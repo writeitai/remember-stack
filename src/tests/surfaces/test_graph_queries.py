@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -41,6 +42,13 @@ _JAN_2024 = datetime(2024, 1, 1, tzinfo=UTC)
 _JUN_2024 = datetime(2024, 6, 1, tzinfo=UTC)
 _JAN_2026 = datetime(2026, 1, 1, tzinfo=UTC)
 _JAN_2027 = datetime(2027, 1, 1, tzinfo=UTC)
+
+
+def _walk_plan_nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield every node in one PostgreSQL JSON execution plan."""
+    yield node
+    for child in node.get("Plans", []):
+        yield from _walk_plan_nodes(child)
 
 
 @pytest.fixture(scope="module")
@@ -760,6 +768,72 @@ def test_shallow_guard_plan_is_endpoint_anchored(
         "'Node Type': 'Seq Scan'" in plan_text
         and "'Relation Name': 'relations'" in plan_text
     )
+
+
+def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Materialized survivor/provenance inputs stay inside the requested tenant."""
+    del graph
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO entities (
+                  entity_id, deployment_id, canonical_name, normalized_name
+                )
+                SELECT md5('unrelated-entity-' || ordinal::text)::uuid,
+                       :deployment_id,
+                       'Unrelated Entity ' || ordinal::text,
+                       'unrelated entity ' || ordinal::text
+                FROM generate_series(1, 1000) AS ordinal
+                """
+            ),
+            {"deployment_id": _OTHER_DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO documents (
+                  doc_id, deployment_id, source_kind, source_ref,
+                  document_entity_id, title
+                )
+                SELECT md5('unrelated-document-' || ordinal::text)::uuid,
+                       :deployment_id,
+                       'upload',
+                       'unrelated-document-' || ordinal::text,
+                       md5('unrelated-entity-' || ordinal::text)::uuid,
+                       'Unrelated Document ' || ordinal::text
+                FROM generate_series(1, 1000) AS ordinal
+                """
+            ),
+            {"deployment_id": _OTHER_DEPLOYMENT_ID},
+        )
+        connection.exec_driver_sql("ANALYZE entities")
+        connection.exec_driver_sql("ANALYZE documents")
+    with database_engine.connect() as connection:
+        plan = connection.execute(
+            text(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT entity_id
+                FROM rememberstack_graph_internal.entities_live
+                WHERE deployment_id = :deployment_id
+                """
+            ),
+            {"deployment_id": _DEPLOYMENT_ID},
+        ).scalar_one()
+
+    plan_text = str(plan)
+    assert "deployments_pkey" in plan_text
+    authority_rows = [
+        float(node.get("Actual Rows", 0))
+        for node in _walk_plan_nodes(plan[0]["Plan"])
+        if node.get("Relation Name")
+        in {"entities", "entity_resolution_events", "mentions", "chunks", "documents"}
+    ]
+    assert authority_rows
+    assert max(authority_rows) < 100, plan_text
 
 
 def test_bounded_graph_read_transaction_does_not_starve_authority_write(

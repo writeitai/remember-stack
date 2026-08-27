@@ -1,10 +1,12 @@
 """Batch C proofs for question-driven current facts and evidence backing."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from typing import cast
 from uuid import UUID
@@ -21,6 +23,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.adapters import BoundedPostgresReadPool
+import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
@@ -77,6 +81,7 @@ class _FactIndex:
         self.fact_keys = tuple((kind, str(fact_id)) for kind, fact_id in fact_keys)
         self.requested_k: list[int] = []
         self.requested_entity_ids: list[tuple[str, ...]] = []
+        self.requested_deadlines: list[float | None] = []
 
     def search_facts_scored(
         self,
@@ -84,10 +89,12 @@ class _FactIndex:
         k: int,
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        deadline: float | None = None,
         **_: object,
     ) -> tuple[P1Nomination, ...]:
         self.requested_k.append(k)
         self.requested_entity_ids.append(entity_ids)
+        self.requested_deadlines.append(deadline)
         allowed = None if candidate_keys is None else set(candidate_keys)
         selected = tuple(
             (kind, fact_id)
@@ -132,10 +139,14 @@ class _ProfileRescueIndex(_FactIndex):
         super().__init__(fact_keys=(("observation", fact_id),))
         self.entity_id = entity_id
         self.profile_requests = 0
+        self.profile_deadlines: list[float | None] = []
 
-    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+    def search_entities_scored(
+        self, *, deadline: float | None = None, **_: object
+    ) -> tuple[P1Nomination, ...]:
         """Return the profile whose prose matches the enumerative query."""
         self.profile_requests += 1
+        self.profile_deadlines.append(deadline)
         return (
             P1Nomination(
                 item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
@@ -148,14 +159,20 @@ class _ProfileRescueIndex(_FactIndex):
         k: int,
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        deadline: float | None = None,
         **arguments: object,
     ) -> tuple[P1Nomination, ...]:
         """Keep global fact search empty so only profile rescue can find the fact."""
         if not entity_ids:
             self.requested_k.append(k)
+            self.requested_deadlines.append(deadline)
             return ()
         return super().search_facts_scored(
-            k=k, candidate_keys=candidate_keys, entity_ids=entity_ids, **arguments
+            k=k,
+            candidate_keys=candidate_keys,
+            entity_ids=entity_ids,
+            deadline=deadline,
+            **arguments,
         )
 
 
@@ -207,11 +224,31 @@ class _FailingGraph:
         raise self.error
 
 
+class _TimedOutReadPool:
+    """Reject every fact-authority checkout at bounded admission."""
+
+    def __init__(self) -> None:
+        self.deadlines: list[float | None] = []
+
+    @contextmanager
+    def connect(
+        self, *, deadline: float | None, isolation_level: str | None = None
+    ) -> Iterator[Connection]:
+        """Record the attempted checkout and raise its typed timeout."""
+        del isolation_level
+        self.deadlines.append(deadline)
+        raise SQLAlchemyTimeoutError("test retrieval admission expired")
+        yield cast(Connection, None)  # pragma: no cover - generator typing only
+
+
 class _Corpus:
     """Relations and observations with live, stale, and tombstoned evidence."""
 
     def __init__(self, *, engine: Engine) -> None:
         self.engine = engine
+        self.read_pool = BoundedPostgresReadPool(
+            engine=engine, max_concurrency=4, pool_wait_seconds=1.0
+        )
         self.provider = FakeModelProvider(generate_payloads={})
         self.subject_id = uuid4()
         self.object_id = uuid4()
@@ -767,6 +804,7 @@ class _Corpus:
                 search_index=index,
                 model_provider=self.provider,
                 embedding_model="batch-c",
+                fact_read_pool=self.read_pool,
             ),
             index,
         )
@@ -1019,14 +1057,75 @@ def test_default_fact_context_maps_graph_failures_to_a_boundary(
     assert index.requested_k == []
 
 
+def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
+    corpus: _Corpus,
+) -> None:
+    """The shared 25-second budget includes fact-authority pool admission."""
+    index = _FactIndex(fact_keys=(("relation", corpus.relation_id),))
+    read_pool = _TimedOutReadPool()
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=read_pool,
+    )
+    started = monotonic()
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, _GraphNeighborhood(neighbor_ids=())),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert index.requested_k == []
+    assert len(read_pool.deadlines) == 1
+    assert read_pool.deadlines[0] is not None
+    assert started + 24.0 < read_pool.deadlines[0] < started + 26.0
+
+
+def test_default_fact_context_fails_closed_without_bounded_fact_pool(
+    corpus: _Corpus,
+) -> None:
+    """A library composition cannot expose D97 through the general SQL pool."""
+    index = _FactIndex(fact_keys=(("relation", corpus.relation_id),))
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+    )
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="What is current?",
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert index.requested_k == []
+
+
 def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Sequential anchor traversals consult the 25-second operation deadline."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=())
-    observed_times = iter((0.0, 0.0, 0.0, 26.0))
-    monkeypatch.setattr(query_engine_module, "monotonic", lambda: next(observed_times))
+    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 26.0))
+
+    def operation_clock() -> float:
+        """Advance one shared monotonic clock across admission and execution."""
+        return next(observed_times)
+
+    monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
+    monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)
 
     answer = engine.default_fact_context(
         deployment_id=_DEPLOYMENT_ID,
@@ -1194,6 +1293,7 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
         search_index=index,
         model_provider=corpus.provider,
         embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
     )
     embedded_before = len(corpus.provider.embedded_texts)
 
@@ -1207,6 +1307,9 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
         FACT_CONTEXT_CANDIDATE_K + 1,
         FACT_CONTEXT_CANDIDATE_K + 1,
     ]
+    assert len(index.requested_deadlines) == 2
+    assert index.requested_deadlines[0] == index.requested_deadlines[1]
+    assert index.profile_deadlines == [index.requested_deadlines[0]]
     assert len(corpus.provider.embedded_texts) == embedded_before + 1
 
 
@@ -1220,6 +1323,7 @@ def test_fact_context_falls_back_while_profile_channel_is_unpublished(
         search_index=index,
         model_provider=corpus.provider,
         embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
     )
 
     answer = engine.fact_context(

@@ -427,6 +427,18 @@ does on the hot path — T0–T3 only, D17):
    clearly that filter (“who reports to X”). Any stored predicate is
    legal, including `other:`. Do not require `type` on `resolve`.
 
+The default operation has one absolute 25-second PostgreSQL budget. Pool
+admission, P1 channel-readiness checks, semantic fact nomination, optional
+entity-profile rescue, anchor/neighbor authority checks, graph expansion, and
+fact/evidence confirmation all consume that same deadline. P1 reads and fact
+authority share one bounded admission object over a dedicated no-overflow
+interactive-retrieval engine; they must not use separate semaphores over one
+physical pool or fall back to the general worker/write pool. Every admitted P1
+or fact transaction derives both `statement_timeout` and
+`transaction_timeout` from the remaining budget. Saturation or expiry returns
+a typed `boundary`; it never silently widens scope or falls back to anchor-only
+retrieval.
+
 Assured operations (`fact_context`, `answer_context`, D87) follow the
 same default: do not require a predicate list to return an entity’s
 facts and one-hop relations.
@@ -539,6 +551,9 @@ generations are abandoned, not dual-run. Sequencing:
   `profile_summary`; “list banks” can match that text.
 - Neighborhood with no predicates returns `other:traveled` neighbors;
   observations for the same id load via lookup, not as graph nodes.
+- One captured deadline reaches P1 readiness, fact/profile nomination, graph,
+  and authority confirmation; a saturated retrieval slot returns a typed
+  boundary before that deadline, and no unguarded checkout occurs.
 - Guard: a lemma linking many entities is down-weighted.
 - Forget: exclusive entity still fully purged; **shared** survivor
   profile no longer contains the forgotten document’s distinctive

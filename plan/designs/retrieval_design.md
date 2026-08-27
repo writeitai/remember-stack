@@ -569,7 +569,12 @@ labels, same trust model (§9).
 - **Locality:** PostgreSQL serves P1 semantic/BM25 entry, live graph expansion,
   authority joins, and registry lookups. API nodes hold no local graph data;
   graph-specific pool/concurrency, statement/transaction timeouts, and hard
-  expansion/result limits contain shared-resource load (D98).
+  expansion/result limits contain shared-resource load (D98). D97's default
+  fact path also has a dedicated no-overflow interactive-retrieval engine and
+  one shared bounded admission authority across P1 nomination and fact
+  confirmation. Its pool wait and every PostgreSQL statement/transaction are
+  clamped to the same absolute operation deadline; expiry is a typed boundary,
+  never an unbounded general-pool fallback.
 - **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
   filtered ANN/BM25 search; multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).

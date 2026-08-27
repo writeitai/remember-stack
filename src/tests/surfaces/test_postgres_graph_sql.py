@@ -10,6 +10,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import RowMapping
 
 from rememberstack.spine.migrations.versions import p9_17_0038_postgres19_live_graph
+from rememberstack.spine.migrations.versions import (
+    p9_18_0039_graph_entity_provenance_plan,
+)
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
@@ -199,13 +202,24 @@ def test_private_relation_source_requires_live_evidence_documents() -> None:
 
 
 def test_private_entity_source_materializes_provenance_once() -> None:
-    """The PGQ vertex source cannot correlate the full provenance plan per row."""
+    """The PGQ vertex source scopes survivor/provenance work before its fence."""
     ddl = p9_17_0038_postgres19_live_graph._GRAPH_SOURCES
-    entity_source = ddl.split(
+    fresh_source = ddl.split(
         "CREATE VIEW rememberstack_graph_internal.entities_live AS", maxsplit=1
     )[1].split(
         "CREATE VIEW rememberstack_graph_internal.documents_live AS", maxsplit=1
     )[0]
+    upgrade_source = p9_18_0039_graph_entity_provenance_plan._MATERIALIZED_ENTITY_VIEW
 
-    assert "WITH provenance AS MATERIALIZED" in entity_source
-    assert entity_source.count("FROM provenance") == 1
+    for entity_source in (fresh_source, upgrade_source):
+        assert "FROM deployments AS deployment" in entity_source
+        assert "CROSS JOIN LATERAL" in entity_source
+        assert "WITH RECURSIVE survivor_chain" in entity_source
+        assert "WHERE source.deployment_id = deployment.deployment_id" in entity_source
+        assert "WHERE mention.deployment_id = deployment.deployment_id" in entity_source
+        assert (
+            "WHERE document.deployment_id = deployment.deployment_id" in entity_source
+        )
+        assert "provenance AS MATERIALIZED" in entity_source
+        assert entity_source.count("FROM provenance") == 1
+        assert "v_memory_entity_survivor" not in entity_source

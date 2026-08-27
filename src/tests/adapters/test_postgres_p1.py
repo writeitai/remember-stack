@@ -6,6 +6,7 @@ from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
 from typing import Literal
+from unittest.mock import call
 from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
@@ -17,8 +18,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.adapters import PostgresP1Index
+from rememberstack.adapters.postgres_p1 import _configure_p1_connection
 from rememberstack.adapters.postgres_p1 import P1SearchUnavailableError
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
@@ -40,6 +43,34 @@ _DEPLOYMENT_ID = UUID("5f000000-0000-0000-0000-000000000094")
 _OTHER_DEPLOYMENT_ID = UUID("5f000000-0000-0000-0000-000000000095")
 _MODEL = "qwen/qwen3-embedding-8b"
 _NOW = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+
+
+def test_fact_deadline_configures_every_p1_statement_transaction() -> None:
+    """P1 channel checks and searches can share the caller's hard deadline."""
+    connection = MagicMock()
+
+    _configure_p1_connection(connection=connection, deadline=10.0, now=9.0)
+
+    assert connection.exec_driver_sql.call_args_list == [
+        call("SET LOCAL statement_timeout = '1000ms'"),
+        call("SET LOCAL transaction_timeout = '1000ms'"),
+    ]
+
+
+def test_deadlined_p1_read_fails_closed_without_bounded_admission() -> None:
+    """A miscomposed fact read never falls back to an unguarded engine checkout."""
+    engine = MagicMock(spec=Engine)
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+
+    with pytest.raises(SQLAlchemyTimeoutError, match="admission is not configured"):
+        index.search_entities_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            vector=_vector(axis=0),
+            k=1,
+            deadline=10**12,
+        )
+
+    engine.connect.assert_not_called()
 
 
 def _vector(*, axis: int) -> tuple[float, ...]:

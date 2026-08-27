@@ -391,3 +391,46 @@ proposal. WP-I.5 does not ship the flag.
 | Delete the mentions table | Lose the naming transcript |
 | Graphiti copy including drop-conflicting-label | Hides dual-role hats |
 | LoCoMo-first extract prompts | Benchmarks follow identity, not the reverse |
+
+---
+
+## 8. Exact-tip retrieval-budget finding (2026-08-27)
+
+The first WP-I.6 implementation gave `default_fact_context` one absolute
+25-second PostgreSQL deadline and reapplied the remaining time as
+`statement_timeout` during fact confirmation and graph expansion. Exact-tip
+review found two holes before those guarded statements:
+
+1. P1 readiness checks and semantic fact/profile nomination opened ordinary
+   connections and ran without the operation deadline.
+2. Fact-authority connections called `engine.connect()` before configuring the
+   remaining statement budget. A saturated general pool could therefore wait
+   outside the advertised 25 seconds.
+
+The graph path already demonstrated the useful containment shape: a private
+engine with no overflow plus application admission whose semaphore wait is
+clamped to the caller's absolute deadline. Separate P1 and authority
+semaphores over the same SQLAlchemy pool would not solve the problem: together
+they could admit more work than that pool owns and reintroduce an unbounded
+checkout behind either semaphore.
+
+The final shape therefore uses one dedicated interactive-retrieval engine and
+one shared bounded admission object for both P1 reads and fact authority.
+`default_fact_context` passes the same monotonic deadline through P1 channel
+checks, fact nomination, optional entity-profile rescue, anchor/neighbor
+checks, and repeatable-read fact/evidence confirmation. Each admitted P1 and
+authority transaction applies `statement_timeout` and `transaction_timeout`
+from the remaining budget. Pool saturation becomes the existing typed
+`boundary`; it never widens retrieval or falls back to an unguarded general
+pool.
+
+Rejected repairs:
+
+- increasing SQLAlchemy `pool_timeout`: still independent of the operation
+  deadline and makes overload slower;
+- setting timeouts only after ordinary `engine.connect()`: bounds statements,
+  not checkout;
+- separate bounded P1 and fact pools over one engine: admissions can exceed
+  physical capacity;
+- sharing the worker/write engine: background load can consume the very slots
+  intended to keep interactive reads bounded.

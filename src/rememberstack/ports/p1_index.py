@@ -261,12 +261,18 @@ class P1ScoredSearchPort(Protocol):
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored facts with separate eligible scope and ranking anchors."""
         ...
 
     def search_entities_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored entity nominations over the profile/description vectors.
 

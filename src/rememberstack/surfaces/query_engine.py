@@ -15,6 +15,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
 from functools import wraps
@@ -84,6 +85,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -222,6 +224,7 @@ class QueryEngine:
         model_provider: ModelProviderPort,
         embedding_model: str,
         batch_engine: Engine | None = None,
+        fact_read_pool: PostgresReadPoolPort | None = None,
         surface_cost: SqlSurfaceCostRecorder | None = None,
     ) -> None:
         """Bind the engine to the spine, the P1 indexes, and the embedder.
@@ -235,6 +238,12 @@ class QueryEngine:
         to the interactive engine — correct for a single-pool deployment —
         but a deployment that wants isolation passes a second engine bound
         to its own connection pool.
+
+        `fact_read_pool` is the shared bounded admission authority for D97's
+        P1 nomination and fact confirmation. The stock profile supplies a
+        dedicated no-overflow engine. Other compositions may omit it only when
+        they do not expose `fact_context`; that operation fails closed rather
+        than opening an unbounded connection.
         """
         self._engine = engine
         self._search_index = search_index
@@ -249,7 +258,23 @@ class QueryEngine:
         self._policy_generation = EMBEDDING_INPUT_POLICY_VERSION
         self._embedder_generation = embedding_model
         self._batch_engine = batch_engine or engine
+        self._fact_read_pool = fact_read_pool
         self._surface_cost = surface_cost
+
+    @contextmanager
+    def _fact_connection(
+        self, *, deadline: float, isolation_level: str | None = None
+    ) -> Iterator[Connection]:
+        """Open one fact read through bounded admission when it is configured."""
+        if self._fact_read_pool is not None:
+            with self._fact_read_pool.connect(
+                deadline=deadline, isolation_level=isolation_level
+            ) as connection:
+                yield connection
+            return
+        raise SQLAlchemyTimeoutError(
+            "bounded fact-context PostgreSQL read admission is not configured"
+        )
 
     def resolve(
         self,
@@ -599,8 +624,12 @@ class QueryEngine:
             if _database_deadline is not None
             else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
         )
-        with self._engine.connect() as connection:
-            if required_entity_ids:
+        if self._fact_read_pool is None:
+            raise SQLAlchemyTimeoutError(
+                "bounded fact-context PostgreSQL read admission is not configured"
+            )
+        if required_entity_ids:
+            with self._fact_connection(deadline=database_deadline) as connection:
                 _configure_fact_context_connection(
                     connection=connection, deadline=database_deadline
                 )
@@ -624,6 +653,7 @@ class QueryEngine:
             predicate=predicate,
             time=selected_time,
             evaluated_at=evaluation,
+            deadline=database_deadline,
         )
         candidate_keys = tuple(
             (item.qualifier, UUID(item.item_id))
@@ -632,8 +662,8 @@ class QueryEngine:
         )
         evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
         totals: dict[tuple[str, UUID, str], int] = {}
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
+        with self._fact_connection(
+            deadline=database_deadline, isolation_level="REPEATABLE READ"
         ) as connection:
             confirmed_scope_ids = entity_ids
             confirmed_optional_nodes: tuple[GraphNode, ...] = ()
@@ -871,7 +901,7 @@ class QueryEngine:
         if not anchors:
             return confirmed_facts(scoped_entity_ids=())
         try:
-            with self._engine.connect() as connection:
+            with self._fact_connection(deadline=database_deadline) as connection:
                 _configure_fact_context_connection(
                     connection=connection, deadline=database_deadline
                 )
@@ -980,7 +1010,7 @@ class QueryEngine:
             )
 
         try:
-            with self._engine.connect() as connection:
+            with self._fact_connection(deadline=database_deadline) as connection:
                 _configure_fact_context_connection(
                     connection=connection, deadline=database_deadline
                 )
@@ -2339,6 +2369,7 @@ class QueryEngine:
         predicate: str | None,
         time: FactTime,
         evaluated_at: datetime,
+        deadline: float,
     ) -> tuple[P1Nomination, ...]:
         """Rank candidates, deferring final fact authority to the confirm gate."""
         method = (
@@ -2369,6 +2400,7 @@ class QueryEngine:
                 "evaluated_at": evaluated_at,
                 "entity_ids": tuple(str(item) for item in scope),
                 "ranking_entity_ids": tuple(str(item) for item in ranking_scope),
+                "deadline": deadline,
             }
             if predicate is not None:
                 arguments["equality_filters"] = {"predicate": predicate}
@@ -2385,6 +2417,7 @@ class QueryEngine:
                     deployment_id=str(deployment_id),
                     vector=query_vector,
                     k=FACT_CONTEXT_PROFILE_ENTITY_K,
+                    deadline=deadline,
                 ),
             )
         except P1SearchUnavailableError:
@@ -3118,6 +3151,9 @@ def _configure_fact_context_connection(
     timeout_ms = max(1, math.floor(remaining * 1_000))
     connection.exec_driver_sql(
         f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
+    connection.exec_driver_sql(
+        f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
     connection.exec_driver_sql("SET LOCAL jit = off")
     connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")

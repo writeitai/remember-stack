@@ -1,15 +1,21 @@
 """PostgreSQL-native P1 writes and ranked search (D94)."""
 
+from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
+import math
+from time import monotonic
 from typing import Any
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
@@ -28,6 +34,7 @@ from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.postgres_read import PostgresReadPoolPort
 
 P1_HNSW_MAX_SCAN_TUPLES = 20_000
 """Reference-profile ceiling for one filtered iterative HNSW scan (D94)."""
@@ -42,11 +49,13 @@ class PostgresP1Index:
         engine: Engine,
         embedding_model: str,
         chunk_input_policy: str = EMBEDDING_INPUT_POLICY_VERSION,
+        read_pool: PostgresReadPoolPort | None = None,
     ) -> None:
         """Bind the database and the one active semantic configuration."""
         self._engine = engine
         self._embedding_model = embedding_model
         self._chunk_input_policy = chunk_input_policy
+        self._read_pool = read_pool
 
     def configure_channels(
         self, *, deployment_id: UUID, include_entity: bool = True
@@ -890,6 +899,7 @@ class PostgresP1Index:
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank facts after applying identity, temporal, and entity authority."""
         _require_vector(vector)
@@ -908,6 +918,7 @@ class PostgresP1Index:
                 target=target,
                 channel="semantic",
                 policy=FACT_INPUT_POLICY,
+                deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
@@ -998,7 +1009,9 @@ class PostgresP1Index:
             ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic", qualified=True
+            self._engine_rows(statement, parameters, deadline=deadline),
+            channel="semantic",
+            qualified=True,
         )
 
     def nominate_facts_scored(
@@ -1012,6 +1025,7 @@ class PostgresP1Index:
         evaluated_at: datetime | None = None,
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank cheap base-table candidates for a caller that confirms every row."""
         _require_vector(vector)
@@ -1030,6 +1044,7 @@ class PostgresP1Index:
                 target=target,
                 channel="semantic",
                 policy=FACT_INPUT_POLICY,
+                deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
@@ -1148,11 +1163,18 @@ class PostgresP1Index:
             ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic", qualified=True
+            self._engine_rows(statement, parameters, deadline=deadline),
+            channel="semantic",
+            qualified=True,
         )
 
     def search_entities_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank live entity profiles without an entity-class filter (D96)."""
         _require_vector(vector)
@@ -1161,6 +1183,7 @@ class PostgresP1Index:
             target="entities",
             channel="semantic",
             policy=ENTITY_INPUT_POLICY,
+            deadline=deadline,
         )
         rows = self._engine_rows(
             """
@@ -1185,6 +1208,7 @@ class PostgresP1Index:
                 "query_vector": _vector_literal(vector),
                 "limit": k,
             },
+            deadline=deadline,
         )
         return _nominations(rows, channel="semantic")
 
@@ -1243,10 +1267,12 @@ class PostgresP1Index:
         channel: str,
         policy: str | None,
         model: str | None = None,
+        deadline: float | None = None,
     ) -> None:
         """Fail closed unless setup published the exact current channel."""
         expected_model = model or self._embedding_model
-        with self._engine.connect() as connection:
+        with self._read_connection(deadline=deadline) as connection:
+            _configure_p1_connection(connection=connection, deadline=deadline)
             ready = connection.execute(
                 text(
                     """
@@ -1285,10 +1311,15 @@ class PostgresP1Index:
             )
 
     def _engine_rows(
-        self, statement: str, parameters: Mapping[str, Any]
+        self,
+        statement: str,
+        parameters: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
     ) -> list[Mapping[str, Any]]:
         """Execute one read statement and return detached mappings."""
-        with self._engine.connect() as connection:
+        with self._read_connection(deadline=deadline) as connection:
+            _configure_p1_connection(connection=connection, deadline=deadline)
             if "<=>" in statement:
                 connection.exec_driver_sql(
                     "SET LOCAL hnsw.iterative_scan = 'strict_order'"
@@ -1301,6 +1332,40 @@ class PostgresP1Index:
                 dict(row)
                 for row in connection.execute(text(statement), parameters).mappings()
             ]
+
+    @contextmanager
+    def _read_connection(
+        self, *, deadline: float | None = None
+    ) -> Iterator[Connection]:
+        """Open one P1 read through configured bounded admission when present."""
+        if self._read_pool is not None:
+            with self._read_pool.connect(deadline=deadline) as connection:
+                yield connection
+            return
+        if deadline is not None:
+            raise SQLAlchemyTimeoutError(
+                "bounded P1 PostgreSQL read admission is not configured"
+            )
+        with self._engine.connect() as connection:
+            yield connection
+
+
+def _configure_p1_connection(
+    *, connection: Connection, deadline: float | None, now: float | None = None
+) -> None:
+    """Apply the remaining fact-operation budget to one P1 read transaction."""
+    if deadline is None:
+        return
+    remaining = deadline - (monotonic() if now is None else now)
+    if remaining <= 0:
+        raise SQLAlchemyTimeoutError("P1 PostgreSQL operation deadline expired")
+    timeout_ms = max(1, math.floor(remaining * 1_000))
+    connection.exec_driver_sql(
+        f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
+    connection.exec_driver_sql(
+        f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
 
 
 def _claim_filters(

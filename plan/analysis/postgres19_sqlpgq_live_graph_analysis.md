@@ -511,15 +511,32 @@ graph completed in milliseconds, but it was rejected because it would bypass
 the surviving-provenance membership rule.
 
 A semantic-equivalent prototype changed only the private entity view's SQL
-shape: it materialized the complete `(deployment_id, survivor_entity_id)`
-provenance keyset once inside each view expansion, then semi-joined active
-entities to that keyset. The property-graph keys, rows, labels, grants, relation
-source, and hydration contract did not change. The same production
+shape: it materialized a `(deployment_id, survivor_entity_id)` provenance
+keyset once inside each view expansion, then semi-joined active entities to
+that keyset. The property-graph keys, rows, labels, grants, relation source,
+and hydration contract did not change. The same production
 `GraphQueries.neighborhood` call then completed in approximately 0.9 seconds
-and returned the two admitted edges. This is the chosen repair because it
-retains the D48 absence rule and D98's PGQ/current-snapshot semantics while
-removing repeated evaluation rather than raising a timeout or introducing a
-fallback traversal.
+and returned the two admitted edges.
+
+Exact-tip review then found that the first repair's materialization fence was
+still outside the deployment predicate. It removed repeated evaluation but
+could build the survivor/provenance keyset for every deployment before the
+caller filtered one tenant. That cost is hidden in a single-deployment fixture
+and grows with other customers' corpora, so it is not an acceptable managed
+topology.
+
+The final prototype starts from the one indexed `deployments` row and enters a
+`CROSS JOIN LATERAL`. Inside that deployment-bound subquery it computes the
+recursive survivor closure, materializes the survivor map, and materializes
+mention/document provenance. Every base-table branch is constrained by
+`deployment.deployment_id` before either fence. A live PostgreSQL 19
+`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` with 1,000 unrelated entities and
+1,000 unrelated provenance documents showed the outer `deployments_pkey`
+probe and fewer than 100 actual rows at every target authority scan; no scan
+consumed the unrelated tenant. This is the chosen repair because it retains
+the D48 absence rule and D98's PGQ/current-snapshot semantics while removing
+both repeated evaluation and cross-deployment materialization rather than
+raising a timeout or introducing a fallback traversal.
 
 ## 9. Recommendation and design inputs
 

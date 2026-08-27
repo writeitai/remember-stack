@@ -76,6 +76,19 @@ Size these four values together with PostgreSQL shared memory and host reserve.
 Increasing pool or concurrency independently multiplies worst-case memory; the
 managed service applies a stricter host-level admission calculation.
 
+### Interactive retrieval resources
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | Dedicated PostgreSQL P1/fact read connections (default `4`) |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | Maximum admission wait for an interactive retrieval read (default `1` second, also clamped to the operation deadline) |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | Per-process P1/fact reads admitted across the shared retrieval pool (default `4`) |
+
+Keep maximum concurrency at or below pool size. `fact_context` also clamps
+every admitted PostgreSQL statement and transaction to its remaining operation
+deadline; pool saturation returns a typed boundary rather than using the
+worker/write pool.
+
 ### Provider (OpenRouter)
 
 | Variable | Purpose |

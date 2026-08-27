@@ -103,6 +103,7 @@ def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() 
 
     assert [call.args[0] for call in connection.exec_driver_sql.call_args_list] == [
         "SET LOCAL statement_timeout = '25000ms'",
+        "SET LOCAL transaction_timeout = '25000ms'",
         "SET LOCAL jit = off",
         "SET LOCAL join_collapse_limit = 1",
         "SET LOCAL from_collapse_limit = 1",
