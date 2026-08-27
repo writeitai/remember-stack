@@ -18,6 +18,7 @@ job; `DeletionService` is the operator's grain (§8) through the same
 cascade.
 """
 
+import logging
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
@@ -31,6 +32,7 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.review import ReviewQueue
@@ -41,6 +43,8 @@ from rememberstack.workers.p1 import P1Settings
 
 RECONCILE_VERSION = "reconcile-2026.07"
 """The reconcile stage's component version (D12 idempotency key member)."""
+
+_logger = logging.getLogger(__name__)
 
 
 class ReconcileHandler:
@@ -191,13 +195,20 @@ class ReconcileHandler:
                 flags_raised=flags,
             ),
         )
-        self._profile_refresher.refresh_for_facts(
-            deployment_id=deployment_id,
-            relation_ids=relation_ids,
-            observation_ids=observation_ids,
-            meter=meter,
-            call_key=f"profile:reconcile:{reconciliation_id}",
-        )
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=f"profile:reconcile:{reconciliation_id}",
+            )
+        except ProfileRefreshContendedError:
+            _logger.warning(
+                "profile.refresh_contended reconciliation_id=%s; "
+                "stale cache remains empty",
+                reconciliation_id,
+            )
         doc_id = context["doc_id"]
         if not isinstance(doc_id, UUID):
             raise NonRetryableHandlerError(

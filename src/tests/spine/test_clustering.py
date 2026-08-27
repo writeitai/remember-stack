@@ -22,6 +22,7 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.profile_refresher import current_profile_entity_ids
 from rememberstack.spine.settings import load_database_settings
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -471,6 +472,30 @@ def test_clustering_redirect_walks_are_anchored() -> None:
         sql = str(statement)
         assert "WITH RECURSIVE" in sql
         assert "v_memory_entity_survivor" not in sql
+
+
+def test_clustering_attestation_preserves_caller_timeouts(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """The borrowed clustering transaction keeps its own timeout policy."""
+    index = _ScriptedEntityIndex()
+    entity_id = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    with database_engine.begin() as connection:
+        connection.execute(text("SET LOCAL statement_timeout = '2min'"))
+        connection.execute(
+            text("SET LOCAL idle_in_transaction_session_timeout = '3min'")
+        )
+        assert current_profile_entity_ids(
+            connection=connection, deployment_id=_DEPLOYMENT_ID, entity_ids=(entity_id,)
+        ) == frozenset({entity_id})
+        statement_timeout = connection.execute(
+            text("SHOW statement_timeout")
+        ).scalar_one()
+        idle_timeout = connection.execute(
+            text("SHOW idle_in_transaction_session_timeout")
+        ).scalar_one()
+    assert statement_timeout == "2min"
+    assert idle_timeout == "3min"
 
 
 def test_black_hole_guard_tightens_the_cut(

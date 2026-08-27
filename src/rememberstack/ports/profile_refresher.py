@@ -6,6 +6,10 @@ from uuid import UUID
 from rememberstack.ports.cost_meter import CostMeterPort
 
 
+class ProfileRefreshContendedError(RuntimeError):
+    """Current evidence kept changing through bounded optimistic retries."""
+
+
 class ProfileRefresherPort(Protocol):
     """Refresh disposable entity profile projections after evidence changes."""
 

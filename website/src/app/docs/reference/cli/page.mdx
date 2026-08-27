@@ -306,7 +306,7 @@ nothing is edited in place:
 
 | item kind | verdict | what it writes |
 | --- | --- | --- |
-| `merge_cluster` | `merge` | performs the merge: a redirect plus an append-only `merge_events` row (`decided_by=human`) with the pre-merge snapshot, then rebuilds the survivor profile from the full redirect closure and clears absorbed caches — fully un-mergeable later |
+| `merge_cluster` | `merge` | performs the merge: a redirect plus an append-only `merge_events` row (`decided_by=human`) with the pre-merge snapshot, then rebuilds the survivor's full-closure profile and the absorbed member's local nDR profile — fully un-mergeable later |
 | `merge_cluster` | `not_merge` | closes the item as rejected; nothing merges |
 | `support_withdrawn` | `restore_support` | the old claim was right (the extractor regressed): a `testimony_currency_events` row reinstates it and the fact's evidence count recounts |
 | `support_withdrawn` | `invalidate_fact` | the old claim was an extraction artifact: the fact's `invalidated_at` is set with a recorded adjudication — it leaves the current fact layer, history intact |

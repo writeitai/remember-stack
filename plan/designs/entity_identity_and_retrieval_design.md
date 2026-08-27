@@ -190,6 +190,8 @@ reconstructs the expected summary/hash from current facts; stale or missing
 attestation disables T3 and T4 still receives the current salient statements.
 Clustering performs the same exact current-input check under evidence locks before reading a
 generation-pinned vector, so stale or missing member state cannot authorize a merge or split.
+Merged-member relation prose keeps endpoints inside the member subtree named as that local profile
+root, rather than rewriting them to the outer survivor and self-reinforcing an earlier merge.
 Hot-path redirect traversal uses recursive CTEs anchored at the requested ids rather than the
 deployment-wide survivor view. No queued stale snapshot can overwrite newer evidence: the
 refresher snapshots under the identity/evidence locks, releases the transaction for the provider
@@ -197,7 +199,10 @@ call, then reacquires the locks and rebuilds the exact input. A changed hash dis
 the stale vector and triggers a bounded retry rather than writing it. Multi-entity refreshes use
 bounded provider batches, but each entity still revalidates and commits independently. Salient
 facts use index-backed per-member/per-endpoint prefix scans before the final bounded entity rank,
-so a hub cannot turn profile refresh into a deployment-wide fact sort under lock.
+so a hub cannot turn profile refresh into a deployment-wide fact sort under lock. Worker-side
+contention exhaustion leaves the stale cache empty and completes already-durable evidence work;
+the later evidence mutation owns another refresh, preventing paid normalization replay and DLQ.
+Setup and operator surfaces continue to surface exhaustion as a failure.
 
 Merge application also resolves a queued survivor to its live terminal root and requires the
 absorbed target to remain active. A target that joined another cluster after proposal creation is

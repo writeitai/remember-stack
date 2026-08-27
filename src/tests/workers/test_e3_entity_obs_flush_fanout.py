@@ -12,6 +12,7 @@ from rememberstack.model import ClaimedWork
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.spine import work_ledger
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import e3
@@ -118,6 +119,20 @@ def test_supersession_retry_refreshes_the_full_stable_relation_set() -> None:
     assert adjudicator.calls == [relation_id, relation_id]
     affected = tuple(sorted((relation_id, closed_relation_id), key=str))
     assert refresher.fact_refreshes == [(affected, ()), (affected, ())]
+
+
+def test_profile_contention_does_not_fail_paid_e3_work() -> None:
+    """Bounded optimistic exhaustion is safe under-recall, not an LLM replay."""
+    calls = 0
+
+    def contend() -> None:
+        nonlocal calls
+        calls += 1
+        raise ProfileRefreshContendedError("changed during 3 refresh attempts")
+
+    e3._run_profile_refresh(action=contend, call_key="profile:test")
+
+    assert calls == 1
 
 
 def test_adjudicator_resplit_late_arrival() -> None:

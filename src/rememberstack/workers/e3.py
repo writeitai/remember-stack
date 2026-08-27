@@ -9,6 +9,7 @@ Entities resolve through T0; the fact catalog collapses redundancy (D2) and
 keeps the D54 lineage-distinct evidence counts.
 """
 
+from collections.abc import Callable
 import logging
 from typing import Final
 from uuid import UUID
@@ -30,6 +31,7 @@ from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
@@ -51,6 +53,22 @@ _logger = logging.getLogger(__name__)
 
 _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 """The escape-value routing check (the spine re-validates authoritatively)."""
+
+
+def _run_profile_refresh(*, action: Callable[[], object], call_key: str) -> None:
+    """Keep safe contention from replaying paid normalization work.
+
+    Every stale input is cleared before provider work. A later evidence
+    mutation owns another refresh attempt, so exhaustion here can safely
+    under-recall until that attempt converges instead of failing this work.
+    """
+    try:
+        action()
+    except ProfileRefreshContendedError:
+        _logger.warning(
+            "profile.refresh_contended call_key=%s; stale cache remains empty", call_key
+        )
+
 
 E3_NORMALIZER_VERSION: Final = (
     "e3-normalize-2026.08c:temp0-1:claim-fanout-1:bare-noun-1:no-types-1"
@@ -218,11 +236,15 @@ class NormalizeRelationsHandler:
             prompt_lines=prompt_lines,
             meter=meter,
         )
-        self._profile_refresher.refresh_many(
-            deployment_id=deployment_id,
-            entity_ids=tuple(profile_entity_ids),
-            meter=meter,
-            call_key=f"profile:normalize:{claim_id}",
+        profile_call_key = f"profile:normalize:{claim_id}"
+        _run_profile_refresh(
+            action=lambda: self._profile_refresher.refresh_many(
+                deployment_id=deployment_id,
+                entity_ids=tuple(profile_entity_ids),
+                meter=meter,
+                call_key=profile_call_key,
+            ),
+            call_key=profile_call_key,
         )
         # Stage under every version that currently lists this claim (D56). A
         # shared claim work row may complete with one payload while siblings
@@ -315,20 +337,26 @@ class NormalizeRelationsHandler:
             )
             profile_entity_ids.add(entity_id)
         claim_ids = tuple(claim.claim_id for claim in claims)
-        self._profile_refresher.refresh_for_facts(
+        relation_ids = self._facts.relation_ids_for_origin_claims(
             deployment_id=deployment_id,
-            relation_ids=self._facts.relation_ids_for_origin_claims(
+            claim_ids=claim_ids,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+        observation_ids = self._facts.observation_ids_for_origin_claims(
+            deployment_id=deployment_id,
+            claim_ids=claim_ids,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+        profile_call_key = f"profile:normalize:{work.target_id}"
+        _run_profile_refresh(
+            action=lambda: self._profile_refresher.refresh_for_facts(
                 deployment_id=deployment_id,
-                claim_ids=claim_ids,
-                normalizer_version=E3_NORMALIZER_VERSION,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=profile_call_key,
             ),
-            observation_ids=self._facts.observation_ids_for_origin_claims(
-                deployment_id=deployment_id,
-                claim_ids=claim_ids,
-                normalizer_version=E3_NORMALIZER_VERSION,
-            ),
-            meter=meter,
-            call_key=f"profile:normalize:{work.target_id}",
+            call_key=profile_call_key,
         )
         return HandlerOutcome(
             follow_up=self._terminal_branches(
@@ -596,11 +624,15 @@ class AdjudicateObservationsHandler:
             meter=meter,
             call_key=f"observation_flush:{entity_id}",
         )
-        self._profile_refresher.refresh_many(
-            deployment_id=work.deployment_id,
-            entity_ids=(entity_id,),
-            meter=meter,
-            call_key=f"profile:observation_flush:{entity_id}",
+        profile_call_key = f"profile:observation_flush:{entity_id}"
+        _run_profile_refresh(
+            action=lambda: self._profile_refresher.refresh_many(
+                deployment_id=work.deployment_id,
+                entity_ids=(entity_id,),
+                meter=meter,
+                call_key=profile_call_key,
+            ),
+            call_key=profile_call_key,
         )
         raw_doc_id = unit.get("doc_id")
         doc_id = UUID(str(raw_doc_id)) if raw_doc_id is not None else None
@@ -699,12 +731,16 @@ class AdjudicateObservationsHandler:
             claim_ids=tuple(claim.claim_id for claim in claims),
             normalizer_version=normalizer_version,
         )
-        self._profile_refresher.refresh_for_facts(
-            deployment_id=work.deployment_id,
-            relation_ids=relation_ids,
-            observation_ids=observation_ids,
-            meter=meter,
-            call_key=f"profile:observation_flush:{version_uuid}",
+        profile_call_key = f"profile:observation_flush:{version_uuid}"
+        _run_profile_refresh(
+            action=lambda: self._profile_refresher.refresh_for_facts(
+                deployment_id=work.deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=profile_call_key,
+            ),
+            call_key=profile_call_key,
         )
         doc_id = payload.get("doc_id")
         if doc_id is None and claims:
@@ -819,12 +855,17 @@ class AdjudicateSupersessionHandler:
                     call_key=f"supersession:{relation_id}",
                 )
             )
-        self._profile_refresher.refresh_for_facts(
-            deployment_id=work.deployment_id,
-            relation_ids=tuple(sorted(affected_relation_ids, key=str)),
-            observation_ids=(),
-            meter=meter,
-            call_key=f"profile:supersession:{work.target_id}",
+        stable_affected_ids = tuple(sorted(affected_relation_ids, key=str))
+        profile_call_key = f"profile:supersession:{work.target_id}"
+        _run_profile_refresh(
+            action=lambda: self._profile_refresher.refresh_for_facts(
+                deployment_id=work.deployment_id,
+                relation_ids=stable_affected_ids,
+                observation_ids=(),
+                meter=meter,
+                call_key=profile_call_key,
+            ),
+            call_key=profile_call_key,
         )
         version_id = payload.get("version_id")
         representation_id = payload.get("representation_id")

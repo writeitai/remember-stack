@@ -17,6 +17,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 
 PROFILE_SUMMARY_FACT_LIMIT: Final = 5
 PROFILE_SALIENT_FACT_LIMIT: Final = 8
@@ -117,7 +118,7 @@ class EntityProfileRefresher:
             )
             if committed is not None:
                 return committed
-        raise RuntimeError(
+        raise ProfileRefreshContendedError(
             f"entity profile {entity_id} changed during "
             f"{PROFILE_REFRESH_MAX_ATTEMPTS} refresh attempts"
         )
@@ -294,7 +295,7 @@ class EntityProfileRefresher:
                 return tuple(completed[entity_id] for entity_id in targets)
             pending = tuple(retry)
         changed = ", ".join(str(entity_id) for entity_id in pending)
-        raise RuntimeError(
+        raise ProfileRefreshContendedError(
             "entity profiles changed during "
             f"{PROFILE_REFRESH_MAX_ATTEMPTS} refresh attempts: {changed}"
         )
@@ -443,7 +444,10 @@ def current_profile_entity_ids(
     current: set[UUID] = set()
     for entity_id in sorted(set(entity_ids), key=str):
         entity, facts = _locked_profile_state(
-            connection=connection, deployment_id=deployment_id, entity_id=entity_id
+            connection=connection,
+            deployment_id=deployment_id,
+            entity_id=entity_id,
+            configure_timeouts=False,
         )
         if entity is None or str(entity["status"]) not in {"active", "merged"}:
             continue
@@ -460,11 +464,18 @@ def current_profile_entity_ids(
 
 
 def _locked_profile_state(
-    *, connection: Connection, deployment_id: UUID, entity_id: UUID
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    entity_id: UUID,
+    configure_timeouts: bool = True,
 ) -> tuple[RowMapping | None, tuple[str, ...]]:
     """Load one current profile input under bounded identity/evidence locks."""
-    connection.execute(text("SET LOCAL statement_timeout = '15s'"))
-    connection.execute(text("SET LOCAL idle_in_transaction_session_timeout = '15s'"))
+    if configure_timeouts:
+        connection.execute(text("SET LOCAL statement_timeout = '15s'"))
+        connection.execute(
+            text("SET LOCAL idle_in_transaction_session_timeout = '15s'")
+        )
     connection.execute(
         _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
     )
@@ -828,8 +839,23 @@ _SELECT_SALIENT_FACTS = text(
       SELECT * FROM ranked WHERE ordinal <= :limit
     )
     SELECT selected.profile_entity_id, selected.kind, selected.statement,
-           subject.canonical_name, selected.predicate, object.canonical_name
+           CASE WHEN subject_member.member_entity_id IS NOT NULL
+                THEN profile.canonical_name ELSE subject.canonical_name END,
+           selected.predicate,
+           CASE WHEN object_member.member_entity_id IS NOT NULL
+                THEN profile.canonical_name ELSE object.canonical_name END
     FROM selected
+    JOIN entities profile
+      ON profile.deployment_id = :deployment_id
+     AND profile.entity_id = selected.profile_entity_id
+    LEFT JOIN identity_members subject_member
+      ON subject_member.profile_entity_id = selected.profile_entity_id
+     AND subject_member.member_entity_id = selected.subject_entity_id
+     AND selected.kind = 'relation'
+    LEFT JOIN identity_members object_member
+      ON object_member.profile_entity_id = selected.profile_entity_id
+     AND object_member.member_entity_id = selected.object_entity_id
+     AND selected.kind = 'relation'
     LEFT JOIN LATERAL (
       WITH RECURSIVE up(entity_id, status, merged_into, path) AS (
         SELECT entity.entity_id, entity.status, entity.merged_into,

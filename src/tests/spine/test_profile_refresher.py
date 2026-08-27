@@ -356,6 +356,63 @@ def test_relation_prose_is_salient_for_both_endpoints(database_engine: Engine) -
     assert len(provider.embedded_texts) == 2
 
 
+def test_merged_member_relation_profile_keeps_its_local_name(
+    database_engine: Engine,
+) -> None:
+    """nDR member prose does not rewrite its endpoint to the active survivor."""
+    employer = uuid4()
+    relation_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET canonical_name = 'Robert Klein'"
+                " WHERE entity_id = :survivor"
+            ),
+            {"survivor": _FIRST_ENTITY},
+        )
+        connection.execute(
+            text(
+                " UPDATE entities SET canonical_name = 'R. Klein',"
+                " status = 'merged', merged_into = :survivor"
+                " WHERE entity_id = :member"
+            ),
+            {"survivor": _FIRST_ENTITY, "member": _SECOND_ENTITY},
+        )
+        connection.execute(
+            text(
+                " INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:employer, :deployment, 'Acme', 'acme')"
+            ),
+            {"employer": employer, "deployment": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                " INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id, evidence_count,"
+                " normalizer_version) VALUES (:relation, :deployment, :member,"
+                " 'works_for', :employer, 1, 'profile-test')"
+            ),
+            {
+                "member": _SECOND_ENTITY,
+                "employer": employer,
+                "relation": relation_id,
+                "deployment": _DEPLOYMENT_ID,
+            },
+        )
+
+    results = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        embedding_model="profile-embed-test",
+    ).refresh_many(
+        deployment_id=_DEPLOYMENT_ID, entity_ids=(_FIRST_ENTITY, _SECOND_ENTITY)
+    )
+
+    facts = {result.entity_id: result.salient_facts for result in results}
+    assert facts[_FIRST_ENTITY] == ("Robert Klein works for Acme",)
+    assert facts[_SECOND_ENTITY] == ("R. Klein works for Acme",)
+
+
 def test_capped_fact_cannot_outrank_the_open_current_profile(
     database_engine: Engine,
 ) -> None:

@@ -128,13 +128,19 @@ staleness attestation: unchanged inputs make no provider call. Multi-entity refr
 backfill batch provider inputs to bound policy-cut downtime while retaining per-entity locked
 revalidation and exact attestations. Salient-fact selection takes an index-backed bounded prefix
 per redirect-closure member and endpoint direction before the final entity-wide rank; no hub can
-force an unbounded OR-join or full fact-set window sort while profile locks are held.
+force an unbounded OR-join or full fact-set window sort while profile locks are held. If evidence
+contention exhausts the bounded retries, worker paths leave the stale cache empty and complete
+their already-durable evidence work; the later mutation that caused the drift owns another
+refresh, avoiding a paid normalizer replay/DLQ loop. Setup and operator surfaces still surface
+exhaustion.
 
 New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
 merge/un-merge, terminal human review, normal deletion, and D74 hard-forget invoke the same
 refresher. A survivor profile includes evidence anchored to every entity in its complete redirect
 closure. A merged row retains a separately attested member-local/subtree profile solely for joint
-neighborhood re-decision; it remains excluded from public entity resolution and search. Fact-
+neighborhood re-decision. Relation prose names an endpoint inside that subtree as the local
+profile root rather than its current outer survivor, so a previous merge cannot self-reinforce
+the vector used to reconsider it. The row remains excluded from public entity resolution and search. Fact-
 triggered refresh repairs both raw endpoints and their terminal active survivor, so later
 lifecycle changes cannot strand evidence behind a redirect;
 hard-forget refreshes shared survivor ids after the
@@ -145,6 +151,8 @@ missing profile and makes T4 rely on the current facts rather than stale cached 
 missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Clustering
 performs the same exact current-input attestation under evidence locks and reads only the active
 model/policy generation, so stale member state cannot authorize an automatic merge or split.
+The borrowed clustering transaction does not inherit the refresher-owned statement/idle timeouts
+while it performs its bounded in-process HAC decision.
 Boundaries:
 the refresher writes only the disposable profile projection and its attestation — never names,
 aliases, status, or identity.
