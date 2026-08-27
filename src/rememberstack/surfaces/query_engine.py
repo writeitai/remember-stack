@@ -2778,10 +2778,14 @@ def _fuse_fact_nominations(
     """Fuse fact coordinates without confusing relation/observation UUIDs."""
     scores: dict[tuple[str, str], float] = {}
     for channel in channels:
+        seen: set[tuple[str, str]] = set()
         for item in channel:
             if item.qualifier not in {"relation", "observation"}:
                 continue
             key = (item.qualifier, item.item_id)
+            if key in seen:
+                continue
+            seen.add(key)
             scores[key] = scores.get(key, 0.0) + 1.0 / (DEFAULT_RRF_K + item.rank)
     ranked = sorted(scores.items(), key=lambda item: (-item[1], *item[0]))[:limit]
     return tuple(

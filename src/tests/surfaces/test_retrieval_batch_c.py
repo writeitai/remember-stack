@@ -246,6 +246,15 @@ class _Corpus:
             )
 
     def _seed_primary_facts(self, connection: Connection) -> None:
+        connection.execute(
+            text(
+                "INSERT INTO predicates (deployment_id, predicate, parent_predicate,"
+                " description, tier) VALUES (:deployment, 'other:traveled',"
+                " 'related_to', 'Batch C dynamic predicate', 'other')"
+                " ON CONFLICT (deployment_id, predicate) DO NOTHING"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
         self._relation(
             connection,
             fact_id=self.relation_id,
@@ -955,6 +964,35 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
         FACT_CONTEXT_CANDIDATE_K + 1,
     ]
     assert len(corpus.provider.embedded_texts) == embedded_before + 1
+
+
+def test_profile_rescue_rrf_counts_each_fact_once_per_channel() -> None:
+    """A malformed duplicate nomination cannot forge cross-channel agreement."""
+    fact_id = uuid4()
+    fused = query_engine_module._fuse_fact_nominations(  # noqa: SLF001
+        channels=(
+            (
+                P1Nomination(
+                    item_id=str(fact_id),
+                    rank=1,
+                    score=0.9,
+                    channel="semantic",
+                    qualifier="observation",
+                ),
+                P1Nomination(
+                    item_id=str(fact_id),
+                    rank=2,
+                    score=0.8,
+                    channel="semantic",
+                    qualifier="observation",
+                ),
+            ),
+        ),
+        limit=2,
+    )
+
+    assert len(fused) == 1
+    assert fused[0].score == pytest.approx(1.0 / 61.0)
 
 
 def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(

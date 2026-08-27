@@ -244,7 +244,7 @@ With no IDs, fact search is deployment-wide and may use matching entity profile
 prose to nominate an additional bounded fact scope—so “list banks” can match an
 “is a bank” observation without any `type` parameter. `overlap` and `history`
 keep their explicit anchors without P2 expansion because the graph primitive is
-point-in-time; the absent P2 freshness stamp makes that boundary visible.
+point-in-time; the absent P2 freshness stamp makes that limitation visible.
 
 The `time` object is a closed union: `{"mode":"current"}` (default),
 `{"mode":"at","at":"…"}`, `{"mode":"overlap","from":"…","to":"…"}`,
