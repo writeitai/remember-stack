@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v14"
-DEFAULT_PROTOCOL_KEY: Final = "full-v14"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-live-graph-v14"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v15"
+DEFAULT_PROTOCOL_KEY: Final = "full-v15"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-default-neighborhood-v15"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -39,7 +39,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "a8b92da218488baf8fb156358d808121a4038a2c7228e9891d0cd1411b5b597c"
+    "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -194,8 +194,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V14 = LoCoMoProtocol(
-    key="full-v14",
+_FULL_V15 = LoCoMoProtocol(
+    key="full-v15",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -217,7 +217,7 @@ _FULL_V14 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V14.key: _FULL_V14}
+    {_FULL_V15.key: _FULL_V15}
 )
 
 

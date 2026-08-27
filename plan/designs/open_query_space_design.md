@@ -107,7 +107,7 @@ D54, D80, and D87 remain controlling.*
     exposed. The internal property-graph definition is verified separately from
     PostgreSQL's semantic catalogs and is not an open query surface.
 12. **No benchmark-specific product behavior exists.** The separately
-    fingerprinted v14 protocol consumes the customer surface unchanged.
+    fingerprinted v15 protocol consumes the customer surface unchanged.
     Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
     in product code.
@@ -403,11 +403,12 @@ remain. `resolve_entity` is the sole assured name/alias authority, while
 
 An implementation change that alters any descriptor, selection semantics,
 bound, field, negative, or association increments that operation's version and
-rolls `surface_manifest_hash`. None of the three context operations requests
-graph expansion; they use P1 nominations and PostgreSQL authorities. Explicit
-graph expansion uses the live SQL helpers or `examples.multi_hop_context`. A
-later measured descriptor may add an explicit graph option only through the
-§1.13 gate and never by silently changing these operations' answers.
+rolls `surface_manifest_hash`. D97 applies that rule: `fact_context@2` adds the
+bounded live-graph neighborhood before P1 fact-text nomination, and
+`answer_context@2` carries that changed fact child. `resolve_entity@1` and
+`testimony_context@1` remain unchanged. Explicit deeper or path-shaped graph
+work still uses the live SQL helpers or `examples.multi_hop_context`; it is not
+silently added to an assured response.
 
 ### 3.2 `memory_v1` view catalog
 
@@ -1141,6 +1142,14 @@ manifest hash at start and compare-and-swaps that same hash at transition: if
 the hash changes while validation runs, its result cannot activate the version,
 which remains or returns to `pending_revalidation` for a fresh validation.
 
+Stock self-host `setup` owns this publication ordering on upgrade. It publishes
+the checked-in hash before seeding `examples.*`, suspending ordinary active
+versions atomically. The platform seed then installs one new active version for
+each shipped example and deprecates that example's suspended prior version;
+customer-authored versions remain `pending_revalidation`. When the authoritative
+hash already matches, setup performs neither a publication audit nor shipped
+version churn.
+
 Agents can create drafts. Only a deployment operator or explicit deployment
 policy can activate, make discoverable-by-default, or approve a version.
 Saved queries are invoked through `run_saved_query`; they do not become
@@ -1347,11 +1356,11 @@ or cap change changes the hash. An internal property-graph catalog change rolls
 the separate graph contract/version and must pass graph readiness and parity
 tests before deployment.
 
-`RS-LoCoMo-Full-v14` pins `surface_manifest_hash`, the four assured-operation
-descriptors, and the complete 21-tool answer catalog. V9–v13 runs remain
+`RS-LoCoMo-Full-v15` pins `surface_manifest_hash`, the four assured-operation
+descriptors, and the complete 21-tool answer catalog. V9–v14 runs remain
 self-describing historical evidence; the aborted v12 answer pass remains
 self-describing operational evidence and is not a v13 score. There is no
-surface compatibility arm. V14 traces record manifest hash, assured-operation
+surface compatibility arm. V15 traces record manifest hash, assured-operation
 calls, SQL hashes, graph-helper operation/depth/truncation metadata, errors,
 caps, and latency/cost. Raw SQL and parameters follow §7 retention. The answer agent receives only product behavior
 available to customers, and accepting this design does not authorize a paid
@@ -1425,10 +1434,10 @@ protect nobody while preserving duplicate invariant logic.
 4. Do not ship deprecation headers, adapter warnings, compatibility-call
    counters, removal-denominator telemetry, or a product gate whose only
    purpose is preserving/removing the 17 adapters.
-5. The paid benchmark remains operator-invoked. Full-v9 through v13 are
-   immutable historical evidence over their pinned catalogs; v14 is the
-   D98-amended protocol identity but this design does not authorize running it. Any result
-   informs quality, not compatibility permission.
+5. The paid benchmark remains operator-invoked. Full-v9 through v14 are
+   immutable historical evidence over their pinned catalogs; v15 is the
+   D97-amended protocol identity but this design does not authorize running it.
+   Any result informs quality, not compatibility permission.
 
 Exactly four platform operations remain. Removing those intentional one-call
 contracts is not decided here; it remains the explicit product-quality

@@ -38,7 +38,7 @@ than expanding WP-8.2. The reusable prompt for independent external research is
 
 ## WP-8.2 LoCoMo setup
 
-The current adapter is the reviewed `RS-LoCoMo-Full-v14` protocol. It preserves
+The current adapter is the reviewed `RS-LoCoMo-Full-v15` protocol. It preserves
 the earlier judge, strict-representable `arguments_json`, answer-loop guards,
 recoverable identity history, and assumed-UTC ingestion contract while adopting
 the D98 live graph and 21-tool catalog (D78 and amendments):

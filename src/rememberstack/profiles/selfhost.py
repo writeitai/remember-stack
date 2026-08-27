@@ -26,6 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import make_url
 
+from rememberstack.adapters import BoundedPostgresReadPool
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import HashedBearerAuth
@@ -123,12 +124,24 @@ class SelfHostSettings(BaseSettings):
     graph_pool_timeout_s: float = Field(default=1.0, gt=0, le=30)
     graph_max_concurrency: int = Field(default=2, ge=1, le=32)
     graph_work_mem_kib: int = Field(default=16_384, ge=64, le=65_536)
+    retrieval_pool_size: int = Field(default=4, ge=1, le=32)
+    retrieval_pool_timeout_s: float = Field(default=1.0, gt=0, le=30)
+    retrieval_max_concurrency: int = Field(default=4, ge=1, le=32)
 
     @model_validator(mode="after")
     def graph_concurrency_fits_pool(self) -> Self:
         """Keep expansion concurrency within the dedicated graph pool."""
         if self.graph_max_concurrency > self.graph_pool_size:
             raise ValueError("graph_max_concurrency must not exceed graph_pool_size")
+        return self
+
+    @model_validator(mode="after")
+    def retrieval_concurrency_fits_pool(self) -> Self:
+        """Keep interactive retrieval admission within its dedicated pool."""
+        if self.retrieval_max_concurrency > self.retrieval_pool_size:
+            raise ValueError(
+                "retrieval_max_concurrency must not exceed retrieval_pool_size"
+            )
         return self
 
     @field_validator("api_bearer_bind", mode="before")
@@ -458,6 +471,7 @@ class SelfHostProfile:
         settings: SelfHostSettings,
         engine: Engine,
         graph_engine: Engine | None = None,
+        retrieval_engine: Engine | None = None,
         raw_store: MinIOObjectStore,
         artifact_store: MinIOObjectStore,
         corpusfs_store: MinIOObjectStore,
@@ -468,6 +482,7 @@ class SelfHostProfile:
         self._settings = settings
         self._engine = engine
         self._graph_engine = graph_engine or engine
+        self._retrieval_engine = retrieval_engine or engine
         self._raw_store = raw_store
         self._artifact_store = artifact_store
         self._corpusfs_store = corpusfs_store
@@ -490,6 +505,13 @@ class SelfHostProfile:
                 max_overflow=0,
                 pool_timeout=profile_settings.graph_pool_timeout_s,
             ),
+            retrieval_engine=sqlalchemy.create_engine(
+                database_url,
+                pool_pre_ping=True,
+                pool_size=profile_settings.retrieval_pool_size,
+                max_overflow=0,
+                pool_timeout=profile_settings.retrieval_pool_timeout_s,
+            ),
             raw_store=MinIOObjectStore(
                 bucket=profile_settings.raw_bucket_name, settings=minio_settings
             ),
@@ -509,6 +531,8 @@ class SelfHostProfile:
         """Dispose this process's explicitly owned database pool."""
         if self._graph_engine is not self._engine:
             self._graph_engine.dispose()
+        if self._retrieval_engine is not self._engine:
+            self._retrieval_engine.dispose()
         self._engine.dispose()
 
     def setup(self) -> None:
@@ -552,16 +576,26 @@ class SelfHostProfile:
             build_hash_members,
         )
         from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
+            publish_surface_hash,
+        )
+        from rememberstack.surfaces.query_sandbox.saved_queries import (  # noqa: PLC0415
             seed_shipped_examples,
         )
 
+        manifest_hash = surface_manifest_hash(build_hash_members())
         with self._engine.connect() as sa_connection:
             raw = sa_connection.connection.dbapi_connection
             assert isinstance(raw, psycopg.Connection)
+            publish_surface_hash(
+                connection=raw,
+                deployment_id=self._settings.deployment_id,
+                manifest_hash=manifest_hash,
+                actor="selfhost-setup",
+            )
             seed_shipped_examples(
                 connection=raw,
                 deployment_id=self._settings.deployment_id,
-                manifest_hash=surface_manifest_hash(build_hash_members()),
+                manifest_hash=manifest_hash,
             )
             # Deploy-time only: provision the query-role password so setup-time
             # composition can open as that role later. Never run from api().
@@ -624,8 +658,15 @@ class SelfHostProfile:
         p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
         embedding_model = p1_settings.embedding_model
+        retrieval_reads = BoundedPostgresReadPool(
+            engine=self._retrieval_engine,
+            max_concurrency=self._settings.retrieval_max_concurrency,
+            pool_wait_seconds=self._settings.retrieval_pool_timeout_s,
+        )
         search_index = PostgresP1Index(
-            engine=self._engine, embedding_model=embedding_model
+            engine=self._engine,
+            embedding_model=embedding_model,
+            read_pool=retrieval_reads,
         )
         # One admission + audit authority for open SQL.
         kill_switches = KillSwitches()
@@ -647,6 +688,7 @@ class SelfHostProfile:
             search_index=search_index,
             model_provider=self._model_provider,
             embedding_model=embedding_model,
+            fact_read_pool=retrieval_reads,
             surface_cost=surface_cost,
         )
         sql_executor = QuerySandboxExecutor(
@@ -667,6 +709,13 @@ class SelfHostProfile:
                 manifest_hash=manifest_hash,
             ),
         )
+        graph_queries = GraphQueries(
+            engine=self._graph_engine,
+            deployment_id=self._settings.deployment_id,
+            work_mem_kib=self._settings.graph_work_mem_kib,
+            max_concurrency=self._settings.graph_max_concurrency,
+            pool_wait_seconds=self._settings.graph_pool_timeout_s,
+        )
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
@@ -680,7 +729,9 @@ class SelfHostProfile:
             ),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
-                executor=OperationExecutor(query_engine=query_engine),
+                executor=OperationExecutor(
+                    query_engine=query_engine, graph_queries=graph_queries
+                ),
                 deployment_id=self._settings.deployment_id,
             ),
             open_query=open_query,
@@ -696,13 +747,7 @@ class SelfHostProfile:
                 model_bindings=_model_bindings(),
                 build_revision=_build_revision(),
             ),
-            graph=GraphQueries(
-                engine=self._graph_engine,
-                deployment_id=self._settings.deployment_id,
-                work_mem_kib=self._settings.graph_work_mem_kib,
-                max_concurrency=self._settings.graph_max_concurrency,
-                pool_wait_seconds=self._settings.graph_pool_timeout_s,
-            ),
+            graph=graph_queries,
         )
 
         @app.get("/deployment", response_model=DeploymentBuildInfo)

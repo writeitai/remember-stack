@@ -215,14 +215,22 @@ curl -X POST "$REMEMBERSTACK_API_URL/operations/resolve_entity" \
 
 An unknown operation is **404**; a missing required argument is **422**.
 
+On self-host upgrades, run the new image's `setup` entrypoint before starting
+API or worker processes. Setup atomically reconciles the four stored canonical
+descriptors, including their implementation-plan hashes. When the surface
+manifest changes, setup publishes the new hash, suspends customer saved queries
+for explicit revalidation, and reseeds platform `examples.*` against the new
+hash. The stock Compose file enforces that order by making API and workers wait
+for the setup service to complete successfully.
+
 The complete operation catalog is:
 
 | Operation | Arguments | What it returns |
 | --- | --- | --- |
 | `resolve_entity` | `name` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
 | `testimony_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
-| `fact_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | relations and observations for `current`, `at`, `overlap`, or `history`, with supporting and contradicting testimony and exact association totals |
-| `answer_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `time` | `ContextBundle/v1`: complete `testimony_context` and `fact_context` child envelopes, never a blended result list |
+| `fact_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
+| `answer_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `time` | `ContextBundle/v1`: complete `testimony_context` and neighborhood-aware `fact_context` child envelopes, never a blended result list |
 
 `entity_ids` is optional. Omit it for deployment-wide semantic retrieval; pass
 confirmed survivor IDs when identity materially narrows the question. Supplying
@@ -230,6 +238,25 @@ any unknown, retired, forgotten, or foreign ID yields one opaque
 `unknown_entity` result with no partial answer. Use `resolve_entity` first when
 a name is ambiguous. Entity and fact-time eligibility are applied before the
 bounded ranking cut.
+
+For `current` and `at`, supplying IDs invokes the default D97 recipe: the live graph walks
+from each anchor with an empty predicate list, the anchor-plus-neighbor union is
+capped at 20 IDs, and fact-text search is constrained to that union. Empty
+predicates mean every stored relation, including `other:*`. Supplying
+`predicate` narrows both traversal and PostgreSQL-confirmed relations to that
+exact dynamic value; because observations have no relation predicate, that
+filtered result contains relations only. Unfiltered observations are searched
+and returned as facts, but they are never graph nodes. Unavailable live-graph
+authority or a current anchor absent from it is a `boundary`. A neighbor that
+becomes stale across the bounded graph and fact reads is omitted and counted in
+`dropped_by_hydration`, so current anchor facts can still return. Caps are
+reported in `truncation`.
+
+With no IDs, fact search is deployment-wide and may use matching entity profile
+prose to nominate an additional bounded fact scope—so “list banks” can match an
+“is a bank” observation without any `type` parameter. `overlap` and `history`
+keep their explicit anchors without graph expansion because a neighborhood
+requires one world-time instant.
 
 The `time` object is a closed union: `{"mode":"current"}` (default),
 `{"mode":"at","at":"…"}`, `{"mode":"overlap","from":"…","to":"…"}`,
@@ -351,15 +378,18 @@ explicitly maps each fact to each claim and stance, and `evidence_totals[]`
 reports exact returned/total counts for both stances. Both association arrays
 carry the complete `(fact_kind, fact_id)` identity; relation and observation
 UUIDs must not be grouped by bare `fact_id`. It accepts only explicit
-entity IDs, not names or a hidden resolution step. A fact with no current
+entity IDs, not names or a hidden resolution step. Current and point-in-time
+ID-scoped calls add the separately returned one-hop `nodes[]` described above;
+observations remain only in `facts[]`. A fact with no current
 evidence returns only when D54 identifies historically backed support as
 withdrawn; a fact with no qualifying provenance is never returned.
 
 Choose the authority explicitly: `testimony_context` for what sources said,
 `fact_context` for what the system holds or held true, and `answer_context` when
-the answer-producing agent needs both complete views. None silently adds graph
-neighbors; use the live SQL graph helpers or the saved
-`examples.multi_hop_context` pattern for explicit graph expansion.
+the answer-producing agent needs both complete views. ID-scoped current and
+point-in-time fact operations add a bounded live-graph neighborhood by default.
+Use the typed graph HTTP/SDK operations or live SQL graph helpers when you need
+paths, more than two hops, paging, or shapes beyond that assured default.
 
 The default question channel independently fuses semantic and BM25 claim nominations and source-chunk
 nominations, confirms the complete already-fetched pools, and takes the final
@@ -375,7 +405,10 @@ The saved `examples.claims_hybrid_rrf` and `examples.chunks_hybrid_rrf`
 patterns expose either half when a caller needs only one evidence type; they
 run through `/query/saved/examples/{name}/run` and are not assured operations.
 The four operation descriptors expose their integer `version`, so clients can
-pin the behavior that produced an answer.
+pin the behavior that produced an answer. The current catalog is
+`resolve_entity@1`, `testimony_context@1`, `fact_context@2`, and
+`answer_context@2`; the two fact-bearing operations advanced for D97's default
+neighborhood semantics.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities

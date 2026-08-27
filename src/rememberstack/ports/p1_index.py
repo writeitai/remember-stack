@@ -20,6 +20,10 @@ FACT_INPUT_POLICY = "fact-label-v1"
 ENTITY_INPUT_POLICY = "entity-profile-v2"
 
 
+class P1SearchUnavailableError(RuntimeError):
+    """The requested P1 channel is not published under the active contract."""
+
+
 @runtime_checkable
 class ChunkIndexPort(Protocol):
     """Write the P1 chunk table without exposing vector-store types."""
@@ -256,12 +260,19 @@ class P1ScoredSearchPort(Protocol):
         evaluated_at: datetime | None = None,
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored facts, with optional D87 time eligibility before top-k."""
+        """Scored facts with separate eligible scope and ranking anchors."""
         ...
 
     def search_entities_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored entity nominations over the profile/description vectors.
 

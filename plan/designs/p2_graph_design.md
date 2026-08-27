@@ -258,6 +258,20 @@ therefore keeps anchor exclusion (`y.entity_id <> x.entity_id`) in the
 graph-pattern `WHERE` after the complete `MATCH`, where cross-element
 comparisons are valid.
 
+The private entity element view starts with one indexed `deployments` row and
+enters a deployment-correlated lateral subquery. Inside that bound it computes
+the recursive survivor closure and materializes the
+`(entity_id, survivor_entity_id)` map and survivor provenance once per view
+expansion, then semi-joins active registry entities to that keyset. Every
+entity, resolution-event, mention, chunk, and document branch must filter the
+outer deployment **before** either materialization fence. This is a
+planner-shape requirement, not a projection: the CTE copies no durable rows and
+the view retains exactly the D48 surviving-provenance membership rule. Both a
+correlated provenance `EXISTS` at each entity row and a corpus-wide
+`(deployment_id, survivor_entity_id)` materialization are forbidden. The first
+is duplicated by the PG19 Beta 3 graph rewrite; the second makes one customer's
+query pay for every other deployment before its tenant filter applies.
+
 Because PG19 has no inside-match work counter, each fixed PGQ operation begins
 with a separate static, indexed, tenant-and-anchor-first relational guard in
 the same read-only repeatable-read transaction. The guard expands the anchor's
@@ -546,10 +560,28 @@ representative fixtures is an implementation gate.
 The scale contract is bounded work at every supported cardinality: no operation
 may examine more than its expansion budget or retain more than its frontier,
 returned-result, temp-space, and time budgets. At representative target-scale
-fixtures, default two-hop neighborhood and four-hop path queries must complete
-inside the configured statement timeout without spills or an unanchored scan
-of the tenant relation set. Measurements record hardware, cardinality, skew,
-and p50/p95/p99 rather than weakening correctness to a small-fixture promise.
+fixtures, fixed one-hop PGQ, default two-hop neighborhood, and four-hop path
+queries must complete inside the configured statement timeout without spills
+or an unanchored scan of the tenant relation set. The one-hop fixture includes
+enough entity provenance, resolution partitions, evidence, and documents to
+expose repeated view expansion even when the anchor has only a few incident
+edges. A separate plan fixture adds at least 1,000 entities and provenance
+documents to an unrelated deployment and proves every materialized
+survivor/provenance authority scan remains at the requested deployment's
+cardinality. The fixed graph executor and recursive graph helper functions
+disable sequential scans locally for their bounded transaction/function call
+so the planner cannot trade that invariant for a cheaper global scan under
+skewed tenant statistics. When D97 supplies its common caller-owned snapshot,
+the executor applies all graph planner and resource settings inside a nested
+savepoint and rolls that savepoint back after hydrating the answer. Subsequent
+authority reads therefore retain the same outer MVCC cut but recover their
+prior settings; other query-space statements retain PostgreSQL's default. The
+two function-local directives are part of the helpers' semantic catalog
+contract: readiness verifies them and graph-metadata repair reapplies them
+after recreating the helpers. The citation-path helper keeps the default planner
+because it is not one of the recursive entity-expansion helpers.
+Measurements record hardware, cardinality, skew, and p50/p95/p99 rather than
+weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture
 
@@ -690,8 +722,9 @@ Implementation is accepted only when all of these pass:
 8. repository searches and dependency locks contain no active Ladybug runtime,
    P2 generation worker, public Cypher route, or P2 readiness contract;
 9. representative query plans prove frontier-anchored deployment-first index
-   access and the configured concurrency test does not starve authority
-   writes/search;
+   access; an unrelated-tenant scale fixture proves survivor/provenance
+   materialization is deployment-scoped before its fence; and the configured
+   concurrency test does not starve authority writes/search;
 10. `SELECT ON PROPERTY GRAPH` DDL is proven; the ten graph information-schema
     views and `pg_get_propgraphdef()` report the expected semantic contract;
     and least-privilege tests determine and enforce invoker ACL behavior on

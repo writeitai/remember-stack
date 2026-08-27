@@ -34,10 +34,10 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocol (`--protocol`, prepare-time only): `full-v14`. Both the answer
+- Protocol (`--protocol`, prepare-time only): `full-v15`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v13 runs.
+  historical v1–v14 runs.
 - The answer agent can use the complete public read plane: the four assured
   operations (`testimony_context`, `fact_context`, `answer_context`, and
   `resolve_entity`), direct primitives, open SQL, typed live-graph helpers,
@@ -54,10 +54,10 @@ Exported in the shell that invokes the CLI (values live in the host's
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V14 transport budget
+REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V15 transport budget
 ```
 
-`run_shard.sh` sets every non-secret V14 ingest binding itself: Luna for the
+`run_shard.sh` sets every non-secret V15 ingest binding itself: Luna for the
 generative seats, Qwen3-Embedding-8B for vector seats, and Nebius as the pinned
 embedding host. It overrides ambient self-host defaults, and ingest compares
 the complete `GET /deployment` binding map before uploading any document.
@@ -67,7 +67,7 @@ the complete `GET /deployment` binding map before uploading any document.
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v14
+export LOCOMO_PROTOCOL=full-v15
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
@@ -136,7 +136,7 @@ numbers: such runs measured different systems.
 ## 7. Historical sizing estimate
 
 These figures came from the pre-v12 GLM-5.2 extraction path and are only useful
-for rough capacity planning. V14 uses the current `main` bindings and must record
+for rough capacity planning. V15 uses the current `main` bindings and must record
 its own actual cost and duration; the provider account cap remains the hard
 monetary boundary.
 

@@ -62,6 +62,11 @@ class AssuredOperationRegistry:
             canonical = AssuredOperationName(name)
         except ValueError:
             return None
+        expected = next(
+            operation
+            for operation in CANONICAL_OPERATIONS
+            if operation.name is canonical
+        )
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
@@ -69,7 +74,7 @@ class AssuredOperationRegistry:
                     {
                         "deployment_id": deployment_id,
                         "name": canonical.value,
-                        "version": 1,
+                        "version": expected.version,
                     },
                 )
                 .mappings()
@@ -187,7 +192,13 @@ _ENTITY_IDS = {
     "uniqueItems": True,
 }
 
+_NEIGHBORHOOD_ENTITY_IDS = {**_ENTITY_IDS, "maxItems": 19}
+
 _QUERY = {"type": "string", "required": True, "minLength": 1, "maxLength": 8192}
+
+_HOPS = {"type": "integer", "required": False, "default": 1, "minimum": 1, "maximum": 2}
+
+_PREDICATE = {"type": "string", "required": False, "minLength": 1, "maxLength": 200}
 
 
 def _envelope_schema() -> dict[str, object]:
@@ -242,11 +253,13 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
     AssuredOperation(
         name=AssuredOperationName.FACT_CONTEXT,
         description=(
-            "Adjudicated relations and observations under an explicit world-time scope."
+            "Adjudicated relations and observations under an explicit world-time"
+            " scope, with bounded live-graph expansion for current or point-in-time"
+            " entity anchors."
         ),
         parameters={
             "query": _QUERY,
-            "entity_ids": _ENTITY_IDS,
+            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
             "k": {
                 "type": "integer",
                 "required": False,
@@ -261,22 +274,33 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
                 "minimum": 1,
                 "maximum": 5,
             },
+            "hops": _HOPS,
+            "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},
         },
         result_schema=_envelope_schema(),
-        execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="fact_context"),)),
+        execution_plan=PrimitiveChainPlan(
+            steps=(
+                OperationStep(op="graph_neighborhood"),
+                OperationStep(op="fact_context"),
+            )
+        ),
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.FACTS,
+        version=2,
     ),
     AssuredOperation(
         name=AssuredOperationName.ANSWER_CONTEXT,
         description=(
-            "Complete testimony and fact responses side by side in ContextBundle/v1."
+            "Complete testimony and neighborhood-aware fact responses side by side"
+            " in ContextBundle/v1."
         ),
         parameters={
             "query": _QUERY,
-            "entity_ids": _ENTITY_IDS,
+            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
+            "hops": _HOPS,
+            "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},
         },
         result_schema=ContextBundleV1.model_json_schema(mode="serialization"),
@@ -284,6 +308,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.CONTEXT_BUNDLE_V1,
         output_grain=None,
         answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
+        version=2,
     ),
 )
 
@@ -365,7 +390,6 @@ _ACTIVE_OPERATIONS = text(
     FROM assured_operations
     WHERE deployment_id = :deployment_id AND status = 'active'
       AND name = ANY(CAST(:names AS assured_operation_name[]))
-      AND version = 1
     ORDER BY name
     """  # noqa: S608 -- columns are a module constant
 )

@@ -1695,6 +1695,82 @@ def test_seed_installs_exactly_eighteen_examples_idempotently(
         connection.rollback()
 
 
+def test_surface_upgrade_reseeds_shipped_examples_and_suspends_customer_queries(
+    registry_url: str,
+) -> None:
+    """Self-host upgrade ordering keeps examples live without bypassing customers."""
+    with psycopg.connect(_psycopg_url(registry_url)) as connection:
+        assert (
+            seed_shipped_examples(
+                connection=connection, deployment_id=_DEPLOYMENT, manifest_hash=_HASH
+            )
+            == 18
+        )
+        customer = _draft_validate_activate(
+            connection, registry_url, name=_unique("surface_upgrade")
+        )
+
+        suspended = publish_surface_hash(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            manifest_hash=_OTHER_HASH,
+            actor="selfhost-setup",
+        )
+        assert suspended == 19
+        assert (
+            seed_shipped_examples(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                manifest_hash=_OTHER_HASH,
+            )
+            == 18
+        )
+
+        shipped_statuses = dict(
+            connection.execute(
+                b"SELECT v.status::text, count(*)"
+                b" FROM saved_queries AS q"
+                b" JOIN saved_query_versions AS v"
+                b"   ON v.deployment_id = q.deployment_id"
+                b"  AND v.query_id = q.query_id"
+                b" WHERE q.deployment_id = %s"
+                b"   AND q.namespace = 'examples'"
+                b" GROUP BY v.status",
+                (str(_DEPLOYMENT),),
+            ).fetchall()
+        )
+        assert shipped_statuses == {"active": 18, "deprecated": 18}
+        customer_status = connection.execute(
+            b"SELECT status::text FROM saved_query_versions"
+            b" WHERE deployment_id = %s AND query_id = %s AND version = %s",
+            (str(_DEPLOYMENT), str(customer.query_id), customer.version),
+        ).fetchone()
+        assert customer_status == ("pending_revalidation",)
+
+        audit_count = connection.execute(
+            b"SELECT count(*) FROM saved_query_audit"
+            b" WHERE deployment_id = %s AND action = 'publish'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert audit_count is not None
+        assert (
+            publish_surface_hash(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                manifest_hash=_OTHER_HASH,
+                actor="selfhost-setup",
+            )
+            == 0
+        )
+        unchanged_audit_count = connection.execute(
+            b"SELECT count(*) FROM saved_query_audit"
+            b" WHERE deployment_id = %s AND action = 'publish'",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert unchanged_audit_count == audit_count
+        connection.rollback()
+
+
 def test_examples_namespace_is_reserved_for_platform_seed(
     agent_registry: SavedQueryRegistry, registry: SavedQueryRegistry
 ) -> None:

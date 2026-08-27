@@ -10,6 +10,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import RowMapping
 
 from rememberstack.spine.migrations.versions import p9_17_0038_postgres19_live_graph
+from rememberstack.spine.migrations.versions import (
+    p9_18_0039_graph_entity_provenance_plan,
+)
+from rememberstack.spine.migrations.versions import (
+    p9_19_0040_graph_tenant_planner_settings,
+)
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
@@ -196,3 +202,68 @@ def test_private_relation_source_requires_live_evidence_documents() -> None:
     assert "JOIN documents AS evidence_document" in relation_source
     assert "evidence_document.doc_id = evidence.doc_id" in relation_source
     assert "evidence_document.deleted_at IS NULL" in relation_source
+
+
+def test_private_entity_source_materializes_provenance_once() -> None:
+    """The PGQ vertex source scopes survivor/provenance work before its fence."""
+    ddl = p9_17_0038_postgres19_live_graph._GRAPH_SOURCES
+    fresh_source = ddl.split(
+        "CREATE VIEW rememberstack_graph_internal.entities_live AS", maxsplit=1
+    )[1].split(
+        "CREATE VIEW rememberstack_graph_internal.documents_live AS", maxsplit=1
+    )[0]
+    upgrade_source = p9_18_0039_graph_entity_provenance_plan._MATERIALIZED_ENTITY_VIEW
+
+    for entity_source in (fresh_source, upgrade_source):
+        assert "FROM deployments AS deployment" in entity_source
+        assert "CROSS JOIN LATERAL" in entity_source
+        assert "WITH RECURSIVE survivor_chain" in entity_source
+        assert "WHERE source.deployment_id = deployment.deployment_id" in entity_source
+        assert "WHERE mention.deployment_id = deployment.deployment_id" in entity_source
+        assert (
+            "WHERE document.deployment_id = deployment.deployment_id" in entity_source
+        )
+        assert "provenance AS MATERIALIZED" in entity_source
+        assert entity_source.count("FROM provenance") == 1
+        assert "v_memory_entity_survivor" not in entity_source
+
+
+def test_provenance_plan_downgrade_restores_the_fresh_p9_17_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One revision stamp cannot name different fresh and downgraded plans."""
+    executed: list[str] = []
+    monkeypatch.setattr(
+        p9_18_0039_graph_entity_provenance_plan.op, "execute", executed.append
+    )
+
+    p9_18_0039_graph_entity_provenance_plan.downgrade()
+
+    assert executed == [
+        p9_18_0039_graph_entity_provenance_plan._MATERIALIZED_ENTITY_VIEW
+    ]
+
+
+def test_graph_helpers_pin_deployment_first_index_plans() -> None:
+    """Recursive helper calls cannot choose cross-tenant sequential scans."""
+    source = p9_19_0040_graph_tenant_planner_settings._GRAPH_HELPER_INDEX_SETTINGS
+
+    assert source.count("SET enable_seqscan = off") == 2
+    assert "memory_v1.graph_neighborhood" in source
+    assert "memory_v1.graph_path" in source
+
+
+def test_graph_helper_plan_downgrade_restores_planner_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Downgrade removes both function-local planner directives."""
+    executed: list[str] = []
+    monkeypatch.setattr(
+        p9_19_0040_graph_tenant_planner_settings.op, "execute", executed.append
+    )
+
+    p9_19_0040_graph_tenant_planner_settings.downgrade()
+
+    assert executed == [
+        p9_19_0040_graph_tenant_planner_settings._GRAPH_HELPER_DEFAULT_SETTINGS
+    ]

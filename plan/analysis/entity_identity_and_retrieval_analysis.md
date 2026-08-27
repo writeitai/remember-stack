@@ -391,3 +391,174 @@ proposal. WP-I.5 does not ship the flag.
 | Delete the mentions table | Lose the naming transcript |
 | Graphiti copy including drop-conflicting-label | Hides dual-role hats |
 | LoCoMo-first extract prompts | Benchmarks follow identity, not the reverse |
+
+---
+
+## 8. Exact-tip retrieval-budget finding (2026-08-27)
+
+The first WP-I.6 implementation gave `default_fact_context` one absolute
+25-second PostgreSQL deadline and reapplied the remaining time as
+`statement_timeout` during fact confirmation and graph expansion. Exact-tip
+review found two holes before those guarded statements:
+
+1. P1 readiness checks and semantic fact/profile nomination opened ordinary
+   connections and ran without the operation deadline.
+2. Fact-authority connections called `engine.connect()` before configuring the
+   remaining statement budget. A saturated general pool could therefore wait
+   outside the advertised 25 seconds.
+
+The graph path already demonstrated the useful containment shape: a private
+engine with no overflow plus application admission whose semaphore wait is
+clamped to the caller's absolute deadline. Separate P1 and authority
+semaphores over the same SQLAlchemy pool would not solve the problem: together
+they could admit more work than that pool owns and reintroduce an unbounded
+checkout behind either semaphore.
+
+The final shape therefore uses one dedicated interactive-retrieval engine and
+one shared bounded admission object for both P1 reads and fact authority.
+`default_fact_context` passes the same monotonic deadline through P1 channel
+checks, fact nomination, optional entity-profile rescue, anchor/neighbor
+checks, and repeatable-read fact/evidence confirmation. Each admitted P1 and
+authority transaction applies `statement_timeout` and `transaction_timeout`
+from the remaining budget. Pool saturation becomes the existing typed
+`boundary`; it never widens retrieval or falls back to an unguarded general
+pool.
+
+Rejected repairs:
+
+- increasing SQLAlchemy `pool_timeout`: still independent of the operation
+  deadline and makes overload slower;
+- setting timeouts only after ordinary `engine.connect()`: bounds statements,
+  not checkout;
+- separate bounded P1 and fact pools over one engine: admissions can exceed
+  physical capacity;
+- sharing the worker/write engine: background load can consume the very slots
+  intended to keep interactive reads bounded.
+
+---
+
+## 9. Exact-tip public-contract findings (2026-08-27)
+
+The closure review of WP-I.6 found two public-identity consequences that the
+implementation had not carried through mechanically.
+
+First, D97 changes `fact_context` selection semantics and bounds: an anchored
+current/point-in-time read now expands a bounded live-graph neighborhood,
+accepts `hops` and `predicate`, and reserves one entity slot for neighbors.
+`answer_context` inherits that changed fact child. Publishing both as version
+1 would make pre-D97 and post-D97 traces claim the same contract identity even
+though the same input can return different facts. The existing operation
+version rule therefore requires `fact_context@2` and `answer_context@2`;
+`resolve_entity@1` and `testimony_context@1` are unchanged.
+
+Second, those descriptor changes alter the complete answer-tool catalog and
+the `surface_manifest_hash`. A LoCoMo run retaining the `full-v14` name would
+look comparable to the pre-D97 live-graph protocol even though its ordinary
+fact recipe differs. The benchmark identity must roll to `full-v15`; the
+dataset, model seats, call budgets, and 21-tool catalog size stay unchanged.
+This is protocol bookkeeping, not authorization for a paid run.
+
+The same review found an availability-contract hole: if the primary relation
+or observation P1 channel is unpublished, `P1SearchUnavailableError` escaped
+the assured operation as an HTTP 500. That state is expected during a policy
+cut and must remain fail-closed, but it is not an untyped server defect. The
+default recipe therefore maps primary-channel unavailability to the same typed
+fact-context boundary used for bounded database/graph unavailability. The
+optional profile channel remains an additive recall path and may still be
+skipped when it alone is unpublished.
+
+The first exact-tip deployment proof exposed one more upgrade consequence.
+Advancing the assured-operation versions rolls `surface_manifest_hash`, but an
+existing deployment's saved-query registry still holds the previous hash.
+Self-host `setup` attempted to seed the shipped `examples.*` rows before
+publishing the new hash, so the registry correctly rejected the stale caller
+with `saved_query_revalidation_pending`; setup could not complete on an
+existing store. A fresh store did not expose the bug.
+
+The required ordering is the registry's existing fail-closed protocol, not a
+compatibility bypass: setup atomically publishes the new hash and suspends all
+active saved-query versions, then the platform seed installs a new active
+version of each unchanged shipped example and deprecates its suspended prior
+version. Customer-authored queries stay `pending_revalidation` for their normal
+operator/fixture workflow. Re-running setup against the same hash creates no
+publication audit or version churn.
+
+---
+
+## 10. Exact-tip snapshot and acceptance-proof findings (2026-08-27)
+
+Review of the versioned-contract tip found that the default D97 recipe shared
+an absolute deadline but not the accepted common database snapshot. Anchor
+validation, P1 nomination, each graph expansion, neighbor validation, and fact
+confirmation could each open a new transaction. The current graph call also
+left both clocks implicit. A relation committed after the operation's captured
+`evaluated_at` could therefore nominate a neighbor from a later statement
+snapshot; fact confirmation would reject the too-new relation while the
+neighbor node remained in the answer. Multiple anchors could likewise observe
+different graph cuts.
+
+The deadline pool is already the common admission authority for P1 and fact
+reads, so it can own the missing invariant without a second pool or snapshot
+export protocol: one outer `READ ONLY, REPEATABLE READ` transaction is admitted
+for the complete default recipe; nested P1 and authority reads reuse that
+connection; and the graph facade executes its fixed statements on the same
+connection while still taking its graph concurrency slot and planner limits.
+Both graph instants are passed explicitly from operation entry, including for
+`current`. Standalone graph calls retain their dedicated graph pool and
+least-privilege role. This implements the binding D98 transaction contract
+without weakening the role-isolated public graph surface.
+
+The same review identified two acceptance-proof drifts. The cross-deployment
+vertex plan test counted only emitted rows, which cannot detect a sequential
+scan that examines many foreign rows and filters them away. The proof must also
+reject authority sequential scans and bound rows removed by filtering (scaled
+by loops). Separately, the maintained benchmark runbook still named
+`full-v14` after the executable protocol moved to `full-v15`; the literal
+single-conversation command would fail argument validation. These are test and
+runbook repairs, not new retrieval or benchmark decisions.
+
+The first plan repair materialized an index-ordered `tenant_entities` CTE and
+reused it throughout the vertex view. It eliminated foreign-row work in the
+adversarial plan, but PostgreSQL estimated the correlated slice at roughly half
+the global registry and carried that inflated estimate through recursive graph
+helpers. The maintained `multi_hop_context` example then exceeded its five
+second statement cap on the small validation corpus. That repair is rejected.
+The narrower remedy keeps the already-correct deployment-lateral view and pins
+`enable_seqscan=off` only inside the graph executor transaction and the two
+recursive graph helper functions. The strengthened 10,000-foreign-row plan
+proof still observes index access and fewer than 100 examined authority rows;
+unrelated query-space statements keep PostgreSQL's default planner choice.
+
+The first CI run exposed a second-order contract consequence of that remedy.
+PostgreSQL stores a function-local planner directive in `pg_proc.proconfig`.
+The semantic graph readiness check quite correctly treats `proconfig` as part
+of each helper's executable contract, but its expected catalog still named only
+the inherited `search_path`; both live-graph readiness and metadata repair
+therefore rejected a correctly migrated p9_19 database. Ignoring `proconfig`
+would hide real drift, while moving the setting to a broad role or session
+default would exceed the deliberately narrow scope. The repair is to make the
+expected helper configuration name-specific and teach catalog replay to
+reapply p9_19 after recreating the p9_17 helpers. A test must reset the two
+directives and prove that one semantic repair restores them without changing
+the citation helper, whose non-recursive plan does not need the directive.
+
+The next exact-tip review found that the executor-local half of the planner
+remedy was still too broad when D97 supplied its caller-owned transaction.
+`SET LOCAL` survives until the outer transaction ends, so the shared graph
+context leaked `enable_seqscan=off` and every graph resource setting into the
+later neighbor-authority and fact-confirmation statements. That contradicted
+the intended graph-only scope even though all statements still observed the
+same MVCC cut. The graph call must therefore open a nested savepoint, apply its
+planner and resource settings inside it, detach the hydrated result, and roll
+the savepoint back before returning to the recipe. Rolling back instead of
+releasing restores the caller's prior settings while preserving the outer
+read-only repeatable-read snapshot; standalone graph transactions remain
+unchanged. A database-backed test must prove both restoration and continued
+use of the outer transaction.
+
+The same review found four remaining current-contract sentences that still
+called the answer/P3 behavior V14, plus the runbook's V1–V13 comparability
+boundary and one query-space invariant. They are editorial drift after the
+D97 protocol roll: V14 remains immutable historical evidence, while those
+current behaviors and invariants belong to `full-v15`. Updating those labels
+does not change benchmark behavior or authorize a paid run.

@@ -61,6 +61,7 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
     assert "fact.fact_kind = 'relation'" in confirmation_sql
     assert "fact.fact_kind = 'observation'" in confirmation_sql
+    assert "fact.predicate = :predicate" in confirmation_sql
     assert "memory_v1.facts_visible_history" in ranked_sql
     assert "coverage DESC" in ranked_sql
     assert "entity_ids" in ranked_sql
@@ -102,6 +103,7 @@ def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() 
 
     assert [call.args[0] for call in connection.exec_driver_sql.call_args_list] == [
         "SET LOCAL statement_timeout = '25000ms'",
+        "SET LOCAL transaction_timeout = '25000ms'",
         "SET LOCAL jit = off",
         "SET LOCAL join_collapse_limit = 1",
         "SET LOCAL from_collapse_limit = 1",
@@ -126,9 +128,7 @@ def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
         """Return kind-specific rows while recording the fixed SQL branch."""
         statement_sql = str(statement)
         fact_kind = (
-            "relation"
-            if "fact.fact_kind = 'relation'" in statement_sql
-            else "observation"
+            "relation" if "'relation'::text AS kind" in statement_sql else "observation"
         )
         raw_fact_ids = parameters["fact_ids"]
         assert isinstance(raw_fact_ids, list)
@@ -161,6 +161,8 @@ def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
         time=CurrentFactTime(),
         evaluated_at=datetime.now(UTC),
         entity_ids=(),
+        ranking_entity_ids=(),
+        predicate=None,
         deadline=monotonic() + 30,
     )
 

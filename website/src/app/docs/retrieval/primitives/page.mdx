@@ -119,10 +119,25 @@ Conceptual chain:
 
 Conceptual chain:
 
-1. Nominate current facts for the query  
-2. Hydrate live relations/observations  
-3. Attach live testimony under a **hard evidence budget**  
-4. Package `fact_evidence`, `evidence_totals`, contradictions, support markers  
+1. Resolve names separately and pass the unambiguous `entity_ids`
+2. For `current` / `at`, walk one hop by default with **empty predicates** (all `RELATES`, including `other:*`)
+3. Nominate relation labels and observation statements inside the capped anchor + neighbor IDs
+4. Hydrate live relations/observations and attach testimony under a **hard evidence budget**
+5. Package graph nodes separately from facts, plus `fact_evidence`, exact totals, contradictions, support markers
+
+`hops` is 1–2. `predicate` is optional and may be any stored predicate; it is
+passed unchanged to the live graph and re-confirmed on relation rows in Postgres. It is an
+exact relation-only filter, so observations are excluded when it is present;
+unfiltered observations remain facts and never become graph nodes. Unavailable
+live-graph authority or a current anchor absent from it is a typed `boundary`;
+a neighbor that becomes stale across the bounded reads is omitted and counted
+in `dropped_by_hydration`. The combined entity cap is explicit in `truncation`.
+`overlap` and `history` retain the explicit anchor scope because graph traversal
+requires a single world-time instant.
+
+Without `entity_ids`, profile prose is a second bounded nomination path for
+fact text. “List banks” can therefore reach a bank observation; no `type`
+argument or query-path completion model exists.
 
 ### `answer_context` (`ContextBundle/v1`)
 

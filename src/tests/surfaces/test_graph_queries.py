@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from time import monotonic
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -41,6 +43,13 @@ _JAN_2024 = datetime(2024, 1, 1, tzinfo=UTC)
 _JUN_2024 = datetime(2024, 6, 1, tzinfo=UTC)
 _JAN_2026 = datetime(2026, 1, 1, tzinfo=UTC)
 _JAN_2027 = datetime(2027, 1, 1, tzinfo=UTC)
+
+
+def _walk_plan_nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield every node in one PostgreSQL JSON execution plan."""
+    yield node
+    for child in node.get("Plans", []):
+        yield from _walk_plan_nodes(child)
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +83,8 @@ class _GraphCorpus:
             "Beacon",
             "ESB Migration",
             "Vector Databases",
+            "Traveler",
+            "Prague",
         ) + tuple(f"Hub Leaf {index:02d}" for index in range(20))
         self.ids = {name: uuid4() for name in entities}
         self.docs: dict[str, UUID] = {}
@@ -116,6 +127,15 @@ class _GraphCorpus:
                         "title": name,
                     },
                 )
+            connection.execute(
+                text(
+                    "INSERT INTO predicates (deployment_id, predicate,"
+                    " parent_predicate, description, tier)"
+                    " VALUES (:deployment_id, 'other:traveled', 'related_to',"
+                    " 'Dynamic travel relation for D97 graph coverage', 'other')"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
             evidence_doc, evidence_claim = self._seed_claim(connection=connection)
             self.evidence_doc = evidence_doc
             for subject, predicate, obj in (
@@ -125,6 +145,7 @@ class _GraphCorpus:
                 ("Carol", "works_on", "ESB Migration"),
                 ("Beacon", "part_of", "ESB Migration"),
                 ("Bob", "knows_about", "Vector Databases"),
+                ("Traveler", "other:traveled", "Prague"),
             ):
                 relation_id = self._seed_edge(
                     connection=connection,
@@ -395,6 +416,53 @@ def test_sql_pgq_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None
     assert _names(first).isdisjoint(_names(second))
 
 
+def test_shared_graph_scope_restores_outer_transaction_settings(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Graph-only settings end while the caller-owned snapshot stays usable."""
+    ids = graph.ids  # type: ignore[attr-defined]
+    setting_names = (
+        "statement_timeout",
+        "transaction_timeout",
+        "lock_timeout",
+        "idle_in_transaction_session_timeout",
+        "temp_file_limit",
+        "max_parallel_workers_per_gather",
+        "enable_seqscan",
+        "work_mem",
+    )
+    with database_engine.connect().execution_options(
+        isolation_level="REPEATABLE READ"
+    ) as connection:
+        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        connection.exec_driver_sql("SET LOCAL statement_timeout = '17s'")
+        connection.exec_driver_sql("SET LOCAL transaction_timeout = '19s'")
+        connection.exec_driver_sql("SET LOCAL enable_seqscan = on")
+        before = {
+            name: connection.exec_driver_sql(f"SHOW {name}").scalar_one()
+            for name in setting_names
+        }
+
+        answer = graph.neighborhood(
+            entity_id=ids["Acme"],
+            hops=1,
+            _deadline=monotonic() + 5.0,
+            _connection=connection,
+        )
+
+        after = {
+            name: connection.exec_driver_sql(f"SHOW {name}").scalar_one()
+            for name in setting_names
+        }
+        assert {"Alice", "Bob"} <= _names(answer)
+        assert after == before
+        assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+        assert (
+            connection.exec_driver_sql("SHOW transaction_read_only").scalar_one()
+            == "on"
+        )
+
+
 def test_tombstoned_relation_evidence_disappears_and_restores_live(
     graph: GraphQueries, database_engine: Engine
 ) -> None:
@@ -452,6 +520,23 @@ def test_tombstoned_relation_evidence_disappears_and_restores_live(
         )
     restored = graph.neighborhood(entity_id=graph.ids["Acme"], hops=1)  # type: ignore[attr-defined]
     assert "Alice" in _names(restored)
+
+
+def test_empty_predicates_include_dynamic_other_edges(graph: GraphQueries) -> None:
+    """D97: an empty live-graph filter includes dynamic `other:*` relations."""
+    ids = graph.ids  # type: ignore[attr-defined]
+
+    unfiltered = graph.neighborhood(entity_id=ids["Traveler"], hops=1)
+    dynamic = graph.neighborhood(
+        entity_id=ids["Traveler"], hops=1, predicates=("other:traveled",)
+    )
+    unrelated = graph.neighborhood(
+        entity_id=ids["Traveler"], hops=1, predicates=("works_for",)
+    )
+
+    assert _names(unfiltered) == {"Prague"}
+    assert _names(dynamic) == {"Prague"}
+    assert _names(unrelated) == set()
 
 
 def test_tombstoned_crossref_endpoint_disappears_and_restores_live(
@@ -731,6 +816,98 @@ def test_shallow_guard_plan_is_endpoint_anchored(
         "'Node Type': 'Seq Scan'" in plan_text
         and "'Relation Name': 'relations'" in plan_text
     )
+
+
+def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Materialized survivor/provenance inputs stay inside the requested tenant."""
+    del graph
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO entities (
+                  entity_id, deployment_id, canonical_name, normalized_name
+                )
+                SELECT md5('unrelated-entity-' || ordinal::text)::uuid,
+                       :deployment_id,
+                       'Unrelated Entity ' || ordinal::text,
+                       'unrelated entity ' || ordinal::text
+                FROM generate_series(1, 10000) AS ordinal
+                """
+            ),
+            {"deployment_id": _OTHER_DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO documents (
+                  doc_id, deployment_id, source_kind, source_ref,
+                  document_entity_id, title
+                )
+                SELECT md5('unrelated-document-' || ordinal::text)::uuid,
+                       :deployment_id,
+                       'upload',
+                       'unrelated-document-' || ordinal::text,
+                       md5('unrelated-entity-' || ordinal::text)::uuid,
+                       'Unrelated Document ' || ordinal::text
+                FROM generate_series(1, 10000) AS ordinal
+                """
+            ),
+            {"deployment_id": _OTHER_DEPLOYMENT_ID},
+        )
+        connection.exec_driver_sql("ANALYZE entities")
+        connection.exec_driver_sql("ANALYZE documents")
+    with database_engine.connect() as connection:
+        connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        plan = connection.execute(
+            text(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT entity_id
+                FROM rememberstack_graph_internal.entities_live
+                WHERE deployment_id = :deployment_id
+                """
+            ),
+            {"deployment_id": _DEPLOYMENT_ID},
+        ).scalar_one()
+
+    plan_text = str(plan)
+    assert "deployments_pkey" in plan_text
+    assert "entities_deployment_id_entity_id_key" in plan_text
+    authority_prefixes = (
+        "entities",
+        "merge_events",
+        "resolution_decisions",
+        "mentions",
+        "chunks",
+        "document_versions",
+        "documents",
+    )
+    authority_nodes = [
+        node
+        for node in _walk_plan_nodes(plan[0]["Plan"])
+        if any(
+            str(node.get("Relation Name", "")) == relation
+            or str(node.get("Relation Name", "")).startswith(f"{relation}_p")
+            or str(node.get("Relation Name", "")).startswith(f"{relation}_default")
+            for relation in authority_prefixes
+        )
+    ]
+    assert authority_nodes
+    assert all(node.get("Node Type") != "Seq Scan" for node in authority_nodes), (
+        plan_text
+    )
+    examined_rows = [
+        (
+            float(node.get("Actual Rows", 0))
+            + float(node.get("Rows Removed by Filter", 0))
+        )
+        * float(node.get("Actual Loops", 0))
+        for node in authority_nodes
+    ]
+    assert max(examined_rows) < 100, plan_text
 
 
 def test_bounded_graph_read_transaction_does_not_starve_authority_write(

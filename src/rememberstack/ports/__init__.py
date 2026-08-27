@@ -6,6 +6,7 @@ from rememberstack.ports.git import KGitRemotePort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.mounts import MountPublisherPort
 from rememberstack.ports.object_store import ObjectStorePort
+from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.ports.purge import ProjectionPurgePort
@@ -20,6 +21,7 @@ __all__ = (
     "ModelProviderPort",
     "MountPublisherPort",
     "ObjectStorePort",
+    "PostgresReadPoolPort",
     "ObjectPurgePort",
     "ProjectionPurgePort",
     "TaskQueuePort",

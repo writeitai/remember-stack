@@ -1189,13 +1189,14 @@ class SavedQueryRegistry:
                 },
             )
             # Seed is platform-owned: the seed actor authors and installs.
-            # Deprecate any prior active version of the same identity.
+            # A manifest publication suspends the prior shipped version before
+            # setup seeds its replacement, so retire both possible live states.
             self._connection.execute(
                 b"UPDATE saved_query_versions"
                 b" SET status = 'deprecated', superseded_at = now()"
                 b" WHERE deployment_id = %(deployment)s"
                 b"   AND query_id = %(query)s"
-                b"   AND status = 'active'"
+                b"   AND status IN ('active', 'pending_revalidation')"
                 b"   AND version <> %(version)s",
                 {
                     "deployment": str(self._deployment_id),
@@ -1863,6 +1864,8 @@ def publish_surface_hash(
         {"deployment": str(deployment_id)},
     ).fetchone()
     old_hash = old[0] if old is not None else None
+    if old_hash == manifest_hash:
+        return 0
     connection.execute(
         b"INSERT INTO saved_query_registry_state"
         b" (deployment_id, surface_manifest_hash, updated_at)"

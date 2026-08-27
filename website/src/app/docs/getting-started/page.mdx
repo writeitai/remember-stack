@@ -140,7 +140,10 @@ curl --fail -X POST http://localhost:8000/operations/fact_context \
 Returns **fact grain** with live testimony under a hard evidence budget. Use
 `at`, `overlap`, or `history` time mode when the question is about past
 world-valid state; omit `entity_ids` for deployment-wide retrieval or pass
-confirmed IDs to narrow the eligible set before ranking.
+confirmed IDs to start the default one-hop entity-neighborhood recipe.
+Current/`at` calls walk every relation by default—including `other:*`—then
+search relation and observation text inside the capped ID union. Optional
+`predicate` narrows to that exact stored relation name; `hops` accepts 1–2.
 
 ### Both authority views
 

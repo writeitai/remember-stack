@@ -490,6 +490,63 @@ is available. The release must also diff PG18/PG19 keywords, AST forms, and
 admitted built-ins and prove new PG19 syntax/functions default-deny; the parser
 version mismatch is a broader safety boundary, not only a PGQ limitation.
 
+### 8.1 Post-merge one-hop provenance-plan finding
+
+The first D97 composition test after the PostgreSQL graph cut exposed a plan
+shape that the smaller graph fixture had not forced. On 2026-08-27, the Batch C
+retrieval fixture contained 38 entities, 38 relations, 193 relation-evidence
+rows, and 234 documents. Its admitted one-hop `GRAPH_TABLE` query hit the
+five-second graph `statement_timeout` for both the current and explicitly
+clocked history shapes. This was not dense-hub refusal: the relational guard
+admitted two incident edges.
+
+`EXPLAIN (FORMAT JSON)` showed that PostgreSQL 19 Beta 3 repeatedly inlined the
+correlated provenance `EXISTS` from
+`rememberstack_graph_internal.entities_live` through the vertex and endpoint
+copies produced by the PGQ rewrite. The resulting plan repeatedly expanded the
+survivor and partitioned-resolution branches before reaching the anchored
+relation. Moving predicates into element patterns and splitting the undirected
+match into directed shapes did not remove that expansion. A raw-table property
+graph completed in milliseconds, but it was rejected because it would bypass
+the surviving-provenance membership rule.
+
+A semantic-equivalent prototype changed only the private entity view's SQL
+shape: it materialized a `(deployment_id, survivor_entity_id)` provenance
+keyset once inside each view expansion, then semi-joined active entities to
+that keyset. The property-graph keys, rows, labels, grants, relation source,
+and hydration contract did not change. The same production
+`GraphQueries.neighborhood` call then completed in approximately 0.9 seconds
+and returned the two admitted edges.
+
+Exact-tip review then found that the first repair's materialization fence was
+still outside the deployment predicate. It removed repeated evaluation but
+could build the survivor/provenance keyset for every deployment before the
+caller filtered one tenant. That cost is hidden in a single-deployment fixture
+and grows with other customers' corpora, so it is not an acceptable managed
+topology.
+
+The final prototype starts from the one indexed `deployments` row and enters a
+`CROSS JOIN LATERAL`. Inside that deployment-bound subquery it computes the
+recursive survivor closure, materializes the survivor map, and materializes
+mention/document provenance. Every base-table branch is constrained by
+`deployment.deployment_id` before either fence. A live PostgreSQL 19
+`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` with 1,000 unrelated entities and
+1,000 unrelated provenance documents showed the outer `deployments_pkey`
+probe and fewer than 100 actual rows at every target authority scan; no scan
+consumed the unrelated tenant. This is the chosen repair because it retains
+the D48 absence rule and D98's PGQ/current-snapshot semantics while removing
+both repeated evaluation and cross-deployment materialization rather than
+raising a timeout or introducing a fallback traversal.
+
+Migration review added one lifecycle constraint. Because the fresh
+`p9_17_0038` source now contains the deployment-lateral view, downgrading
+`p9_18_0039` to that revision must restore the same definition. Restoring the
+older correlated definition would leave two databases stamped
+`p9_17_0038` with different query plans depending on whether they arrived by a
+fresh upgrade or a downgrade. The corrective migration therefore uses the
+deployment-scoped definition in both directions; the revision boundary stays
+schema- and plan-identical.
+
 ## 9. Recommendation and design inputs
 
 Accept the live PostgreSQL graph and direct PG19 Beta 3 cut with these binding

@@ -1,15 +1,21 @@
 """PostgreSQL-native P1 writes and ranked search (D94)."""
 
+from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
+import math
+from time import monotonic
 from typing import Any
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
@@ -27,13 +33,11 @@ from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.postgres_read import PostgresReadPoolPort
 
 P1_HNSW_MAX_SCAN_TUPLES = 20_000
 """Reference-profile ceiling for one filtered iterative HNSW scan (D94)."""
-
-
-class P1SearchUnavailableError(RuntimeError):
-    """The requested P1 channel is not published under the active contract."""
 
 
 class PostgresP1Index:
@@ -45,11 +49,13 @@ class PostgresP1Index:
         engine: Engine,
         embedding_model: str,
         chunk_input_policy: str = EMBEDDING_INPUT_POLICY_VERSION,
+        read_pool: PostgresReadPoolPort | None = None,
     ) -> None:
         """Bind the database and the one active semantic configuration."""
         self._engine = engine
         self._embedding_model = embedding_model
         self._chunk_input_policy = chunk_input_policy
+        self._read_pool = read_pool
 
     def configure_channels(
         self, *, deployment_id: UUID, include_entity: bool = True
@@ -892,6 +898,8 @@ class PostgresP1Index:
         evaluated_at: datetime | None = None,
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank facts after applying identity, temporal, and entity authority."""
         _require_vector(vector)
@@ -910,12 +918,18 @@ class PostgresP1Index:
                 target=target,
                 channel="semantic",
                 policy=FACT_INPUT_POLICY,
+                deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
+        ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
+        if not set(ranking_ids).issubset(entity_ids):
+            raise ValueError(
+                "fact ranking entity_ids must be inside the eligible scope"
+            )
         parameters.update(
             {
                 "deployment_id": UUID(deployment_id),
@@ -925,6 +939,7 @@ class PostgresP1Index:
                 "branch_limit": k,
                 "limit": k,
                 "entity_ids": _uuid_strings(entity_ids),
+                "ranking_entity_ids": _uuid_strings(ranking_ids),
             }
         )
         key_sql = ""
@@ -946,7 +961,8 @@ class PostgresP1Index:
             )
             coverage_select = (
                 "(SELECT count(DISTINCT anchor)::integer"
-                " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
+                " FROM unnest(CAST(:ranking_entity_ids AS uuid[]))"
+                " AS requested(anchor)"
                 " WHERE requested.anchor = fact.subject_entity_id"
                 "    OR requested.anchor = fact.object_entity_id) AS coverage,"
             )
@@ -993,7 +1009,9 @@ class PostgresP1Index:
             ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic", qualified=True
+            self._engine_rows(statement, parameters, deadline=deadline),
+            channel="semantic",
+            qualified=True,
         )
 
     def nominate_facts_scored(
@@ -1006,6 +1024,8 @@ class PostgresP1Index:
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank cheap base-table candidates for a caller that confirms every row."""
         _require_vector(vector)
@@ -1024,12 +1044,18 @@ class PostgresP1Index:
                 target=target,
                 channel="semantic",
                 policy=FACT_INPUT_POLICY,
+                deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         time_sql, parameters = _fact_time(
             selected_time, evaluated_at=evaluation, alias="indexed"
         )
+        ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
+        if not set(ranking_ids).issubset(entity_ids):
+            raise ValueError(
+                "fact ranking entity_ids must be inside the eligible scope"
+            )
         parameters.update(
             {
                 "deployment_id": UUID(deployment_id),
@@ -1039,6 +1065,7 @@ class PostgresP1Index:
                 "branch_limit": k,
                 "limit": k,
                 "entity_ids": _uuid_strings(entity_ids),
+                "ranking_entity_ids": _uuid_strings(ranking_ids),
             }
         )
         if entity_ids:
@@ -1063,11 +1090,17 @@ class PostgresP1Index:
                 continue
             if entity_ids and fact_kind == "relation":
                 scope_select = """
-                        (CASE WHEN subject_scope.entity_id IS NULL THEN 0 ELSE 1 END
+                        (CASE
+                             WHEN subject_scope.survivor_entity_id
+                                  = ANY(CAST(:ranking_entity_ids AS uuid[]))
+                             THEN 1 ELSE 0
+                           END
                          + CASE
                              WHEN object_scope.entity_id IS NULL
                                OR object_scope.survivor_entity_id
                                   = subject_scope.survivor_entity_id
+                               OR object_scope.survivor_entity_id
+                                  <> ALL(CAST(:ranking_entity_ids AS uuid[]))
                              THEN 0 ELSE 1
                            END) AS coverage,
                 """
@@ -1085,7 +1118,13 @@ class PostgresP1Index:
                     "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
                 )
             elif entity_ids:
-                scope_select = "1 AS coverage,"
+                scope_select = """
+                        CASE
+                            WHEN subject_scope.survivor_entity_id
+                                 = ANY(CAST(:ranking_entity_ids AS uuid[]))
+                            THEN 1 ELSE 0
+                        END AS coverage,
+                """
                 scope_join = """
                  JOIN scoped_entities AS subject_scope
                    ON subject_scope.entity_id = indexed.subject_entity_id
@@ -1124,11 +1163,18 @@ class PostgresP1Index:
             ORDER BY {result_order} LIMIT :limit
         """
         return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic", qualified=True
+            self._engine_rows(statement, parameters, deadline=deadline),
+            channel="semantic",
+            qualified=True,
         )
 
     def search_entities_scored(
-        self, *, deployment_id: str, vector: tuple[float, ...], k: int
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank live entity profiles without an entity-class filter (D96)."""
         _require_vector(vector)
@@ -1137,6 +1183,7 @@ class PostgresP1Index:
             target="entities",
             channel="semantic",
             policy=ENTITY_INPUT_POLICY,
+            deadline=deadline,
         )
         rows = self._engine_rows(
             """
@@ -1161,6 +1208,7 @@ class PostgresP1Index:
                 "query_vector": _vector_literal(vector),
                 "limit": k,
             },
+            deadline=deadline,
         )
         return _nominations(rows, channel="semantic")
 
@@ -1219,10 +1267,12 @@ class PostgresP1Index:
         channel: str,
         policy: str | None,
         model: str | None = None,
+        deadline: float | None = None,
     ) -> None:
         """Fail closed unless setup published the exact current channel."""
         expected_model = model or self._embedding_model
-        with self._engine.connect() as connection:
+        with self._read_connection(deadline=deadline) as connection:
+            _configure_p1_connection(connection=connection, deadline=deadline)
             ready = connection.execute(
                 text(
                     """
@@ -1261,10 +1311,15 @@ class PostgresP1Index:
             )
 
     def _engine_rows(
-        self, statement: str, parameters: Mapping[str, Any]
+        self,
+        statement: str,
+        parameters: Mapping[str, Any],
+        *,
+        deadline: float | None = None,
     ) -> list[Mapping[str, Any]]:
         """Execute one read statement and return detached mappings."""
-        with self._engine.connect() as connection:
+        with self._read_connection(deadline=deadline) as connection:
+            _configure_p1_connection(connection=connection, deadline=deadline)
             if "<=>" in statement:
                 connection.exec_driver_sql(
                     "SET LOCAL hnsw.iterative_scan = 'strict_order'"
@@ -1277,6 +1332,40 @@ class PostgresP1Index:
                 dict(row)
                 for row in connection.execute(text(statement), parameters).mappings()
             ]
+
+    @contextmanager
+    def _read_connection(
+        self, *, deadline: float | None = None
+    ) -> Iterator[Connection]:
+        """Open one P1 read through configured bounded admission when present."""
+        if self._read_pool is not None:
+            with self._read_pool.connect(deadline=deadline) as connection:
+                yield connection
+            return
+        if deadline is not None:
+            raise SQLAlchemyTimeoutError(
+                "bounded P1 PostgreSQL read admission is not configured"
+            )
+        with self._engine.connect() as connection:
+            yield connection
+
+
+def _configure_p1_connection(
+    *, connection: Connection, deadline: float | None, now: float | None = None
+) -> None:
+    """Apply the remaining fact-operation budget to one P1 read transaction."""
+    if deadline is None:
+        return
+    remaining = deadline - (monotonic() if now is None else now)
+    if remaining <= 0:
+        raise SQLAlchemyTimeoutError("P1 PostgreSQL operation deadline expired")
+    timeout_ms = max(1, math.floor(remaining * 1_000))
+    connection.exec_driver_sql(
+        f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
+    connection.exec_driver_sql(
+        f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
+    )
 
 
 def _claim_filters(

@@ -274,9 +274,9 @@
       "contract": "memory_v1.core_operations/1",
       "operations": [
         {
-          "description": "Complete testimony and fact responses side by side in ContextBundle/v1.",
+          "description": "Complete testimony and neighborhood-aware fact responses side by side in ContextBundle/v1.",
           "grain": null,
-          "implementation_plan_hash": "a7b2eaf5260fa59157ca64aefab6b95af1382f45da16277eddac6534e780ffaa",
+          "implementation_plan_hash": "3cfe84b1adadae185645c8700e7400f257fa6b851b2b28d7fbda8c44767b9df5",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -285,10 +285,21 @@
                   "format": "uuid",
                   "type": "string"
                 },
-                "maxItems": 20,
+                "maxItems": 19,
                 "minItems": 1,
                 "type": "array",
                 "uniqueItems": true
+              },
+              "hops": {
+                "default": 1,
+                "maximum": 2,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "predicate": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
               },
               "query": {
                 "maxLength": 8192,
@@ -2137,7 +2148,7 @@
             "title": "ContextBundleV1",
             "type": "object"
           },
-          "version": 1
+          "version": 2
         },
         {
           "channels": {
@@ -2154,9 +2165,9 @@
               ]
             }
           },
-          "description": "Adjudicated relations and observations under an explicit world-time scope.",
+          "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors.",
           "grain": "fact",
-          "implementation_plan_hash": "51f533c7529bebfbe90420974245c51952879a7b4e54f1cf579c6578ea437a51",
+          "implementation_plan_hash": "cecdbadf6452e3c383f07c546061affc889f20328ffac2cdc9c977082347ef77",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
@@ -2165,7 +2176,7 @@
                   "format": "uuid",
                   "type": "string"
                 },
-                "maxItems": 20,
+                "maxItems": 19,
                 "minItems": 1,
                 "type": "array",
                 "uniqueItems": true
@@ -2176,11 +2187,22 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "hops": {
+                "default": 1,
+                "maximum": 2,
+                "minimum": 1,
+                "type": "integer"
+              },
               "k": {
                 "default": 15,
                 "maximum": 30,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "predicate": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
               },
               "query": {
                 "maxLength": 8192,
@@ -4005,7 +4027,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 1
+          "version": 2
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -37470,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "a8b92da218488baf8fb156358d808121a4038a2c7228e9891d0cd1411b5b597c"
+  "surface_manifest_hash": "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
 }

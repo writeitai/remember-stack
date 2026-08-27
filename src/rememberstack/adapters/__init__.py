@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.adapters.codex_writer import CodexAgentAdapterSettings
 from rememberstack.adapters.codex_writer import CodexCLIAgentAdapter
 from rememberstack.adapters.codex_writer import CodexCLIWriterAdapter
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from rememberstack.adapters.markitdown_converter import MarkitdownConverter
 
 __all__ = (
+    "BoundedPostgresReadPool",
     "CodexCLIAgentAdapter",
     "CodexCLIWriterAdapter",
     "CodexAgentAdapterSettings",

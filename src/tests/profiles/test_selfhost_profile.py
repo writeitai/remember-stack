@@ -4,7 +4,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from uuid import UUID
 
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.model import PipelineStage
@@ -12,6 +14,7 @@ from rememberstack.profiles.selfhost import _expected_components
 from rememberstack.profiles.selfhost import _initialize_error_tracking
 from rememberstack.profiles.selfhost import _model_bindings
 from rememberstack.profiles.selfhost import _SUPPORTED_WORKER_STAGES
+from rememberstack.profiles.selfhost import SelfHostSettings
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,6 +26,20 @@ def test_selfhost_setup_seeds_shipped_examples() -> None:
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "seed_shipped_examples" in source
     assert "seed_canonical_operations" in source
+    assert "publish_surface_hash" in source
+    assert source.index("publish_surface_hash(") < source.index(
+        "seed_shipped_examples("
+    )
+
+
+def test_selfhost_assured_operations_share_the_live_graph_authority() -> None:
+    """The D97 recipe and typed graph API share one bounded graph facade."""
+    from rememberstack.profiles import selfhost as selfhost_mod
+
+    source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
+    assert "graph_queries = GraphQueries(" in source
+    assert "graph_queries=graph_queries" in source
+    assert "graph=graph_queries" in source
 
 
 def test_selfhost_convert_uses_stock_passthrough_including_plain_text() -> None:
@@ -93,12 +110,35 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY", "2"),
         ("REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB", "16384"),
+        ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
+        ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
+        ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
     ):
         assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (
         "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH: "
         "${REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH:-false}" in compose
     )
+
+
+def test_selfhost_fact_authority_and_p1_share_bounded_retrieval_pool() -> None:
+    """P1 nomination and fact confirmation use one private admission authority."""
+    from rememberstack.profiles import selfhost as selfhost_mod
+
+    source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
+    assert "retrieval_reads = BoundedPostgresReadPool(" in source
+    assert "read_pool=retrieval_reads" in source
+    assert "fact_read_pool=retrieval_reads" in source
+
+
+def test_selfhost_retrieval_concurrency_cannot_exceed_private_pool() -> None:
+    """The shared admission count cannot exceed its physical connection pool."""
+    with pytest.raises(ValidationError, match="retrieval_max_concurrency"):
+        SelfHostSettings(
+            deployment_id=UUID("43000000-0000-0000-0000-000000000001"),
+            retrieval_pool_size=1,
+            retrieval_max_concurrency=2,
+        )
 
 
 def test_observability_imports_are_absent_without_environment_opt_in(

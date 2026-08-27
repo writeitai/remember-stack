@@ -1,11 +1,14 @@
 """Batch C proofs for question-driven current facts and evidence backing."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from time import monotonic
 from typing import Any
+from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
@@ -17,22 +20,35 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.adapters import BoundedPostgresReadPool
+import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import FactSupport
+from rememberstack.model import Freshness
+from rememberstack.model import Grain
+from rememberstack.model import GraphNode
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.model import Truncation
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import GraphQueries
 from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.graph_queries import GraphBusyError
+from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.query_engine import FACT_CONTEXT_CANDIDATE_K
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -64,15 +80,21 @@ class _FactIndex:
     def __init__(self, *, fact_keys: tuple[tuple[str, UUID], ...]) -> None:
         self.fact_keys = tuple((kind, str(fact_id)) for kind, fact_id in fact_keys)
         self.requested_k: list[int] = []
+        self.requested_entity_ids: list[tuple[str, ...]] = []
+        self.requested_deadlines: list[float | None] = []
 
     def search_facts_scored(
         self,
         *,
         k: int,
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
+        deadline: float | None = None,
         **_: object,
     ) -> tuple[P1Nomination, ...]:
         self.requested_k.append(k)
+        self.requested_entity_ids.append(entity_ids)
+        self.requested_deadlines.append(deadline)
         allowed = None if candidate_keys is None else set(candidate_keys)
         selected = tuple(
             (kind, fact_id)
@@ -110,16 +132,145 @@ class _FactIndex:
         return {}
 
 
+class _ProfileRescueIndex(_FactIndex):
+    """Nominate one fact only after profile text identifies its entity scope."""
+
+    def __init__(self, *, entity_id: UUID, fact_id: UUID) -> None:
+        super().__init__(fact_keys=(("observation", fact_id),))
+        self.entity_id = entity_id
+        self.profile_requests = 0
+        self.profile_deadlines: list[float | None] = []
+
+    def search_entities_scored(
+        self, *, deadline: float | None = None, **_: object
+    ) -> tuple[P1Nomination, ...]:
+        """Return the profile whose prose matches the enumerative query."""
+        self.profile_requests += 1
+        self.profile_deadlines.append(deadline)
+        return (
+            P1Nomination(
+                item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+            ),
+        )
+
+    def search_facts_scored(
+        self,
+        *,
+        k: int,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
+        deadline: float | None = None,
+        **arguments: object,
+    ) -> tuple[P1Nomination, ...]:
+        """Keep global fact search empty so only profile rescue can find the fact."""
+        if not entity_ids:
+            self.requested_k.append(k)
+            self.requested_deadlines.append(deadline)
+            return ()
+        return super().search_facts_scored(
+            k=k,
+            candidate_keys=candidate_keys,
+            entity_ids=entity_ids,
+            deadline=deadline,
+            **arguments,
+        )
+
+
+class _UnavailableProfileIndex(_FactIndex):
+    """Expose the ordinary fact channel while the additive profile channel is cut."""
+
+    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        """Match the adapter contract during profile backfill or republishing."""
+        raise P1SearchUnavailableError("entities semantic channel is not ready")
+
+
+class _UnavailableFactIndex(_FactIndex):
+    """Fail the primary fact channel as it can be during a policy cut."""
+
+    def search_facts_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        """Expose primary-channel unavailability through the P1 port contract."""
+        raise P1SearchUnavailableError("relations semantic channel is not ready")
+
+
+class _GraphNeighborhood:
+    """Record D97 traversal arguments and return one bounded neighbor."""
+
+    def __init__(self, *, neighbor_ids: tuple[UUID, ...]) -> None:
+        self.neighbor_ids = neighbor_ids
+        self.calls: list[dict[str, object]] = []
+
+    def neighborhood(self, **arguments: object):
+        """Return the configured neighbor as a fresh live-graph result."""
+        self.calls.append(arguments)
+        limit = cast(int, arguments["limit"])
+        selected = self.neighbor_ids[:limit]
+        return query_engine_module._envelope(  # noqa: SLF001 - typed graph stub
+            grain=Grain.FACT,
+            temporal_scope=current_temporal_scope(evaluated_at=_NOW),
+            nodes=tuple(
+                GraphNode(entity_id=entity_id, name=f"Neighbor {index}", hops=1)
+                for index, entity_id in enumerate(selected)
+            ),
+            freshness=Freshness(pg_live_ts=_NOW),
+            truncation=Truncation(
+                truncated=len(selected) < len(self.neighbor_ids),
+                returned=len(selected),
+                estimated_total=len(self.neighbor_ids),
+                total_is_exact=True,
+            ),
+        )
+
+
+class _FailingGraph:
+    """Raise one configured live-graph availability failure."""
+
+    def __init__(self, *, error: Exception) -> None:
+        self.error = error
+
+    def neighborhood(self, **_: object):
+        """Fail before returning a graph envelope."""
+        raise self.error
+
+
+class _TimedOutReadPool:
+    """Reject every fact-authority checkout at bounded admission."""
+
+    def __init__(self) -> None:
+        self.deadlines: list[float | None] = []
+
+    @contextmanager
+    def connect(
+        self, *, deadline: float | None, isolation_level: str | None = None
+    ) -> Iterator[Connection]:
+        """Record the attempted checkout and raise its typed timeout."""
+        del isolation_level
+        self.deadlines.append(deadline)
+        raise SQLAlchemyTimeoutError("test retrieval admission expired")
+        yield cast(Connection, None)  # pragma: no cover - generator typing only
+
+    @contextmanager
+    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
+        """Reject the outer compound snapshot at the same admission boundary."""
+        self.deadlines.append(deadline)
+        raise SQLAlchemyTimeoutError("test retrieval admission expired")
+        yield cast(Connection, None)  # pragma: no cover - generator typing only
+
+
 class _Corpus:
     """Relations and observations with live, stale, and tombstoned evidence."""
 
     def __init__(self, *, engine: Engine) -> None:
         self.engine = engine
+        self.read_pool = BoundedPostgresReadPool(
+            engine=engine, max_concurrency=4, pool_wait_seconds=1.0
+        )
         self.provider = FakeModelProvider(generate_payloads={})
         self.subject_id = uuid4()
         self.object_id = uuid4()
         self.relation_id = uuid4()
         self.observation_id = uuid4()
+        self.bank_observation_id = uuid4()
+        self.dynamic_relation_id = uuid4()
         self.kind_collision_id = uuid4()
         self.unbacked_id = uuid4()
         self.withdrawn_id = uuid4()
@@ -171,6 +322,15 @@ class _Corpus:
             )
 
     def _seed_primary_facts(self, connection: Connection) -> None:
+        connection.execute(
+            text(
+                "INSERT INTO predicates (deployment_id, predicate, parent_predicate,"
+                " description, tier) VALUES (:deployment, 'other:traveled',"
+                " 'related_to', 'Batch C dynamic predicate', 'other')"
+                " ON CONFLICT (deployment_id, predicate) DO NOTHING"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
         self._relation(
             connection,
             fact_id=self.relation_id,
@@ -178,6 +338,14 @@ class _Corpus:
             evidence_count=3,
             contradict_count=2,
             object_id=self.object_id,
+        )
+        self._relation(
+            connection,
+            fact_id=self.dynamic_relation_id,
+            label="Alice traveled to Acme",
+            evidence_count=1,
+            object_id=self.object_id,
+            predicate="other:traveled",
         )
         self._relation(connection, fact_id=self.unbacked_id, label="Alice knows Acme")
         self._relation(
@@ -196,6 +364,20 @@ class _Corpus:
                 "fact": self.observation_id,
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.subject_id,
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version, evidence_count,"
+                " ingested_at) VALUES (:fact, :deployment, :subject,"
+                " 'Acme is a bank', 'batch-c', 1, :at)"
+            ),
+            {
+                "fact": self.bank_observation_id,
+                "deployment": _DEPLOYMENT_ID,
+                "subject": self.object_id,
                 "at": _NOW,
             },
         )
@@ -229,6 +411,22 @@ class _Corpus:
             kind="relation",
             stance="supports",
             doc_id=shared_doc,
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="dynamic-relation-support",
+            fact_id=self.dynamic_relation_id,
+            kind="relation",
+            stance="supports",
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="bank-observation-support",
+            fact_id=self.bank_observation_id,
+            kind="observation",
+            stance="supports",
             at=_NOW,
         )
         self._evidence(
@@ -406,6 +604,7 @@ class _Corpus:
         evidence_count: int = 0,
         contradict_count: int = 0,
         object_id: UUID | None = None,
+        predicate: str = "works_for",
         valid_from: datetime | None = None,
         valid_until: datetime | None = None,
         ingested_at: datetime = _NOW,
@@ -445,7 +644,7 @@ class _Corpus:
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, contradict_count,"
                 " valid_from, valid_until, ingested_at, invalidated_at) VALUES"
-                " (:fact, :deployment, :subject, 'works_for', :object, 'batch-c',"
+                " (:fact, :deployment, :subject, :predicate, :object, 'batch-c',"
                 " :label, :supports, :contradicts, :valid_from, :valid_until,"
                 " :ingested_at, :invalidated_at)"
             ),
@@ -454,6 +653,7 @@ class _Corpus:
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.subject_id,
                 "object": object_id,
+                "predicate": predicate,
                 "label": label,
                 "supports": evidence_count,
                 "contradicts": contradict_count,
@@ -619,6 +819,7 @@ class _Corpus:
                 search_index=index,
                 model_provider=self.provider,
                 embedding_model="batch-c",
+                fact_read_pool=self.read_pool,
             ),
             index,
         )
@@ -640,6 +841,76 @@ def corpus(database_engine: Engine) -> _Corpus:
         )
     )
     return _Corpus(engine=database_engine)
+
+
+def test_retrieval_snapshot_reuses_one_read_only_mvcc_cut(corpus: _Corpus) -> None:
+    """Nested authority reads cannot see a row committed after operation entry."""
+    predicate = f"other:snapshot-{uuid4()}"
+    try:
+        with corpus.read_pool.snapshot(deadline=monotonic() + 5.0) as snapshot:
+            assert (
+                snapshot.exec_driver_sql("SHOW transaction_isolation").scalar_one()
+                == "repeatable read"
+            )
+            assert (
+                snapshot.exec_driver_sql("SHOW transaction_read_only").scalar_one()
+                == "on"
+            )
+            assert (
+                snapshot.execute(
+                    text(
+                        "SELECT count(*) FROM predicates"
+                        " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                ).scalar_one()
+                == 0
+            )
+            with corpus.engine.begin() as writer:
+                writer.execute(
+                    text(
+                        "INSERT INTO predicates ("
+                        "deployment_id, predicate, parent_predicate, description, tier"
+                        ") VALUES ("
+                        ":deployment_id, :predicate, 'related_to',"
+                        " 'snapshot proof', 'other'"
+                        ")"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                )
+            with corpus.read_pool.connect(deadline=monotonic() + 5.0) as nested:
+                assert nested is snapshot
+                assert (
+                    nested.execute(
+                        text(
+                            "SELECT count(*) FROM predicates"
+                            " WHERE deployment_id = :deployment_id"
+                            " AND predicate = :predicate"
+                        ),
+                        {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                    ).scalar_one()
+                    == 0
+                )
+        with corpus.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM predicates"
+                        " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                    ),
+                    {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+                ).scalar_one()
+                == 1
+            )
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM predicates"
+                    " WHERE deployment_id = :deployment_id AND predicate = :predicate"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID, "predicate": predicate},
+            )
 
 
 def test_fact_context_returns_both_fact_kinds_with_both_stances(
@@ -668,6 +939,541 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
     ]
     assert len({corpus.claim_docs[claim_id] for claim_id in selected_support}) == 2
     assert corpus.claims["support-old-same-lineage"] not in selected_support
+
+
+def test_default_fact_context_expands_empty_predicate_neighborhood_for_observations(
+    corpus: _Corpus,
+) -> None:
+    """A neighbor's observation is found as fact text, never as a graph node."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.observation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="What does Alice prefer?",
+        entity_ids=(corpus.object_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.observation_id,)
+    assert tuple(node.entity_id for node in answer.nodes) == (corpus.subject_id,)
+    assert corpus.observation_id not in {node.entity_id for node in answer.nodes}
+    assert len(graph.calls) == 1
+    assert isinstance(graph.calls[0]["_deadline"], float)
+    assert isinstance(graph.calls[0]["_connection"], Connection)
+    assert {
+        key: value
+        for key, value in graph.calls[0].items()
+        if key not in {"_deadline", "_connection"}
+    } == {
+        "entity_id": corpus.object_id,
+        "hops": 1,
+        "predicates": (),
+        "valid_at": _NOW,
+        "believed_at": _NOW,
+        "limit": 19,
+    }
+    assert answer.freshness.pg_live_ts == _NOW
+    assert index.requested_entity_ids == [
+        (str(corpus.object_id), str(corpus.subject_id))
+    ]
+
+
+def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
+    corpus: _Corpus,
+) -> None:
+    """The current recipe gives the production graph its operation-entry clocks."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=graph,
+        query="Where does Alice work?",
+        entity_ids=(corpus.object_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert corpus.subject_id in {node.entity_id for node in answer.nodes}
+
+
+def test_default_fact_context_supplies_paired_clocks_for_at_time(
+    corpus: _Corpus,
+) -> None:
+    """An explicit world time travels with the operation's belief-time clock."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice work?",
+        entity_ids=(corpus.object_id,),
+        time=AtFactTime(at=_NOW - timedelta(days=3)),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.temporal_scope.mode == "at"
+    assert graph.calls[0]["valid_at"] == _NOW - timedelta(days=3)
+    assert graph.calls[0]["believed_at"] == _NOW
+
+
+def test_live_graph_rejects_an_expired_composed_operation_deadline() -> None:
+    """A composed graph read expires before semaphore or pool admission."""
+    graph = GraphQueries(engine=cast(Engine, object()), deployment_id=_DEPLOYMENT_ID)
+
+    with pytest.raises(TimeoutError, match="deadline expired"):
+        graph.neighborhood(entity_id=uuid4(), _deadline=0.0)
+
+
+def test_default_fact_context_keeps_anchor_fact_rank_after_neighborhood_expansion(
+    corpus: _Corpus,
+) -> None:
+    """A two-endpoint neighbor relation cannot evict a better anchor observation."""
+    engine, _index = corpus.query_engine_for_keys(
+        fact_keys=(
+            ("observation", corpus.bank_observation_id),
+            ("relation", corpus.relation_id),
+        )
+    )
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="list banks",
+        entity_ids=(corpus.object_id,),
+        k=1,
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
+
+
+def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
+    corpus: _Corpus,
+) -> None:
+    """A concurrently stale graph node is disclosed without vetoing anchor facts."""
+    stale_neighbor_id = uuid4()
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(stale_neighbor_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert answer.nodes == ()
+    assert answer.negative is None
+    assert answer.dropped_by_hydration == 1
+    assert answer.truncation is not None
+    assert answer.truncation.truncated is False
+    assert answer.truncation.returned == 1
+    assert answer.truncation.estimated_total == 1
+    assert answer.truncation.total_is_exact is True
+    assert index.requested_entity_ids == [(str(corpus.subject_id),)]
+
+
+def test_default_fact_context_rechecks_only_caller_supplied_anchors(
+    corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A graph-derived neighbor retiring late cannot veto valid anchor facts."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.object_id,))
+    checked_scopes: list[tuple[UUID, ...]] = []
+
+    def current_ids(
+        *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+    ) -> set[UUID]:
+        """Retire the neighbor only after its explicit hydration check."""
+        del connection
+        assert deployment_id == _DEPLOYMENT_ID
+        checked_scopes.append(entity_ids)
+        if len(checked_scopes) == 2:
+            return set(entity_ids)
+        return {corpus.subject_id}
+
+    monkeypatch.setattr(query_engine_module, "_current_context_entity_ids", current_ids)
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert checked_scopes[-1] == (corpus.subject_id, corpus.object_id)
+    assert answer.nodes == ()
+    assert answer.dropped_by_hydration == 1
+    assert answer.truncation is not None
+    assert answer.truncation.returned == answer.truncation.estimated_total == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GraphBusyError("busy"),
+        GraphHydrationError("stale"),
+        OperationalError("graph query", {}, Exception("timed out")),
+        SQLAlchemyTimeoutError("graph pool timed out"),
+    ],
+)
+def test_default_fact_context_maps_graph_failures_to_a_boundary(
+    corpus: _Corpus, error: Exception
+) -> None:
+    """Busy, stale, and database-failed graph reads never escape as HTTP 500s."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, _FailingGraph(error=error)),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert answer.facts == ()
+    assert index.requested_k == []
+
+
+def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
+    corpus: _Corpus,
+) -> None:
+    """The shared 25-second budget includes fact-authority pool admission."""
+    index = _FactIndex(fact_keys=(("relation", corpus.relation_id),))
+    read_pool = _TimedOutReadPool()
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=read_pool,
+    )
+    started = monotonic()
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, _GraphNeighborhood(neighbor_ids=())),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert index.requested_k == []
+    assert len(read_pool.deadlines) == 1
+    assert read_pool.deadlines[0] is not None
+    assert started + 24.0 < read_pool.deadlines[0] < started + 26.0
+
+
+def test_default_fact_context_maps_primary_p1_unavailability_to_boundary(
+    corpus: _Corpus,
+) -> None:
+    """An unpublished primary fact channel is a typed negative, never HTTP 500."""
+    index = _UnavailableFactIndex(fact_keys=())
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
+    )
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="What is current?",
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert "P1 fact channels" in answer.negative.explanation
+    assert answer.facts == ()
+
+
+def test_default_fact_context_fails_closed_without_bounded_fact_pool(
+    corpus: _Corpus,
+) -> None:
+    """A library composition cannot expose D97 through the general SQL pool."""
+    index = _FactIndex(fact_keys=(("relation", corpus.relation_id),))
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+    )
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="What is current?",
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert index.requested_k == []
+
+
+def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
+    corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sequential anchor traversals consult the 25-second operation deadline."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=())
+    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 26.0))
+
+    def operation_clock() -> float:
+        """Advance one shared monotonic clock across admission and execution."""
+        return next(observed_times)
+
+    monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
+    monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="shared context",
+        entity_ids=(corpus.subject_id, corpus.object_id),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert len(graph.calls) == 1
+    assert graph.calls[0]["_deadline"] == 25.0
+    assert index.requested_k == []
+
+
+def test_default_fact_context_reserves_neighbor_capacity_and_graph_predicate_size(
+    corpus: _Corpus,
+) -> None:
+    """Direct callers receive the same 19-anchor/200-character bounds as HTTP."""
+    engine, _index = corpus.query_engine(fact_ids=())
+
+    with pytest.raises(ValueError, match="at most 19"):
+        engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=None,
+            query="context",
+            entity_ids=tuple(uuid4() for _ in range(20)),
+            evaluated_at=_NOW,
+        )
+    with pytest.raises(ValueError, match="between 1 and 200"):
+        engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=None,
+            query="context",
+            entity_ids=(corpus.subject_id,),
+            predicate="p" * 201,
+            evaluated_at=_NOW,
+        )
+
+
+def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmation(
+    corpus: _Corpus,
+) -> None:
+    """An `other:` predicate is legal and enforced again by PostgreSQL."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.dynamic_relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.object_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice travel?",
+        entity_ids=(corpus.subject_id,),
+        predicate="other:traveled",
+        evaluated_at=_NOW,
+    )
+    wrong_filter = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice travel?",
+        entity_ids=(corpus.subject_id,),
+        predicate="reports_to",
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.dynamic_relation_id,)
+    assert graph.calls[0]["predicates"] == ("other:traveled",)
+    assert graph.calls[1]["predicates"] == ("reports_to",)
+    assert wrong_filter.facts == ()
+
+
+def test_default_fact_context_reports_missing_graph_without_widening(
+    corpus: _Corpus,
+) -> None:
+    """No graph dependency is a boundary before P1 nomination or embedding."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    embedded_before = len(corpus.provider.embedded_texts)
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert answer.facts == ()
+    assert index.requested_k == []
+    assert len(corpus.provider.embedded_texts) == embedded_before
+
+
+def test_default_fact_context_discloses_the_combined_entity_cap(
+    corpus: _Corpus,
+) -> None:
+    """A large neighborhood returns 19 nodes beside one anchor and marks loss."""
+    neighbor_ids = tuple(uuid4() for _ in range(25))
+    document_ids = tuple(uuid4() for _ in neighbor_ids)
+    with corpus.engine.begin() as connection:
+        for index, (entity_id, document_id) in enumerate(
+            zip(neighbor_ids, document_ids, strict=True)
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name) VALUES (:entity, :deployment, :name, :name)"
+                ),
+                {
+                    "entity": entity_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "name": f"neighbor-{index}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, document_entity_id, title) VALUES (:doc, :deployment,"
+                    " 'upload', :ref, :entity, :title)"
+                ),
+                {
+                    "doc": document_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "ref": f"batch-c-neighbor-{index}",
+                    "entity": entity_id,
+                    "title": f"Neighbor {index}",
+                },
+            )
+    try:
+        engine, _index = corpus.query_engine(fact_ids=())
+        graph = _GraphNeighborhood(neighbor_ids=neighbor_ids)
+        answer = engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=cast(Any, graph),
+            query="neighbor context",
+            entity_ids=(corpus.subject_id,),
+            evaluated_at=_NOW,
+        )
+
+        assert len(answer.nodes) == 19
+        assert answer.truncation is not None
+        assert answer.truncation.truncated
+        assert answer.truncation.returned == 19
+        assert answer.truncation.estimated_total == 25
+        assert not answer.truncation.total_is_exact
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM documents WHERE doc_id = ANY(:ids)"),
+                {"ids": list(document_ids)},
+            )
+            connection.execute(
+                text("DELETE FROM entities WHERE entity_id = ANY(:ids)"),
+                {"ids": list(neighbor_ids)},
+            )
+
+
+def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) -> None:
+    """“List banks” can nominate Acme's profile, then its bank observation."""
+    index = _ProfileRescueIndex(
+        entity_id=corpus.object_id, fact_id=corpus.bank_observation_id
+    )
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
+    )
+    embedded_before = len(corpus.provider.embedded_texts)
+
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID, query="list banks", evaluated_at=_NOW
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
+    assert index.profile_requests == 1
+    assert index.requested_k == [
+        FACT_CONTEXT_CANDIDATE_K + 1,
+        FACT_CONTEXT_CANDIDATE_K + 1,
+    ]
+    assert len(index.requested_deadlines) == 2
+    assert index.requested_deadlines[0] == index.requested_deadlines[1]
+    assert index.profile_deadlines == [index.requested_deadlines[0]]
+    assert len(corpus.provider.embedded_texts) == embedded_before + 1
+
+
+def test_fact_context_falls_back_while_profile_channel_is_unpublished(
+    corpus: _Corpus,
+) -> None:
+    """Profile backfill cannot turn ordinary deployment-wide facts into a 500."""
+    index = _UnavailableProfileIndex(fact_keys=(("relation", corpus.relation_id),))
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
+    )
+
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID, query="Alice employment", evaluated_at=_NOW
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+
+
+def test_profile_rescue_rrf_counts_each_fact_once_per_channel() -> None:
+    """A malformed duplicate nomination cannot forge cross-channel agreement."""
+    fact_id = uuid4()
+    fused = query_engine_module._fuse_fact_nominations(  # noqa: SLF001
+        channels=(
+            (
+                P1Nomination(
+                    item_id=str(fact_id),
+                    rank=1,
+                    score=0.9,
+                    channel="semantic",
+                    qualifier="observation",
+                ),
+                P1Nomination(
+                    item_id=str(fact_id),
+                    rank=2,
+                    score=0.8,
+                    channel="semantic",
+                    qualifier="observation",
+                ),
+            ),
+        ),
+        limit=2,
+    )
+
+    assert len(fused) == 1
+    assert fused[0].score == pytest.approx(1.0 / 61.0)
 
 
 def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(

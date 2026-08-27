@@ -21,6 +21,9 @@ Current public release: [`v0.5.0`](https://github.com/writeitai/remember-stack/r
 
 - PostgreSQL-native search indexes, a live SQL/PGQ graph, and a browsable corpus filesystem
 - Four assured operations: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`
+- ID-scoped `fact_context` / `answer_context` use bounded live graph
+  neighborhoods for `current` and `at`; unavailable graph authority is an
+  explicit boundary, while `history` and `overlap` remain visibly anchor-scoped
 - Open query: sandboxed SQL, typed live-graph helpers, saved examples, schema discovery
 - MCP assured-operation and open-query tools (stdio client transport)
 - Self-accounting response envelopes (grain, freshness, contradictions, typed negatives)

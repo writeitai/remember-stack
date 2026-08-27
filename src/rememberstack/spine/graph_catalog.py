@@ -319,6 +319,12 @@ _EXPECTED_HELPERS: Final = {
     ),
 }
 
+_EXPECTED_HELPER_CONFIG: Final = {
+    "graph_neighborhood": {"enable_seqscan=off", "search_path=memory_v1, pg_catalog"},
+    "graph_path": {"enable_seqscan=off", "search_path=memory_v1, pg_catalog"},
+    "graph_citation_path": {"search_path=memory_v1, pg_catalog"},
+}
+
 _EXPECTED_ROLE_CONFIG: Final = {
     "default_transaction_read_only=on",
     "idle_in_transaction_session_timeout=5000",
@@ -595,7 +601,7 @@ def _check_helpers(*, connection: Connection, problems: list[str]) -> None:
             or row["provolatile"] != "s"
             or row["proparallel"] != "u"
             or row["prosecdef"] is not False
-            or set(row["proconfig"] or ()) != {"search_path=memory_v1, pg_catalog"}
+            or set(row["proconfig"] or ()) != _EXPECTED_HELPER_CONFIG[name]
             or row["comment"] != expected_comment
             or row["public_execute_revoked"] is not True
             or row["query_role_execute"] is not True
@@ -763,6 +769,9 @@ def _replay_graph_catalog(*, connection: Connection) -> None:
     from rememberstack.spine.migrations.versions import (
         p9_17_0038_postgres19_live_graph as migration,
     )
+    from rememberstack.spine.migrations.versions import (
+        p9_19_0040_graph_tenant_planner_settings as planner_settings,
+    )
 
     for statement in (
         "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history",
@@ -791,3 +800,5 @@ def _replay_graph_catalog(*, connection: Connection) -> None:
         # psycopg scans percent tokens before PostgreSQL can evaluate the
         # ``format('%I', ...)`` calls inside the administrative DO blocks.
         connection.exec_driver_sql(statement.replace("%", "%%"))
+    for statement in _split_sql(sql=planner_settings._GRAPH_HELPER_INDEX_SETTINGS):
+        connection.exec_driver_sql(statement)
