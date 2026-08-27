@@ -306,12 +306,12 @@ jobs:
             run --rm projections
           readiness="$(
             curl --fail --header 'Content-Type: application/json' \
-              --data "[\"$version_id\"]" \
-              'http://localhost:8000/readiness?require_projections=true'
+              --data "{\"version_ids\":[\"$version_id\"],\"require\":{\"pipeline\":true,\"p1\":true,\"live_graph\":true,\"p3\":true}}" \
+              'http://localhost:8000/readiness'
           )"
           printf '%s' "$readiness" |
             docker compose --env-file .env.example exec -T api python -c \
-              'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["projections"])'
+              'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
       - name: Stage an upgrade from the prior schema
         run: |

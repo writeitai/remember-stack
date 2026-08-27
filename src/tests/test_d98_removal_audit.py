@@ -170,3 +170,12 @@ def test_uv_lock_and_automation_share_one_tool_version() -> None:
         setup_count = workflow.count("uses: astral-sh/setup-uv@v5")
         assert setup_count > 0
         assert workflow.count('version: "0.12.6"') == setup_count
+
+
+def test_compose_quickstart_uses_exhaustive_readiness_contract() -> None:
+    """Compose must prove pipeline, P1, live graph, and P3 readiness together."""
+    workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "require_projections" not in workflow
+    for capability in ("pipeline", "p1", "live_graph", "p3"):
+        assert f'\\"{capability}\\":true' in workflow
+    assert 'report["capabilities"].values()' in workflow
