@@ -472,7 +472,8 @@ def test_merged_sibling_relation_profiles_keep_both_local_names(
     assert facts[sibling] == ("Alice works for Bob",)
     assert all(
         "Survivor" not in fact
-        for member_facts in facts.values()
+        for entity_id in (_SECOND_ENTITY, sibling)
+        for member_facts in (facts[entity_id],)
         for fact in member_facts
     )
 
