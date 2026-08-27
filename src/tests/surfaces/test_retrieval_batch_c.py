@@ -6,6 +6,7 @@ from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
 from typing import Any
+from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
@@ -19,10 +20,15 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import FactSupport
+from rememberstack.model import Freshness
+from rememberstack.model import Grain
+from rememberstack.model import GraphNode
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkText
+from rememberstack.model import Truncation
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
@@ -70,8 +76,10 @@ class _FactIndex:
         *,
         k: int,
         candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
         **_: object,
     ) -> tuple[P1Nomination, ...]:
+        del entity_ids
         self.requested_k.append(k)
         allowed = None if candidate_keys is None else set(candidate_keys)
         selected = tuple(
@@ -110,6 +118,71 @@ class _FactIndex:
         return {}
 
 
+class _ProfileRescueIndex(_FactIndex):
+    """Nominate one fact only after profile text identifies its entity scope."""
+
+    def __init__(self, *, entity_id: UUID, fact_id: UUID) -> None:
+        super().__init__(fact_keys=(("observation", fact_id),))
+        self.entity_id = entity_id
+        self.profile_requests = 0
+
+    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        """Return the profile whose prose matches the enumerative query."""
+        self.profile_requests += 1
+        return (
+            P1Nomination(
+                item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+            ),
+        )
+
+    def search_facts_scored(
+        self,
+        *,
+        k: int,
+        candidate_keys: tuple[tuple[str, str], ...] | None = None,
+        entity_ids: tuple[str, ...] = (),
+        **arguments: object,
+    ) -> tuple[P1Nomination, ...]:
+        """Keep global fact search empty so only profile rescue can find the fact."""
+        if not entity_ids:
+            self.requested_k.append(k)
+            return ()
+        return super().search_facts_scored(
+            k=k, candidate_keys=candidate_keys, entity_ids=entity_ids, **arguments
+        )
+
+
+class _GraphNeighborhood:
+    """Record D97 traversal arguments and return one bounded neighbor."""
+
+    def __init__(self, *, neighbor_ids: tuple[UUID, ...]) -> None:
+        self.neighbor_ids = neighbor_ids
+        self.calls: list[dict[str, object]] = []
+
+    def neighborhood(self, **arguments: object):
+        """Return the configured neighbor as a fresh P2 projection result."""
+        self.calls.append(arguments)
+        limit = cast(int, arguments["limit"])
+        selected = self.neighbor_ids[:limit]
+        return query_engine_module._envelope(  # noqa: SLF001 - typed graph stub
+            grain=Grain.FACT,
+            temporal_scope=current_temporal_scope(evaluated_at=_NOW),
+            nodes=tuple(
+                GraphNode(entity_id=entity_id, name=f"Neighbor {index}", hops=1)
+                for index, entity_id in enumerate(selected)
+            ),
+            freshness=Freshness(
+                pg_live_ts=_NOW, p2_snapshot_version="batch-c-p2", p2_snapshot_ts=_NOW
+            ),
+            truncation=Truncation(
+                truncated=len(selected) < len(self.neighbor_ids),
+                returned=len(selected),
+                estimated_total=len(self.neighbor_ids),
+                total_is_exact=True,
+            ),
+        )
+
+
 class _Corpus:
     """Relations and observations with live, stale, and tombstoned evidence."""
 
@@ -120,6 +193,8 @@ class _Corpus:
         self.object_id = uuid4()
         self.relation_id = uuid4()
         self.observation_id = uuid4()
+        self.bank_observation_id = uuid4()
+        self.dynamic_relation_id = uuid4()
         self.kind_collision_id = uuid4()
         self.unbacked_id = uuid4()
         self.withdrawn_id = uuid4()
@@ -179,6 +254,14 @@ class _Corpus:
             contradict_count=2,
             object_id=self.object_id,
         )
+        self._relation(
+            connection,
+            fact_id=self.dynamic_relation_id,
+            label="Alice traveled to Acme",
+            evidence_count=1,
+            object_id=self.object_id,
+            predicate="other:traveled",
+        )
         self._relation(connection, fact_id=self.unbacked_id, label="Alice knows Acme")
         self._relation(
             connection,
@@ -196,6 +279,20 @@ class _Corpus:
                 "fact": self.observation_id,
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.subject_id,
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version, evidence_count,"
+                " ingested_at) VALUES (:fact, :deployment, :subject,"
+                " 'Acme is a bank', 'batch-c', 1, :at)"
+            ),
+            {
+                "fact": self.bank_observation_id,
+                "deployment": _DEPLOYMENT_ID,
+                "subject": self.object_id,
                 "at": _NOW,
             },
         )
@@ -229,6 +326,22 @@ class _Corpus:
             kind="relation",
             stance="supports",
             doc_id=shared_doc,
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="dynamic-relation-support",
+            fact_id=self.dynamic_relation_id,
+            kind="relation",
+            stance="supports",
+            at=_NOW,
+        )
+        self._evidence(
+            connection,
+            key="bank-observation-support",
+            fact_id=self.bank_observation_id,
+            kind="observation",
+            stance="supports",
             at=_NOW,
         )
         self._evidence(
@@ -406,6 +519,7 @@ class _Corpus:
         evidence_count: int = 0,
         contradict_count: int = 0,
         object_id: UUID | None = None,
+        predicate: str = "works_for",
         valid_from: datetime | None = None,
         valid_until: datetime | None = None,
         ingested_at: datetime = _NOW,
@@ -445,7 +559,7 @@ class _Corpus:
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, contradict_count,"
                 " valid_from, valid_until, ingested_at, invalidated_at) VALUES"
-                " (:fact, :deployment, :subject, 'works_for', :object, 'batch-c',"
+                " (:fact, :deployment, :subject, :predicate, :object, 'batch-c',"
                 " :label, :supports, :contradicts, :valid_from, :valid_until,"
                 " :ingested_at, :invalidated_at)"
             ),
@@ -454,6 +568,7 @@ class _Corpus:
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.subject_id,
                 "object": object_id,
+                "predicate": predicate,
                 "label": label,
                 "supports": evidence_count,
                 "contradicts": contradict_count,
@@ -668,6 +783,178 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
     ]
     assert len({corpus.claim_docs[claim_id] for claim_id in selected_support}) == 2
     assert corpus.claims["support-old-same-lineage"] not in selected_support
+
+
+def test_default_fact_context_expands_empty_predicate_neighborhood_for_observations(
+    corpus: _Corpus,
+) -> None:
+    """A neighbor's observation is found as fact text, never as a graph node."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.observation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="What does Alice prefer?",
+        entity_ids=(corpus.object_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.observation_id,)
+    assert tuple(node.entity_id for node in answer.nodes) == (corpus.subject_id,)
+    assert corpus.observation_id not in {node.entity_id for node in answer.nodes}
+    assert graph.calls == [
+        {
+            "entity_id": corpus.object_id,
+            "hops": 1,
+            "predicates": (),
+            "valid_at": _NOW,
+            "limit": 19,
+        }
+    ]
+    assert answer.freshness.p2_snapshot_version == "batch-c-p2"
+
+
+def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmation(
+    corpus: _Corpus,
+) -> None:
+    """An `other:` predicate is legal and enforced again by PostgreSQL."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.dynamic_relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.object_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice travel?",
+        entity_ids=(corpus.subject_id,),
+        predicate="other:traveled",
+        evaluated_at=_NOW,
+    )
+    wrong_filter = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where did Alice travel?",
+        entity_ids=(corpus.subject_id,),
+        predicate="reports_to",
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.dynamic_relation_id,)
+    assert graph.calls[0]["predicates"] == ("other:traveled",)
+    assert graph.calls[1]["predicates"] == ("reports_to",)
+    assert wrong_filter.facts == ()
+
+
+def test_default_fact_context_reports_missing_p2_without_widening(
+    corpus: _Corpus,
+) -> None:
+    """No graph dependency is a boundary before P1 nomination or embedding."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    embedded_before = len(corpus.provider.embedded_texts)
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert answer.facts == ()
+    assert index.requested_k == []
+    assert len(corpus.provider.embedded_texts) == embedded_before
+
+
+def test_default_fact_context_discloses_the_combined_entity_cap(
+    corpus: _Corpus,
+) -> None:
+    """A large neighborhood returns 19 nodes beside one anchor and marks loss."""
+    neighbor_ids = tuple(uuid4() for _ in range(25))
+    document_ids = tuple(uuid4() for _ in neighbor_ids)
+    with corpus.engine.begin() as connection:
+        for index, (entity_id, document_id) in enumerate(
+            zip(neighbor_ids, document_ids, strict=True)
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name) VALUES (:entity, :deployment, :name, :name)"
+                ),
+                {
+                    "entity": entity_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "name": f"neighbor-{index}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, document_entity_id, title) VALUES (:doc, :deployment,"
+                    " 'upload', :ref, :entity, :title)"
+                ),
+                {
+                    "doc": document_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "ref": f"batch-c-neighbor-{index}",
+                    "entity": entity_id,
+                    "title": f"Neighbor {index}",
+                },
+            )
+    try:
+        engine, _index = corpus.query_engine(fact_ids=())
+        graph = _GraphNeighborhood(neighbor_ids=neighbor_ids)
+        answer = engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=cast(Any, graph),
+            query="neighbor context",
+            entity_ids=(corpus.subject_id,),
+            evaluated_at=_NOW,
+        )
+
+        assert len(answer.nodes) == 19
+        assert answer.truncation is not None
+        assert answer.truncation.truncated
+        assert answer.truncation.returned == 19
+        assert answer.truncation.estimated_total == 25
+        assert not answer.truncation.total_is_exact
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM documents WHERE doc_id = ANY(:ids)"),
+                {"ids": list(document_ids)},
+            )
+            connection.execute(
+                text("DELETE FROM entities WHERE entity_id = ANY(:ids)"),
+                {"ids": list(neighbor_ids)},
+            )
+
+
+def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) -> None:
+    """“List banks” can nominate Acme's profile, then its bank observation."""
+    index = _ProfileRescueIndex(
+        entity_id=corpus.object_id, fact_id=corpus.bank_observation_id
+    )
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+    )
+    embedded_before = len(corpus.provider.embedded_texts)
+
+    answer = engine.fact_context(
+        deployment_id=_DEPLOYMENT_ID, query="list banks", evaluated_at=_NOW
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
+    assert index.profile_requests == 1
+    assert index.requested_k == [
+        FACT_CONTEXT_CANDIDATE_K + 1,
+        FACT_CONTEXT_CANDIDATE_K + 1,
+    ]
+    assert len(corpus.provider.embedded_texts) == embedded_before + 1
 
 
 def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(

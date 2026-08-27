@@ -56,6 +56,7 @@ from rememberstack.model import FactResult
 from rememberstack.model import FactSupport
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import GraphNode
 from rememberstack.model import HistoryTemporalScope
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
@@ -71,6 +72,7 @@ from rememberstack.model import Validity
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
@@ -138,6 +140,12 @@ FACT_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
 
 TESTIMONY_CONTEXT_K: Final = 50
 """The testimony channel's default per-grain result cap."""
+
+FACT_CONTEXT_PROFILE_ENTITY_K: Final = 20
+"""Maximum profile-text entity nominations used to rescue enumerative queries."""
+
+DEFAULT_FACT_CONTEXT_HOPS: Final = 1
+"""Ordinary D97 neighborhood depth; named graph recipes may still ask for two."""
 
 TESTIMONY_CONTEXT_CANDIDATE_K: Final = 200
 """The testimony channel's default per-channel nomination cap."""
@@ -551,11 +559,13 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...] = (),
         k: int = 15,
         evidence_per_fact: int = 3,
+        predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
         _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
@@ -581,6 +591,7 @@ class QueryEngine:
             deployment_id=deployment_id,
             query=query,
             entity_ids=entity_ids,
+            predicate=predicate,
             time=selected_time,
             evaluated_at=evaluation,
         )
@@ -605,6 +616,7 @@ class QueryEngine:
                     time=selected_time,
                     evaluated_at=evaluation,
                     entity_ids=entity_ids,
+                    predicate=predicate,
                     deadline=database_deadline,
                 )
                 visited_candidates += len(batch)
@@ -645,6 +657,7 @@ class QueryEngine:
             evidence_per_fact=evidence_per_fact,
             budget=FACT_CONTEXT_EVIDENCE_BUDGET,
         )
+
         returned_counts = Counter(
             (str(row["kind"]), row["fact_id"], str(row["stance"])) for row in selected
         )
@@ -725,6 +738,202 @@ class QueryEngine:
                 explanation=f"no adjudicated facts match {query!r}",
                 workaround=("broaden the query or inspect source testimony"),
             ),
+        )
+
+    @_with_surface(SurfaceCostKind.OPERATION)
+    def default_fact_context(
+        self,
+        *,
+        deployment_id: UUID,
+        graph_queries: "GraphQueries | None",
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = 15,
+        evidence_per_fact: int = 3,
+        hops: int = DEFAULT_FACT_CONTEXT_HOPS,
+        predicate: str | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+    ) -> Envelope:
+        """Apply D97's default entity-neighborhood then fact-text recipe.
+
+        Callers resolve names first and pass the complete candidate choice as
+        ids. PostgreSQL validates those anchors, P2 expands them with an empty
+        predicate list by default, and fact text is then searched only inside
+        the bounded anchor-plus-neighbor scope. A missing or lagging P2 is a
+        typed boundary rather than a silent anchor-only fallback. Interval and
+        history reads preserve their explicit anchor scope because P2 exposes
+        point-in-time traversal only; their freshness therefore has no P2 stamp.
+        """
+        _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        _validate_default_fact_context_hops(hops=hops)
+        _validate_optional_predicate(predicate=predicate)
+        anchors = _validate_context_entity_ids(entity_ids=entity_ids)
+        evaluation = evaluated_at or datetime.now(UTC)
+        selected_time = time or CurrentFactTime()
+        if not anchors:
+            return self.fact_context(
+                deployment_id=deployment_id,
+                query=query,
+                entity_ids=(),
+                k=k,
+                evidence_per_fact=evidence_per_fact,
+                predicate=predicate,
+                time=selected_time,
+                evaluated_at=evaluation,
+            )
+        with self._engine.connect() as connection:
+            if not _context_entities_are_current(
+                connection=connection, deployment_id=deployment_id, entity_ids=anchors
+            ):
+                return _unknown_context_entity(
+                    grain=Grain.FACT,
+                    evaluated_at=evaluation,
+                    temporal_scope=_fact_temporal_scope(
+                        time=selected_time, evaluated_at=evaluation
+                    ),
+                )
+        if isinstance(selected_time, (OverlapFactTime, HistoryFactTime)):
+            return self.fact_context(
+                deployment_id=deployment_id,
+                query=query,
+                entity_ids=anchors,
+                k=k,
+                evidence_per_fact=evidence_per_fact,
+                predicate=predicate,
+                time=selected_time,
+                evaluated_at=evaluation,
+            )
+        if graph_queries is None:
+            return _fact_context_graph_boundary(
+                time=selected_time,
+                evaluated_at=evaluation,
+                explanation="the P2 graph projection is not configured",
+            )
+
+        remaining = CONTEXT_ENTITY_LIMIT - len(anchors)
+        neighbors: dict[UUID, GraphNode] = {}
+        graph_answers: list[Envelope] = []
+        graph_cap_applied = remaining == 0
+        for anchor in anchors:
+            if remaining == 0:
+                graph_cap_applied = True
+                break
+            graph = graph_queries.neighborhood(
+                entity_id=anchor,
+                hops=hops,
+                predicates=(predicate,) if predicate is not None else (),
+                valid_at=_fact_context_graph_time(
+                    time=selected_time, evaluated_at=evaluation
+                ),
+                limit=remaining,
+            )
+            graph_answers.append(graph)
+            if (
+                graph.negative is not None
+                and graph.negative.kind is not NegativeKind.KNOWN_EMPTY
+            ):
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation=(
+                        "the P2 graph projection could not expand a current anchor: "
+                        f"{graph.negative.explanation}"
+                    ),
+                    freshness=graph.freshness,
+                )
+            for node in graph.nodes:
+                if node.entity_id in anchors or node.entity_id in neighbors:
+                    continue
+                neighbors[node.entity_id] = node
+                remaining -= 1
+                if remaining == 0:
+                    break
+            graph_cap_applied = graph_cap_applied or bool(
+                graph.truncation is not None and graph.truncation.truncated
+            )
+
+        scoped_ids = (*anchors, *neighbors)
+        with self._engine.connect() as connection:
+            if not _context_entities_are_current(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_ids=scoped_ids,
+            ):
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation=(
+                        "the P2 graph projection nominated a non-current neighbor"
+                    ),
+                    freshness=(graph_answers[0].freshness if graph_answers else None),
+                )
+        facts = self.fact_context(
+            deployment_id=deployment_id,
+            query=query,
+            entity_ids=scoped_ids,
+            k=k,
+            evidence_per_fact=evidence_per_fact,
+            predicate=predicate,
+            time=selected_time,
+            evaluated_at=evaluation,
+        )
+        graph_freshness = graph_answers[0].freshness if graph_answers else None
+        fact_truncation = facts.truncation
+        graph_estimated = sum(
+            (
+                graph.truncation.estimated_total
+                if graph.truncation is not None
+                else len(graph.nodes)
+            )
+            for graph in graph_answers
+        )
+        fact_estimated = (
+            fact_truncation.estimated_total
+            if fact_truncation is not None
+            else len(facts.facts)
+        )
+        graph_exact = (
+            len(graph_answers) <= 1
+            and not graph_cap_applied
+            and all(
+                graph.truncation is None or graph.truncation.total_is_exact
+                for graph in graph_answers
+            )
+        )
+        return facts.model_copy(
+            update={
+                "nodes": tuple(neighbors.values()),
+                "freshness": (
+                    facts.freshness
+                    if graph_freshness is None
+                    else facts.freshness.model_copy(
+                        update={
+                            "p2_snapshot_version": graph_freshness.p2_snapshot_version,
+                            "p2_snapshot_ts": graph_freshness.p2_snapshot_ts,
+                            "p2_believed_at_horizon": (
+                                graph_freshness.p2_believed_at_horizon
+                            ),
+                        }
+                    )
+                ),
+                "truncation": Truncation(
+                    truncated=(
+                        graph_cap_applied
+                        or bool(
+                            fact_truncation is not None and fact_truncation.truncated
+                        )
+                    ),
+                    returned=len(facts.facts) + len(neighbors),
+                    estimated_total=fact_estimated + graph_estimated,
+                    total_is_exact=(
+                        graph_exact
+                        and bool(
+                            fact_truncation is None or fact_truncation.total_is_exact
+                        )
+                    ),
+                ),
+            }
         )
 
     @_with_surface(SurfaceCostKind.OPERATION)
@@ -1995,47 +2204,60 @@ class QueryEngine:
         deployment_id: UUID,
         query: str,
         entity_ids: tuple[UUID, ...],
+        predicate: str | None,
         time: FactTime,
         evaluated_at: datetime,
     ) -> tuple[P1Nomination, ...]:
         """Rank candidates, deferring final fact authority to the confirm gate."""
-        nomination_method = getattr(self._search_index, "nominate_facts_scored", None)
-        if callable(nomination_method):
-            return cast(
-                "tuple[P1Nomination, ...]",
-                nomination_method(
-                    deployment_id=str(deployment_id),
-                    vector=self._embed(
-                        query=query,
-                        call_site=SurfaceCallSite.FACT_CONTEXT,
-                        deployment_id=deployment_id,
-                    ),
-                    k=FACT_CONTEXT_CANDIDATE_K + 1,
-                    kind=None,
-                    time=time,
-                    evaluated_at=evaluated_at,
-                    entity_ids=tuple(str(item) for item in entity_ids),
-                ),
-            )
-        method = getattr(self._search_index, "search_facts_scored", None)
-        if callable(method):
-            return cast(
-                "tuple[P1Nomination, ...]",
-                method(
-                    deployment_id=str(deployment_id),
-                    vector=self._embed(
-                        query=query,
-                        call_site=SurfaceCallSite.FACT_CONTEXT,
-                        deployment_id=deployment_id,
-                    ),
-                    k=FACT_CONTEXT_CANDIDATE_K + 1,
-                    kind=None,
-                    time=time,
-                    evaluated_at=evaluated_at,
-                    entity_ids=tuple(str(item) for item in entity_ids),
-                ),
-            )
-        raise RuntimeError("fact_context requires scored, time-filtered P1 search")
+        query_vector = self._embed(
+            query=query,
+            call_site=SurfaceCallSite.FACT_CONTEXT,
+            deployment_id=deployment_id,
+        )
+        method = (
+            None
+            if predicate is not None
+            else getattr(self._search_index, "nominate_facts_scored", None)
+        )
+        if not callable(method):
+            method = getattr(self._search_index, "search_facts_scored", None)
+        if not callable(method):
+            raise RuntimeError("fact_context requires scored, time-filtered P1 search")
+
+        def nominate(*, scope: tuple[UUID, ...]) -> tuple[P1Nomination, ...]:
+            """Run the selected bounded P1 fact nomination in one entity scope."""
+            arguments: dict[str, object] = {
+                "deployment_id": str(deployment_id),
+                "vector": query_vector,
+                "k": FACT_CONTEXT_CANDIDATE_K + 1,
+                "kind": None,
+                "time": time,
+                "evaluated_at": evaluated_at,
+                "entity_ids": tuple(str(item) for item in scope),
+            }
+            if predicate is not None:
+                arguments["equality_filters"] = {"predicate": predicate}
+            return cast("tuple[P1Nomination, ...]", method(**arguments))
+
+        nominated = nominate(scope=entity_ids)
+        entity_method = getattr(self._search_index, "search_entities_scored", None)
+        if entity_ids or not callable(entity_method):
+            return nominated
+        profile_entities = cast(
+            "tuple[P1Nomination, ...]",
+            entity_method(
+                deployment_id=str(deployment_id),
+                vector=query_vector,
+                k=FACT_CONTEXT_PROFILE_ENTITY_K,
+            ),
+        )
+        profile_ids = tuple(UUID(item.item_id) for item in profile_entities)
+        if not profile_ids:
+            return nominated
+        return _fuse_fact_nominations(
+            channels=(nominated, nominate(scope=profile_ids)),
+            limit=FACT_CONTEXT_CANDIDATE_K + 1,
+        )
 
     def _resolve_context_entity(
         self, *, deployment_id: UUID, entity: str, grain: Grain
@@ -2538,6 +2760,38 @@ def _validate_fact_context_bounds(*, k: int, evidence_per_fact: int) -> None:
         raise ValueError("evidence_per_fact must be between 1 and 5")
 
 
+def _validate_default_fact_context_hops(*, hops: int) -> None:
+    """Keep the ordinary neighborhood recipe inside its measured depth."""
+    if not 1 <= hops <= 2:
+        raise ValueError("fact_context hops must be between 1 and 2")
+
+
+def _validate_optional_predicate(*, predicate: str | None) -> None:
+    """Accept every stored predicate spelling while rejecting empty filters."""
+    if predicate is not None and not 1 <= len(predicate) <= 255:
+        raise ValueError("predicate must contain between 1 and 255 characters")
+
+
+def _fuse_fact_nominations(
+    *, channels: tuple[tuple[P1Nomination, ...], ...], limit: int
+) -> tuple[P1Nomination, ...]:
+    """Fuse fact coordinates without confusing relation/observation UUIDs."""
+    scores: dict[tuple[str, str], float] = {}
+    for channel in channels:
+        for item in channel:
+            if item.qualifier not in {"relation", "observation"}:
+                continue
+            key = (item.qualifier, item.item_id)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (DEFAULT_RRF_K + item.rank)
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], *item[0]))[:limit]
+    return tuple(
+        P1Nomination(
+            item_id=key[1], rank=rank, score=score, channel="rrf", qualifier=key[0]
+        )
+        for rank, (key, score) in enumerate(ranked, start=1)
+    )
+
+
 def _fact_context_confirmation_batch_size(*, k: int) -> int:
     """Confirm enough rows for k plus truncation without expanding all 30."""
     return min(
@@ -2626,6 +2880,7 @@ def _confirm_fact_context(
     time: FactTime,
     evaluated_at: datetime,
     entity_ids: tuple[UUID, ...],
+    predicate: str | None,
     deadline: float,
 ) -> tuple[RowMapping, ...]:
     """Re-confirm exact nominated identities, time, and anchors by fact kind."""
@@ -2644,6 +2899,7 @@ def _confirm_fact_context(
                 "deployment_id": deployment_id,
                 "fact_ids": fact_ids,
                 "entity_ids": list(entity_ids),
+                "predicate": predicate,
                 **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
             },
         ).mappings()
@@ -2722,6 +2978,37 @@ def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
             }
         )
     return HistoryTemporalScope(evaluated_at=evaluated_at, believed_at=evaluated_at)
+
+
+def _fact_context_graph_time(*, time: FactTime, evaluated_at: datetime) -> datetime:
+    """Select the single world-time instant supported by P2 traversal."""
+    if isinstance(time, AtFactTime):
+        return time.at
+    if isinstance(time, CurrentFactTime):
+        return evaluated_at
+    raise ValueError("overlap and history fact scopes have no single graph instant")
+
+
+def _fact_context_graph_boundary(
+    *,
+    time: FactTime,
+    evaluated_at: datetime,
+    explanation: str,
+    freshness: Freshness | None = None,
+) -> Envelope:
+    """Expose an unavailable graph dependency without widening fact scope."""
+    return _envelope(
+        grain=Grain.FACT,
+        temporal_scope=_fact_temporal_scope(time=time, evaluated_at=evaluated_at),
+        freshness=freshness or _freshness(at=evaluated_at),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation=explanation,
+            workaround=(
+                "build a fresh P2 projection or use direct lookup/search primitives"
+            ),
+        ),
+    )
 
 
 def _unknown_context_entity(
@@ -3216,6 +3503,8 @@ def _confirm_fact_context_statement(
      AND fact.fact_kind = '{fact_kind}'
      AND fact.fact_id = requested.fact_id
     WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
+      AND (CAST(:predicate AS text) IS NULL
+           OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
       {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants

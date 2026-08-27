@@ -3,6 +3,7 @@
 from datetime import datetime
 from datetime import UTC
 from typing import cast
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from rememberstack.model import AssuredOperation
@@ -13,6 +14,9 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.surfaces.query_engine import QueryEngine
+
+if TYPE_CHECKING:
+    from rememberstack.surfaces.graph_queries import GraphQueries
 
 
 class OperationExecutionError(Exception):
@@ -25,9 +29,12 @@ OperationResult = Envelope | ContextBundleV1
 class OperationExecutor:
     """Run one of the four canonical plans over the query engine authorities."""
 
-    def __init__(self, *, query_engine: QueryEngine) -> None:
+    def __init__(
+        self, *, query_engine: QueryEngine, graph_queries: "GraphQueries | None" = None
+    ) -> None:
         """Bind the executor to one composed zero-LLM query engine."""
         self._engine = query_engine
+        self._graph = graph_queries
 
     def execute(
         self,
@@ -74,12 +81,15 @@ class OperationExecutor:
                 evaluated_at=evaluation,
             )
         if name is AssuredOperationName.FACT_CONTEXT:
-            return self._engine.fact_context(
+            return self._engine.default_fact_context(
                 deployment_id=deployment_id,
+                graph_queries=self._graph,
                 query=query,
                 entity_ids=entity_ids,
                 k=cast(int, arguments.get("k", 15)),
                 evidence_per_fact=cast(int, arguments.get("evidence_per_fact", 3)),
+                hops=cast(int, arguments.get("hops", 1)),
+                predicate=cast(str | None, arguments.get("predicate")),
                 time=selected_time,
                 evaluated_at=evaluation,
             )
@@ -92,12 +102,15 @@ class OperationExecutor:
                 candidate_k=200,
                 evaluated_at=evaluation,
             )
-            facts = self._engine.fact_context(
+            facts = self._engine.default_fact_context(
                 deployment_id=deployment_id,
+                graph_queries=self._graph,
                 query=query,
                 entity_ids=entity_ids,
                 k=15,
                 evidence_per_fact=3,
+                hops=cast(int, arguments.get("hops", 1)),
+                predicate=cast(str | None, arguments.get("predicate")),
                 time=selected_time,
                 evaluated_at=evaluation,
             )

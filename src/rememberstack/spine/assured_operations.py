@@ -189,6 +189,10 @@ _ENTITY_IDS = {
 
 _QUERY = {"type": "string", "required": True, "minLength": 1, "maxLength": 8192}
 
+_HOPS = {"type": "integer", "required": False, "default": 1, "minimum": 1, "maximum": 2}
+
+_PREDICATE = {"type": "string", "required": False, "minLength": 1, "maxLength": 255}
+
 
 def _envelope_schema() -> dict[str, object]:
     """Return the exact D49 envelope JSON schema stored in descriptors."""
@@ -261,6 +265,8 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
                 "minimum": 1,
                 "maximum": 5,
             },
+            "hops": _HOPS,
+            "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},
         },
         result_schema=_envelope_schema(),
@@ -277,6 +283,8 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         parameters={
             "query": _QUERY,
             "entity_ids": _ENTITY_IDS,
+            "hops": _HOPS,
+            "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},
         },
         result_schema=ContextBundleV1.model_json_schema(mode="serialization"),

@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from typing import cast
 from uuid import UUID
 
@@ -104,6 +105,18 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     assert isinstance(fact_properties, dict)
     assert "entity_ids" in testimony_properties
     assert "time" in fact_properties
+    assert fact_properties["hops"] == {
+        "default": 1,
+        "maximum": 2,
+        "minimum": 1,
+        "type": "integer",
+    }
+    assert fact_properties["predicate"] == {
+        "maxLength": 255,
+        "minLength": 1,
+        "type": "string",
+    }
+    assert "type" not in fact_properties
 
 
 def test_fact_time_models_reject_naive_wall_times() -> None:
@@ -250,6 +263,7 @@ class _AuthorityStub:
 
     def __init__(self) -> None:
         self.evaluated_at: list[datetime] = []
+        self.default_fact_arguments: list[dict[str, object]] = []
 
     def testimony_context(self, **arguments: object) -> Envelope:
         """Return testimony while recording the executor's evaluation instant."""
@@ -273,12 +287,41 @@ class _AuthorityStub:
             freshness=Freshness(pg_live_ts=_NOW),
         )
 
+    def default_fact_context(self, **arguments: object) -> Envelope:
+        """Stand in for the D97 recipe while preserving composition evidence."""
+        self.default_fact_arguments.append(arguments)
+        return self.fact_context(**arguments)
+
+
+def test_executor_forwards_default_neighborhood_arguments() -> None:
+    """The public descriptor's hops/predicate values reach the D97 recipe."""
+    authority = _AuthorityStub()
+    graph = object()
+    operation = next(
+        operation
+        for operation in CANONICAL_OPERATIONS
+        if operation.name is AssuredOperationName.FACT_CONTEXT
+    )
+
+    OperationExecutor(
+        query_engine=cast("QueryEngine", authority), graph_queries=cast(Any, graph)
+    ).execute(
+        deployment_id=_DEPLOYMENT_ID,
+        operation=operation,
+        arguments={"query": "travel", "hops": 2, "predicate": "other:traveled"},
+        evaluated_at=_NOW,
+    )
+
+    assert authority.default_fact_arguments[0]["graph_queries"] is graph
+    assert authority.default_fact_arguments[0]["hops"] == 2
+    assert authority.default_fact_arguments[0]["predicate"] == "other:traveled"
+
 
 def test_answer_context_is_pure_composition_at_one_evaluation_cut() -> None:
     """The bundle is field-for-field equal to both direct child calls."""
     direct_authority = _AuthorityStub()
     direct_testimony = direct_authority.testimony_context(evaluated_at=_NOW)
-    direct_facts = direct_authority.fact_context(evaluated_at=_NOW)
+    direct_facts = direct_authority.default_fact_context(evaluated_at=_NOW)
     authority = _AuthorityStub()
     operation = next(
         operation
@@ -300,7 +343,7 @@ def test_answer_context_is_pure_composition_at_one_evaluation_cut() -> None:
 class _FailingFactAuthority(_AuthorityStub):
     """A child authority that proves a bundle cannot be partially returned."""
 
-    def fact_context(self, **arguments: object) -> Envelope:
+    def default_fact_context(self, **arguments: object) -> Envelope:
         """Fail after testimony completes, as a real retrieval error could."""
         del arguments
         raise RuntimeError("fact child failed")

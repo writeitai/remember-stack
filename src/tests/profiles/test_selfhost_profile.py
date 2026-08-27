@@ -25,6 +25,14 @@ def test_selfhost_setup_seeds_shipped_examples() -> None:
     assert "seed_canonical_operations" in source
 
 
+def test_selfhost_assured_operations_share_the_p2_snapshot_reader() -> None:
+    """The D97 recipe traverses the same graph reader as public Cypher."""
+    from rememberstack.profiles import selfhost as selfhost_mod
+
+    source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
+    assert "graph_queries=GraphQueries(reader=graph_reader)" in source
+
+
 def test_selfhost_convert_uses_stock_passthrough_including_plain_text() -> None:
     """Stock convert must route text/plain (CLI .txt) as well as text/markdown."""
     from rememberstack.profiles import selfhost as selfhost_mod

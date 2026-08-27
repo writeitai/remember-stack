@@ -290,6 +290,17 @@
                 "type": "array",
                 "uniqueItems": true
               },
+              "hops": {
+                "default": 1,
+                "maximum": 2,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "predicate": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
               "query": {
                 "maxLength": 8192,
                 "minLength": 1,
@@ -2176,11 +2187,22 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "hops": {
+                "default": 1,
+                "maximum": 2,
+                "minimum": 1,
+                "type": "integer"
+              },
               "k": {
                 "default": 15,
                 "maximum": 30,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "predicate": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
               },
               "query": {
                 "maxLength": 8192,
@@ -37470,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "a8b92da218488baf8fb156358d808121a4038a2c7228e9891d0cd1411b5b597c"
+  "surface_manifest_hash": "365c5876fe9e7832e7811d1b8ccf9114222e06143f9986a4c81fc8db8aa5e285"
 }

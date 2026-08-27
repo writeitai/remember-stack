@@ -667,6 +667,13 @@ class SelfHostProfile:
                 manifest_hash=manifest_hash,
             ),
         )
+        graph_queries = GraphQueries(
+            engine=self._graph_engine,
+            deployment_id=self._settings.deployment_id,
+            work_mem_kib=self._settings.graph_work_mem_kib,
+            max_concurrency=self._settings.graph_max_concurrency,
+            pool_wait_seconds=self._settings.graph_pool_timeout_s,
+        )
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
@@ -680,7 +687,10 @@ class SelfHostProfile:
             ),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
-                executor=OperationExecutor(query_engine=query_engine),
+                executor=OperationExecutor(
+                    query_engine=query_engine,
+                    graph_queries=graph_queries,
+                ),
                 deployment_id=self._settings.deployment_id,
             ),
             open_query=open_query,
@@ -696,13 +706,7 @@ class SelfHostProfile:
                 model_bindings=_model_bindings(),
                 build_revision=_build_revision(),
             ),
-            graph=GraphQueries(
-                engine=self._graph_engine,
-                deployment_id=self._settings.deployment_id,
-                work_mem_kib=self._settings.graph_work_mem_kib,
-                max_concurrency=self._settings.graph_max_concurrency,
-                pool_wait_seconds=self._settings.graph_pool_timeout_s,
-            ),
+            graph=graph_queries,
         )
 
         @app.get("/deployment", response_model=DeploymentBuildInfo)
