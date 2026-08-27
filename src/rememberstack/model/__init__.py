@@ -303,7 +303,6 @@ from rememberstack.model.relations import ObservationCandidate
 from rememberstack.model.relations import RelationCandidate
 from rememberstack.model.relations import ResolvedEntity
 from rememberstack.model.resolution import AdjudicationVerdict
-from rememberstack.model.resolution import P1EntityRow
 from rememberstack.model.resolution import ResolutionCandidate
 from rememberstack.model.resolution import ResolutionThresholds
 from rememberstack.model.resolution import ResolverConfig
@@ -476,7 +475,6 @@ __all__ = (
     "P1ChunkRow",
     "P1ChunkText",
     "P1ClaimRow",
-    "P1EntityRow",
     "P1FactRow",
     "PackedChunk",
     "PerimeterCredential",

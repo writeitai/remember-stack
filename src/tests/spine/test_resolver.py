@@ -324,6 +324,20 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
     ) == (False, "T4_small")
     assert one_sided_provider.embedded_texts == []
 
+    paired_provider = FakeModelProvider(generate_router=_first_token_router)
+    paired = _resolver(engine=database_engine, provider=paired_provider)
+    paired.judge_pair(
+        surface_a="John Smith",
+        surface_b="John Smith",
+        context_a="John Smith lives in Bristol.",
+        context_b="John Smith lives in Prague.",
+    )
+    assert paired_provider.embedded_texts[:2] == [
+        "ENTITY: John Smith\nPROFILE: John Smith lives in Bristol.\n"
+        "SALIENT FACTS:\n- John Smith lives in Bristol.",
+        "ENTITY: John Smith\nCLAIM CONTEXT: John Smith lives in Prague.",
+    ]
+
     with database_engine.connect() as connection:
         notes = connection.execute(
             text(

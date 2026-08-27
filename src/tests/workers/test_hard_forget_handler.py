@@ -67,7 +67,7 @@ class _Deletion:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
-    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID, **_: object) -> None:
         self.events.append("delete-lineage")
 
 

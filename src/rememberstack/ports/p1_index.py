@@ -9,7 +9,6 @@ from typing import runtime_checkable
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import FactTime
 
@@ -276,10 +275,6 @@ class P1ScoredSearchPort(Protocol):
 @runtime_checkable
 class EntityIndexPort(Protocol):
     """The T3 profile-embedding home: entity vectors in P1 (D8/D17)."""
-
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """Insert or replace entity profiles by entity_id; idempotent."""
-        ...
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]

@@ -200,7 +200,10 @@ class HardForgetHandler:
     ) -> None:
         """Run the shared purge path used by both the worker and readiness replay."""
         self._deletion.delete_lineage(
-            deployment_id=manifest.deployment_id, doc_id=manifest.doc_id
+            deployment_id=manifest.deployment_id,
+            doc_id=manifest.doc_id,
+            meter=meter,
+            refresh_profiles=False,
         )
         self._catalog.scrub_postgres(manifest=manifest)
         self._profile_refresher.refresh_many(

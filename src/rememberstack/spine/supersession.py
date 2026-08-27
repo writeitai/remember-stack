@@ -83,7 +83,7 @@ class SupersessionAdjudicator:
         relation_id: UUID,
         meter: CostMeterPort | None = None,
         call_key: str = "supersession",
-    ) -> None:
+    ) -> tuple[UUID, ...]:
         """Run the cascade for one new relation (idempotent per generation).
 
         A non-change-prone predicate, or an empty blocking set, is a clear
@@ -101,7 +101,7 @@ class SupersessionAdjudicator:
                 .one_or_none()
             )
             if subject is None or subject["invalidated_at"] is not None:
-                return  # gone or already retired: nothing to adjudicate
+                return ()  # gone or already retired: nothing to adjudicate
             # serialize the whole (subject, predicate) block (Codex review):
             # concurrent adjudications of one block could otherwise mint
             # disjoint contradiction groups or double-close windows.
@@ -122,7 +122,7 @@ class SupersessionAdjudicator:
             if self._already_adjudicated(
                 connection=connection, relation_id=relation_id
             ):
-                return
+                return ()
             if not subject["is_change_prone"]:
                 self._record(
                     connection=connection,
@@ -134,7 +134,7 @@ class SupersessionAdjudicator:
                     confidence=1.0,
                     features={"reason": "predicate is not change-prone"},
                 )
-                return
+                return ()
             candidates = (
                 connection.execute(
                     _BLOCK_CANDIDATES,
@@ -159,7 +159,8 @@ class SupersessionAdjudicator:
                     confidence=1.0,
                     features={"reason": "no blocked candidates"},
                 )
-                return
+                return ()
+            closed_relation_ids: list[UUID] = []
             for candidate in candidates:
                 if self._same_object_after_redirects(
                     connection=connection,
@@ -190,7 +191,7 @@ class SupersessionAdjudicator:
                     new_row, old_row = subject_row, candidate_row
                 else:
                     new_row, old_row = candidate_row, subject_row
-                self._adjudicate_pair(
+                closed_relation_id = self._adjudicate_pair(
                     connection=connection,
                     deployment_id=deployment_id,
                     work_relation_id=relation_id,
@@ -200,6 +201,9 @@ class SupersessionAdjudicator:
                     meter=meter,
                     call_key=f"{call_key}:{candidate['relation_id']}",
                 )
+                if closed_relation_id is not None:
+                    closed_relation_ids.append(closed_relation_id)
+            return tuple(sorted(set(closed_relation_ids), key=str))
 
     def _adjudicate_pair(
         self,
@@ -212,7 +216,7 @@ class SupersessionAdjudicator:
         old: dict[str, object],
         meter: CostMeterPort | None,
         call_key: str,
-    ) -> None:
+    ) -> UUID | None:
         """Climb the ladder for one blocked pair and apply the outcome.
 
         ``new``/``old`` are source-time oriented. Transcript rows for
@@ -286,7 +290,7 @@ class SupersessionAdjudicator:
                     confidence=verdict.confidence,
                     features={**features, "reason": "window already closed"},
                 )
-                return
+                return None
             self._record(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -297,6 +301,7 @@ class SupersessionAdjudicator:
                 confidence=verdict.confidence,
                 features={**features, "boundary": str(new["asserted_at"] or "now")},
             )
+            return old_relation_id
         elif verdict.outcome is SupersessionOutcome.CONTRADICT:
             group = old["contradiction_group"] or uuid4()
             connection.execute(
@@ -322,6 +327,7 @@ class SupersessionAdjudicator:
                 confidence=verdict.confidence,
                 features={**features, "contradiction_group": str(group)},
             )
+            return None
         else:  # coexist — the fail-safe: both stand, nothing changes
             related = (
                 old_relation_id
@@ -338,6 +344,7 @@ class SupersessionAdjudicator:
                 confidence=verdict.confidence,
                 features=features,
             )
+            return None
 
     def _same_object_after_redirects(
         self, *, connection: Connection, deployment_id: UUID, left: UUID, right: UUID

@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import ReviewDecisionError
 from rememberstack.model import ReviewItem
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -28,9 +29,12 @@ REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000
 class ReviewQueue:
     """List, flag, and decide review items over an explicitly composed engine."""
 
-    def __init__(self, *, engine: Engine) -> None:
-        """Bind the queue to the spine database."""
+    def __init__(
+        self, *, engine: Engine, profile_refresher: ProfileRefresherPort
+    ) -> None:
+        """Bind review mutations and their evidence-derived projection."""
         self._engine = engine
+        self._profile_refresher = profile_refresher
 
     def pending(
         self, *, deployment_id: UUID, limit: int = 20
@@ -185,6 +189,8 @@ class ReviewQueue:
             raise ReviewDecisionError(
                 f"verdict {verdict!r} is not valid for a support_withdrawn item"
             )
+        fact_kind: str
+        fact_id: UUID
         with self._engine.begin() as connection:
             item = self._claim_item(
                 connection=connection,
@@ -194,37 +200,59 @@ class ReviewQueue:
                 verdict=verdict,
             )
             if item is None:
-                return  # idempotent retry of the same verdict
-            candidate = _candidate(item=item)
-            fact_kind = str(candidate["fact_kind"])
-            fact_id = UUID(str(candidate["fact_id"]))
-            claim_id = UUID(str(candidate["claim_id"]))
-            if verdict == "restore_support":
-                self._restore_support(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    fact_kind=fact_kind,
-                    fact_id=fact_id,
-                    claim_id=claim_id,
-                    review_id=review_id,
+                # The database verdict is already durable, but a prior process
+                # may have failed after commit and before the derived profile
+                # refresh. Re-read its fact coordinates so the identical retry
+                # repairs that projection without duplicating ledger rows.
+                item = dict(
+                    connection.execute(
+                        _SELECT_ITEM_LOCKED,
+                        {"deployment_id": deployment_id, "review_id": review_id},
+                    )
+                    .mappings()
+                    .one()
                 )
-            elif verdict == "invalidate_fact":
-                self._invalidate_fact(
+                candidate = _candidate(item=item)
+                fact_kind = str(candidate["fact_kind"])
+                fact_id = UUID(str(candidate["fact_id"]))
+            else:
+                candidate = _candidate(item=item)
+                fact_kind = str(candidate["fact_kind"])
+                fact_id = UUID(str(candidate["fact_id"]))
+                claim_id = UUID(str(candidate["claim_id"]))
+                if verdict == "restore_support":
+                    self._restore_support(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        fact_kind=fact_kind,
+                        fact_id=fact_id,
+                        claim_id=claim_id,
+                        review_id=review_id,
+                    )
+                elif verdict == "invalidate_fact":
+                    self._invalidate_fact(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        fact_kind=fact_kind,
+                        fact_id=fact_id,
+                        claim_id=claim_id,
+                        review_id=review_id,
+                    )
+                self._close(
                     connection=connection,
-                    deployment_id=deployment_id,
-                    fact_kind=fact_kind,
-                    fact_id=fact_id,
-                    claim_id=claim_id,
                     review_id=review_id,
+                    status="deferred" if verdict == "uncertain" else "accepted",
+                    verdict=verdict,
+                    note=note,
+                    reviewer=reviewer,
+                    result_decision_id=None,
                 )
-            self._close(
-                connection=connection,
-                review_id=review_id,
-                status="deferred" if verdict == "uncertain" else "accepted",
-                verdict=verdict,
-                note=note,
-                reviewer=reviewer,
-                result_decision_id=None,
+        if verdict != "uncertain":
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=(fact_id,) if fact_kind == "relation" else (),
+                observation_ids=(fact_id,) if fact_kind == "observation" else (),
+                call_key=f"profile:review:{review_id}",
             )
 
     def _restore_support(

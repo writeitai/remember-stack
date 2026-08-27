@@ -13,11 +13,9 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
-from rememberstack.core.entity_profile_input import entity_profile_embedding_input
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -310,49 +308,6 @@ class PostgresP1Index:
                     },
                 )
                 _require_updated(result.rowcount, target=row.kind, item_id=row.fact_id)
-
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """Write entity profile vectors directly onto natural entity rows."""
-        if not rows:
-            return
-        _require_vectors(rows=tuple(row.vector for row in rows))
-        statement = text(
-            """
-            UPDATE entities SET
-              profile_summary = :profile_summary,
-              embedding = CAST(:embedding AS vector),
-              embedding_model = :model,
-              embedding_input_policy_version = :policy,
-              embedding_text_hash = :text_hash,
-              updated_at = now()
-            WHERE deployment_id = :deployment_id AND entity_id = :entity_id
-              AND canonical_name = :canonical_name
-            """
-        )
-        with self._engine.begin() as connection:
-            for row in rows:
-                result = connection.execute(
-                    statement,
-                    {
-                        "embedding": _vector_literal(row.vector),
-                        "model": self._embedding_model,
-                        "policy": ENTITY_INPUT_POLICY,
-                        "text_hash": embedding_text_hash(
-                            entity_profile_embedding_input(
-                                canonical_name=row.canonical_name,
-                                profile_summary=row.profile_summary,
-                                salient_facts=row.salient_facts,
-                            )
-                        ),
-                        "profile_summary": row.profile_summary,
-                        "deployment_id": row.deployment_id,
-                        "entity_id": row.entity_id,
-                        "canonical_name": row.canonical_name,
-                    },
-                )
-                _require_updated(
-                    result.rowcount, target="entity", item_id=row.entity_id
-                )
 
     def claim_vectors(
         self, *, deployment_id: str, claim_ids: tuple[str, ...]

@@ -395,7 +395,9 @@ class DeletionService:
         self._catalog = catalog
         self._profile_refresher = profile_refresher
 
-    def delete_version(self, *, version_id: UUID) -> ReconciliationDelta:
+    def delete_version(
+        self, *, version_id: UUID, meter: CostMeterPort | None = None
+    ) -> ReconciliationDelta:
         """End one version's testimony; the lineage continues (§8)."""
         info = self._catalog.delete_version(version_id=version_id)
         deployment_id: UUID = info["deployment_id"]  # type: ignore[assignment]
@@ -426,11 +428,16 @@ class DeletionService:
             reconciliation_id=_derived_run_id(kind="delete-version", id_=version_id),
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
-        self._refresh_profiles(deployment_id=deployment_id, delta=delta)
+        self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
         return delta
 
     def delete_lineage(
-        self, *, deployment_id: UUID, doc_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        meter: CostMeterPort | None = None,
+        refresh_profiles: bool = True,
     ) -> ReconciliationDelta:
         """Remove a lineage's whole contribution (operator grain, §8)."""
         self._catalog.delete_lineage(doc_id=doc_id)
@@ -440,17 +447,25 @@ class DeletionService:
             doc_id=doc_id,
             reconciliation_id=_derived_run_id(kind="delete-lineage", id_=doc_id),
         )
-        self._refresh_profiles(deployment_id=deployment_id, delta=delta)
+        if refresh_profiles:
+            self._refresh_profiles(
+                deployment_id=deployment_id, delta=delta, meter=meter
+            )
         return delta
 
     def _refresh_profiles(
-        self, *, deployment_id: UUID, delta: ReconciliationDelta
+        self,
+        *,
+        deployment_id: UUID,
+        delta: ReconciliationDelta,
+        meter: CostMeterPort | None,
     ) -> None:
         """Refresh all fact endpoints whose support or validity was recomputed."""
         self._profile_refresher.refresh_for_facts(
             deployment_id=deployment_id,
             relation_ids=delta.recounted_relations,
             observation_ids=delta.recounted_observations,
+            meter=meter,
             call_key=f"profile:delete:{delta.reconciliation_id}",
         )
 

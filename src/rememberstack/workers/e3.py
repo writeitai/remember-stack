@@ -735,13 +735,15 @@ class AdjudicateSupersessionHandler:
         self,
         *,
         adjudicator: SupersessionAdjudicator,
+        profile_refresher: ProfileRefresherPort,
         facts: FactCatalog | None = None,
         chunk_catalog: ChunkCatalog | None = None,
         claim_catalog: ClaimCatalog | None = None,
         chunker_version: str = "",
     ) -> None:
-        """Bind the handler to the composed adjudicator (optional D88 catalogs)."""
+        """Bind adjudication, its profile projection, and optional D88 catalogs."""
         self._adjudicator = adjudicator
+        self._profile_refresher = profile_refresher
         self._facts = facts
         self._chunk_catalog = chunk_catalog
         self._claim_catalog = claim_catalog
@@ -790,13 +792,23 @@ class AdjudicateSupersessionHandler:
                     normalizer_version=normalizer_version,
                 )
                 relation_ids = [str(rid) for rid in loaded]
+        closed_relation_ids: list[UUID] = []
         for raw in relation_ids:
-            self._adjudicator.adjudicate_new_relation(
-                deployment_id=work.deployment_id,
-                relation_id=UUID(str(raw)),
-                meter=meter,
-                call_key=f"supersession:{raw}",
+            closed_relation_ids.extend(
+                self._adjudicator.adjudicate_new_relation(
+                    deployment_id=work.deployment_id,
+                    relation_id=UUID(str(raw)),
+                    meter=meter,
+                    call_key=f"supersession:{raw}",
+                )
             )
+        self._profile_refresher.refresh_for_facts(
+            deployment_id=work.deployment_id,
+            relation_ids=tuple(closed_relation_ids),
+            observation_ids=(),
+            meter=meter,
+            call_key=f"profile:supersession:{work.target_id}",
+        )
         version_id = payload.get("version_id")
         representation_id = payload.get("representation_id")
         if not isinstance(version_id, str) or not isinstance(representation_id, str):

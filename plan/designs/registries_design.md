@@ -108,14 +108,16 @@ against the ready current vector on that row.
 
 They are maintained by the deterministic **profile refresher** composed synchronously after
 evidence mutations. There is no profile-writing LLM and no second salient-fact authority. The
-refresher evidence-ranks current supported observations and relation prose, joins a bounded
-prefix into `profile_summary`, and embeds the exact `name + summary + salient facts` input under
+refresher evidence-ranks supported open-ended observations and relation prose (capped
+`valid_until` rows are historical, not profile inputs), joins a bounded prefix into
+`profile_summary`, and embeds the exact `name + summary + salient facts` input under
 `entity-profile-v1`. It holds the entity evidence lock from input selection through the vector
 write. The exact input hash, model, and policy are the debounce and staleness attestation:
 unchanged inputs make no provider call.
 
-New entities have no profile vector until they have evidence. Evidence add/recount/closure and
-D74 hard-forget invoke the same refresher; hard-forget refreshes shared survivor ids after the
+New entities have no profile vector until they have evidence. Evidence add/recount/supersession,
+terminal human review, normal deletion, and D74 hard-forget invoke the same refresher;
+hard-forget refreshes shared survivor ids after the
 lineage scrub and before projection rebuild/verification. When no supported fact remains, the
 summary, vector, and complete attestation clear together. The resolver independently loads the
 current salient facts and reconstructs the expected summary/hash. A mismatch makes T3 see a
@@ -123,6 +125,11 @@ missing profile and makes T4 rely on the current facts rather than stale cached 
 missed or queued stale refresh can cost the cheap path but cannot authorize a merge. Boundaries:
 the refresher writes only the disposable profile projection and its attestation — never names,
 aliases, status, or identity.
+
+The hard policy cut vacates every legacy name-only vector. Deployment setup then scans active
+entity ids in bounded keyset pages through this same idempotent refresher before marking the
+entity semantic channel ready. A provider failure leaves the channel unavailable; rerunning setup
+resumes safely because already-attested profiles debounce.
 
 ## 3. Resolution cascade — T0–T4, block-loose / decide-tight (D17)
 

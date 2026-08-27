@@ -152,11 +152,14 @@ Write-time cascade tiers:
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
-After supported observations or relations change, a deterministic refresher
+After supported open-ended observations or relations change, a deterministic refresher
 rebuilds the entity’s short summary and `entity-profile-v1` vector. Unchanged
-input hashes skip embedding. Normal deletion/reconciliation and hard-forget use
-the same refresh seam; if no supported fact remains, every profile cache field
-clears together.
+input hashes skip embedding. Supersession, terminal human review, normal
+deletion/reconciliation, and hard-forget use the same refresh seam; if no
+supported fact remains, every profile cache field clears together. During the
+profile-policy cut, `remember selfhost setup` clears name-only vectors, rebuilds
+active entity profiles in bounded resumable pages, and publishes entity semantic
+search only after that pass completes.
 
 Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id. Entities have **no type class**: extract emits names only. `works_for` between two people is allowed.
 

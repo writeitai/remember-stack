@@ -24,7 +24,6 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import P1EntityRow
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
 from rememberstack.spine import FactCatalog
@@ -38,9 +37,6 @@ _DEPLOYMENT_ID = UUID("b1000000-0000-0000-0000-000000000001")
 
 class _StaticIndex:
     """An EntityIndexPort double (profiles unused in these proofs)."""
-
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """No-op."""
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]

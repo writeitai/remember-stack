@@ -173,11 +173,15 @@ built from.
   the observations. That is accepted.
 
 The as-built starting refresher is deterministic: it evidence-ranks a
-bounded set of current supported observation statements and canonical
-relation prose, joins the leading statements into `profile_summary`, and
+bounded set of supported, open-ended observation statements and canonical
+relation prose (`valid_until IS NULL`, so capped superseded facts cannot
+outrank their replacements), joins the leading statements into `profile_summary`, and
 embeds `name + summary + salient facts` under `entity-profile-v1`. It is
-composed synchronously after evidence add/recount/closure and after the D74
-lineage scrub. The exact text hash debounces unchanged evidence. Resolution
+composed synchronously after evidence add/recount/supersession, terminal human
+review, normal deletion, and the D74 lineage scrub. Deployment setup keyset-
+backfills every active entity after a policy-cut migration and republishes the
+entity semantic channel only after that resumable pass completes. The exact
+text hash debounces unchanged evidence. Resolution
 reconstructs the expected summary/hash from current facts; stale or missing
 attestation disables T3 and T4 still receives the current salient statements.
 No queued stale snapshot can overwrite newer evidence because selection and

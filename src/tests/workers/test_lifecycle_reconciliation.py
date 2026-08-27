@@ -232,7 +232,9 @@ class _LifecycleRig:
         chunk_catalog = ChunkCatalog(engine=engine)
         claim_catalog = ClaimCatalog(engine=engine)
         self.lifecycle = LifecycleCatalog(engine=engine)
-        self.review = ReviewQueue(engine=engine)
+        self.review = ReviewQueue(
+            engine=engine, profile_refresher=self.profile_refresher
+        )
         self.sync = SyncCatalog(engine=engine)
         self.finalizer = CycleFinalizer(catalog=self.lifecycle)
         self.deletion = DeletionService(
@@ -336,7 +338,8 @@ class _LifecycleRig:
                     engine=engine,
                     model_provider=self.provider,
                     settings=SupersessionSettings(),
-                )
+                ),
+                profile_refresher=self.profile_refresher,
             ),
         )
         registry.register(

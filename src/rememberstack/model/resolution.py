@@ -65,16 +65,3 @@ class AdjudicationVerdict(BaseModel):
     match: bool
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     rationale: str | None = None
-
-
-class P1EntityRow(BaseModel):
-    """One row of the P1 entities table: the T3 profile embedding home (D8)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    entity_id: UUID
-    deployment_id: UUID
-    canonical_name: _NonEmpty
-    profile_summary: _NonEmpty
-    salient_facts: Annotated[tuple[_NonEmpty, ...], Field(min_length=1)]
-    vector: Annotated[tuple[float, ...], Field(min_length=1)]

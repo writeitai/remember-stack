@@ -18,6 +18,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 
 PROFILE_SUMMARY_FACT_LIMIT: Final = 5
 PROFILE_SALIENT_FACT_LIMIT: Final = 8
+PROFILE_BACKFILL_BATCH_SIZE: Final = 100
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,15 @@ class ProfileRefreshResult:
     has_evidence: bool
     input_hash: str | None
     salient_facts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProfileBackfillResult:
+    """Bounded-keyset backfill totals for one deployment."""
+
+    scanned: int
+    updated: int
+    with_evidence: int
 
 
 class EntityProfileRefresher:
@@ -219,6 +229,55 @@ class EntityProfileRefresher:
             call_key=call_key,
         )
 
+    def backfill(
+        self,
+        *,
+        deployment_id: UUID,
+        batch_size: int = PROFILE_BACKFILL_BATCH_SIZE,
+        meter: CostMeterPort | None = None,
+        call_key: str = "backfill_profile",
+    ) -> ProfileBackfillResult:
+        """Refresh every active entity through bounded UUID-keyset pages.
+
+        Deployment setup runs this after a profile-policy migration vacates
+        legacy vectors and before it republishes the entity semantic channel.
+        A failed run is safely resumable because each exact profile input is
+        independently attested and debounced.
+        """
+        if batch_size < 1:
+            raise ValueError("profile backfill batch_size must be positive")
+        scanned = 0
+        updated = 0
+        with_evidence = 0
+        after_id: UUID | None = None
+        while True:
+            with self._engine.connect() as connection:
+                entity_ids = tuple(
+                    connection.execute(
+                        _SELECT_ACTIVE_ENTITY_PAGE,
+                        {
+                            "deployment_id": deployment_id,
+                            "after_id": after_id,
+                            "limit": batch_size,
+                        },
+                    ).scalars()
+                )
+            if not entity_ids:
+                break
+            results = self.refresh_many(
+                deployment_id=deployment_id,
+                entity_ids=entity_ids,
+                meter=meter,
+                call_key=call_key,
+            )
+            scanned += len(results)
+            updated += sum(result.updated for result in results)
+            with_evidence += sum(result.has_evidence for result in results)
+            after_id = entity_ids[-1]
+        return ProfileBackfillResult(
+            scanned=scanned, updated=updated, with_evidence=with_evidence
+        )
+
 
 def load_entity_profile_evidence(
     *, connection: Connection, deployment_id: UUID, entity_id: UUID
@@ -311,6 +370,7 @@ _SELECT_SALIENT_FACTS = text(
       WHERE o.deployment_id = :deployment_id
         AND o.subject_entity_id = :entity_id
         AND o.invalidated_at IS NULL
+        AND o.valid_until IS NULL
         AND o.evidence_count > 0
       UNION ALL
       SELECT subject.canonical_name || ' '
@@ -328,11 +388,24 @@ _SELECT_SALIENT_FACTS = text(
       WHERE r.deployment_id = :deployment_id
         AND (r.subject_entity_id = :entity_id OR r.object_entity_id = :entity_id)
         AND r.invalidated_at IS NULL
+        AND r.valid_until IS NULL
         AND r.evidence_count > 0
     )
     SELECT statement
     FROM candidates
     ORDER BY evidence_count DESC, updated_at DESC, kind, fact_id
+    LIMIT :limit
+    """
+)
+
+_SELECT_ACTIVE_ENTITY_PAGE = text(
+    """
+    SELECT entity_id
+    FROM entities
+    WHERE deployment_id = :deployment_id
+      AND status = 'active'
+      AND (CAST(:after_id AS uuid) IS NULL OR entity_id > CAST(:after_id AS uuid))
+    ORDER BY entity_id
     LIMIT :limit
     """
 )

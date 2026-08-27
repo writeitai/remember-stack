@@ -97,7 +97,7 @@ class _Paths:
 
 
 class _Deletion:
-    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+    def delete_lineage(self, *, deployment_id: UUID, doc_id: UUID, **_: object) -> None:
         return None
 
 

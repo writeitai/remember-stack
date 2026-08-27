@@ -315,7 +315,8 @@ class _E3Rig:
                     engine=engine,
                     model_provider=self.provider,
                     settings=SupersessionSettings(),
-                )
+                ),
+                profile_refresher=profile_refresher,
             ),
         )
         registry.register(
@@ -342,7 +343,9 @@ class _E3Rig:
             stage=PipelineStage.RECONCILE,
             handler=ReconcileHandler(
                 catalog=LifecycleCatalog(engine=engine),
-                review_queue=ReviewQueue(engine=engine),
+                review_queue=ReviewQueue(
+                    engine=engine, profile_refresher=profile_refresher
+                ),
                 profile_refresher=profile_refresher,
                 chunker_version=chunker_version(params=_PARAMS),
             ),

@@ -1,5 +1,9 @@
 """Cut entity vectors from names to evidence-backed profiles (D95).
 
+Deployment setup must keyset-backfill active entities through
+``EntityProfileRefresher.backfill`` before republishing the semantic channel.
+The migration deliberately leaves that channel unready until setup succeeds.
+
 revision: p9_16_0037
 """
 

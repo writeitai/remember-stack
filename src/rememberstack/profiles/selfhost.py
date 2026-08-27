@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         ControlPlaneSpendLease,
     )
     from rememberstack.ports.telemetry import TelemetryPort
+    from rememberstack.spine.review import ReviewQueue
     from rememberstack.workers import StageHandler
 
 _SUPPORTED_WORKER_STAGES = (
@@ -516,11 +517,17 @@ class SelfHostProfile:
             )
         )
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
+        from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
 
-        PostgresP1Index(
+        p1_settings = P1Settings.model_validate({})
+        EntityProfileRefresher(
             engine=self._engine,
-            embedding_model=P1Settings.model_validate({}).embedding_model,
+            model_provider=self._model_provider,
+            embedding_model=p1_settings.embedding_model,
+        ).backfill(deployment_id=self._settings.deployment_id)
+        PostgresP1Index(
+            engine=self._engine, embedding_model=p1_settings.embedding_model
         ).configure_channels(deployment_id=self._settings.deployment_id)
         seed_canonical_operations(
             registry=AssuredOperationRegistry(engine=self._engine),
@@ -929,6 +936,7 @@ class SelfHostProfile:
                     model_provider=self._model_provider,
                     settings=SupersessionSettings.model_validate({}),
                 ),
+                profile_refresher=profile_refresher,
                 facts=facts,
                 chunk_catalog=chunks,
                 claim_catalog=claims,
@@ -946,7 +954,9 @@ class SelfHostProfile:
         if stage is PipelineStage.RECONCILE:
             return ReconcileHandler(
                 catalog=LifecycleCatalog(engine=self._engine),
-                review_queue=ReviewQueue(engine=self._engine),
+                review_queue=ReviewQueue(
+                    engine=self._engine, profile_refresher=profile_refresher
+                ),
                 profile_refresher=profile_refresher,
                 chunker_version=chunk_generation,
             )
@@ -958,6 +968,25 @@ class SelfHostProfile:
                 settings=p1_settings,
             )
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
+
+
+def build_selfhost_review_queue(*, engine: Engine) -> ReviewQueue:
+    """Compose local human-review mutations with the profile projection."""
+    from rememberstack.spine import EntityProfileRefresher
+    from rememberstack.spine import ReviewQueue
+    from rememberstack.workers import P1Settings
+
+    p1_settings = P1Settings.model_validate({})
+    return ReviewQueue(
+        engine=engine,
+        profile_refresher=EntityProfileRefresher(
+            engine=engine,
+            model_provider=OpenRouterModelProvider(
+                settings=OpenRouterSettings.model_validate({})
+            ),
+            embedding_model=p1_settings.embedding_model,
+        ),
+    )
 
 
 def create_api() -> FastAPI:

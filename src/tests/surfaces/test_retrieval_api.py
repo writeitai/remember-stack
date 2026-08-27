@@ -320,7 +320,8 @@ class _ApiRig:
                     engine=engine,
                     model_provider=self.provider,
                     settings=SupersessionSettings(),
-                )
+                ),
+                profile_refresher=profile_refresher,
             ),
         )
         registry.register(
@@ -338,7 +339,9 @@ class _ApiRig:
             stage=PipelineStage.RECONCILE,
             handler=ReconcileHandler(
                 catalog=LifecycleCatalog(engine=engine),
-                review_queue=ReviewQueue(engine=engine),
+                review_queue=ReviewQueue(
+                    engine=engine, profile_refresher=profile_refresher
+                ),
                 profile_refresher=profile_refresher,
                 chunker_version=generation,
             ),

@@ -72,8 +72,11 @@ def _run_review(args: argparse.Namespace) -> int:
     try:
         from sqlalchemy import create_engine
 
-        from rememberstack.spine.review import ReviewQueue
         from rememberstack.spine.settings import load_database_settings
+
+        review_queue_builder = import_module(
+            "rememberstack.profiles.selfhost"
+        ).build_selfhost_review_queue
     except ModuleNotFoundError:
         print(
             "error: review commands require the 'rememberstack[server]' extra",
@@ -83,7 +86,7 @@ def _run_review(args: argparse.Namespace) -> int:
 
     engine = create_engine(load_database_settings().sqlalchemy_url())
     try:
-        queue = ReviewQueue(engine=engine)
+        queue = review_queue_builder(engine=engine)
         if args.review_command == "list":
             return _list(queue=queue, deployment_id=args.deployment)
         return _decide(

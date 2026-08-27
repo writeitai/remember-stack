@@ -11,6 +11,7 @@ class RecordingProfileRefresher:
     def __init__(self) -> None:
         """Start with no refresh requests."""
         self.entity_ids: list[UUID] = []
+        self.fact_refreshes: list[tuple[tuple[UUID, ...], tuple[UUID, ...]]] = []
 
     def refresh(
         self,
@@ -32,9 +33,9 @@ class RecordingProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "refresh_profile",
     ) -> None:
-        """Record every requested id in caller order."""
+        """Record the production refresher's sorted unique entity set."""
         del deployment_id, meter, call_key
-        self.entity_ids.extend(entity_ids)
+        self.entity_ids.extend(sorted(set(entity_ids), key=str))
 
     def refresh_for_facts(
         self,
@@ -45,5 +46,6 @@ class RecordingProfileRefresher:
         meter: CostMeterPort | None = None,
         call_key: str = "refresh_profile",
     ) -> None:
-        """Accept fact-grained calls; this double owns no fact-to-entity catalog."""
-        del deployment_id, relation_ids, observation_ids, meter, call_key
+        """Record fact-grained refresh coordinates without resolving endpoints."""
+        del deployment_id, meter, call_key
+        self.fact_refreshes.append((relation_ids, observation_ids))

@@ -224,9 +224,13 @@ class CascadeResolver:
             and context_b.strip()
         )
         if has_context_evidence:
+            candidate_facts = (context_a.strip(),) if context_a is not None else ()
+            candidate_summary = build_profile_summary(salient_facts=candidate_facts)
             embedding_texts = (
-                mention_profile_embedding_input(
-                    name=surface_a, claim_context=context_a or ""
+                entity_profile_embedding_input(
+                    canonical_name=surface_a,
+                    profile_summary=candidate_summary,
+                    salient_facts=candidate_facts,
                 ),
                 mention_profile_embedding_input(
                     name=surface_b, claim_context=context_b or ""

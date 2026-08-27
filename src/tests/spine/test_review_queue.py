@@ -15,9 +15,12 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ReviewDecisionError
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
@@ -26,6 +29,11 @@ from rememberstack.surfaces import cli_main
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a1000000-0000-0000-0000-000000000001")
+
+
+def _queue(*, engine: Engine) -> ReviewQueue:
+    """Compose review behavior with an observable profile projection seam."""
+    return ReviewQueue(engine=engine, profile_refresher=RecordingProfileRefresher())
 
 
 @pytest.fixture(scope="module")
@@ -166,7 +174,7 @@ def test_open_withdrawn_guards_use_the_complete_fact_identity(
                 "subject_id": subject_id,
             },
         )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -207,7 +215,7 @@ def test_merge_verdict_performs_a_reversible_human_merge(
     review_id = _queued_merge(
         engine=database_engine, survivor=survivor, absorbed=absorbed
     )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     ranked = queue.pending(deployment_id=_DEPLOYMENT_ID)
     assert [item.review_id for item in ranked] == [review_id]
 
@@ -296,7 +304,7 @@ def test_not_merge_closes_without_touching_entities(database_engine: Engine) -> 
     review_id = _queued_merge(
         engine=database_engine, survivor=survivor, absorbed=absorbed
     )
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     events = queue.decide_merge(
         deployment_id=_DEPLOYMENT_ID,
         review_id=review_id,
@@ -322,7 +330,8 @@ def test_restore_support_writes_the_currency_event_and_recounts(
     """restore_support: the designed rows — a review_restored currency event,
     the claim current again, the fact's support recounted."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    profile_refresher = RecordingProfileRefresher()
+    queue = ReviewQueue(engine=database_engine, profile_refresher=profile_refresher)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -360,6 +369,7 @@ def test_restore_support_writes_the_currency_event_and_recounts(
     assert event["reason"] == "review_restored"
     assert current is True
     assert count == 1  # support restored (lineage-distinct, D54)
+    assert profile_refresher.fact_refreshes == [((relation,), ())]
 
 
 def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
@@ -367,7 +377,8 @@ def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
 ) -> None:
     """invalidate_fact: the fact leaves the current layer, adjudicated."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    profile_refresher = RecordingProfileRefresher()
+    queue = ReviewQueue(engine=database_engine, profile_refresher=profile_refresher)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -403,12 +414,78 @@ def test_invalidate_fact_retires_it_with_a_recorded_adjudication(
     # the invalidation, not a noop with a side note.
     assert adjudicated["outcome"] == "invalidated"
     assert adjudicated["action"] == "invalidate_fact"
+    assert profile_refresher.fact_refreshes == [((relation,), ())]
+
+
+def test_terminal_review_verdicts_rebuild_then_clear_published_profiles(
+    database_engine: Engine,
+) -> None:
+    """Human restore/invalidate decisions synchronously repair profile caches."""
+    relation, claim_id = _withdrawn_fact(engine=database_engine)
+    provider = FakeModelProvider()
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="review-profile-test",
+    )
+    queue = ReviewQueue(engine=database_engine, profile_refresher=refresher)
+    restore_id = queue.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+
+    queue.decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=restore_id,
+        verdict="restore_support",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        restored = tuple(
+            connection.execute(
+                text(
+                    "SELECT profile_summary FROM entities"
+                    " WHERE deployment_id = :deployment ORDER BY canonical_name"
+                ),
+                {"deployment": _DEPLOYMENT_ID},
+            ).scalars()
+        )
+    assert restored == ("Alice works for Acme", "Alice works for Acme")
+
+    invalidate_id = queue.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=relation,
+        claim_id=claim_id,
+        diff={},
+    )
+    queue.decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=invalidate_id,
+        verdict="invalidate_fact",
+        reviewer="jiri",
+    )
+
+    with database_engine.connect() as connection:
+        remaining = connection.execute(
+            text(
+                "SELECT count(*) FROM entities WHERE deployment_id = :deployment"
+                " AND num_nonnulls(profile_summary, embedding, embedding_model,"
+                " embedding_input_policy_version, embedding_text_hash) > 0"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+    assert remaining == 0
 
 
 def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
     """uncertain is non-terminal: deferred, still listed, decidable later."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
@@ -446,9 +523,12 @@ def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
 
 
 def test_cli_lists_and_decides_through_the_same_paths(
-    database_engine: Engine, capsys: pytest.CaptureFixture[str]
+    database_engine: Engine,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     survivor = _entity(engine=database_engine, name="CLI Survivor")
     absorbed = _entity(engine=database_engine, name="CLI Absorbed")
     review_id = _queued_merge(
@@ -482,7 +562,7 @@ def test_cli_lists_and_decides_through_the_same_paths(
 def test_foreign_ids_are_refused_at_flag_and_decide(database_engine: Engine) -> None:
     """Codex review / D50: a candidate carrying ids from another deployment
     writes nothing — bound-checked at flag time."""
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     with pytest.raises(ReviewDecisionError):
         queue.flag_support_withdrawn(
             deployment_id=_DEPLOYMENT_ID,
@@ -497,7 +577,7 @@ def test_restore_retry_emits_no_second_currency_event(database_engine: Engine) -
     """Codex review: a retried restore_support verdict is a full no-op —
     one currency event, review-keyed."""
     relation, claim_id = _withdrawn_fact(engine=database_engine)
-    queue = ReviewQueue(engine=database_engine)
+    queue = _queue(engine=database_engine)
     review_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",

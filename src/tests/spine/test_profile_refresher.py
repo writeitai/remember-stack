@@ -208,3 +208,92 @@ def test_relation_prose_is_salient_for_both_endpoints(database_engine: Engine) -
 
     assert all(result.salient_facts == ("Jan works for Jan",) for result in results)
     assert len(provider.embedded_texts) == 2
+
+
+def test_capped_fact_cannot_outrank_the_open_current_profile(
+    database_engine: Engine,
+) -> None:
+    """A still-evidenced superseded relation is not current identity evidence."""
+    replacement = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET canonical_name = 'Acme' WHERE entity_id = :entity"
+            ),
+            {"entity": _SECOND_ENTITY},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:entity, :deployment, 'Globex', 'globex')"
+            ),
+            {"entity": replacement, "deployment": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id, valid_until,"
+                " evidence_count, normalizer_version) VALUES"
+                " (:old, :deployment, :subject, 'works_for', :old_object, now(),"
+                " 10, 'profile-test'),"
+                " (:current, :deployment, :subject, 'works_for', :new_object, NULL,"
+                " 1, 'profile-test')"
+            ),
+            {
+                "old": uuid4(),
+                "current": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "subject": _FIRST_ENTITY,
+                "old_object": _SECOND_ENTITY,
+                "new_object": replacement,
+            },
+        )
+    provider = FakeModelProvider()
+
+    result = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="profile-embed-test",
+    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
+
+    assert result.salient_facts == ("Jan works for Globex",)
+    assert "Acme" not in provider.embedded_texts[0]
+
+
+def test_backfill_pages_every_active_entity_and_debounces_on_retry(
+    database_engine: Engine,
+) -> None:
+    """Setup can repopulate vacated profiles through bounded resumable pages."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, evidence_count, normalizer_version)"
+                " VALUES (:observation, :deployment, :entity,"
+                " 'Jan is a bank', 1, 'profile-test')"
+            ),
+            {
+                "observation": uuid4(),
+                "deployment": _DEPLOYMENT_ID,
+                "entity": _FIRST_ENTITY,
+            },
+        )
+    provider = FakeModelProvider()
+    refresher = EntityProfileRefresher(
+        engine=database_engine,
+        model_provider=provider,
+        embedding_model="profile-embed-test",
+    )
+
+    first = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+    second = refresher.backfill(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+
+    assert first.scanned == 2
+    assert first.updated == 1
+    assert first.with_evidence == 1
+    assert second.scanned == 2
+    assert second.updated == 0
+    assert second.with_evidence == 1
+    assert provider.embedded_texts == [
+        "ENTITY: Jan\nPROFILE: Jan is a bank\nSALIENT FACTS:\n- Jan is a bank"
+    ]

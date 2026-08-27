@@ -25,7 +25,6 @@ from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
-from rememberstack.model import P1EntityRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
@@ -661,26 +660,33 @@ def test_ranked_search_never_crosses_deployments(
         )
     index = seeded["index"]
     assert isinstance(index, PostgresP1Index)
-    index.upsert_entities(
-        rows=(
-            P1EntityRow(
-                entity_id=first_entity,
-                deployment_id=_DEPLOYMENT_ID,
-                canonical_name="Aster",
-                profile_summary="Aster is a bank",
-                salient_facts=("Aster is a bank",),
-                vector=_vector(axis=1),
+    with database_engine.begin() as connection:
+        for entity_id, deployment_id, summary, vector in (
+            (first_entity, _DEPLOYMENT_ID, "Aster is a bank", _vector(axis=1)),
+            (
+                other_entity,
+                _OTHER_DEPLOYMENT_ID,
+                "Nearest foreign row is a control entity",
+                _vector(axis=0),
             ),
-            P1EntityRow(
-                entity_id=other_entity,
-                deployment_id=_OTHER_DEPLOYMENT_ID,
-                canonical_name="Nearest foreign row",
-                profile_summary="Nearest foreign row is a control entity",
-                salient_facts=("Nearest foreign row is a control entity",),
-                vector=_vector(axis=0),
-            ),
-        )
-    )
+        ):
+            connection.execute(
+                text(
+                    "UPDATE entities SET profile_summary = :summary,"
+                    " embedding = CAST(:embedding AS vector),"
+                    " embedding_model = :model,"
+                    " embedding_input_policy_version = 'entity-profile-v1',"
+                    " embedding_text_hash = 'search-scope-proof'"
+                    " WHERE deployment_id = :deployment AND entity_id = :entity"
+                ),
+                {
+                    "summary": summary,
+                    "embedding": "[" + ",".join(map(str, vector)) + "]",
+                    "model": _MODEL,
+                    "deployment": deployment_id,
+                    "entity": entity_id,
+                },
+            )
 
     results = index.search_entities_scored(
         deployment_id=str(_DEPLOYMENT_ID), vector=_vector(axis=0), k=1

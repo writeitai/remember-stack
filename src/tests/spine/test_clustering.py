@@ -15,7 +15,6 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
-from rememberstack.model import P1EntityRow
 from rememberstack.model import UnmergeError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
@@ -44,10 +43,9 @@ class _ScriptedEntityIndex:
         self._vectors: dict[str, tuple[float, ...]] = {}
         self._names: dict[str, str] = {}
 
-    def upsert_entities(self, *, rows: tuple[P1EntityRow, ...]) -> None:
-        """Register each entity's scripted vector by canonical name."""
-        for row in rows:
-            self._vectors[str(row.entity_id)] = _VECTORS[row.canonical_name]
+    def seed(self, *, entity_id: UUID, canonical_name: str) -> None:
+        """Register one scripted vector by canonical name."""
+        self._vectors[str(entity_id)] = _VECTORS[canonical_name]
 
     def entity_vectors(
         self, *, deployment_id: str, entity_ids: tuple[str, ...]
@@ -128,18 +126,7 @@ def _arrive(*, engine: Engine, index: _ScriptedEntityIndex, name: str) -> UUID:
             ),
             {"a": uuid4(), "d": _DEPLOYMENT_ID, "e": entity_id, "n": name, "l": lemma},
         )
-    index.upsert_entities(
-        rows=(
-            P1EntityRow(
-                entity_id=entity_id,
-                deployment_id=_DEPLOYMENT_ID,
-                canonical_name=name,
-                profile_summary=f"Profile for {name}",
-                salient_facts=(f"Profile for {name}",),
-                vector=_VECTORS[name],
-            ),
-        )
-    )
+    index.seed(entity_id=entity_id, canonical_name=name)
     return entity_id
 
 
