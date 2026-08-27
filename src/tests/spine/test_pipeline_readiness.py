@@ -231,6 +231,52 @@ def test_graph_catalog_ensure_repairs_graph_role_limits_and_helper_acl(
     assert public_execute == 0
 
 
+def test_graph_catalog_ensure_repairs_helper_planner_settings(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Repair restores the recursive helpers' narrow tenant-plan contract."""
+    engine, _version_id = ready_rows
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER FUNCTION memory_v1.graph_neighborhood("
+            "uuid, uuid, integer, text[], timestamptz, timestamptz, integer, "
+            "integer, integer, integer) RESET enable_seqscan"
+        )
+        connection.exec_driver_sql(
+            "ALTER FUNCTION memory_v1.graph_path("
+            "uuid, uuid, uuid, integer, text[], timestamptz, timestamptz, "
+            "integer, integer, integer, integer) RESET enable_seqscan"
+        )
+
+    result = ensure_graph_catalog(engine=engine)
+
+    assert result.ready is True
+    assert result.changed is True
+    assert any("helper contract" in problem for problem in result.problems_before)
+    assert result.problems_after == ()
+    with engine.connect() as connection:
+        helper_config = {
+            str(row.proname): set(row.proconfig or ())
+            for row in connection.execute(
+                text(
+                    "SELECT p.proname, p.proconfig FROM pg_proc AS p "
+                    "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
+                    "WHERE n.nspname = 'memory_v1' AND p.proname IN "
+                    "('graph_neighborhood', 'graph_path', "
+                    "'graph_citation_path')"
+                )
+            )
+        }
+    assert helper_config == {
+        "graph_neighborhood": {
+            "enable_seqscan=off",
+            "search_path=memory_v1, pg_catalog",
+        },
+        "graph_path": {"enable_seqscan=off", "search_path=memory_v1, pg_catalog"},
+        "graph_citation_path": {"search_path=memory_v1, pg_catalog"},
+    }
+
+
 def test_a_missing_exact_generation_is_not_ready(
     ready_rows: tuple[Engine, UUID],
 ) -> None:

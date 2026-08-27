@@ -572,8 +572,12 @@ cardinality. The fixed graph executor and recursive graph helper functions
 disable sequential scans locally for their bounded transaction/function call
 so the planner cannot trade that invariant for a cheaper global scan under
 skewed tenant statistics; other query-space statements retain PostgreSQL's
-default. Measurements record hardware, cardinality, skew, and p50/p95/p99
-rather than weakening correctness to a small-fixture promise.
+default. The two function-local directives are part of the helpers' semantic
+catalog contract: readiness verifies them and graph-metadata repair reapplies
+them after recreating the helpers. The citation-path helper keeps the default
+planner because it is not one of the recursive entity-expansion helpers.
+Measurements record hardware, cardinality, skew, and p50/p95/p99 rather than
+weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture
 

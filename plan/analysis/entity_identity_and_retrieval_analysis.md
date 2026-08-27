@@ -528,3 +528,16 @@ The narrower remedy keeps the already-correct deployment-lateral view and pins
 recursive graph helper functions. The strengthened 10,000-foreign-row plan
 proof still observes index access and fewer than 100 examined authority rows;
 unrelated query-space statements keep PostgreSQL's default planner choice.
+
+The first CI run exposed a second-order contract consequence of that remedy.
+PostgreSQL stores a function-local planner directive in `pg_proc.proconfig`.
+The semantic graph readiness check quite correctly treats `proconfig` as part
+of each helper's executable contract, but its expected catalog still named only
+the inherited `search_path`; both live-graph readiness and metadata repair
+therefore rejected a correctly migrated p9_19 database. Ignoring `proconfig`
+would hide real drift, while moving the setting to a broad role or session
+default would exceed the deliberately narrow scope. The repair is to make the
+expected helper configuration name-specific and teach catalog replay to
+reapply p9_19 after recreating the p9_17 helpers. A test must reset the two
+directives and prove that one semantic repair restores them without changing
+the citation helper, whose non-recursive plan does not need the directive.
