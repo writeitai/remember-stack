@@ -285,7 +285,7 @@
                   "format": "uuid",
                   "type": "string"
                 },
-                "maxItems": 20,
+                "maxItems": 19,
                 "minItems": 1,
                 "type": "array",
                 "uniqueItems": true
@@ -297,7 +297,7 @@
                 "type": "integer"
               },
               "predicate": {
-                "maxLength": 255,
+                "maxLength": 200,
                 "minLength": 1,
                 "type": "string"
               },
@@ -2176,7 +2176,7 @@
                   "format": "uuid",
                   "type": "string"
                 },
-                "maxItems": 20,
+                "maxItems": 19,
                 "minItems": 1,
                 "type": "array",
                 "uniqueItems": true
@@ -2200,7 +2200,7 @@
                 "type": "integer"
               },
               "predicate": {
-                "maxLength": 255,
+                "maxLength": 200,
                 "minLength": 1,
                 "type": "string"
               },
@@ -37492,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "87d3e1abfaad4f9467de8f8d86e60c0a338f715a53b2ea97eb0c165d350b82be"
+  "surface_manifest_hash": "4676e6ce71c07740bc95b4f23e9857deeb712267764d7c3f03e8c13e4d6cc102"
 }

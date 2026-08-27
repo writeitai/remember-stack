@@ -227,8 +227,8 @@ The complete operation catalog is:
 | --- | --- | --- |
 | `resolve_entity` | `name` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
 | `testimony_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
-| `fact_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–255 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
-| `answer_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `hops` (1–2, default 1), free `predicate`, `time` | `ContextBundle/v1`: complete `testimony_context` and neighborhood-aware `fact_context` child envelopes, never a blended result list |
+| `fact_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
+| `answer_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `time` | `ContextBundle/v1`: complete `testimony_context` and neighborhood-aware `fact_context` child envelopes, never a blended result list |
 
 `entity_ids` is optional. Omit it for deployment-wide semantic retrieval; pass
 confirmed survivor IDs when identity materially narrows the question. Supplying

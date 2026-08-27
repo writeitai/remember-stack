@@ -32,6 +32,7 @@ from sqlalchemy import TextClause
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.exc import DBAPIError
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
@@ -87,6 +88,8 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostOutcome
+from rememberstack.surfaces.graph_queries import GraphBusyError
+from rememberstack.surfaces.graph_queries import GraphHydrationError
 
 if TYPE_CHECKING:
     from rememberstack.surfaces.graph_queries import GraphQueries
@@ -568,11 +571,19 @@ class QueryEngine:
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
         _database_deadline: float | None = None,
+        _required_entity_ids: tuple[UUID, ...] | None = None,
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
         _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
         _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
+        required_entity_ids = (
+            entity_ids
+            if _required_entity_ids is None
+            else _validate_context_entity_ids(entity_ids=_required_entity_ids)
+        )
+        if not set(required_entity_ids).issubset(entity_ids):
+            raise ValueError("required fact-context anchors must be inside entity_ids")
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         database_deadline = (
@@ -581,14 +592,14 @@ class QueryEngine:
             else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
         )
         with self._engine.connect() as connection:
-            if entity_ids:
+            if required_entity_ids:
                 _configure_fact_context_connection(
                     connection=connection, deadline=database_deadline
                 )
                 if not _context_entities_are_current(
                     connection=connection,
                     deployment_id=deployment_id,
-                    entity_ids=entity_ids,
+                    entity_ids=required_entity_ids,
                 ):
                     return _unknown_context_entity(
                         grain=Grain.FACT,
@@ -779,47 +790,70 @@ class QueryEngine:
         _validate_default_fact_context_hops(hops=hops)
         _validate_optional_predicate(predicate=predicate)
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
+        _validate_default_fact_context_anchor_count(anchors=anchors)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
         database_deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
-        if not anchors:
-            return self.fact_context(
-                deployment_id=deployment_id,
-                query=query,
-                entity_ids=(),
-                k=k,
-                evidence_per_fact=evidence_per_fact,
-                predicate=predicate,
-                time=selected_time,
-                evaluated_at=evaluation,
-                _database_deadline=database_deadline,
-            )
-        with self._engine.connect() as connection:
-            _configure_fact_context_connection(
-                connection=connection, deadline=database_deadline
-            )
-            if not _context_entities_are_current(
-                connection=connection, deployment_id=deployment_id, entity_ids=anchors
-            ):
-                return _unknown_context_entity(
-                    grain=Grain.FACT,
+
+        def confirmed_facts(
+            *,
+            scoped_entity_ids: tuple[UUID, ...],
+            required_entity_ids: tuple[UUID, ...] | None = None,
+        ) -> Envelope:
+            """Run fact confirmation inside the shared operation deadline."""
+            try:
+                return self.fact_context(
+                    deployment_id=deployment_id,
+                    query=query,
+                    entity_ids=scoped_entity_ids,
+                    k=k,
+                    evidence_per_fact=evidence_per_fact,
+                    predicate=predicate,
+                    time=selected_time,
                     evaluated_at=evaluation,
-                    temporal_scope=_fact_temporal_scope(
-                        time=selected_time, evaluated_at=evaluation
-                    ),
+                    _database_deadline=database_deadline,
+                    _required_entity_ids=required_entity_ids,
                 )
-        if isinstance(selected_time, (OverlapFactTime, HistoryFactTime)):
-            return self.fact_context(
-                deployment_id=deployment_id,
-                query=query,
-                entity_ids=anchors,
-                k=k,
-                evidence_per_fact=evidence_per_fact,
-                predicate=predicate,
+            except (DBAPIError, TimeoutError):
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation=(
+                        "the fact authority could not answer inside the operation budget"
+                    ),
+                    workaround="retry the bounded fact-context operation",
+                )
+
+        if not anchors:
+            return confirmed_facts(scoped_entity_ids=())
+        try:
+            with self._engine.connect() as connection:
+                _configure_fact_context_connection(
+                    connection=connection, deadline=database_deadline
+                )
+                if not _context_entities_are_current(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=anchors,
+                ):
+                    return _unknown_context_entity(
+                        grain=Grain.FACT,
+                        evaluated_at=evaluation,
+                        temporal_scope=_fact_temporal_scope(
+                            time=selected_time, evaluated_at=evaluation
+                        ),
+                    )
+        except (DBAPIError, TimeoutError):
+            return _fact_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
-                _database_deadline=database_deadline,
+                explanation=(
+                    "the anchor authority could not answer inside the operation budget"
+                ),
+                workaround="retry the bounded fact-context operation",
             )
+        if isinstance(selected_time, (OverlapFactTime, HistoryFactTime)):
+            return confirmed_facts(scoped_entity_ids=anchors)
         if graph_queries is None:
             return _fact_context_graph_boundary(
                 time=selected_time,
@@ -828,34 +862,46 @@ class QueryEngine:
             )
 
         remaining = CONTEXT_ENTITY_LIMIT - len(anchors)
-        if remaining == 0:
-            return _fact_context_graph_boundary(
-                time=selected_time,
-                evaluated_at=evaluation,
-                explanation=(
-                    "the 20-entity combined scope leaves no capacity for the"
-                    " required graph neighborhood"
-                ),
-                workaround="retry with fewer anchor entity_ids",
-            )
         neighbors: dict[UUID, GraphNode] = {}
         graph_answers: list[Envelope] = []
         graph_cap_applied = False
         for anchor_index, anchor in enumerate(anchors):
+            if monotonic() >= database_deadline:
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation=(
+                        "the live graph could not expand every anchor inside the"
+                        " operation budget"
+                    ),
+                    workaround="retry with fewer anchor entity_ids or fewer hops",
+                )
             if remaining == 0:
                 graph_cap_applied = True
                 break
             anchors_left = len(anchors) - anchor_index
             anchor_limit = max(1, remaining // anchors_left)
-            graph = graph_queries.neighborhood(
-                entity_id=anchor,
-                hops=hops,
-                predicates=(predicate,) if predicate is not None else (),
-                valid_at=_fact_context_graph_time(
-                    time=selected_time, evaluated_at=evaluation
-                ),
-                limit=anchor_limit,
-            )
+            try:
+                graph = graph_queries.neighborhood(
+                    entity_id=anchor,
+                    hops=hops,
+                    predicates=(predicate,) if predicate is not None else (),
+                    valid_at=_fact_context_graph_time(
+                        time=selected_time, evaluated_at=evaluation
+                    ),
+                    believed_at=evaluation,
+                    limit=anchor_limit,
+                )
+            except (DBAPIError, GraphBusyError, GraphHydrationError, TimeoutError):
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation=(
+                        "the live graph could not expand a current anchor inside"
+                        " the operation budget"
+                    ),
+                    workaround="retry the bounded fact-context operation",
+                )
             graph_answers.append(graph)
             if (
                 graph.negative is not None
@@ -881,14 +927,24 @@ class QueryEngine:
                 graph.truncation is not None and graph.truncation.truncated
             )
 
-        with self._engine.connect() as connection:
-            _configure_fact_context_connection(
-                connection=connection, deadline=database_deadline
-            )
-            current_neighbor_ids = _current_context_entity_ids(
-                connection=connection,
-                deployment_id=deployment_id,
-                entity_ids=tuple(neighbors),
+        try:
+            with self._engine.connect() as connection:
+                _configure_fact_context_connection(
+                    connection=connection, deadline=database_deadline
+                )
+                current_neighbor_ids = _current_context_entity_ids(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=tuple(neighbors),
+                )
+        except (DBAPIError, TimeoutError):
+            return _fact_context_graph_boundary(
+                time=selected_time,
+                evaluated_at=evaluation,
+                explanation=(
+                    "the neighbor authority could not answer inside the operation budget"
+                ),
+                workaround="retry the bounded fact-context operation",
             )
         stale_neighbor_count = len(neighbors) - len(current_neighbor_ids)
         neighbors = {
@@ -897,17 +953,14 @@ class QueryEngine:
             if entity_id in current_neighbor_ids
         }
         scoped_ids = (*anchors, *neighbors)
-        facts = self.fact_context(
-            deployment_id=deployment_id,
-            query=query,
-            entity_ids=scoped_ids,
-            k=k,
-            evidence_per_fact=evidence_per_fact,
-            predicate=predicate,
-            time=selected_time,
-            evaluated_at=evaluation,
-            _database_deadline=database_deadline,
+        facts = confirmed_facts(
+            scoped_entity_ids=scoped_ids, required_entity_ids=anchors
         )
+        if (
+            facts.negative is not None
+            and facts.negative.kind is not NegativeKind.KNOWN_EMPTY
+        ):
+            return facts
         fact_truncation = facts.truncation
         graph_estimated = sum(
             (
@@ -2790,10 +2843,16 @@ def _validate_default_fact_context_hops(*, hops: int) -> None:
         raise ValueError("fact_context hops must be between 1 and 2")
 
 
+def _validate_default_fact_context_anchor_count(*, anchors: tuple[UUID, ...]) -> None:
+    """Reserve one combined-scope slot for the required graph neighborhood."""
+    if len(anchors) >= CONTEXT_ENTITY_LIMIT:
+        raise ValueError("default fact_context accepts at most 19 anchor entity_ids")
+
+
 def _validate_optional_predicate(*, predicate: str | None) -> None:
     """Accept every stored predicate spelling while rejecting empty filters."""
-    if predicate is not None and not 1 <= len(predicate) <= 255:
-        raise ValueError("predicate must contain between 1 and 255 characters")
+    if predicate is not None and not 1 <= len(predicate) <= 200:
+        raise ValueError("predicate must contain between 1 and 200 characters")
 
 
 def _fuse_fact_nominations(

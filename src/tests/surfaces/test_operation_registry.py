@@ -112,10 +112,11 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
         "type": "integer",
     }
     assert fact_properties["predicate"] == {
-        "maxLength": 255,
+        "maxLength": 200,
         "minLength": 1,
         "type": "string",
     }
+    assert fact_properties["entity_ids"]["maxItems"] == 19
     assert "type" not in fact_properties
     fact_operation = next(
         operation

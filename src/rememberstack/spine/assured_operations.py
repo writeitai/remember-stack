@@ -187,11 +187,13 @@ _ENTITY_IDS = {
     "uniqueItems": True,
 }
 
+_NEIGHBORHOOD_ENTITY_IDS = {**_ENTITY_IDS, "maxItems": 19}
+
 _QUERY = {"type": "string", "required": True, "minLength": 1, "maxLength": 8192}
 
 _HOPS = {"type": "integer", "required": False, "default": 1, "minimum": 1, "maximum": 2}
 
-_PREDICATE = {"type": "string", "required": False, "minLength": 1, "maxLength": 255}
+_PREDICATE = {"type": "string", "required": False, "minLength": 1, "maxLength": 200}
 
 
 def _envelope_schema() -> dict[str, object]:
@@ -248,12 +250,11 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         description=(
             "Adjudicated relations and observations under an explicit world-time"
             " scope, with bounded live-graph expansion for current or point-in-time"
-            " entity"
-            " anchors."
+            " entity anchors."
         ),
         parameters={
             "query": _QUERY,
-            "entity_ids": _ENTITY_IDS,
+            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
             "k": {
                 "type": "integer",
                 "required": False,
@@ -291,7 +292,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         ),
         parameters={
             "query": _QUERY,
-            "entity_ids": _ENTITY_IDS,
+            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
             "hops": _HOPS,
             "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},

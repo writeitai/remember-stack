@@ -18,6 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import current_temporal_scope
@@ -38,8 +39,11 @@ from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import GraphQueries
 from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.graph_queries import GraphBusyError
+from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.query_engine import FACT_CONTEXT_CANDIDATE_K
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -189,6 +193,17 @@ class _GraphNeighborhood:
                 total_is_exact=True,
             ),
         )
+
+
+class _FailingGraph:
+    """Raise one configured live-graph availability failure."""
+
+    def __init__(self, *, error: Exception) -> None:
+        self.error = error
+
+    def neighborhood(self, **_: object):
+        """Fail before returning a graph envelope."""
+        raise self.error
 
 
 class _Corpus:
@@ -826,6 +841,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
             "hops": 1,
             "predicates": (),
             "valid_at": _NOW,
+            "believed_at": _NOW,
             "limit": 19,
         }
     ]
@@ -833,6 +849,25 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
     assert index.requested_entity_ids == [
         (str(corpus.object_id), str(corpus.subject_id))
     ]
+
+
+def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
+    corpus: _Corpus,
+) -> None:
+    """The composed recipe supplies both clocks to the production graph facade."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=graph,
+        query="Where does Alice work?",
+        entity_ids=(corpus.object_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert corpus.subject_id in {node.entity_id for node in answer.nodes}
 
 
 def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
@@ -856,6 +891,114 @@ def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts
     assert answer.negative is None
     assert answer.dropped_by_hydration == 1
     assert index.requested_entity_ids == [(str(corpus.subject_id),)]
+
+
+def test_default_fact_context_rechecks_only_caller_supplied_anchors(
+    corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A graph-derived neighbor retiring late cannot veto valid anchor facts."""
+    engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.object_id,))
+    checked_scopes: list[tuple[UUID, ...]] = []
+
+    def current_ids(
+        *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
+    ) -> set[UUID]:
+        """Retire the neighbor only after its explicit hydration check."""
+        del connection
+        assert deployment_id == _DEPLOYMENT_ID
+        checked_scopes.append(entity_ids)
+        if len(checked_scopes) == 2:
+            return set(entity_ids)
+        return {corpus.subject_id}
+
+    monkeypatch.setattr(query_engine_module, "_current_context_entity_ids", current_ids)
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
+    assert checked_scopes[-1] == (corpus.subject_id,)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GraphBusyError("busy"),
+        GraphHydrationError("stale"),
+        OperationalError("graph query", {}, Exception("timed out")),
+    ],
+)
+def test_default_fact_context_maps_graph_failures_to_a_boundary(
+    corpus: _Corpus, error: Exception
+) -> None:
+    """Busy, stale, and database-failed graph reads never escape as HTTP 500s."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, _FailingGraph(error=error)),
+        query="Where does Alice work?",
+        entity_ids=(corpus.subject_id,),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert answer.facts == ()
+    assert index.requested_k == []
+
+
+def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
+    corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sequential anchor traversals consult the 25-second operation deadline."""
+    engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
+    graph = _GraphNeighborhood(neighbor_ids=())
+    observed_times = iter((0.0, 0.0, 0.0, 26.0))
+    monkeypatch.setattr(query_engine_module, "monotonic", lambda: next(observed_times))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="shared context",
+        entity_ids=(corpus.subject_id, corpus.object_id),
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert len(graph.calls) == 1
+    assert index.requested_k == []
+
+
+def test_default_fact_context_reserves_neighbor_capacity_and_graph_predicate_size(
+    corpus: _Corpus,
+) -> None:
+    """Direct callers receive the same 19-anchor/200-character bounds as HTTP."""
+    engine, _index = corpus.query_engine(fact_ids=())
+
+    with pytest.raises(ValueError, match="at most 19"):
+        engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=None,
+            query="context",
+            entity_ids=tuple(uuid4() for _ in range(20)),
+            evaluated_at=_NOW,
+        )
+    with pytest.raises(ValueError, match="between 1 and 200"):
+        engine.default_fact_context(
+            deployment_id=_DEPLOYMENT_ID,
+            graph_queries=None,
+            query="context",
+            entity_ids=(corpus.subject_id,),
+            predicate="p" * 201,
+            evaluated_at=_NOW,
+        )
 
 
 def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmation(
