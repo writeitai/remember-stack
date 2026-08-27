@@ -209,7 +209,12 @@ def test_grouping_is_independent_of_arrival_order(
         ("Robert Klein", "R. Klein", "Rachel Klein"),
     ):
         with database_engine.begin() as connection:
-            for table in ("merge_events", "resolution_decisions", "aliases"):
+            for table in (
+                "merge_events",
+                "resolution_decisions",
+                "aliases",
+                "observations",
+            ):
                 connection.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
             connection.execute(
                 text("DELETE FROM entities WHERE deployment_id = :d"),

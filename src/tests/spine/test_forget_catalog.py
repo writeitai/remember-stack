@@ -312,7 +312,7 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
         ).one()
         absorbed_row = connection.execute(
             text(
-                "SELECT profile_summary, embedding, embedding_model,"
+                "SELECT profile_summary, embedding IS NOT NULL, embedding_model,"
                 " embedding_input_policy_version, embedding_text_hash"
                 " FROM entities WHERE deployment_id = :deployment"
                 " AND entity_id = :entity"
@@ -324,7 +324,12 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
     assert survivor_row[1] is True
     assert survivor_row.embedding_input_policy_version == "entity-profile-v2"
     assert survivor_row.embedding_text_hash != embedding_text_hash(old_input)
-    assert tuple(absorbed_row) == (None, None, None, None, None)
+    assert _TOKEN not in str(absorbed_row.profile_summary)
+    assert "shared observation" in str(absorbed_row.profile_summary)
+    assert absorbed_row[1] is True
+    assert absorbed_row.embedding_model == "profile-test"
+    assert absorbed_row.embedding_input_policy_version == "entity-profile-v2"
+    assert absorbed_row.embedding_text_hash != embedding_text_hash(old_input)
 
 
 def test_readiness_rehonors_manifest_after_old_postgres_restore(
