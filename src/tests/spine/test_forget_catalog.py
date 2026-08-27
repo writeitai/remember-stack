@@ -247,7 +247,7 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
             trigger_lemmas=["shared"],
             evidence={"proof": "forget redirect"},
             blast_radius=2,
-            decided_by="test",
+            decided_by="auto",
         )
         assert merge_id is not None
         connection.execute(
