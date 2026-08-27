@@ -1,11 +1,11 @@
 # WP-I.3 + WP-I.4 resolution evaluation gate
 
-**Status:** non-binding delivery evidence for WP-I.5  
-**Recorded:** 2026-08-27  
+**Status:** non-binding delivery evidence for WP-I.5
+**Recorded:** 2026-08-27
 **Binding decision:** D95 in `decisions.md` (entity identity is the real-world
-referent)  
+referent)
 **Binding design:** `plan/designs/entity_identity_and_retrieval_design.md`
-§3.1–3.4 and §8  
+§3.1–3.4 and §8
 **Delivery gate:** `plan/plans/entity_identity_and_retrieval.md`, WP-I.5
 
 ## Why this record exists
