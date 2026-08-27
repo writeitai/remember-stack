@@ -39,7 +39,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "c5736577e6c16569fe9a533fc8a58d7554159308e7d14bff31490ac0a44a4bcb"
+    "87d3e1abfaad4f9467de8f8d86e60c0a338f715a53b2ea97eb0c165d350b82be"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",

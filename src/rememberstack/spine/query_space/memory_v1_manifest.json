@@ -2165,7 +2165,7 @@
               ]
             }
           },
-          "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded P2 expansion for current or point-in-time entity anchors.",
+          "description": "Adjudicated relations and observations under an explicit world-time scope, with bounded live-graph expansion for current or point-in-time entity anchors.",
           "grain": "fact",
           "implementation_plan_hash": "cecdbadf6452e3c383f07c546061affc889f20328ffac2cdc9c977082347ef77",
           "input_schema": {
@@ -37492,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "c5736577e6c16569fe9a533fc8a58d7554159308e7d14bff31490ac0a44a4bcb"
+  "surface_manifest_hash": "87d3e1abfaad4f9467de8f8d86e60c0a338f715a53b2ea97eb0c165d350b82be"
 }

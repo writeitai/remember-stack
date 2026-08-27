@@ -688,8 +688,7 @@ class SelfHostProfile:
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
                 executor=OperationExecutor(
-                    query_engine=query_engine,
-                    graph_queries=graph_queries,
+                    query_engine=query_engine, graph_queries=graph_queries
                 ),
                 deployment_id=self._settings.deployment_id,
             ),

@@ -237,23 +237,24 @@ any unknown, retired, forgotten, or foreign ID yields one opaque
 a name is ambiguous. Entity and fact-time eligibility are applied before the
 bounded ranking cut.
 
-For `current` and `at`, supplying IDs invokes the default D97 recipe: P2 walks
+For `current` and `at`, supplying IDs invokes the default D97 recipe: the live graph walks
 from each anchor with an empty predicate list, the anchor-plus-neighbor union is
 capped at 20 IDs, and fact-text search is constrained to that union. Empty
 predicates mean every stored relation, including `other:*`. Supplying
 `predicate` narrows both traversal and PostgreSQL-confirmed relations to that
 exact dynamic value; because observations have no relation predicate, that
 filtered result contains relations only. Unfiltered observations are searched
-and returned as facts, but they are never graph nodes. A missing P2 snapshot or
-a current anchor absent from P2 is a `boundary`. A stale P2 neighbor is omitted
-and counted in `dropped_by_hydration`, so current anchor facts can still return.
-Caps are reported in `truncation`.
+and returned as facts, but they are never graph nodes. Unavailable live-graph
+authority or a current anchor absent from it is a `boundary`. A neighbor that
+becomes stale across the bounded graph and fact reads is omitted and counted in
+`dropped_by_hydration`, so current anchor facts can still return. Caps are
+reported in `truncation`.
 
 With no IDs, fact search is deployment-wide and may use matching entity profile
 prose to nominate an additional bounded fact scope—so “list banks” can match an
 “is a bank” observation without any `type` parameter. `overlap` and `history`
-keep their explicit anchors without P2 expansion because the graph primitive is
-point-in-time; the absent P2 freshness stamp makes that limitation visible.
+keep their explicit anchors without graph expansion because a neighborhood
+requires one world-time instant.
 
 The `time` object is a closed union: `{"mode":"current"}` (default),
 `{"mode":"at","at":"…"}`, `{"mode":"overlap","from":"…","to":"…"}`,

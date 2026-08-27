@@ -247,7 +247,8 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         name=AssuredOperationName.FACT_CONTEXT,
         description=(
             "Adjudicated relations and observations under an explicit world-time"
-            " scope, with bounded P2 expansion for current or point-in-time entity"
+            " scope, with bounded live-graph expansion for current or point-in-time"
+            " entity"
             " anchors."
         ),
         parameters={

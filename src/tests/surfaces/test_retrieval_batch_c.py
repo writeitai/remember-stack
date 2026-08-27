@@ -170,7 +170,7 @@ class _GraphNeighborhood:
         self.calls: list[dict[str, object]] = []
 
     def neighborhood(self, **arguments: object):
-        """Return the configured neighbor as a fresh P2 projection result."""
+        """Return the configured neighbor as a fresh live-graph result."""
         self.calls.append(arguments)
         limit = cast(int, arguments["limit"])
         selected = self.neighbor_ids[:limit]
@@ -181,9 +181,7 @@ class _GraphNeighborhood:
                 GraphNode(entity_id=entity_id, name=f"Neighbor {index}", hops=1)
                 for index, entity_id in enumerate(selected)
             ),
-            freshness=Freshness(
-                pg_live_ts=_NOW, p2_snapshot_version="batch-c-p2", p2_snapshot_ts=_NOW
-            ),
+            freshness=Freshness(pg_live_ts=_NOW),
             truncation=Truncation(
                 truncated=len(selected) < len(self.neighbor_ids),
                 returned=len(selected),
@@ -831,7 +829,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
             "limit": 19,
         }
     ]
-    assert answer.freshness.p2_snapshot_version == "batch-c-p2"
+    assert answer.freshness.pg_live_ts == _NOW
     assert index.requested_entity_ids == [
         (str(corpus.object_id), str(corpus.subject_id))
     ]
@@ -840,7 +838,7 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
 def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
     corpus: _Corpus,
 ) -> None:
-    """A lagging P2 node is disclosed as hydration loss, not a whole-answer veto."""
+    """A concurrently stale graph node is disclosed without vetoing anchor facts."""
     stale_neighbor_id = uuid4()
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(stale_neighbor_id,))
@@ -890,7 +888,7 @@ def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmati
     assert wrong_filter.facts == ()
 
 
-def test_default_fact_context_reports_missing_p2_without_widening(
+def test_default_fact_context_reports_missing_graph_without_widening(
     corpus: _Corpus,
 ) -> None:
     """No graph dependency is a boundary before P1 nomination or embedding."""

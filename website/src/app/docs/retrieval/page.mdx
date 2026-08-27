@@ -60,14 +60,14 @@ ambiguous names first. The operations never guess a name or silently drop an
 unknown ID.
 
 For a current or point-in-time read with `entity_ids`, `fact_context` starts
-from those anchors, walks one P2 hop by default, then searches relation labels
+from those anchors, walks one live-graph hop by default, then searches relation labels
 and observation statements only inside the anchor-plus-neighbor scope. The
 default predicate list is empty, which means **all stored relations**, including
 `other:*`; `predicate` is an optional narrowing string, not an enum. Observations
 remain fact rows and never become graph nodes; when `predicate` is supplied,
 the exact relation-only filter excludes observations. The combined scope is
 capped at 20 entities and the envelope marks graph or fact truncation. A
-missing snapshot or current anchor absent from P2 returns a `boundary`, never a
+missing live-graph authority or current anchor absent from it returns a `boundary`, never a
 silent anchor-only current answer. A stale neighbor is omitted and counted in
 `dropped_by_hydration`, preserving current facts inside the surviving scope.
 
@@ -124,9 +124,9 @@ Assured ops and operations compose **typed zero-LLM engine primitives** internal
 Every envelope carries a required discriminated `temporal_scope` describing
 the exact selection applied and the identity regime. Default identity follows
 today’s merge redirects.
-P2 traversal is point-in-time: `current` and `at` use neighborhood expansion;
-`overlap` and `history` preserve the supplied anchor scope and therefore carry
-no P2 freshness stamp.
+Live graph traversal requires one world-time instant: `current` and `at` use
+neighborhood expansion; `overlap` and `history` preserve the supplied anchor
+scope.
 
 ## Correctness invariant
 
