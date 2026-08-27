@@ -12,6 +12,7 @@ RUN set -eux; \
       /etc/apt/sources.list.d/pgdg.sources; do \
       if [ -f "${pgdg_source_file}" ]; then \
         sed -i \
+          -e 's|http://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
           -e 's|https://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
           -e 's|trixie-pgdg|trixie-pgdg-archive|g' \
           "${pgdg_source_file}"; \
@@ -66,6 +67,7 @@ RUN set -eux; \
       /etc/apt/sources.list.d/pgdg.sources; do \
       if [ -f "${pgdg_source_file}" ]; then \
         sed -i \
+          -e 's|http://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
           -e 's|https://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g' \
           -e 's|trixie-pgdg|trixie-pgdg-archive|g' \
           "${pgdg_source_file}"; \

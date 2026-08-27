@@ -60,6 +60,7 @@ jobs:
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}

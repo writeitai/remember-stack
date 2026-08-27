@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+import tomllib
 
 _ROOT = Path(__file__).resolve().parents[2]
 _RUNTIME = _ROOT / "src" / "rememberstack"
@@ -108,7 +109,9 @@ def test_postgres_image_verifies_extension_source_patch_and_license() -> None:
     assert "/usr/share/doc/pg_textsearch/LICENSE" in dockerfile
     assert "/usr/share/doc/pg_textsearch/NOTICE" in dockerfile
     assert "/usr/share/doc/pg_textsearch/artifacts.sha256" in dockerfile
-    assert dockerfile.count("apt-archive.postgresql.org/pub/repos/apt") == 4
+    assert dockerfile.count("apt-archive.postgresql.org/pub/repos/apt") == 6
+    assert dockerfile.count("s|http://apt.postgresql.org/pub/repos/apt|") == 2
+    assert dockerfile.count("s|https://apt.postgresql.org/pub/repos/apt|") == 2
     assert dockerfile.count("trixie-pgdg-archive") == 2
     runtime_stage = dockerfile.split("FROM postgres:19beta3-trixie@", maxsplit=2)[2]
     assert "apt-archive.postgresql.org/pub/repos/apt" in runtime_stage
@@ -134,3 +137,21 @@ def test_postgres_image_verifies_extension_source_patch_and_license() -> None:
     assert (
         "**The PostgreSQL License** (`PostgreSQL` identifier)" in normalized_provenance
     )
+
+
+def test_uv_lock_and_automation_share_one_tool_version() -> None:
+    """Local, CI, nightly, and release locking must use one uv version."""
+    pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    required_version = pyproject["tool"]["uv"]["required-version"]
+    assert required_version == "==0.12.6"
+    assert "revision = 3" in (_ROOT / "uv.lock").read_text(encoding="utf-8")
+
+    for relative_path in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/ci-nightly.yml",
+        ".github/workflows/release.yml",
+    ):
+        workflow = (_ROOT / relative_path).read_text(encoding="utf-8")
+        setup_count = workflow.count("uses: astral-sh/setup-uv@v5")
+        assert setup_count > 0
+        assert workflow.count('version: "0.12.6"') == setup_count
