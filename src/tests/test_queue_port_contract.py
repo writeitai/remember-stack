@@ -38,8 +38,6 @@ _PIPELINE_STAGE_VALUES = (
     "embed_observation",
     "label_observation",
     "refresh_profile",
-    "build_snapshot",
-    "detect_communities",
     "compile_knowledge",
     "reflect_knowledge",
     "lint_knowledge",
@@ -154,7 +152,7 @@ def test_queue_fake_preserves_identity_and_non_authoritative_snapshots() -> None
     queue = RecordingTaskQueue()
     processing_id = uuid4()
     route = QueueRoute(
-        deployment_id=uuid4(), stage=PipelineStage.BUILD_SNAPSHOT, lane=None
+        deployment_id=uuid4(), stage=PipelineStage.COMPILE_KNOWLEDGE, lane=None
     )
     due = datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc)
 

@@ -1,12 +1,12 @@
 export const metadata = {
   title: "Open query space",
   description:
-    "Sandboxed SQL, read-only Cypher, schema discovery, saved queries, and the two-layer facts/claims rules for ad-hoc agent retrieval.",
+    "Sandboxed SQL, live graph helpers, schema discovery, saved queries, and the two-layer facts/claims rules for ad-hoc agent retrieval.",
 };
 
 # Open query space
 
-Open query is the power surface for agents that can write SQL or Cypher. It sits beside the four assured operations — not under them.
+Open query is the power surface for agents that can write SQL. It sits beside the four assured operations — not under them.
 
 Parent: [Retrieval](/docs/retrieval). Wire paths: [API reference](/docs/reference/api).
 
@@ -14,11 +14,11 @@ Parent: [Retrieval](/docs/retrieval). Wire paths: [API reference](/docs/referenc
 
 | Surface | Best for | Freshness model |
 | --- | --- | --- |
-| **Cypher** | Multi-hop graph patterns, native graph power | **P2 snapshot** (`built_at` / age) |
-| **SQL** | Live joins, evidence composition, filters | **Live spine views** + nomination SRFs |
+| **SQL** | Live joins, evidence composition, filters, graph helpers | **Live spine views** + nomination/traversal SRFs |
+| **Typed graph methods** | Neighborhoods and bounded shortest paths | Same PostgreSQL repeatable-read snapshot |
 | **Assured ops** | One-call typed envelopes for common intents | Envelope freshness block |
 
-Discovery endpoint `GET /query/space` returns the bound two-layer headline, honesty warnings, worked examples, views, function signatures, grammar, Cypher dialect notes, and tier limits.
+Discovery endpoint `GET /query/space` returns the bound two-layer headline, honesty warnings, worked examples, views, function signatures, SQL grammar, and tier limits.
 
 ## HTTP entry points
 
@@ -26,8 +26,6 @@ Discovery endpoint `GET /query/space` returns the bound two-layer headline, hone
 | --- | --- | --- |
 | `POST` | `/query/sql` | One sandboxed statement → `QueryResult/v1` |
 | `POST` | `/query/sql/explain` | Plan without execution |
-| `POST` | `/query/cypher` | Read-only Cypher over published P2 |
-| `POST` | `/query/cypher/explain` | Engine plan without execution |
 | `GET` | `/query/space` | Full schema discovery payload |
 | `GET` | `/query/space/search` | Search checked-in manifest text |
 | `GET` | `/query/saved` | Saved-query registry metadata |
@@ -92,11 +90,19 @@ ORDER BY f.fact_id, e.stance;
 
 (Exact view/column names follow the deployment’s `memory_v1` manifest — always re-check `/query/space`.)
 
-### Snapshot graph → live confirmation
+### Live graph traversal
 
-1. Run Cypher on P2 to find candidate entity/relation ids.  
-2. Confirm those ids with live SQL / assured ops / hydration.  
-3. Do not treat snapshot-only edges as live without confirmation when correctness matters.
+Use `memory_v1.graph_neighborhood`, `memory_v1.graph_path`, or
+`memory_v1.graph_citation_path`. Fixed shallow typed operations use SQL/PGQ;
+the helpers provide bounded recursive traversal for deeper or shortest-tier
+work. Returned identifiers are hydrated from evidence-rich authority views in
+the same transaction, so there is no snapshot-confirmation phase.
+
+The SQL sandbox hides each helper's internal terminal row after validating it.
+Read aggregate truncation from `QueryResult.truncated` and
+`truncation_reason`; read each helper's counters and effective budgets from
+`QueryResult.graph_invocations`. Data rows may also project `examined_edges`
+and `returned_paths` when those counters are useful in relational composition.
 
 ## Semantic and lexical nomination in SQL
 
@@ -122,7 +128,7 @@ List: `GET /query/saved`. Run: `POST /query/saved/{namespace}/{name}/run`.
 | --- | --- |
 | Sandbox | Single statement; no arbitrary multi-statement scripts |
 | Allowlist | Only published views/SRFs/helpers |
-| Read-only Cypher | No graph mutation |
+| Live graph helpers | Read-only, deployment-first, hard-clamped traversal |
 | Limits | Tier caps on rows/time; disclosed as boundaries |
 | Auth | Deployment perimeter on all endpoints when configured |
 
@@ -141,11 +147,11 @@ Use open query when you need joins, custom filters, graph patterns, or analytics
 
 ## Agent checklist
 
-1. Call `/query/space` once per deployment session (or when skill says manifest changed).  
-2. Decide fact vs evidence **before** writing filters.  
-3. Prefer `facts_current` for present tense.  
-4. Join `fact_claim_evidence_live` for why.  
-5. Confirm P2 findings live when load-bearing.  
+1. Call `/query/space` once per deployment session (or when skill says manifest changed).
+2. Decide fact vs evidence **before** writing filters.
+3. Prefer `facts_current` for present tense.
+4. Join `fact_claim_evidence_live` for why.
+5. Inspect `QueryResult.graph_invocations` and aggregate truncation bounds.
 6. Respect limit/boundary errors — re-plan, do not loop blindly.
 
 ## Related

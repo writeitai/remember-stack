@@ -280,37 +280,43 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             "parallel": "unsafe",
         }
     )
-    graph_edge_columns = [
-        "relation_id",
-        "subject_entity_id",
-        "object_entity_id",
-        "predicate",
-        "fact_label",
-        "valid_from",
-        "valid_until",
-        "ingested_at",
-        "invalidated_at",
-        "contradiction_group",
-        "confidence",
-        "evidence_count_current",
-        "contradict_count_current",
-        "support_state_current",
+    graph_work_columns = [
+        "row_kind",
+        "hops",
+        "truncated",
+        "truncation_reason",
+        "examined_edges",
+        "returned_paths",
+        "effective_depth",
+        "effective_expansion_budget",
+        "effective_frontier_budget",
+        "effective_result_budget",
+        "effective_time_budget_ms",
     ]
-    graph_edge_types = [
-        "uuid",
-        "uuid",
-        "uuid",
+    graph_work_types = [
         "text",
+        "integer",
+        "boolean",
         "text",
-        "timestamptz",
-        "timestamptz",
-        "timestamptz",
-        "timestamptz",
-        "uuid",
-        "real",
         "bigint",
         "bigint",
-        "text",
+        "integer",
+        "integer",
+        "integer",
+        "integer",
+        "integer",
+    ]
+    entity_graph_arguments: list[CanonicalValue] = [
+        {"name": "deployment_id", "type": "uuid", "required": True},
+        {"name": "start_entity_id", "type": "uuid", "required": True},
+        {"name": "max_depth", "type": "integer", "required": False},
+        {"name": "predicates", "type": "text[]", "required": False},
+        {"name": "valid_at", "type": "timestamptz", "required": False},
+        {"name": "believed_at", "type": "timestamptz", "required": False},
+        {"name": "max_results", "type": "integer", "required": False},
+        {"name": "expansion_budget", "type": "integer", "required": False},
+        {"name": "frontier_budget", "type": "integer", "required": False},
+        {"name": "time_budget_ms", "type": "integer", "required": False},
     ]
     functions.extend(
         [
@@ -318,74 +324,38 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "name": "graph_neighborhood",
                 "target": "graph",
                 "channel": "postgresql",
-                "arguments_min": 1,
-                "arguments_max": 6,
-                "arguments": [
-                    {"name": "start_entity_id", "type": "uuid", "required": True},
-                    {
-                        "name": "max_depth",
-                        "type": "integer",
-                        "required": False,
-                        "default": 2,
-                        "hard_cap": 4,
-                    },
-                    {
-                        "name": "predicates",
-                        "type": "text[]",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "valid_at",
-                        "type": "timestamptz",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "believed_at",
-                        "type": "timestamptz",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "max_edges",
-                        "type": "integer",
-                        "required": False,
-                        "default": 100,
-                        "hard_cap": 500,
-                    },
-                ],
+                "arguments_min": 2,
+                "arguments_max": 10,
+                "arguments": entity_graph_arguments,
                 "volatility": "stable",
                 "security": "invoker",
                 "parallel": "unsafe",
                 "comment": (
-                    "Traverse the live graph with statement_timestamp() applied to"
-                    " both clocks when both are omitted, or the half-open historical"
-                    " graph when both valid_at and believed_at are supplied. Supplying"
-                    " exactly one clock fails with invalid_parameter_value. Reaching"
-                    " a depth or edge cap is disclosed in QueryResult/v1."
+                    "Return bounded deterministic live or bitemporal neighborhood"
+                    " paths and one terminal status row. Data rows repeat final"
+                    " truncation and work counters; the QueryResult envelope remains"
+                    " authoritative, including for empty results. The authenticated"
+                    " deployment parameter is mandatory and cannot be overridden."
                 ),
                 "example": (
-                    "SELECT * FROM memory_v1.graph_neighborhood("
-                    "$1, 2, NULL, $2, $3, 100)"
+                    "SELECT hops, relation_ids, node_ids, examined_edges,"
+                    " returned_paths FROM memory_v1.graph_neighborhood("
+                    "$1, $2, 2, NULL, $3, $4, 100, 2000, 1000, 1000)"
+                    " ORDER BY hops, relation_ids"
                 ),
                 "columns": [
-                    "path_id",
-                    "hop",
-                    "path_position",
-                    "from_entity_id",
-                    "to_entity_id",
-                    *graph_edge_columns,
+                    *graph_work_columns[:2],
+                    "relation_ids",
+                    "node_ids",
+                    *graph_work_columns[2:],
                     "applied_valid_at",
                     "applied_believed_at",
                 ],
                 "column_types": [
-                    "bigint",
-                    "integer",
-                    "integer",
-                    "uuid",
-                    "uuid",
-                    *graph_edge_types,
+                    *graph_work_types[:2],
+                    "uuid[]",
+                    "uuid[]",
+                    *graph_work_types[2:],
                     "timestamptz",
                     "timestamptz",
                 ],
@@ -394,149 +364,91 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
                 "name": "graph_path",
                 "target": "graph",
                 "channel": "postgresql",
-                "arguments_min": 2,
-                "arguments_max": 8,
+                "arguments_min": 3,
+                "arguments_max": 11,
                 "arguments": [
+                    {"name": "deployment_id", "type": "uuid", "required": True},
                     {"name": "from_entity_id", "type": "uuid", "required": True},
                     {"name": "to_entity_id", "type": "uuid", "required": True},
-                    {
-                        "name": "max_depth",
-                        "type": "integer",
-                        "required": False,
-                        "default": 4,
-                        "hard_cap": 6,
-                    },
-                    {
-                        "name": "predicates",
-                        "type": "text[]",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "valid_at",
-                        "type": "timestamptz",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "believed_at",
-                        "type": "timestamptz",
-                        "required": False,
-                        "default": None,
-                    },
-                    {
-                        "name": "max_paths",
-                        "type": "integer",
-                        "required": False,
-                        "default": 3,
-                        "hard_cap": 10,
-                    },
-                    {
-                        "name": "max_edges",
-                        "type": "integer",
-                        "required": False,
-                        "default": 100,
-                        "hard_cap": 500,
-                    },
+                    *entity_graph_arguments[2:],
                 ],
                 "volatility": "stable",
                 "security": "invoker",
                 "parallel": "unsafe",
                 "comment": (
-                    "Return bounded simple paths over the live graph with"
-                    " statement_timestamp() applied to both clocks when both are"
-                    " omitted, or the half-open historical graph when both valid_at"
-                    " and believed_at are supplied. Supplying exactly one clock fails"
-                    " with invalid_parameter_value. Reaching a depth, path, or edge"
-                    " cap is disclosed in QueryResult/v1."
+                    "Return bounded equal-length shortest-tier paths and one"
+                    " terminal work-status row from PostgreSQL authority. Data rows"
+                    " repeat final truncation and work counters; the QueryResult"
+                    " envelope remains authoritative, including for empty results."
                 ),
                 "example": (
-                    "SELECT * FROM memory_v1.graph_path("
-                    "$1, $2, 4, NULL, $3, $4, 3, 100)"
+                    "SELECT hops, relation_ids, node_ids, examined_edges,"
+                    " returned_paths FROM memory_v1.graph_path("
+                    "$1, $2, $3, 4, NULL, $4, $5, 3, 2000, 1000, 1000)"
+                    " ORDER BY hops, relation_ids"
                 ),
                 "columns": [
-                    "path_id",
-                    "path_length",
-                    "path_position",
-                    "step_from_entity_id",
-                    "step_to_entity_id",
-                    *graph_edge_columns,
+                    *graph_work_columns[:2],
+                    "relation_ids",
+                    "node_ids",
+                    *graph_work_columns[2:],
                     "applied_valid_at",
                     "applied_believed_at",
                 ],
                 "column_types": [
-                    "bigint",
-                    "integer",
-                    "integer",
-                    "uuid",
-                    "uuid",
-                    *graph_edge_types,
+                    *graph_work_types[:2],
+                    "uuid[]",
+                    "uuid[]",
+                    *graph_work_types[2:],
                     "timestamptz",
                     "timestamptz",
                 ],
             },
             {
-                "name": "query_cypher",
+                "name": "graph_citation_path",
                 "target": "graph",
-                "channel": "cypher",
-                "arguments_min": 1,
-                "arguments_max": 3,
+                "channel": "postgresql",
+                "arguments_min": 3,
+                "arguments_max": 8,
                 "arguments": [
-                    {"name": "cypher", "type": "text", "required": True},
-                    {
-                        "name": "parameters",
-                        "type": "json",
-                        "required": False,
-                        "default": {},
-                    },
-                    {
-                        "name": "max_rows",
-                        "type": "integer",
-                        "required": False,
-                        "default": None,
-                    },
+                    {"name": "deployment_id", "type": "uuid", "required": True},
+                    {"name": "from_doc_id", "type": "uuid", "required": True},
+                    {"name": "to_doc_id", "type": "uuid", "required": True},
+                    {"name": "max_depth", "type": "integer", "required": False},
+                    {"name": "max_paths", "type": "integer", "required": False},
+                    {"name": "expansion_budget", "type": "integer", "required": False},
+                    {"name": "frontier_budget", "type": "integer", "required": False},
+                    {"name": "time_budget_ms", "type": "integer", "required": False},
                 ],
-                "execution_options": {"confirm": {"type": "boolean", "default": False}},
-                "result_contract": "QueryResult/v1",
-                "grade": "snapshot_graph",
+                "volatility": "stable",
+                "security": "invoker",
+                "parallel": "unsafe",
                 "comment": (
-                    "Execute one bounded read against the disclosed P2 snapshot;"
-                    " confirm defaults false and checks only top-level typed Entity"
-                    " and RELATES values. The manifest's rejected_functions list"
-                    " names the pinned physical-address origin and coercion functions"
-                    " that are unavailable."
+                    "Return bounded directed citation paths and one terminal"
+                    " work-status row from the current live document graph. Data"
+                    " rows repeat final truncation and work counters; the QueryResult"
+                    " envelope remains authoritative, including for empty results."
                 ),
                 "example": (
-                    "MATCH (e:Entity) RETURN e.id, e.name ORDER BY e.name LIMIT 20"
+                    "SELECT hops, crossref_ids, document_ids, examined_edges,"
+                    " returned_paths FROM memory_v1.graph_citation_path("
+                    "$1, $2, $3, 6, 3, 2000, 1000, 1000)"
+                    " ORDER BY hops, crossref_ids"
                 ),
-                "columns": ["result"],
-                "column_types": ["QueryResult/v1"],
-            },
-            {
-                "name": "explain_cypher",
-                "target": "graph",
-                "channel": "cypher",
-                "arguments_min": 1,
-                "arguments_max": 2,
-                "arguments": [
-                    {"name": "cypher", "type": "text", "required": True},
-                    {
-                        "name": "parameters",
-                        "type": "json",
-                        "required": False,
-                        "default": {},
-                    },
+                "columns": [
+                    *graph_work_columns[:2],
+                    "crossref_ids",
+                    "document_ids",
+                    *graph_work_columns[2:],
+                    "evaluated_at",
                 ],
-                "result_contract": "QueryResult/v1",
-                "grade": "snapshot_graph",
-                "comment": (
-                    "Return the bounded engine plan for one accepted read without"
-                    " executing it. The same dialect gate applies, including refusal"
-                    " of the manifest's physical-address functions."
-                ),
-                "example": "MATCH (e:Entity) RETURN e.name LIMIT 20",
-                "columns": ["result"],
-                "column_types": ["QueryResult/v1"],
+                "column_types": [
+                    *graph_work_types[:2],
+                    "uuid[]",
+                    "uuid[]",
+                    *graph_work_types[2:],
+                    "timestamptz",
+                ],
             },
         ]
     )
@@ -627,8 +539,6 @@ def stub_limits() -> dict[str, CanonicalValue]:
             "pg_catalog_functions": [],
             "statement_node_classes": [],
         },
-        "cypher_dialect": {"allowed_clauses": [], "rejected_constructs": []},
-        "p2_projection": {"contract_version": None, "node_types": {}, "edge_types": {}},
         "resource_limits": {
             "default": {},
             "interactive_hard_cap": {},
@@ -648,7 +558,6 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
     """
     from rememberstack.surfaces.query_sandbox import grammar
     from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
-    from rememberstack.workers.p2 import P2_PROJECTION_SCHEMA
 
     sql_grammar: dict[str, CanonicalValue] = {
         "statement_node_classes": list(sorted(grammar.STATEMENT_NODE_ALLOWLIST)),
@@ -675,50 +584,6 @@ def _sandbox_limits_member() -> dict[str, CanonicalValue]:
         "contract": "memory_v1.limits/1",
         "sql_grammar": sql_grammar,
         "resource_limits": resource_limits,
-        "cypher_dialect": _cypher_dialect(),
-        "p2_projection": cast("dict[str, CanonicalValue]", P2_PROJECTION_SCHEMA),
-    }
-
-
-def _cypher_dialect() -> dict[str, CanonicalValue]:
-    """The §3.5 Cypher read surface: what it accepts and what it refuses.
-
-    The reject list is part of the public contract, not an implementation
-    detail: an agent needs to know which constructs die before the engine sees
-    them (the file/network/extension family). Mutations are refused by the
-    engine's `read_only=True` and mapped to the same public code; a change to
-    either path rolls the hash.
-    """
-    from rememberstack.surfaces.query_sandbox import cypher
-    from rememberstack.surfaces.query_sandbox.cypher_executor import (
-        CYPHER_TEXT_BYTES_MAX,
-    )
-
-    return {
-        "contract": "memory_v1.cypher/1",
-        "engine": "ladybug",
-        "engine_version": cypher.LADYBUG_ENGINE_VERSION,
-        "read_clauses": list(sorted(cypher.READ_CLAUSES)),
-        "read_openings": list(sorted(cypher.READ_OPENINGS)),
-        "rejected_constructs": list(sorted(cypher.REJECTED_KEYWORDS)),
-        "engine_rejected_mutations": list(sorted(cypher.ENGINE_REJECTED_MUTATIONS)),
-        "rejected_functions": list(sorted(cypher.REJECTED_FUNCTIONS)),
-        "text_bytes_max": CYPHER_TEXT_BYTES_MAX,
-        # Pinned engine-native recursive upper bound. The executor does not
-        # duplicate this grammar in a text walker.
-        "recursive_hops_max": cypher.RECURSIVE_HOPS_MAX,
-        "grade": "snapshot_graph",
-        "process_isolated": False,
-        "graph_reference_metadata": "unavailable",
-        # `confirm=true` checks live membership of projected entity/relation
-        # ids; it does not make any other part of the result live. Naming the
-        # types alone read as a promise about any projection of them, which is
-        # wider than what the code does — a scalar `RETURN e.id` is not
-        # checked, and saying so here is the difference between a documented
-        # limit and an overclaim.
-        "confirmable_types": ["Entity", "RELATES"],
-        "confirmable_projections": ["typed_node_value", "typed_relationship_value"],
-        "unconfirmed_projections": ["scalar_id_projection"],
     }
 
 

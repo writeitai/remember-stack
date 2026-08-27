@@ -101,7 +101,7 @@ def default_deny_activation(_actor: str) -> bool:
 #: Bound actor used by the self-host seed path for shipped `examples.*` install.
 PLATFORM_SEED_ACTOR: Final = "platform:shipped-examples"
 
-#: Platform-owned namespace for the seventeen shipped demotion examples (§2).
+#: Platform-owned namespace for the eighteen shipped demotion examples (§2).
 #: Customer drafts must copy into another namespace; only platform seed installs here.
 EXAMPLES_NAMESPACE: Final = "examples"
 
@@ -1061,7 +1061,7 @@ class SavedQueryRegistry:
         )
 
     def install_shipped_examples(self) -> int:
-        """Idempotently install the seventeen `examples.*` registry identities.
+        """Idempotently install the eighteen `examples.*` registry identities.
 
         Requires activation authority on the bound actor (the self-host seed
         path binds `PLATFORM_SEED_ACTOR`). Each body is grammar-checked, stored
@@ -1824,7 +1824,7 @@ def revalidate(
 def seed_shipped_examples(
     *, connection: psycopg.Connection, deployment_id: UUID, manifest_hash: str
 ) -> int:
-    """Idempotently install all seventeen `examples.*` identities (bootstrap).
+    """Idempotently install all eighteen `examples.*` identities (bootstrap).
 
     Constructs a registry bound to `PLATFORM_SEED_ACTOR` with a matching
     activation policy and delegates to `install_shipped_examples`. Safe to call

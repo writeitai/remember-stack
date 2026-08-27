@@ -9,7 +9,7 @@ e1 §5); #4 extractor model → **D70** (`gpt-5.6-luna` port default).
 **Exit criteria:** a toy corpus (≈10 mixed docs) ingests; scenario classes **S1, S2, S5, S39**
 pass; the grain CI invariants hold (fact vs evidence labeling; claims never answer
 current-fact); propose/dispose verified (a hand-invalidated fact never surfaces as current).
-Deliberately absent here: ER beyond T0, supersession cascade, versions, K, P2/P3.
+Deliberately absent here: ER beyond T0, supersession cascade, versions, K, live graph/P3.
 
 | WP | Goal | Reads | Depends | Deliverable | Acceptance | Status |
 |---|---|---|---|---|---|---|
@@ -28,4 +28,4 @@ invariants hold (claims answers are evidence grain and never answer
 current-fact; fact lookups filter both clocks); propose/dispose is verified
 (a hand-invalidated fact never surfaces as current — the drop-count honesty
 and both-clocks tests). Deliberately absent per the phase goal: ER beyond T0,
-supersession cascade, versions, K, P2/P3.
+supersession cascade, versions, K, live graph/P3.

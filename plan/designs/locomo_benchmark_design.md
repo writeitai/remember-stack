@@ -1,8 +1,18 @@
 # LoCoMo full-system benchmark design
 
+> **Binding D98 amendment (2026-08-27).** The benchmark no longer builds or
+> waits for P2 and does not expose Cypher to the answer agent. Graph questions
+> use typed live-graph operations and the bounded PostgreSQL SQL helpers;
+> server-owned shallow execution exercises SQL/PGQ. Data-independent readiness
+> proves property-graph catalog/function health; the benchmark preflight
+> separately proves immediate committed-edge visibility on its isolated sample.
+> P3 is
+> still explicitly built. This rolls the current protocol to `full-v14`; older
+> version-transition paragraphs remain historical evidence only.
+
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v13 run.
+> paid v14 run.
 
 ## 1. Acceptance boundary
 
@@ -11,10 +21,11 @@ run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
 - the stock self-host profile composes all eleven continuous handlers;
-- P2/P3 can be built explicitly over the same stores the API reads;
+- P3 can be built explicitly over the same stores the API reads, while graph
+  readiness and committed-edge visibility are verified directly in PostgreSQL;
 - readiness is machine-verifiable through the public API;
 - the answer agent can use the complete shipped read plane: assured operations,
-  direct primitives, open query, P1/P2, and the published P3 mount;
+  direct primitives, open query, P1/live graph, and the published P3 mount;
 - all tool calls, responses, model usage, costs, and failures checkpoint;
 - pure and synthetic tests pass; and
 - the operator supplies explicit execution, isolated-deployment, call-budget,
@@ -27,7 +38,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v13
+protocol                RS-LoCoMo-Full-v14
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -51,6 +62,18 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v13 → v14 (2026-08-27 — PostgreSQL 19 live graph):** D98 removes the two
+Cypher tools and every P2 build/readiness/snapshot input. The complete answer
+catalog now contains four assured operations, seven direct primitives, seven
+open-query operations, and three P3 motions: **21 descriptors**. Graph questions
+use `graph_path`, `graph_neighborhood`, typed live-graph operations, or saved SQL;
+server-owned fixed one-hop execution exercises SQL/PGQ behind those
+contracts. Readiness pins PostgreSQL 19, the exact property-graph semantic
+catalog and grants, helper versions, traversal budgets, and empty-deployment
+execution. A separate isolated benchmark preflight proves immediate visibility
+of the sample's committed edges. The manifest, prompt, adapter, catalog hash, and protocol
+fingerprint roll together. There is no v13 compatibility mode.
 
 **v12 → v13 (2026-08-11 — current-main ingest and bounded fact authority):**
 D89 keeps the v12 dataset, models, prompts, budgets, and complete 23-tool answer
@@ -240,7 +263,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and v11 instead measure the
-owner-selected Luna agent against their pinned surfaces; v13 retains that model
+owner-selected Luna agent against their pinned surfaces; v14 retains that model
 choice for the D87 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -426,22 +449,24 @@ All use the same deployment ID, PostgreSQL authority/P1 database, MinIO stores, 
 adapter. One route per process preserves the existing queue/rate-limit design; no workflow engine
 is introduced.
 
-### Aggregate projections
+### Aggregate projection
 
-P2 and P3 rebuild after all selected session versions are E/P1-ready:
+P3 rebuilds after all selected session versions are E/P1-ready:
 
 ```bash
 docker compose --profile operations run --rm projections
 ```
 
-The one-shot service builds P2 into the snapshot bucket and P3 into the corpusfs bucket. It does
-not run on every document and does not remain resident.
+The one-shot service builds P3 into the corpusfs bucket. It does not run on
+every document and does not remain resident. The live graph is already
+queryable from PostgreSQL after the write commits; no graph build or snapshot
+bucket exists.
 
 After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v13; no benchmark-specific
+an integrity requirement and an answer channel in v14; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -467,18 +492,40 @@ This ensures labels enter P1 only after supersession and testimony reconciliatio
 no-claims document still creates the no-op terminal rows, so readiness has one deterministic
 shape.
 
-`POST /readiness?require_projections=true` receives a bounded JSON list of version IDs. The
-response contains:
+`POST /readiness` receives one bounded capability request:
+
+```json
+{
+  "version_ids": ["…"],
+  "require": {
+    "pipeline": true,
+    "p1": true,
+    "live_graph": true,
+    "p3": false
+  }
+}
+```
+
+All four `require` keys are mandatory; there is no `require_projections`
+compatibility form. The response contains:
 
 - every expected stage and exact component version;
 - its status and completion time;
-- P2/P3 version and publication time;
-- a Boolean requiring every stage to be `succeeded`/`skipped`;
-- a Boolean requiring both projection builds to begin after the latest requested terminal stage;
+- exact `pipeline`, `p1`, `live_graph`, and `p3` capability members, each with
+  `required`, `ready`, `checked_at`, and a typed non-secret reason;
+- P3 version/publication evidence when P3 is required, plus PostgreSQL 19
+  property-graph catalog, grant, helper-version, role-limit, and
+  same-snapshot proven-absent-anchor execution checks when live graph is required;
+- an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding.
 
 The answer command refuses a false report and checkpoints a true one. The old
 `--confirm-index-ready` flag is removed.
+
+Public readiness never inserts or expects a synthetic tenant sentinel. The
+benchmark's committed-edge and invalid-short/valid-longer probes are separate
+acceptance checks over the already-isolated sample fixture and do not redefine
+the machine-client readiness capability.
 
 ## 6. Complete retrieval surface
 
@@ -488,8 +535,8 @@ The answer catalog is the exact union of:
   `answer_context`;
 - direct primitives: `resolve`, `lookup_relations`, `transcript_relation`,
   `lookup_observations`, `search_claims`, `search_chunks`, `hydrate_relation`;
-- open query: `query_sql`, `explain_sql`, `query_cypher`, `explain_cypher`,
-  `describe_query_space`, `search_query_space`, `list_saved_queries`,
+- open query: `query_sql`, `explain_sql`, `describe_query_space`,
+  `search_query_space`, `list_saved_queries`,
   `describe_saved_query`, `run_saved_query`; and
 - mounted P3: `p3_list`, `p3_search`, `p3_read`.
 
@@ -506,7 +553,7 @@ registry row, so equality covers the plan the executor will actually run, not
 only its name and schema. This catches both implementation-contract drift and
 registry bootstrap drift before remote processing or answer-model spend.
 
-The nine open-query descriptors come from the same static authority used by the
+The seven open-query descriptors come from the same static authority used by the
 MCP surface; the seven primitive descriptors adapt the exact public SDK
 methods; and the three P3 schemas and their output limits are pinned by the
 benchmark adapter. The canonical descriptor hash is part of `run.json`.
@@ -525,7 +572,7 @@ stay inside the normal P3 mount.
 
 For each question:
 
-1. Render the frozen answer-agent prompt with the question, all 23 tool
+1. Render the frozen answer-agent prompt with the question, all 21 tool
    descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
 3. For `action="tool"`, validate the name against the catalog, decode
@@ -538,7 +585,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v13 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v14 leaves it unset.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
@@ -553,15 +600,14 @@ The agent is instructed to choose the cheapest suitable channel:
 historical truth, `answer_context` when both authority layers are useful, and
 `resolve_entity` before entity-grounded retrieval when identity is ambiguous;
 direct primitives for
-targeted evidence and audit, discovery before unfamiliar SQL/Cypher, SQL for
-live composition and P1 search functions, Cypher for P2 graph questions, saved
-queries for shipped patterns, and P3 for filesystem orientation/grep/read. It
-must verify load-bearing snapshot findings against live fact/evidence paths and
-respect grain, validity, freshness, truncation, typed negatives, and hydration
-drops. It receives no gold answer, evidence IDs, summaries, or outside
-retrieval.
+targeted evidence and audit, discovery before unfamiliar SQL, SQL for live
+composition and P1 search functions, bounded graph helpers or typed graph
+operations for graph questions, saved queries for shipped patterns, and P3 for
+filesystem orientation/grep/read. It must inspect graph truncation/work-bound
+fields and respect grain, validity, freshness, typed negatives, and hydration
+drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v13): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v14): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". These are prompt discipline, not harness enforcement
@@ -570,13 +616,13 @@ before answering "Unknown". These are prompt discipline, not harness enforcement
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
 hydration-drop counts remain, while rank-score bookkeeping and empty containers
-are omitted from envelopes. SQL/Cypher/discovery/P3 response content is not
+are omitted from envelopes. SQL/discovery/P3 response content is not
 silently reduced. Default-valued temporal and validity fields are retained
 rather than being silently classified as noise. The complete response remains
 in the durable `ToolCallRecord`.
 
 Evidence claims found anywhere in the trace are de-duplicated in first-seen
-order for the coarse session diagnostic. Because SQL, Cypher, and P3 do not
+order for the coarse session diagnostic. Because SQL and P3 do not
 necessarily return typed envelope claims/chunks, the diagnostic is explicitly
 envelope-evidence only. It remains separate from the primary score.
 
@@ -588,11 +634,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v13 \
+  --protocol full-v14 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v13`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v14`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -684,13 +730,14 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
 - Explicit ingestion model IDs are set; no rotating model router.
 - All eleven workers are running.
 - Every prepared session has an ingest record.
-- P2/P3 one-shot build completed.
+- P3 one-shot build completed; live-graph catalog/grant/helper readiness and a
+  committed-edge visibility probe passed.
 - The ordinary mount publisher completed and its P3 `.snapshot-version` equals
   readiness.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
 - Public surface hash, assured-operation descriptors, live implementation-plan hashes,
-  nine open-query names, and the fingerprinted complete answer catalog match.
+  seven open-query names, and the fingerprinted complete answer catalog match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.
 - No claim is made that K ran.
 - Raw artifacts and failures will be retained for publication review.

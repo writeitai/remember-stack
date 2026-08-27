@@ -36,7 +36,6 @@ from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.query_space.canonical import CanonicalizationError
 from rememberstack.spine.query_space.deletion_matrix import MATRIX_PATH
 from rememberstack.surfaces.operation_surface import operation_descriptors
-from rememberstack.surfaces.query_sandbox.cypher import validate_cypher
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 
 
@@ -154,7 +153,7 @@ def test_two_independent_builds_of_the_manifest_agree_byte_for_byte() -> None:
 
 
 def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
-    """The still-unpopulated members carry their bound shape already."""
+    """The published members carry their complete bound shape."""
     manifest = load_manifest()
     members = manifest["hash_members"]
     assert isinstance(members, dict)
@@ -167,14 +166,13 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # vocabulary, and the columns it answers with, so a caller can read the
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
-        "explain_cypher",
         "facts_as_of",
         "fetch_chunk_bodies",
+        "graph_citation_path",
         "graph_neighborhood",
         "graph_path",
         "lexical_chunks",
         "lexical_claims",
-        "query_cypher",
         "semantic_chunks",
         "semantic_claims",
         "semantic_entities",
@@ -184,26 +182,20 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         assert isinstance(entry, dict)
         assert entry["arguments_min"] >= 1
         assert entry["columns"]
-    batch_d_functions = {
+    graph_functions = {
         entry["name"]: entry
         for entry in published
-        if entry["name"]
-        in {"graph_neighborhood", "graph_path", "query_cypher", "explain_cypher"}
+        if str(entry["name"]).startswith("graph_")
     }
-    assert set(batch_d_functions) == {
+    assert set(graph_functions) == {
+        "graph_citation_path",
         "graph_neighborhood",
         "graph_path",
-        "query_cypher",
-        "explain_cypher",
     }
-    assert all(entry["comment"] for entry in batch_d_functions.values())
-    assert all(entry["example"] for entry in batch_d_functions.values())
-    for name in ("graph_neighborhood", "graph_path"):
-        assert "invalid_parameter_value" in batch_d_functions[name]["comment"]
-        assert "statement_timestamp()" in batch_d_functions[name]["comment"]
-        assert validate_sql(batch_d_functions[name]["example"])
-    for name in ("query_cypher", "explain_cypher"):
-        assert validate_cypher(batch_d_functions[name]["example"])
+    assert all(entry["comment"] for entry in graph_functions.values())
+    assert all(entry["example"] for entry in graph_functions.values())
+    assert all(entry["channel"] == "postgresql" for entry in graph_functions.values())
+    assert all(validate_sql(entry["example"]) for entry in graph_functions.values())
     core = members["core_operation_descriptors"]
     assert isinstance(core, dict)
     assert core["contract"] == "memory_v1.core_operations/1"
@@ -243,54 +235,23 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert properties["entity_ids"]["maxItems"] == 20  # type: ignore[index]
     limits = members["limits"]
     assert isinstance(limits, dict)
-    assert sorted(limits) == [
-        "contract",
-        "cypher_dialect",
-        "p2_projection",
-        "resource_limits",
-        "sql_grammar",
+    assert sorted(limits) == ["contract", "resource_limits", "sql_grammar"]
+    grammar = limits["sql_grammar"]
+    assert isinstance(grammar, dict)
+    assert grammar["public_functions"] == [
+        "facts_as_of",
+        "fetch_chunk_bodies",
+        "graph_citation_path",
+        "graph_neighborhood",
+        "graph_path",
+        "lexical_chunks",
+        "lexical_claims",
+        "semantic_chunks",
+        "semantic_claims",
+        "semantic_entities",
+        "semantic_facts",
     ]
-    cypher = limits["cypher_dialect"]
-    assert isinstance(cypher, dict)
-    assert cypher["text_bytes_max"] == 32 * 1024
-    assert cypher["read_openings"] == ["match", "optional", "return", "unwind", "with"]
-    assert cypher["engine_rejected_mutations"] == ["create", "delete", "merge", "set"]
-    assert cypher["rejected_functions"] == [
-        "cast",
-        "hash",
-        "id",
-        "internal_id",
-        "offset",
-        "rowid",
-        "string",
-        "to_string",
-    ]
-    projection = limits["p2_projection"]
-    assert isinstance(projection, dict)
-    assert projection["contract_version"] == "p2-rebuild-2026.08"
-    assert set(projection["node_types"]) == {"Entity", "Document"}  # type: ignore[arg-type]
-    assert set(projection["edge_types"]) == {  # type: ignore[arg-type]
-        "RELATES",
-        "MENTIONED_IN",
-        "DOC_CROSSREF",
-        "IS_DOCUMENT",
-    }
-    relates = projection["edge_types"]["RELATES"]  # type: ignore[index]
-    assert set(relates) == {  # type: ignore[arg-type]
-        "relation_id",
-        "subject_id",
-        "object_id",
-        "predicate",
-        "fact",
-        "evidence_count",
-        "contradict_count",
-        "confidence",
-        "contradiction_group",
-        "valid_from",
-        "valid_until",
-        "ingested_at",
-        "invalidated_at",
-    }
+    assert grammar["srf_categories"]["graph_neighborhood"] == "graph"
 
 
 def test_manifest_definitions_are_parse_trees_and_never_sql_text() -> None:

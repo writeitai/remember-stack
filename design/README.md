@@ -13,6 +13,14 @@ lost in chat.
 
 Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 
+## PostgreSQL 19 live-graph review evidence
+
+- [Design review round 1](reviews/postgres19_live_graph_design_review_round1.md)
+- [Design review round 2](reviews/postgres19_live_graph_design_review_round2.md)
+- [Implementation review round 1](reviews/postgres19_live_graph_implementation_review_round1.md)
+- [Implementation review round 2](reviews/postgres19_live_graph_implementation_review_round2.md)
+- [Frozen final implementation approval](reviews/postgres19_live_graph_implementation_review_final.md)
+
 ## Engine design cross-links (selected)
 
 | Topic | Binding | Analysis |
@@ -24,5 +32,5 @@ Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 | Claim-level E3 normalize fan-out (D88) | [`../plan/designs/e3_claim_level_normalize_fanout_design.md`](../plan/designs/e3_claim_level_normalize_fanout_design.md) | [`../plan/analysis/e3_claim_level_normalize_fanout_analysis.md`](../plan/analysis/e3_claim_level_normalize_fanout_analysis.md) |
 | Request-path metering + cost export (D91) | [`../plan/designs/request_path_metering_and_cost_export_design.md`](../plan/designs/request_path_metering_and_cost_export_design.md) | [`../plan/analysis/request_path_metering_and_cost_export_analysis.md`](../plan/analysis/request_path_metering_and_cost_export_analysis.md) |
 | PostgreSQL-native P1 search (D94) | [`../plan/designs/postgres_p1_search_projection_design.md`](../plan/designs/postgres_p1_search_projection_design.md) | [`../plan/analysis/postgres_p1_search_projection_analysis.md`](../plan/analysis/postgres_p1_search_projection_analysis.md) |
-| P2 graph-engine re-evaluation (D13 remains LadybugDB) | [`../plan/designs/p2_graph_design.md`](../plan/designs/p2_graph_design.md) | [`../plan/analysis/postgresql_p2_graph_analysis.md`](../plan/analysis/postgresql_p2_graph_analysis.md) |
+| Live PostgreSQL 19 graph (D98) | [`../plan/designs/p2_graph_design.md`](../plan/designs/p2_graph_design.md) | [`../plan/analysis/postgres19_sqlpgq_live_graph_analysis.md`](../plan/analysis/postgres19_sqlpgq_live_graph_analysis.md) |
 | Entity identity and retrieval (D95–D97) | [`../plan/designs/entity_identity_and_retrieval_design.md`](../plan/designs/entity_identity_and_retrieval_design.md) | [`../plan/analysis/entity_identity_and_retrieval_analysis.md`](../plan/analysis/entity_identity_and_retrieval_analysis.md) |

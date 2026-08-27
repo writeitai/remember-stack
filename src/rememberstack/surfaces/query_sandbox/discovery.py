@@ -89,8 +89,6 @@ class QuerySpaceDescription:
     core_operation_descriptors: dict[str, object]
     function_signatures: dict[str, object]
     sql_grammar: dict[str, object]
-    cypher_dialect: dict[str, object]
-    p2_projection: dict[str, object]
     examples: tuple[str, ...]
 
 
@@ -151,13 +149,7 @@ def describe_query_space(
         honesty_warnings=HONESTY_WARNINGS,
         worked_examples=bound_worked_examples(),
         views=tuple(views),
-        functions=tuple(
-            sorted(
-                str(entry["name"])
-                for entry in signature_entries
-                if entry.get("channel") != "cypher"
-            )
-        ),
+        functions=tuple(sorted(str(entry["name"]) for entry in signature_entries)),
         # Every named field of each tier's authoritative limit record (§6).
         limits=cast("dict[str, dict[str, int]]", limits_member["resource_limits"]),
         core_operation_descriptors=cast(
@@ -166,8 +158,6 @@ def describe_query_space(
         function_signatures=cast("dict[str, object]", signatures),
         # Already-loaded authoritative limits fields — never omit one.
         sql_grammar=cast("dict[str, object]", limits_member["sql_grammar"]),
-        cypher_dialect=cast("dict[str, object]", limits_member["cypher_dialect"]),
-        p2_projection=cast("dict[str, object]", limits_member["p2_projection"]),
         examples=examples,
     )
 

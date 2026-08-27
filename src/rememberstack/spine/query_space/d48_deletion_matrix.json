@@ -1522,220 +1522,220 @@
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.changes_visible before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.changes_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.chunks_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.chunks_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.claim_occurrences_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.claim_occurrences_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.claims_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.claims_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.claims_visible_history publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.claims_visible_history",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.contradiction_members_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.contradiction_members_current",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.document_crossrefs_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_crossrefs_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.document_versions_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.document_versions_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.documents_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.documents_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.entities_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.entities_current",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.entity_aliases_current publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.entity_aliases_current",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.entity_document_mentions publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.entity_document_mentions",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.evidence_lineage before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.evidence_lineage",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.fact_claim_evidence_live before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.fact_claim_evidence_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.facts_current before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.facts_current before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.facts_current",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.facts_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.facts_visible_history before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.facts_visible_history",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_current before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_current before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.graph_edges_current",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_visible_history before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.graph_edges_visible_history before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.graph_edges_visible_history",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.identity_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.identity_events_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.mentions_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.mentions_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through memory_v1.page_evidence_visible before the mutation, and no column of any row carries one of them after it.",
       "status": "applicable",
       "surface": "memory_v1.page_evidence_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.pages_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.pages_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.sections_live publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.sections_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "memory_v1.testimony_currency_events_visible publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it.",
       "status": "not_applicable",
       "surface": "memory_v1.testimony_currency_events_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "not_caller_reachable",
       "expectation": "public.v_graph_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_graph_survivor",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "not_caller_reachable",
       "expectation": "public.v_memory_entity_survivor is a merge-redirect helper: it deliberately keeps resolving an entity whose provenance is gone, because entities_current computes that provenance from it, so its obligation is non-reachability rather than absence — outside memory_v1, no grant, and never on a query role's search_path — which the gate proves, while the public relations that read it carry their own cells for this target.",
       "status": "not_applicable",
       "surface": "public.v_memory_entity_survivor",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_evidence_lineage_live before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through public.v_memory_evidence_lineage_live before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
       "surface": "public.v_memory_evidence_lineage_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_fact_claim_live before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through public.v_memory_fact_claim_live before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
       "surface": "public.v_memory_fact_claim_live",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through public.v_memory_fact_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
       "surface": "public.v_memory_fact_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": "no_identifier_of_this_class",
       "expectation": "public.v_memory_mention_current_content publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_mention_current_content",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
-      "expectation": "The p2_edge target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "expectation": "The graph_edge target's forbidden identifiers are reachable through public.v_memory_page_citation_visible before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
       "surface": "public.v_memory_page_citation_visible",
-      "target_id": "p2_edge"
+      "target_id": "graph_edge"
     },
     {
       "basis": null,
@@ -2322,13 +2322,13 @@
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "D",
-      "forbidden_identifiers": "The edge identifier in any generation built after the deletion; a generation built before it may still return the edge and endpoints, but only with its own earlier built_at and the snapshot_graph grade.",
+      "forbidden_identifiers": "The relation identifier after its last surviving evidence row is deleted; no graph generation or stale snapshot exception exists.",
       "identifier_classes": [
         "fact"
       ],
-      "mutation": "Delete the relation behind a projected edge, then read the snapshot before and after the next rebuild.",
-      "summary": "A projected graph edge is deleted after a snapshot was built.",
-      "target_id": "p2_edge"
+      "mutation": "Delete the surviving evidence behind a relation, then read the live graph authorities in the same transaction.",
+      "summary": "A live graph edge loses its last surviving evidence row.",
+      "target_id": "graph_edge"
     },
     {
       "applicable_surfaces": [],

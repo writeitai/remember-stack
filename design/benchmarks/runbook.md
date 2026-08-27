@@ -18,7 +18,8 @@ Three facts drive every operational decision:
    different answer models, retrieval budgets, and judges.
 2. **Per-sample isolation is mandatory.** The answer stage refuses to run
    unless the serving deployment contains exactly the sample's documents
-   with a fully completed pipeline and fresh P2/P3 projections. Consequence:
+   with a fully completed pipeline, live-graph readiness, and a fresh P3
+   projection. Consequence:
    one conversation per store at a time, with a wipe between conversations —
    and therefore conversations are *embarrassingly parallel across hosts*.
 3. **The engine pipeline is asynchronous and can stall.** Extraction and
@@ -33,14 +34,14 @@ Three facts drive every operational decision:
   `publication` = 1540 across all 10 conversations. Question counts per
   conversation: 26:152, 30:81, 41:152, 42:199, 43:178, 44:123, 47:150,
   48:191, 49:156, 50:158.
-- Protocol (`--protocol`, prepare-time only): `full-v13`. Both the answer
+- Protocol (`--protocol`, prepare-time only): `full-v14`. Both the answer
   agent and judge use `openai/gpt-5.6-luna`; reasoning effort is pinned to
   `none` for both. It is the sole executable protocol and is not comparable with
-  historical v1–v12 runs.
+  historical v1–v13 runs.
 - The answer agent can use the complete public read plane: the four assured
   operations (`testimony_context`, `fact_context`, `answer_context`, and
-  `resolve_entity`), direct primitives, open SQL and Cypher, saved queries,
-  and the P3 mount. It is allowed 8 tool calls / 9 total agent calls per
+  `resolve_entity`), direct primitives, open SQL, typed live-graph helpers,
+  saved queries, and the P3 mount. Public Cypher is absent. It is allowed 8 tool calls / 9 total agent calls per
   question and must return the shortest phrase that fully answers the question.
   The reader step auto-retries invalid (non-JSON) completions up to 2 extra
   attempts — this fired 83 times in 1540 questions, so it is load-bearing.
@@ -53,10 +54,10 @@ Exported in the shell that invokes the CLI (values live in the host's
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
 REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V13 transport budget
+REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V14 transport budget
 ```
 
-`run_shard.sh` sets every non-secret V13 ingest binding itself: Luna for the
+`run_shard.sh` sets every non-secret V14 ingest binding itself: Luna for the
 generative seats, Qwen3-Embedding-8B for vector seats, and Nebius as the pinned
 embedding host. It overrides ambient self-host defaults, and ingest compares
 the complete `GET /deployment` binding map before uploading any document.
@@ -66,7 +67,7 @@ the complete `GET /deployment` binding map before uploading any document.
 The maintained path is the sharding kit, which encodes every lesson below:
 
 ```
-export LOCOMO_PROTOCOL=full-v13
+export LOCOMO_PROTOCOL=full-v14
 export LOCOMO_MAX_EVALUATOR_COST_USD=60
 bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /opt/locomo/locomo10.json
 ```
@@ -77,7 +78,7 @@ bound Compose project. It starts the empty stack with worker scaling
 (extract-claims ×8, normalize-relations ×6, adjudicate-observations ×4,
 embed-claim ×2), attests the protocol-frozen environment inside every app
 container, ingests, waits for a **true drain** (6 h budget, aborts on dead-letter),
-publishes projections, answers, judges, and creates a new verified GCS backup
+verifies live graph, publishes P3, answers, judges, and creates a new verified GCS backup
 before the next sample may begin. See
 `benchmarks/locomo/sharding/README.md` for the binding backup/restore contract.
 `summarize --run <dir>` prints the scorecard.
@@ -86,7 +87,8 @@ Manual equivalents, when you need them:
 
 - Drain check: `select stage, status, count(*) from processing_state
   where status in ('pending','running','dead_letter') group by 1,2;`
-- Projections: `docker compose --profile operations run --rm projections`.
+- P3 projection: `docker compose --profile operations run --rm projections`
+  (the operation is P3-only under D98).
 - Deployment identity is self-provisioned from `.env`
   (`REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`), so a wiped stack comes back
   with the same deployment id — nothing to re-create.
@@ -95,7 +97,7 @@ Manual equivalents, when you need them:
 
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
-| `answer` refuses: "deployment did not report the exact completed pipeline and fresh P2/P3 projections" | Drain not actually complete (pending rows, or dead-letter rows which pending/running counts miss), or projections published *before* the last ingest event | Finish the true drain, re-run projections, then answer. Order matters: projections after ingest. |
+| `answer` refuses: deployment lacks required pipeline/P1/live-graph/P3 capability readiness | Drain not actually complete, live graph catalog/helper health failed, or P3 published before the last ingest event | Finish the true drain, repair live graph catalog if reported, rebuild P3, then answer. P3 must follow ingest. |
 | Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
 | A worker reports a model different from `state.json` | A separate post-launch `docker compose up --scale` read stale ambient `.env` values and created a mixed-model fleet | Stop the invalid run. Relaunch through `run_shard.sh` only; set its `LOCOMO_*_WORKERS` variables if different replica counts are needed. The runner attests every app container before ingest and during every drain poll. |
 | Extract or normalize remains slow | Replica counts are too low for the current chunk/claim fan-out | Set `LOCOMO_EXTRACT_CLAIM_WORKERS`, `LOCOMO_NORMALIZE_RELATION_WORKERS`, `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS`, or `LOCOMO_EMBED_CLAIM_WORKERS` on the original `run_shard.sh` invocation. Never scale the benchmark with a second Compose command. |
@@ -134,7 +136,7 @@ numbers: such runs measured different systems.
 ## 7. Historical sizing estimate
 
 These figures came from the pre-v12 GLM-5.2 extraction path and are only useful
-for rough capacity planning. V13 uses the current `main` bindings and must record
+for rough capacity planning. V14 uses the current `main` bindings and must record
 its own actual cost and duration; the provider account cap remains the hard
 monetary boundary.
 
@@ -153,6 +155,7 @@ The score is the least valuable output. Keep:
   claims were retrieved per question.
 - The run log, which records stage progress and failures.
 
-Each completed sample's PostgreSQL, P1, P2, P3, run state, and mount state is
+Each completed sample's PostgreSQL authority/P1/live-graph catalog, P3, run
+state, and mount state is
 uploaded to its immutable GCS prefix and verified before the next isolated
 sample may wipe the local store.

@@ -4,9 +4,6 @@ Every successful, empty, truncated, rejected, or failed query carries this
 header before any rows. `exploratory_tabular` explicitly does not guarantee a
 platform result grain, D49 negatives, contradiction completeness, exact
 totals, or deterministic order; the design's non-guarantee list is normative.
-The `snapshot_graph` grade and its `p2_snapshot` block belong to the Batch D
-Cypher surface — the fields exist now so the contract shape is complete, and
-stay null until then.
 """
 
 from datetime import datetime
@@ -43,35 +40,6 @@ class ResultLimits(BaseModel):
     analytical_tier: bool
 
 
-class P2Snapshot(BaseModel):
-    """Cypher-only snapshot provenance (populated by Batch D, null before)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    snapshot_id: UUID
-    snapshot_version: str
-    built_at: datetime
-    age_seconds: float = Field(ge=0)
-
-
-class GraphConfirmation(BaseModel):
-    """What `confirm=true` checked, and what it withheld (§3.5).
-
-    These are unique confirmable-id counts, and `confirmed + dropped_stale`
-    equals `nominated`. Confirmation checks live membership of projected entity
-    and relation ids; it does not make any other part of the result live, and
-    the result keeps its `snapshot_graph` grade.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    requested: int
-    nominated: int
-    confirmed: int
-    dropped_stale: int
-    pg_confirmed_at: datetime | None = None
-
-
 class SemanticInvocation(BaseModel):
     """One §3.4 nomination invocation's disclosure (populated by Batch C)."""
 
@@ -99,29 +67,51 @@ class SemanticInvocation(BaseModel):
     termination_reason: str | None = None
 
 
+class GraphInvocation(BaseModel):
+    """One graph helper's terminal work and truncation disclosure."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ordinal: int = Field(ge=0)
+    function: Literal["graph_neighborhood", "graph_path", "graph_citation_path"]
+    truncated: bool
+    truncation_reason: (
+        Literal[
+            "depth_budget",
+            "expansion_budget",
+            "frontier_budget",
+            "result_budget",
+            "time_budget",
+        ]
+        | None
+    ) = None
+    examined_edges: int = Field(ge=0)
+    returned_paths: int = Field(ge=0)
+    effective_depth: int = Field(ge=1)
+    effective_expansion_budget: int = Field(ge=1)
+    effective_frontier_budget: int = Field(ge=1)
+    effective_result_budget: int = Field(ge=1)
+    effective_time_budget_ms: int = Field(ge=1)
+    applied_valid_at: datetime | None = None
+    applied_believed_at: datetime | None = None
+    evaluated_at: datetime | None = None
+
+
 class QueryResult(BaseModel):
     """One complete `QueryResult/v1` response."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     contract: Literal["QueryResult/v1"] = CONTRACT_VERSION
-    grade: Literal["exploratory_tabular", "snapshot_graph"] = "exploratory_tabular"
+    grade: Literal["exploratory_tabular"] = "exploratory_tabular"
     request_id: UUID
     deployment_id: UUID
     surface_manifest_hash: str
-    # Null for Cypher (§4.4): the graph surface does not read the memory_v1
-    # SQL schema, and naming it would tell a caller their rows came from views
-    # they did not query.
-    query_space_schema: Literal["memory_v1"] | None = "memory_v1"
+    query_space_schema: Literal["memory_v1"] = "memory_v1"
     query_hash: str
-    query_language: Literal["sql", "cypher"] = "sql"
+    query_language: Literal["sql"] = "sql"
     saved_query: dict[str, str] | None = None
     referenced_views: tuple[str, ...] = ()
-    #: The graph labels/types and properties a Cypher statement referenced.
-    #: Null means the pinned engine supplied no structural parse metadata;
-    #: an empty tuple is reserved for a known-empty dependency set.
-    referenced_graph_types: tuple[str, ...] | None = None
-    referenced_graph_properties: tuple[str, ...] | None = None
     referenced_functions: tuple[str, ...] = ()
     source_grain_tags: tuple[str, ...] = ()
     columns: tuple[ResultColumn, ...] = ()
@@ -145,5 +135,4 @@ class QueryResult(BaseModel):
     error_message: str | None = None
     warnings: tuple[str, ...] = ()
     semantic_invocations: tuple[SemanticInvocation, ...] = ()
-    p2_snapshot: P2Snapshot | None = None
-    confirmation: GraphConfirmation | None = None
+    graph_invocations: tuple[GraphInvocation, ...] = ()

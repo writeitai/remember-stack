@@ -116,6 +116,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_14_0035",
         "p9_15_0036",
         "p9_16_0037",
+        "p9_17_0038",
     )
     assert len(script.get_heads()) == 1
 
@@ -603,7 +604,7 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
 
 
 def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> None:
-    """Exercise the complete PostgreSQL 16+ lifecycle and negative catalog proof."""
+    """Exercise the complete PostgreSQL 19 lifecycle and negative catalog proof."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
 
@@ -617,7 +618,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 72
+    assert len(fresh_inventory.tables) == 70
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -639,7 +640,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_16_0037"
+    assert head_before_noop == head_after_noop == "p9_17_0038"
     assert _inventory(database_url=database_url) == restored_inventory
 
 

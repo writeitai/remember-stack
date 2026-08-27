@@ -25,6 +25,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
+from rememberstack.model import ReadinessRequirements
 from rememberstack.model import ResolverConfig
 from rememberstack.model import RunResultOutcome
 from rememberstack.spine import CascadeResolver
@@ -595,7 +596,9 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
     ).inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(ingested.version_id,),
-        require_projections=False,
+        require=ReadinessRequirements(
+            pipeline=True, p1=False, live_graph=False, p3=False
+        ),
     )
     version = report.versions[0]
     assert version.ready is True

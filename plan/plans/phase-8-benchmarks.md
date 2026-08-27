@@ -38,9 +38,10 @@ than expanding WP-8.2. The reusable prompt for independent external research is
 
 ## WP-8.2 LoCoMo setup
 
-The first adapter is the reviewed `RS-LoCoMo-Full-v7` protocol (v1 with a stronger judge,
-strict-representable `arguments_json`, recipe ergonomics and answer-loop guards, recoverable
-identity history, and an explicit assumed-UTC LoCoMo ingestion contract; D78 and amendments):
+The current adapter is the reviewed `RS-LoCoMo-Full-v14` protocol. It preserves
+the earlier judge, strict-representable `arguments_json`, answer-loop guards,
+recoverable identity history, and assumed-UTC ingestion contract while adopting
+the D98 live graph and 21-tool catalog (D78 and amendments):
 
 - analysis and comparability limits:
   [`locomo_benchmark_analysis.md`](../analysis/locomo_benchmark_analysis.md);
@@ -49,8 +50,9 @@ identity history, and an explicit assumed-UTC LoCoMo ingestion contract; D78 and
 - unshipped repository harness: `benchmarks/locomo/`.
 
 Its smoke, development, and publication manifests pin 8, 200, and 1,540 question IDs. Compose
-now runs the complete ten-route continuous lifecycle and exposes a one-shot P2/P3 build. The
-answer harness verifies exact stage/projection readiness and lets a bounded agent choose the
-ordinary public recipe tools; the former claims-only J@30 path is not the headline. No real
+runs the complete continuous lifecycle and exposes a one-shot P3 build; the graph
+is live PostgreSQL. The answer harness verifies exact stage, graph, and P3
+readiness and lets a bounded agent choose the complete 21-tool read surface; the
+former claims-only J@30 path is not the headline. No real
 ingest, query, answer-agent, judge, or score run has occurred. WP-8.2 remains in progress until
 the owner reviews the setup and an eight-question smoke completes against an isolated deployment.

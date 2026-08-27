@@ -94,12 +94,12 @@ class PoisonTargetReport(BaseModel):
 
 
 class ProjectionSnapshotState(BaseModel):
-    """The current P2 or P3 snapshot pointer, if that plane has one."""
+    """The current P3 CorpusFS snapshot pointer, if one exists."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     snapshot_id: UUID
-    plane: Literal["P2_graph", "P3_corpusfs"]
+    plane: Literal["P3_corpusfs"]
     version: str
     store_uri: str
     row_counts: dict[str, object] | None

@@ -24,7 +24,6 @@ from rememberstack.surfaces.query_engine import _CURRENT_FACT_EVIDENCE
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
 from rememberstack.surfaces.query_engine import _fact_context_confirmation_batch_size
 from rememberstack.surfaces.query_engine import _FACT_CONTEXT_CONTRADICTION_MEMBERS
-from rememberstack.surfaces.query_engine import _MULTI_HOP_EDGE_EVIDENCE
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
 
@@ -211,11 +210,3 @@ def test_testimony_context_confirms_claims_and_chunks_through_memory_v1() -> Non
         scoped_sql = str(scoped)
         assert "memory_v1.mentions_live" in scoped_sql
         assert "resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))" in scoped_sql
-
-
-def test_graph_enrichment_confirms_against_the_current_edge_authority() -> None:
-    """The remaining internal graph hydrator cannot publish visible history as current."""
-    graph_sql = str(_MULTI_HOP_EDGE_EVIDENCE)
-    assert "memory_v1.graph_edges_current" in graph_sql
-    assert "graph_edges_visible_history" not in graph_sql
-    assert "r.support_state = 'withdrawn'" in graph_sql

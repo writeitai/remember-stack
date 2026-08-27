@@ -48,8 +48,9 @@ needs to restate it:
   (grain CI, envelope invariants, canaries) run in the same CI as unit tests.
 - **Migrations:** Alembic, generated against `postgres_schema_design.md` (the schema doc is
   the source of truth; migrations implement it, never fork it).
-- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** PostgreSQL 18
-  (the spine and P1 search), LadybugDB (P2), the E/K/P data model, PageIndex (structure), semchunk
+- **The engine — fixed everywhere, never abstracted (D61 anti-goal):** PostgreSQL 19
+  (the spine, P1 search, SQL/PGQ live graph, and bounded recursive traversal),
+  the E/K/P data model, PageIndex (structure), semchunk
   (packing), Codex/OpenCode (K producers) with cross-family checkers (D53).
 - **The substrate — reached only through the D61 ports**, each with a self-host and a GCP
   reference adapter: object store (MinIO/local ↔ GCS), task queue (**delivery-only** over
@@ -97,7 +98,7 @@ needs to restate it:
 | 1 | Walking skeleton | one document end-to-end, everything minimal; 4 retrieval primitives + envelope core | e0, e1, e2_e3, observations, retrieval §2–3 | done (exit criteria met 2026-07-18; PRs #81-#87 — see the phase file) |
 | 2 | Truth machinery | full ER cascade + registries + review queue; supersession; observation adjudication; thresholds measured | registries, e2_e3 §5, observations | done (exit criteria met 2026-07-19; PRs #88-#94 — see the phase file) |
 | 3 | Evidence lifecycle | lineages/versions, Drive connector + sync cycles, currency + counting + reconciliation, chunk reuse, deletion grains, full PageIndex route | evidence_lifecycle, e1 §7, e0 | done (exit criteria met 2026-07-19; PRs #95-#99 — see the phase file) |
-| 4 | Projections | P2 (spikes → views → rebuild → snapshots), P3 (tree + mounts incl. raw), communities | p2_graph, e0 §6, `p3_agent_navigation.md` | done (exit criteria met 2026-07-19; PRs #100-#104 — see the phase file) |
+| 4 | Historical projections | Former P2/community implementation (superseded by D98); current P3 tree + mounts incl. raw | p2_graph, e0 §6, `p3_agent_navigation.md` | historical work done; D98 live-graph replacement is the active cutover train |
 | 5 | Retrieval complete | full primitives + recipe registry, envelope contract CI, MCP/CLI, batch scan, **consumption skill + S58** | retrieval | done (exit criteria met 2026-07-20; PRs #105–#111 — see the phase file) |
 | 6 | Plane K | planner/writer/driver, fact-sheet → prose bands, citations/staleness, authored + sidecars, triggers + subscriptions, K1 + K2 purpose scopes | k_layers | done (exit criteria met 2026-07-21; PRs #112–#117; former WP-6.7 removed by D73) |
 | 7 | Operational correctness + portability | backfill/reprocessing, fixed scale batteries, configurable budgets, failure inspection/drills, hard-delete, release, portable restore | orchestration, packaging, schema §12–13 | done (exit criteria met 2026-07-23; PRs #120, #122–#124, #126, #128, #131; public `v0.1.0` release proof) |
@@ -109,9 +110,15 @@ needs to restate it:
 This reform of shipped Phase-2 ER + E3 + default retrieval does **not** reopen Phase 2
 exit; it is a later train with its own WPs.
 
+**PostgreSQL 19 live-graph cutover (D98), not a new numbered phase.** Sequencing:
+[`postgres19_sqlpgq_live_graph.md`](postgres19_sqlpgq_live_graph.md). This train
+replaces the completed historical WP-4.1–WP-4.4 Ladybug/community implementation
+without reopening P3 WP-4.5/WP-4.6.
+
 Sequencing calls already argued (see the phase files for the rest): **K after retrieval**
 (agentic writers consume retrieval tools — build against a finished surface); **lifecycle
-before projections** (P2/P3 views are simpler written against lineages than re-plumbed later).
+before derived/read surfaces** (live graph views and P3 are simpler written against
+lineages than re-plumbed later).
 
 ## 5. Gate register
 

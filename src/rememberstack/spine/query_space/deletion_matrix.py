@@ -39,7 +39,7 @@ cells are executed exactly like a public relation's:
 reachable before the mutation, absent after. Non-reachability is proven for
 all seven helpers on top of that, by the gate that reads their grants.
 - ``deferred`` — the target names an object class this batch does not build (a
-  P1 nomination candidate, a P2 snapshot edge, a corpus body). The cell is
+  P1 nomination candidate, a live graph edge, a corpus body). The cell is
   recorded rather than omitted, with the batch that will execute it, so the
   artifact's coverage claim stays honest about its own scope.
 
@@ -389,17 +389,16 @@ DELETION_TARGETS: Final = (
         ),
     ),
     DeletionTarget(
-        target_id="p2_edge",
-        summary="A projected graph edge is deleted after a snapshot was built.",
+        target_id="graph_edge",
+        summary="A live graph edge loses its last surviving evidence row.",
         mutation=(
-            "Delete the relation behind a projected edge, then read the snapshot "
-            "before and after the next rebuild."
+            "Delete the surviving evidence behind a relation, then read the live "
+            "graph authorities in the same transaction."
         ),
         identifier_classes=("fact",),
         forbidden_identifiers=(
-            "The edge identifier in any generation built after the deletion; a "
-            "generation built before it may still return the edge and endpoints, but "
-            "only with its own earlier built_at and the snapshot_graph grade."
+            "The relation identifier after its last surviving evidence row is "
+            "deleted; no graph generation or stale snapshot exception exists."
         ),
         executed_in="D",
         applicable_surfaces=(

@@ -479,7 +479,7 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
     assert isinstance(transcript, Envelope)
     assert isinstance(observations, Envelope)
     assert isinstance(relations, Envelope)
-    assert len(answer_tool_catalog()) == 23
+    assert len(answer_tool_catalog()) == 21
     assert observed[0] == (
         "POST",
         "/query/sql",

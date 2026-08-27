@@ -56,7 +56,7 @@ FUNCTION_TARGETS: Final[dict[str, tuple[str, str]]] = {
 #: executor leaves their invocation in place and the planner sees straight
 #: through it; model-assisted P1 functions are resolved and substituted.
 SQL_NATIVE_FUNCTIONS: Final = frozenset(
-    {"facts_as_of", "graph_neighborhood", "graph_path"}
+    {"facts_as_of", "graph_neighborhood", "graph_path", "graph_citation_path"}
 )
 
 #: Which adapter each public function actually needs. The SQL-native functions

@@ -41,7 +41,6 @@ class PipelineComponent(StrEnum):
     EMBEDDER = "embedder"
     FACT_LABELER = "fact_labeler"
     PROFILE_SUMMARIZER = "profile_summarizer"
-    COMMUNITY_DETECTOR = "community_detector"
     SNAPSHOT_BUILDER = "snapshot_builder"
     KNOWLEDGE_PLANNER = "knowledge_planner"
     KNOWLEDGE_WRITER = "knowledge_writer"

@@ -8,7 +8,7 @@ export const metadata = {
 
 Most systems return rows. RememberStack returns rows **plus a machine-readable account of the answer itself** — because the caller is an agent that must decide whether to act, re-query, or escalate to a human.
 
-This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the same envelope). Open SQL/Cypher use `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
+This page documents the **shipped wire shape** for assured operations (and primitive compositions that emit the same envelope). Open SQL uses `QueryResult/v1` instead; see [Open query](/docs/retrieval/open-query).
 
 ## Envelope: one cohesive typed response
 
@@ -41,12 +41,9 @@ populated, and `temporal_scope` states the exact selection applied:
     pg_live_ts,
     p1_written_inline,
     p1_believed_at_horizon,
-    p2_snapshot_version,
-    p2_snapshot_ts,
-    p2_believed_at_horizon,
     k: { compiled_at, stale, open_flags } | null
   },
-  truncation: { truncated, returned, estimated_total, total_is_exact, continuation } | null,
+  truncation: { truncated, returned, estimated_total, total_is_exact, continuation, reason } | null,
   dropped_by_hydration: n,
   excluded_unstamped: n,
   negative: null | { kind, explanation, workaround }
@@ -131,7 +128,7 @@ Returning one side of a live contradiction group without indication of the other
 
 ### 2. No silent caps
 
-Hub neighborhoods and large sets return ranked pages with **truncation markers and continuations**. `total_is_exact` tells you whether the estimated total itself hit a cap.
+Hub neighborhoods and large sets return ranked pages with **truncation markers and continuations**. `total_is_exact` tells you whether the estimated total itself hit a cap; `reason` carries a machine-readable budget cause when the producer can distinguish one (for example `expansion_budget` or `result_budget`).
 
 ### 3. Hydration drops are counted
 
@@ -144,9 +141,10 @@ Projections may nominate candidates the spine rejects. `dropped_by_hydration` ke
 | `pg_live_ts` | Live spine clock for confirmed rows |
 | `p1_written_inline` | Whether P1 was written on the inline path (lag measurement evolves) |
 | `p1_believed_at_horizon` | Oldest system-time P1 can answer (`null` = unbounded) |
-| `p2_snapshot_version` / `p2_snapshot_ts` | Which graph snapshot answered |
-| `p2_believed_at_horizon` | Graph belief horizon |
 | `k` | Compile time, stale flag, open evidence-change flags when K was consumed |
+
+The graph has no separate freshness stamp: SQL/PGQ and recursive helpers read
+the same PostgreSQL repeatable-read snapshot as hydration.
 
 Finite `believed_at` horizons → query before horizon yields typed **`boundary`**, not partial silent history.
 

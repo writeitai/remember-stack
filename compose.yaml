@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.4.3
+  image: ghcr.io/writeitai/remember-stack:0.5.0
   environment:
     REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://${REMEMBERSTACK_POSTGRES_USER}:${REMEMBERSTACK_POSTGRES_PASSWORD}@postgres:5432/${REMEMBERSTACK_POSTGRES_DB}
     REMEMBERSTACK_MINIO_ENDPOINT_URL: http://minio:9000
@@ -30,6 +30,10 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN: ${REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN:-}
     REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH: ${REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH:-false}
     REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL: ${REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL:-}
+    REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE: ${REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE:-4}
+    REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S: ${REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S:-1}
+    REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY: ${REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY:-2}
+    REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB: ${REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB:-16384}
     REMEMBERSTACK_SENTRY_DSN: ${REMEMBERSTACK_SENTRY_DSN:-}
     REMEMBERSTACK_SENTRY_ENVIRONMENT: ${REMEMBERSTACK_SENTRY_ENVIRONMENT:-}
     REMEMBERSTACK_SENTRY_SAMPLE_RATE: ${REMEMBERSTACK_SENTRY_SAMPLE_RATE:-}
@@ -61,7 +65,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: rememberstack-postgres:18
+    image: rememberstack-postgres:19beta3
     command:
       - postgres
       - -c
@@ -85,6 +89,8 @@ services:
       timeout: 5s
       retries: 30
     volumes:
+      # Official PostgreSQL 18+ images keep major-version directories below
+      # this mount so pg_upgrade can link across a version boundary.
       - postgres-data:/var/lib/postgresql
 
   minio:
@@ -209,7 +215,7 @@ services:
 
   projections:
     <<: *app
-    command: ["project", "--plane", "all"]
+    command: ["project", "--plane", "p3"]
     profiles: ["operations"]
     depends_on:
       setup:

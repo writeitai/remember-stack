@@ -17,6 +17,7 @@ import psycopg
 from psycopg import sql as pg_sql
 from pydantic import Field
 from pydantic import field_validator
+from pydantic import model_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -105,9 +106,7 @@ class SelfHostSettings(BaseSettings):
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
-    snapshot_bucket_name: str = Field(default="remember-snapshots", min_length=1)
     projection_work_root: Path = Path("/var/lib/rememberstack/projection-work")
-    graph_cache_root: Path = Path("/var/lib/rememberstack/graph-cache")
     forget_manifest_root: Path = Path("/var/lib/rememberstack/forget-manifests")
     migration_config: Path = Path("alembic.ini")
     api_host: str = "0.0.0.0"
@@ -120,6 +119,17 @@ class SelfHostSettings(BaseSettings):
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
     spend_lease_url: str | None = None
+    graph_pool_size: int = Field(default=4, ge=1, le=32)
+    graph_pool_timeout_s: float = Field(default=1.0, gt=0, le=30)
+    graph_max_concurrency: int = Field(default=2, ge=1, le=32)
+    graph_work_mem_kib: int = Field(default=16_384, ge=64, le=65_536)
+
+    @model_validator(mode="after")
+    def graph_concurrency_fits_pool(self) -> Self:
+        """Keep expansion concurrency within the dedicated graph pool."""
+        if self.graph_max_concurrency > self.graph_pool_size:
+            raise ValueError("graph_max_concurrency must not exceed graph_pool_size")
+        return self
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
@@ -440,27 +450,27 @@ def _provision_query_role_password(
 
 
 class SelfHostProfile:
-    """Compose the complete continuous E/P1 path plus aggregate P2/P3 builds."""
+    """Compose the continuous E/P1 path plus the aggregate P3 build."""
 
     def __init__(
         self,
         *,
         settings: SelfHostSettings,
         engine: Engine,
+        graph_engine: Engine | None = None,
         raw_store: MinIOObjectStore,
         artifact_store: MinIOObjectStore,
         corpusfs_store: MinIOObjectStore,
-        snapshot_store: MinIOObjectStore,
         model_provider: OpenRouterModelProvider,
         error_telemetry: TelemetryPort | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process."""
         self._settings = settings
         self._engine = engine
+        self._graph_engine = graph_engine or engine
         self._raw_store = raw_store
         self._artifact_store = artifact_store
         self._corpusfs_store = corpusfs_store
-        self._snapshot_store = snapshot_store
         self._model_provider = model_provider
         self._error_telemetry = error_telemetry
 
@@ -469,10 +479,16 @@ class SelfHostProfile:
         """Load every external value through its typed settings boundary."""
         profile_settings = SelfHostSettings.model_validate({})
         minio_settings = MinIOSettings.model_validate({})
+        database_url = load_database_settings().sqlalchemy_url()
         return cls(
             settings=profile_settings,
-            engine=sqlalchemy.create_engine(
-                load_database_settings().sqlalchemy_url(), pool_pre_ping=True
+            engine=sqlalchemy.create_engine(database_url, pool_pre_ping=True),
+            graph_engine=sqlalchemy.create_engine(
+                database_url,
+                pool_pre_ping=True,
+                pool_size=profile_settings.graph_pool_size,
+                max_overflow=0,
+                pool_timeout=profile_settings.graph_pool_timeout_s,
             ),
             raw_store=MinIOObjectStore(
                 bucket=profile_settings.raw_bucket_name, settings=minio_settings
@@ -483,9 +499,6 @@ class SelfHostProfile:
             corpusfs_store=MinIOObjectStore(
                 bucket=profile_settings.corpusfs_bucket_name, settings=minio_settings
             ),
-            snapshot_store=MinIOObjectStore(
-                bucket=profile_settings.snapshot_bucket_name, settings=minio_settings
-            ),
             model_provider=OpenRouterModelProvider(
                 settings=OpenRouterSettings.model_validate({})
             ),
@@ -494,6 +507,8 @@ class SelfHostProfile:
 
     def close(self) -> None:
         """Dispose this process's explicitly owned database pool."""
+        if self._graph_engine is not self._engine:
+            self._graph_engine.dispose()
         self._engine.dispose()
 
     def setup(self) -> None:
@@ -506,10 +521,8 @@ class SelfHostProfile:
         self._raw_store.ensure_bucket()
         self._artifact_store.ensure_bucket()
         self._corpusfs_store.ensure_bucket()
-        self._snapshot_store.ensure_bucket()
         self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
         self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
-        self._settings.graph_cache_root.mkdir(parents=True, exist_ok=True)
         DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
             deployment_input=DeploymentBootstrapInput(
                 deployment_id=self._settings.deployment_id,
@@ -530,7 +543,7 @@ class SelfHostProfile:
             registry=AssuredOperationRegistry(engine=self._engine),
             deployment_id=self._settings.deployment_id,
         )
-        # Install the seventeen examples.* saved-query identities (idempotent).
+        # Install the eighteen examples.* saved-query identities (idempotent).
         # Not an Alembic migration: deployment seed DML lives in setup/bootstrap.
         from rememberstack.spine.query_space.canonical import (  # noqa: PLC0415
             surface_manifest_hash,
@@ -596,35 +609,25 @@ class SelfHostProfile:
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
+        from rememberstack.surfaces import GraphQueries
         from rememberstack.surfaces import OperationExecutor
         from rememberstack.surfaces import OperationSurface
         from rememberstack.surfaces import QueryEngine
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
-        from rememberstack.surfaces.query_sandbox.cypher_executor import (
-            CypherSandboxExecutor,
-        )
         from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
         from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
-        from rememberstack.workers import GraphSnapshotReader
         from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
         # D94 has one active vector space across every P1 target.
         p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
-        graph_reader = GraphSnapshotReader(
-            catalog=projection_catalog,
-            snapshot_store=self._snapshot_store,
-            deployment_id=self._settings.deployment_id,
-            cache_dir=self._settings.graph_cache_root,
-        )
         embedding_model = p1_settings.embedding_model
         search_index = PostgresP1Index(
             engine=self._engine, embedding_model=embedding_model
         )
-        # One admission + audit authority for SQL and Cypher so concurrency and
-        # rolling spend are combined and §7 events actually emit.
+        # One admission + audit authority for open SQL.
         kill_switches = KillSwitches()
         audit_trail = AuditTrail()
         query_role_connect = _query_role_connect_factory(engine=self._engine)
@@ -654,18 +657,10 @@ class SelfHostProfile:
             kill_switches=kill_switches,
             audit=audit_trail,
         )
-        cypher_executor = CypherSandboxExecutor(
-            deployment_id=self._settings.deployment_id,
-            reader=graph_reader,
-            connect=query_role_connect,
-            kill_switches=kill_switches,
-            audit=audit_trail,
-        )
         manifest_hash = surface_manifest_hash(build_hash_members())
         open_query = OpenQueryFacade(
             deployment_id=self._settings.deployment_id,
             sql=sql_executor,
-            cypher=cypher_executor,
             saved_queries=_SelfHostSavedQueryReads(
                 engine=self._engine,
                 deployment_id=self._settings.deployment_id,
@@ -700,6 +695,13 @@ class SelfHostProfile:
                 projections=projection_catalog,
                 model_bindings=_model_bindings(),
                 build_revision=_build_revision(),
+            ),
+            graph=GraphQueries(
+                engine=self._graph_engine,
+                deployment_id=self._settings.deployment_id,
+                work_mem_kib=self._settings.graph_work_mem_kib,
+                max_concurrency=self._settings.graph_max_concurrency,
+                pool_wait_seconds=self._settings.graph_pool_timeout_s,
             ),
         )
 
@@ -777,25 +779,17 @@ class SelfHostProfile:
             loop.run_for(duration_s=self._settings.worker_session_s)
 
     def run_projection(self, *, plane: str) -> dict[str, object]:
-        """Build P2, P3, or both once after continuous ingestion settles."""
+        """Build the P3 CorpusFS snapshot after continuous ingestion settles."""
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import ProjectionCatalog
         from rememberstack.workers import CorpusFsBuilder
-        from rememberstack.workers import GraphRebuildWorker
 
         ForgetCatalog(engine=self._engine).assert_available(
             deployment_id=self._settings.deployment_id
         )
         catalog = ProjectionCatalog(engine=self._engine)
         reports: dict[str, object] = {}
-        if plane in {"p2", "all"}:
-            reports["p2"] = GraphRebuildWorker(
-                catalog=catalog, snapshot_store=self._snapshot_store
-            ).rebuild(
-                deployment_id=self._settings.deployment_id,
-                workdir=self._settings.projection_work_root,
-            )
-        if plane in {"p3", "all"}:
+        if plane == "p3":
             reports["p3"] = CorpusFsBuilder(
                 catalog=catalog, snapshot_store=self._corpusfs_store
             ).build(deployment_id=self._settings.deployment_id)
@@ -1056,7 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
     projection = subparsers.add_parser(
         "project", help="build aggregate projections once"
     )
-    projection.add_argument("--plane", choices=("p2", "p3", "all"), required=True)
+    projection.add_argument("--plane", choices=("p3",), required=True)
     mounts = subparsers.add_parser(
         "mounts", help="publish the latest P3 snapshot under a local root"
     )

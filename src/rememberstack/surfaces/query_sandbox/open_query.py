@@ -1,19 +1,17 @@
 """The thin public open-query facade (design §3.1; Batch F).
 
-One deployment-bound surface over the existing SQL executor, Cypher executor,
-manifest discovery, and saved-query registry. It does not re-parse SQL/Cypher,
+One deployment-bound surface over the SQL executor, manifest discovery, and
+saved-query registry. It does not re-parse SQL,
 re-validate limits, or invent a second registry: each method delegates to the
 authority that already owns the contract.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from rememberstack.surfaces.query_sandbox.cypher_executor import CypherSandboxExecutor
 from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 from rememberstack.surfaces.query_sandbox.discovery import DiscoveryHit
 from rememberstack.surfaces.query_sandbox.discovery import QuerySpaceDescription
@@ -48,31 +46,26 @@ class SavedQueryReads(Protocol):
 
 
 class OpenQueryFacade:
-    """Nine §3.1 entry points bound to one deployment's existing authorities."""
+    """Seven open-query entry points bound to one deployment's authorities."""
 
     def __init__(
         self,
         *,
         deployment_id: UUID,
         sql: QuerySandboxExecutor,
-        cypher: CypherSandboxExecutor | None = None,
         saved_queries: SavedQueryReads | None = None,
         principal: str = "agent",
     ) -> None:
         """Bind one deployment and reject mismatched executor/registry deps.
 
-        `cypher` and `saved_queries` may be absent when the host has not
-        composed those authorities; the matching entry points then fail with
-        a typed public refusal rather than pretending the surface exists.
+        `saved_queries` may be absent when the host has not composed that
+        authority; matching entry points then fail with a typed public refusal
+        rather than pretending the surface exists.
         """
         self._deployment_id = UUID(str(deployment_id))
         if sql.deployment_id != self._deployment_id:
             raise ValueError(
                 "the SQL executor serves a different deployment than the facade"
-            )
-        if cypher is not None and cypher.deployment_id != self._deployment_id:
-            raise ValueError(
-                "the Cypher executor serves a different deployment than the facade"
             )
         if (
             saved_queries is not None
@@ -82,7 +75,6 @@ class OpenQueryFacade:
                 "the saved-query registry serves a different deployment than the facade"
             )
         self._sql = sql
-        self._cypher = cypher
         self._saved = saved_queries
         self._principal = principal
 
@@ -121,42 +113,6 @@ class OpenQueryFacade:
         # Explain is not a retrieval call; do not count toward the §8 denominator.
         return self._sql.explain_sql(
             sql=sql,
-            parameters=parameters,
-            tier=tier,
-            principal=principal or self._principal,
-        )
-
-    def query_cypher(
-        self,
-        *,
-        cypher: str,
-        parameters: Mapping[str, object] | None = None,
-        max_rows: int | None = None,
-        tier: LimitTier = LimitTier.INTERACTIVE,
-        principal: str | None = None,
-        confirm: bool = False,
-    ) -> QueryResult:
-        """One read-only Cypher statement over the server-selected snapshot."""
-        return self._require_cypher().query_cypher(
-            cypher=cypher,
-            parameters=parameters,
-            max_rows=max_rows,
-            tier=tier,
-            principal=principal or self._principal,
-            confirm=confirm,
-        )
-
-    def explain_cypher(
-        self,
-        *,
-        cypher: str,
-        parameters: Mapping[str, object] | None = None,
-        tier: LimitTier = LimitTier.INTERACTIVE,
-        principal: str | None = None,
-    ) -> QueryResult:
-        """Engine plan without query execution; same Cypher gates."""
-        return self._require_cypher().explain_cypher(
-            cypher=cypher,
             parameters=parameters,
             tier=tier,
             principal=principal or self._principal,
@@ -240,15 +196,6 @@ class OpenQueryFacade:
             "query_hash": resolved.query_hash,
         }
         return outcome.model_copy(update={"saved_query": stamp})
-
-    def _require_cypher(self) -> CypherSandboxExecutor:
-        """Return the composed Cypher executor or refuse with a typed public code."""
-        if self._cypher is None:
-            raise SandboxRejection(
-                code=QueryErrorCode.P2_UNAVAILABLE,
-                message="this deployment has not composed the Cypher query surface",
-            )
-        return self._cypher
 
     def _require_saved(self) -> SavedQueryReads:
         """Return the composed saved-query registry or refuse with a typed public code."""

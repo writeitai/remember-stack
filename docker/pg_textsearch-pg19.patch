@@ -1,0 +1,202 @@
+diff --git a/src/access/build_parallel.c b/src/access/build_parallel.c
+index 107fa4b..5e80b83 100644
+--- a/src/access/build_parallel.c
++++ b/src/access/build_parallel.c
+@@ -248,7 +248,7 @@ tp_parallel_build_worker_main(dsm_segment *seg, shm_toc *toc)
+ 
+ 			ItemPointerSet(&min_tid, start_blk, FirstOffsetNumber);
+ 			ItemPointerSet(&max_tid, end_blk - 1, MaxOffsetNumber);
+-			scan = table_beginscan_tidrange(heap, snap, &min_tid, &max_tid);
++			scan = table_beginscan_tidrange(heap, snap, &min_tid, &max_tid, 0);
+ 		}
+ 		else
+ 		{
+diff --git a/src/constants.h b/src/constants.h
+index 5ecb80c..71978c4 100644
+--- a/src/constants.h
++++ b/src/constants.h
+@@ -141,15 +141,17 @@
+  * LWLockNewTrancheId() for each index, we would quickly exhaust the available
+  * tranche IDs and get "too many LWLocks taken" errors.
+  */
+-#define TP_TRANCHE_STRING		1001
+-#define TP_TRANCHE_POSTING		1002
+-#define TP_TRANCHE_CORPUS		1003
+-#define TP_TRANCHE_DOC_LENGTHS	1004
+-#define TP_TRANCHE_INDEX_LOCK	1005
+-#define TP_TRANCHE_BUILD_DSA	1006
+-#define TP_TRANCHE_GLOBAL_DSA	1007
+-#define TP_TRANCHE_REGISTRY		1008
+-#define TP_TRANCHE_POSTING_LOCK 1009
++extern int tp_tranche_id;
++
++#define TP_TRANCHE_STRING		tp_tranche_id
++#define TP_TRANCHE_POSTING		tp_tranche_id
++#define TP_TRANCHE_CORPUS		tp_tranche_id
++#define TP_TRANCHE_DOC_LENGTHS	tp_tranche_id
++#define TP_TRANCHE_INDEX_LOCK	tp_tranche_id
++#define TP_TRANCHE_BUILD_DSA	tp_tranche_id
++#define TP_TRANCHE_GLOBAL_DSA	tp_tranche_id
++#define TP_TRANCHE_REGISTRY		tp_tranche_id
++#define TP_TRANCHE_POSTING_LOCK tp_tranche_id
+ 
+ /*
+  * In-memory memtable cache LWLocks (see docs/memtable_cache.md).
+@@ -158,8 +160,8 @@
+  * held SHARED for the lifetime of a served TpDataSource and EXCL only
+  * for drop / evict.
+  */
+-#define TP_TRANCHE_CACHE_APPLY_LOCK 1010
+-#define TP_TRANCHE_CACHE_LOCK		1011
++#define TP_TRANCHE_CACHE_APPLY_LOCK tp_tranche_id
++#define TP_TRANCHE_CACHE_LOCK		tp_tranche_id
+ 
+ /*
+  * Global eviction mutex tranche (see docs/memtable_cache.md
+@@ -169,7 +171,7 @@
+  * inspection and a concurrent dsa_free of the victim's shared
+  * state.
+  */
+-#define TP_TRANCHE_EVICTION_MUTEX 1012
++#define TP_TRANCHE_EVICTION_MUTEX tp_tranche_id
+ 
+ /*
+  * Global GUC variables declared in mod.c
+diff --git a/src/index/registry.c b/src/index/registry.c
+index 6611312..2520587 100644
+--- a/src/index/registry.c
++++ b/src/index/registry.c
+@@ -31,6 +31,9 @@
+ /* Backend-local pointer to the registry in shared memory */
+ static TpGlobalRegistry *tapir_registry = NULL;
+ 
++/* One PostgreSQL-registered tranche identifies all pg_textsearch LWLocks. */
++int tp_tranche_id = 0;
++
+ /* Backend-local DSA area pointer */
+ static dsa_area *tapir_dsa = NULL;
+ 
+@@ -133,6 +136,8 @@ tp_registry_shmem_startup(void)
+ {
+ 	bool found;
+ 
++	tp_tranche_id = LWLockNewTrancheId("pg_textsearch");
++
+ 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+ 
+ 	tapir_registry = ShmemInitStruct(
+@@ -168,10 +173,6 @@ tp_registry_shmem_startup(void)
+ 
+ 	LWLockRelease(AddinShmemInitLock);
+ 
+-	/* Register the lock tranches */
+-	LWLockRegisterTranche(tapir_registry->lock.tranche, "tapir_registry");
+-	LWLockRegisterTranche(
+-			tapir_registry->eviction_mutex.tranche, "tapir_cache_eviction");
+ }
+ 
+ /*
+diff --git a/src/memtable/cache.c b/src/memtable/cache.c
+index 215eefa..88bea0d 100644
+--- a/src/memtable/cache.c
++++ b/src/memtable/cache.c
+@@ -44,6 +44,7 @@
+ #include <postgres.h>
+ 
+ #include <access/htup_details.h>
++#include <access/genam.h>
+ #include <access/relation.h>
+ #include <catalog/index.h>
+ #include <fmgr.h>
+diff --git a/src/memtable/cache_source.c b/src/memtable/cache_source.c
+index 99de7ca..5ce39fd 100644
+--- a/src/memtable/cache_source.c
++++ b/src/memtable/cache_source.c
+@@ -14,6 +14,7 @@
+  */
+ #include <postgres.h>
+ 
++#include <access/genam.h>
+ #include <fmgr.h>
+ #include <funcapi.h>
+ #include <lib/dshash.h>
+diff --git a/src/memtable/log.c b/src/memtable/log.c
+index af3f53d..cfeed7f 100644
+--- a/src/memtable/log.c
++++ b/src/memtable/log.c
+@@ -25,10 +25,13 @@
+  */
+ #include <postgres.h>
+ 
++#include <access/genam.h>
+ #include <access/generic_xlog.h>
++#include <access/htup_details.h>
+ #include <access/relation.h>
+ #include <access/transam.h>
+ #include <catalog/index.h>
++#include <catalog/pg_type_d.h>
+ #include <fmgr.h>
+ #include <funcapi.h>
+ #include <miscadmin.h>
+diff --git a/src/planner/cost.c b/src/planner/cost.c
+index 6b4473e..5b49461 100644
+--- a/src/planner/cost.c
++++ b/src/planner/cost.c
+@@ -6,6 +6,8 @@
+  */
+ #include <postgres.h>
+ 
++#include <limits.h>
++
+ #include <access/genam.h>
+ #include <utils/float.h>
+ #include <utils/rel.h>
+diff --git a/src/planner/hooks.c b/src/planner/hooks.c
+index d07933d..d3e783d 100644
+--- a/src/planner/hooks.c
++++ b/src/planner/hooks.c
+@@ -1018,7 +1018,7 @@ static void
+ tp_post_parse_analyze_hook(
+ 		ParseState *pstate	pg_attribute_unused(),
+ 		Query			   *query,
+-		JumbleState *jstate pg_attribute_unused())
++		const JumbleState *jstate pg_attribute_unused())
+ {
+ 	/* Reset flag for this query - will be set if BM25 operators found */
+ 	query_has_bm25_operators = false;
+@@ -1928,7 +1928,8 @@ tp_planner_hook(
+ 		Query		 *parse,
+ 		const char	 *query_string,
+ 		int			  cursorOptions,
+-		ParamListInfo boundParams)
++		ParamListInfo boundParams,
++		ExplainState *es)
+ {
+ 	PlannedStmt		*result;
+ 	BM25OidCache	 oid_cache;
+@@ -1941,10 +1942,10 @@ tp_planner_hook(
+ 	{
+ 		if (prev_planner_hook)
+ 			return prev_planner_hook(
+-					parse, query_string, cursorOptions, boundParams);
++					parse, query_string, cursorOptions, boundParams, es);
+ 		else
+ 			return standard_planner(
+-					parse, query_string, cursorOptions, boundParams);
++					parse, query_string, cursorOptions, boundParams, es);
+ 	}
+ 
+ 	/*
+@@ -1977,10 +1978,10 @@ tp_planner_hook(
+ 	{
+ 		if (prev_planner_hook)
+ 			result = prev_planner_hook(
+-					parse, query_string, cursorOptions, boundParams);
++					parse, query_string, cursorOptions, boundParams, es);
+ 		else
+ 			result = standard_planner(
+-					parse, query_string, cursorOptions, boundParams);
++					parse, query_string, cursorOptions, boundParams, es);
+ 	}
+ 	PG_FINALLY();
+ 	{

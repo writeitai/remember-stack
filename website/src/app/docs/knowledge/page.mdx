@@ -39,7 +39,7 @@ One compilation **mechanism**; many **scopes**:
 
 | Scope pattern | Role |
 | --- | --- |
-| **K1 — general knowledge** | Default scope: entity pages, topic/community pages, source digests, root index |
+| **K1 — general knowledge** | Default scope: entity pages, source digests, root index |
 | **K2 — purpose scopes** | Extra subtrees (people profiles, projects, operating doctrine, migration as-is/to-be, …) |
 
 Scopes share one entity space and one fact spine. They own **markdown**, not separate truth databases.
@@ -48,7 +48,7 @@ A deployment can rename, drop, or invent scopes. The framework contract stays fi
 
 ## How evidence reaches pages
 
-1. Facts/claims arrive **pre-labeled** (entities, predicates, communities) from Plane E.  
+1. Facts/claims arrive **pre-labeled** (entities and predicates) from Plane E.
 2. **Routing rules** (mechanically evaluable) decide which pages a change affects.  
 3. Affected **compiled** pages are marked stale and recompiled on the debounced cycle.  
 4. Affected **authored** pages get **watch/review flags**, not silent edits.  
@@ -88,9 +88,9 @@ Assured ops that return `grain: compiled` are orientation. For present-tense bel
 
 ```
 E (facts) ──routes──► K (prose + citations)
-E ──projects──► P1/P2/P3
+E ──feeds──► P1 / live graph / P3
 K ↔ P3 cross-link for navigation
-K is never a structural input to P rebuilds
+K is never a structural input to P1 maintenance, graph reads, or P3 builds
 ```
 
 ## Progressive disclosure

@@ -1,31 +1,37 @@
 """Machine-verifiable readiness for the ordinary self-host pipeline.
 
-The work ledger remains authoritative. This read model checks the exact
-component generations composed by a profile for each requested document
-version, then verifies that P2 and P3 builds began after those terminal
-E-stage rows. Publication time alone is insufficient: an older build can
-finish after newer document work. This read does not execute work or hide
-failures.
+The work ledger remains authoritative. This read model checks exact pipeline
+generations, current P1 configuration, live PostgreSQL graph catalog/query
+health, and the optional P3 publication boundary. It never executes work.
 """
 
 from collections.abc import Mapping
 from datetime import datetime
+import time
+from typing import Literal
 from uuid import UUID
+from uuid import uuid4
 
 from sqlalchemy import bindparam
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
+from rememberstack.model import CapabilityReadiness
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import PipelineStage
 from rememberstack.model import PipelineStageReadiness
-from rememberstack.model import ProjectionReadiness
+from rememberstack.model import ReadinessRequirements
 from rememberstack.model import VersionPipelineReadiness
+from rememberstack.spine.graph_catalog import graph_catalog_problems
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 from rememberstack.spine.projection import ProjectionCatalog
-
-_PLANES = ("P2_graph", "P3_corpusfs")
 
 
 class PipelineReadinessCatalog:
@@ -46,13 +52,15 @@ class PipelineReadinessCatalog:
         self._projections = projections
         self._model_bindings = dict(model_bindings or {})
         self._build_revision = build_revision
+        self._graph_catalog_verified_at: float | None = None
+        self._graph_catalog_cache_seconds = 30.0
 
     def inspect(
         self,
         *,
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
-        require_projections: bool,
+        require: ReadinessRequirements,
     ) -> PipelineReadinessReport:
         """Return readiness without mutating or waiting for the pipeline."""
         version_ids = tuple(dict.fromkeys(version_ids))
@@ -86,7 +94,13 @@ class PipelineReadinessCatalog:
         # processing_state component_version is the bare algorithm pin. Use the
         # default pack params for the active grid filter (compose/selfhost default).
         chunk_version = packing_generation(params=ChunkerParams())
-        with self._engine.connect() as connection:
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            checked_at = connection.execute(
+                text("SELECT statement_timestamp()")
+            ).scalar_one()
             rows = (
                 connection.execute(
                     _VERSION_WORK,
@@ -145,6 +159,24 @@ class PipelineReadinessCatalog:
                     .mappings()
                     .all()
                 )
+            p1_ready = bool(
+                connection.execute(
+                    _P1_READY, {"deployment_id": deployment_id}
+                ).scalar_one()
+            )
+            verify_graph_catalog = (
+                self._graph_catalog_verified_at is None
+                or time.monotonic() - self._graph_catalog_verified_at
+                >= self._graph_catalog_cache_seconds
+            )
+            live_graph_ready, live_graph_reason = _live_graph_status(
+                connection=connection,
+                deployment_id=deployment_id,
+                checked_at=checked_at,
+                verify_catalog=verify_graph_catalog,
+            )
+            if live_graph_ready and verify_graph_catalog:
+                self._graph_catalog_verified_at = time.monotonic()
         by_key = {
             (
                 UUID(str(row["target_id"])),
@@ -218,39 +250,62 @@ class PipelineReadinessCatalog:
                     stages=tuple(stages),
                 )
             )
-        projection_states: list[ProjectionReadiness] = []
-        for plane in _PLANES:
-            latest = self._projections.latest_snapshot(
-                deployment_id=deployment_id, plane=plane
-            )
-            raw_built_at = None if latest is None else latest["built_at"]
-            built_at = raw_built_at if isinstance(raw_built_at, datetime) else None
-            raw_published_at = None if latest is None else latest["published_at"]
-            published_at = (
-                raw_published_at if isinstance(raw_published_at, datetime) else None
-            )
-            fresh = (
-                latest is not None
-                and built_at is not None
-                and published_at is not None
-                and terminal_at is not None
-                and built_at >= terminal_at
-            )
-            projection_states.append(
-                ProjectionReadiness(
-                    plane=plane,
-                    ready=fresh,
-                    version=None if latest is None else str(latest["version"]),
-                    built_at=built_at,
-                    published_at=published_at,
-                )
-            )
         versions_ready = all(version.ready for version in versions)
-        projections_ready = all(item.ready for item in projection_states)
+        latest_p3 = self._projections.latest_snapshot(
+            deployment_id=deployment_id, plane="P3_corpusfs"
+        )
+        raw_p3_built_at = None if latest_p3 is None else latest_p3["built_at"]
+        p3_built_at = raw_p3_built_at if isinstance(raw_p3_built_at, datetime) else None
+        raw_p3_published_at = None if latest_p3 is None else latest_p3["published_at"]
+        p3_published_at = (
+            raw_p3_published_at if isinstance(raw_p3_published_at, datetime) else None
+        )
+        p3_ready = (
+            latest_p3 is not None
+            and p3_published_at is not None
+            and terminal_at is not None
+            and p3_built_at is not None
+            and p3_built_at >= terminal_at
+        )
+        capabilities: dict[
+            Literal["pipeline", "p1", "live_graph", "p3"], CapabilityReadiness
+        ] = {
+            "pipeline": CapabilityReadiness(
+                required=require.pipeline,
+                ready=versions_ready,
+                checked_at=checked_at,
+                reason="ready" if versions_ready else "stage_incomplete",
+            ),
+            "p1": CapabilityReadiness(
+                required=require.p1,
+                ready=p1_ready,
+                checked_at=checked_at,
+                reason="ready" if p1_ready else "search_channel_incomplete",
+            ),
+            "live_graph": CapabilityReadiness(
+                required=require.live_graph,
+                ready=live_graph_ready,
+                checked_at=checked_at,
+                reason=live_graph_reason,
+            ),
+            "p3": CapabilityReadiness(
+                required=require.p3,
+                ready=p3_ready,
+                checked_at=checked_at,
+                reason="ready" if p3_ready else "corpus_snapshot_incomplete",
+                version=None if latest_p3 is None else str(latest_p3["version"]),
+                built_at=p3_built_at,
+                published_at=p3_published_at,
+            ),
+        }
+        ready = all(
+            not capability.required or capability.ready
+            for capability in capabilities.values()
+        )
         return PipelineReadinessReport(
-            ready=versions_ready and (projections_ready or not require_projections),
+            ready=ready,
             versions=tuple(versions),
-            projections=tuple(projection_states),
+            capabilities=capabilities,
             model_bindings=self._model_bindings,
             build_revision=self._build_revision,
         )
@@ -266,6 +321,206 @@ _VERSION_WORK = text(
       AND target_id IN :version_ids
     """
 ).bindparams(bindparam("version_ids", expanding=True))
+
+_P1_READY = text(
+    """
+    SELECT count(*) = 7 AND coalesce(bool_and(ready), false)
+    FROM p1_search_channels
+    WHERE deployment_id = :deployment_id
+      AND (target, channel) IN (
+        ('chunks', 'semantic'),
+        ('claims', 'semantic'),
+        ('relations', 'semantic'),
+        ('observations', 'semantic'),
+        ('entities', 'semantic'),
+        ('chunks', 'bm25'),
+        ('claims', 'bm25')
+      )
+    """
+)
+
+_ABSENT_GRAPH_ANCHOR = text(
+    """
+    SELECT NOT EXISTS (
+             SELECT 1
+             FROM memory_v1.entities_current
+             WHERE deployment_id = :deployment_id AND entity_id = :candidate_id
+           )
+       AND NOT EXISTS (
+             SELECT 1
+             FROM memory_v1.documents_live
+             WHERE deployment_id = :deployment_id AND doc_id = :candidate_id
+           )
+    """
+)
+
+_NEIGHBORHOOD_HEALTH = text(
+    """
+    SELECT *
+    FROM memory_v1.graph_neighborhood(
+      :deployment_id, :candidate_id, 1, NULL, :checked_at, :checked_at,
+      1, 8, 8, 1000
+    )
+    """
+)
+
+_PATH_HEALTH = text(
+    """
+    SELECT *
+    FROM memory_v1.graph_path(
+      :deployment_id, :candidate_id, :candidate_id, 1, NULL,
+      :checked_at, :checked_at, 1, 8, 8, 1000
+    )
+    """
+)
+
+_CITATION_PATH_HEALTH = text(
+    """
+    SELECT *
+    FROM memory_v1.graph_citation_path(
+      :deployment_id, :candidate_id, :candidate_id, 1, 1, 8, 8, 1000
+    )
+    """
+)
+
+
+def _catalog_problem_reason(problem: str) -> str:
+    """Map detailed non-secret catalog diagnostics to a stable reason code."""
+    if problem.startswith("server_version_num"):
+        return "graph_server_version_mismatch"
+    if problem.startswith("extension versions"):
+        return "graph_extension_version_mismatch"
+    if "role" in problem:
+        return "graph_role_contract_mismatch"
+    if problem.startswith("helper"):
+        return "graph_helper_contract_mismatch"
+    return "graph_catalog_mismatch"
+
+
+def _live_graph_status(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    checked_at: datetime,
+    verify_catalog: bool,
+) -> tuple[bool, str]:
+    """Prove catalog and bounded query health with a stable failure reason."""
+    role_active = False
+    try:
+        if verify_catalog:
+            problems = graph_catalog_problems(connection=connection)
+            if problems:
+                return False, _catalog_problem_reason(problems[0])
+        quoted_role = str(
+            connection.execute(
+                text("SELECT quote_ident('rememberstack_graph_' || current_database())")
+            ).scalar_one()
+        )
+        connection.exec_driver_sql("SET LOCAL statement_timeout = '5s'")
+        connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
+        connection.exec_driver_sql(
+            "SET LOCAL idle_in_transaction_session_timeout = '5s'"
+        )
+        connection.exec_driver_sql("SET LOCAL transaction_timeout = '6s'")
+        connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
+        connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
+        connection.exec_driver_sql("SET LOCAL search_path = memory_v1, pg_catalog")
+        connection.exec_driver_sql("SET LOCAL work_mem = '16384kB'")
+        connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_role}")
+        role_active = True
+        limits_ready = bool(
+            connection.execute(
+                text(
+                    "SELECT current_user = "
+                    "'rememberstack_graph_' || current_database() "
+                    "AND current_setting('statement_timeout')::interval = "
+                    "interval '5 seconds' "
+                    "AND current_setting('lock_timeout')::interval = "
+                    "interval '500 milliseconds' "
+                    "AND current_setting("
+                    "'idle_in_transaction_session_timeout')::interval = "
+                    "interval '5 seconds' "
+                    "AND current_setting('transaction_timeout')::interval = "
+                    "interval '6 seconds' "
+                    "AND pg_size_bytes(current_setting('temp_file_limit')) = "
+                    "67108864 "
+                    "AND pg_size_bytes(current_setting('work_mem')) = 16777216 "
+                    "AND current_setting("
+                    "'max_parallel_workers_per_gather')::integer = 0 "
+                    "AND current_setting('search_path') = "
+                    "'memory_v1, pg_catalog'"
+                )
+            ).scalar_one()
+        )
+        if not limits_ready:
+            return False, "graph_role_runtime_limits_mismatch"
+        parameters: dict[str, object] | None = None
+        for _attempt in range(2):
+            candidate_id = uuid4()
+            candidate_parameters: dict[str, object] = {
+                "deployment_id": deployment_id,
+                "candidate_id": candidate_id,
+                "checked_at": checked_at,
+            }
+            if bool(
+                connection.execute(
+                    _ABSENT_GRAPH_ANCHOR, candidate_parameters
+                ).scalar_one()
+            ):
+                parameters = candidate_parameters
+                break
+        if parameters is None:
+            return False, "graph_smoke_identifier_collision"
+        pgq_parameters = {
+            **parameters,
+            "anchor_id": parameters["candidate_id"],
+            "max_depth": 1,
+            "predicates": None,
+            "max_results": 1,
+            "expansion_budget": 8,
+            "frontier_budget": 8,
+            "time_budget_ms": 1000,
+            "valid_at": checked_at,
+            "believed_at": checked_at,
+            "result_offset": 0,
+        }
+        for guard_statement, pgq_statement in (
+            (CURRENT_NEIGHBORHOOD_GUARD, CURRENT_NEIGHBORHOOD_PGQ),
+            (HISTORY_NEIGHBORHOOD_GUARD, HISTORY_NEIGHBORHOOD_PGQ),
+        ):
+            guard_rows = (
+                connection.execute(text(guard_statement), pgq_parameters)
+                .mappings()
+                .all()
+            )
+            if len(guard_rows) != 1 or not bool(guard_rows[0]["admitted"]):
+                return False, "graph_pgq_guard_smoke_failed"
+            if connection.execute(text(pgq_statement), pgq_parameters).first():
+                return False, "graph_pgq_smoke_failed"
+        for reason, statement in (
+            ("graph_neighborhood_smoke_failed", _NEIGHBORHOOD_HEALTH),
+            ("graph_path_smoke_failed", _PATH_HEALTH),
+            ("graph_citation_smoke_failed", _CITATION_PATH_HEALTH),
+        ):
+            rows = connection.execute(statement, parameters).mappings().all()
+            if any(row["row_kind"] == "data" for row in rows):
+                return False, reason
+            if sum(row["row_kind"] == "status" for row in rows) != 1:
+                return False, reason
+        connection.exec_driver_sql("RESET ROLE")
+        role_active = False
+        return True, "ready"
+    except SQLAlchemyError:
+        return False, "graph_database_or_permission_failed"
+    except (KeyError, TypeError, ValueError):
+        return False, "graph_smoke_contract_failed"
+    finally:
+        if role_active:
+            try:
+                connection.exec_driver_sql("RESET ROLE")
+            except SQLAlchemyError:
+                pass
+
 
 # D84: extract_claims primary rows target chunks; derive a version-level status
 # for the version's current representation only.

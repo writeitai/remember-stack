@@ -31,8 +31,6 @@ def primary_knowledge_plan_trigger(
         return KnowledgePlanTrigger.ORPHAN_EVIDENCE
     if snapshot.overflow_artifact_ids:
         return KnowledgePlanTrigger.SIZE_OVERFLOW
-    if snapshot.community_ids:
-        return KnowledgePlanTrigger.COMMUNITY_CHANGE
     if snapshot.writer_suggestions:
         return KnowledgePlanTrigger.WRITER_SUGGESTION
     return KnowledgePlanTrigger.HUMAN

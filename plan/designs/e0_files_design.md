@@ -1,5 +1,11 @@
 # E0 — Files / Document Layer + the Corpus Filesystem (P3)
 
+> **Binding D98 amendment (2026-08-27).** Document cross-references are exposed
+> as live PostgreSQL graph edges; there is no P2 snapshot to purge or rebuild.
+> P3 alone retains its full snapshot/pointer-swap lifecycle and must be
+> described directly, not by analogy to P2. Pre-D98 P2 wording below is
+> superseded; E0 authority and P3 contracts are unchanged.
+
 How a raw input file becomes a **structured document** (E0), and how documents are organized into
 a **mountable corpus filesystem** that agents browse (P3, a projection). Decisions **D36–D40**.
 Companion working analysis: `_feature_planning/e0/` (Claude + Codex). Numbers/choices here are
@@ -129,7 +135,7 @@ the edit, not the document — full design: `evidence_lifecycle_design.md` §2/�
 **Deletion / forget (cascade).** Normal removal tombstones the lineage, purges its unshared **raw +
 artifacts** objects, ends its testimony currency, and reaches K through the citation tombstone path
 (lifecycle §8; schema §13.1). Irreversible hard-forget is D74's separate fail-closed workflow: it
-also scrubs retained source payloads, explicitly purges P1 and old P2/P3 snapshots, erases affected
+also scrubs retained source payloads, explicitly purges P1 and old P3 snapshots, erases affected
 K history, and records a portable restore barrier. A clean projection rebuild changes what is
 served; it does not by itself erase immutable old bytes (`hard_forget_design.md`).
 
@@ -457,7 +463,7 @@ in prose.
 ## 4A. Cross-references — the `crossref` sub-worker
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
-`DOC_CROSSREF` graph edges (P2) and one source of the E2 bundle's entity hints
+live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints
 (design-review F7). Product: `document_crossrefs` rows `(from_doc_id, to_doc_id NULLABLE,
 kind, context)`, kinds `cites | links_to | attaches | replies_to`.
 
@@ -526,18 +532,18 @@ directory tree** that organizes the whole corpus for agent navigation. It is a *
 (P3): **derived, holding no source-of-truth, no validity state**, and discardable/rebuildable. It is
 "canonical" only in the sense of being *the published navigable view* — never an independent truth.
 
-**Rebuild semantics — snapshot + pointer-swap, like P2 (D7).** P3 is a **full snapshot rebuild** by
+**Rebuild semantics — snapshot + pointer-swap (D7).** P3 is a **full snapshot rebuild** by
 default: the projection worker builds the whole tree into
 `gs://rememberstack-<dep>-corpusfs/snapshots/<version>/`, validates it, then atomically swaps the `latest`
 pointer; agent mounts read `latest`. Incremental tree maintenance is permitted only as an *internal
 optimization* that produces the same validated snapshot — never as authority and never a separate
-mutable state. This is the same rebuild-first discipline as P2.
+mutable state. This lifecycle is specific to P3; the D98 live graph does not share it.
 
 **Rebuild inputs (Postgres-anchored).** The tree *structure* is built from **Postgres** (the
 placement hints D39, plus entities/relations that define topic/entity folders) **+ the GCS
 artifacts** (for the leaf stubs). It **cross-links to** K-plane pages by reference but does **not**
 take K as a structural input — so P3 stays rebuildable from the E spine + artifacts, consistent with
-P1/P2 (it does not depend on the non-reproducible K git repo for its shape).
+other derived surfaces (it does not depend on the non-reproducible K git repo for its shape).
 
 ```
 gs://rememberstack-<dep>-corpusfs/snapshots/<version>/
@@ -599,7 +605,7 @@ with it.
 
 1. **The top level is configured, not emergent.** Placement hints reconcile *within* a
    deployment-declared facet skeleton (registry-style config): e.g. `by-type/` (emails,
-   papers, contracts, notes…), `by-source/`, `by-topic/` (community-derived), `entities/`.
+   papers, contracts, notes…), `by-source/`, `by-topic/` (placement-hint/registry-derived), `entities/`.
    Emergent top levels reshuffle as the corpus grows — exactly what path-holding consumers
    cannot tolerate. Facets are stable; their interiors reorganize.
 2. **One document, many views — by stub duplication.** An email about Project Atlas belongs

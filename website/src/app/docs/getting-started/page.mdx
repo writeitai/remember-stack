@@ -38,7 +38,7 @@ cp .env.example .env
 docker compose up --build --detach --wait
 ```
 
-The Compose file can also pull the public `ghcr.io/writeitai/remember-stack:0.4.3` image. Use `--build` when you want to run local source; use `--no-build --pull always` when you want the released image.
+The Compose file can also pull the public `ghcr.io/writeitai/remember-stack:0.5.0` image. Use `--build` when you want to run local source; use `--no-build --pull always` when you want the released image.
 
 Health:
 
@@ -83,10 +83,12 @@ Prefer the machine-verifiable readiness endpoint over shelling into Postgres:
 # replace VERSION_ID with the ingest response version_id
 curl --fail -X POST http://localhost:8000/readiness \
   -H 'content-type: application/json' \
-  -d '{"version_ids":["VERSION_ID"],"require_projections":false}'
+  -d '{"version_ids":["VERSION_ID"],"require":{"pipeline":true,"p1":true,"live_graph":true,"p3":false}}'
 ```
 
-`require_projections=false` is appropriate for a smoke path before you publish P2/P3. After projections matter, publish them and re-check with `require_projections=true` (the default).
+All four capability keys are mandatory. Ordinary recall requires the pipeline,
+P1, and live graph; require P3 only when the caller needs the published corpus
+filesystem.
 
 Human fallback if you need stage detail:
 
@@ -95,9 +97,9 @@ docker compose exec postgres psql -U rememberstack -d rememberstack -c \
   "SELECT stage, status FROM processing_state ORDER BY enqueued_at"
 ```
 
-## 4. Publish aggregate projections (when you need graph / corpus FS)
+## 4. Publish P3 (when you need the corpus filesystem)
 
-P2 (graph) and P3 (corpus filesystem) rebuild whole-corpus, not per document:
+The graph is already live in PostgreSQL. P3 remains a whole-corpus build:
 
 ```bash
 docker compose --profile operations run --rm projections

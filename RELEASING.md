@@ -55,10 +55,18 @@ uv run python scripts/check_release_contract.py --tag v0.2.0
 ```
 
 That release pull request also refreshes the PostgreSQL foundation pins in
-`Dockerfile.postgres`: use the current patched PostgreSQL 18 base digest, pin the intended
-`postgresql-18-partman` package version, and pin the pg_textsearch release plus both amd64 and
-arm64 archive checksums. Build the Dockerfile for both architectures before tagging. This is the
-manual, reviewable patch cadence; mutable database-image tags are not used.
+`Dockerfile.postgres`: use the reviewed PostgreSQL 19 prerelease/GA base digest,
+pin the intended PGDG pgvector and pg_partman package versions, and pin the
+pg_textsearch source revision plus source, compatibility-patch, license, and
+notice checksums. Build the Dockerfile for both architectures, record each
+embedded artifact manifest and immutable image digest, and run the extension
+and graph release matrix before tagging. The tag workflow then rebuilds and
+publishes `ghcr.io/writeitai/remember-stack-postgres:19beta3-VERSION` for both
+architectures and attaches `postgres-image-digests.json` to the GitHub release;
+UMC consumes the recorded manifest digest, never that human-readable tag.
+Updating the foundation pins remains a manual, reviewable patch cadence;
+publishing and digest capture are mechanical and mutable database-image tags
+are not used.
 
 After that pull request is merged and `main` is green, tag its exact merge commit:
 
@@ -71,8 +79,9 @@ git push origin v0.2.0
 
 The workflow validates the tag, runs the release test suite, builds the wheel and source
 distribution, and publishes `rememberstack==0.2.0` plus
-`ghcr.io/writeitai/remember-stack:0.2.0`. It creates the GitHub release only after both
-registries accept their artifact.
+`ghcr.io/writeitai/remember-stack:0.2.0` and the multi-architecture PostgreSQL
+foundation. It creates the GitHub release only after both registries accept
+their artifacts and the PostgreSQL manifest proves amd64 plus arm64 digests.
 
 PyPI and GHCR do not support an atomic cross-registry transaction. Never reuse a published
 version after a partial failure: fix the cause, complete the missing publish when safe, or cut the

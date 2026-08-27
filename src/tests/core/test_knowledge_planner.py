@@ -48,10 +48,6 @@ def test_planning_snapshot_hash_and_trigger_are_canonical() -> None:
                 candidate_keys=("relation:b", "relation:a", "relation:a"),
             ),
         ),
-        community_ids=(
-            UUID("65000000-0000-0000-0000-000000000005"),
-            UUID("65000000-0000-0000-0000-000000000004"),
-        ),
     )
     second = KnowledgePlanningSnapshot(
         deployment_id=_DEPLOYMENT_ID,
@@ -61,7 +57,6 @@ def test_planning_snapshot_hash_and_trigger_are_canonical() -> None:
                 entity_id=_ENTITY_ID, candidate_keys=("relation:a", "relation:b")
             ),
         ),
-        community_ids=tuple(reversed(first.community_ids)),
     )
 
     assert knowledge_planning_input_hash(

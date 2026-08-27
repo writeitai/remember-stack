@@ -104,7 +104,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/ingestion/lifecycle` | Versions, currency, counting, deletion |
 | `/docs/retrieval` | Read-path overview + assured ops |
 | `/docs/retrieval/envelope` | Response envelope contract |
-| `/docs/retrieval/open-query` | SQL / Cypher / saved queries |
+| `/docs/retrieval/open-query` | SQL / live-graph helpers / saved queries |
 | `/docs/retrieval/primitives` | Zero-LLM primitive catalog |
 | `/docs/mounts` | Four mounts + consumption skill |
 | `/docs/deployment` | Docker Compose self-host |

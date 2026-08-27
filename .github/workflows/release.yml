@@ -23,12 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start PostgreSQL 18 with required extensions
+      - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
 
       - name: Set up Python
@@ -114,9 +115,78 @@ jobs:
           build-args: |
             REMEMBERSTACK_BUILD_REVISION=${{ github.sha }}
 
+  publish-postgres-ghcr:
+    name: Publish multi-architecture PostgreSQL foundation
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive the immutable foundation tag
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/writeitai/remember-stack-postgres
+          flavor: latest=false
+          tags: type=semver,pattern=19beta3-{{version}}
+
+      - name: Build and publish both supported architectures
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.postgres
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+
+      - name: Record manifest and per-architecture digests
+        env:
+          POSTGRES_IMAGE_TAG: ${{ steps.metadata.outputs.tags }}
+          POSTGRES_MANIFEST_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p release-evidence
+          image_coordinate="${POSTGRES_IMAGE_TAG}@${POSTGRES_MANIFEST_DIGEST}"
+          docker buildx imagetools inspect --raw "${image_coordinate}" \
+            | jq --arg image "${POSTGRES_IMAGE_TAG}" \
+                 --arg manifest "${POSTGRES_MANIFEST_DIGEST}" \
+                 '{image: $image, manifest_digest: $manifest,
+                   platforms: [.manifests[] |
+                     {os: .platform.os, architecture: .platform.architecture,
+                      digest: .digest}]}' \
+            > release-evidence/postgres-image-digests.json
+          jq -e '
+            [.platforms[] | select(.os == "linux") | .architecture]
+            | sort == ["amd64", "arm64"]
+          ' release-evidence/postgres-image-digests.json
+
+      - name: Upload immutable PostgreSQL image evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-image-evidence
+          path: release-evidence/postgres-image-digests.json
+          if-no-files-found: error
+
   github-release:
     name: Publish GitHub release
-    needs: [publish-pypi, publish-ghcr]
+    needs: [publish-pypi, publish-ghcr, publish-postgres-ghcr]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -129,11 +199,18 @@ jobs:
           name: python-distributions
           path: dist/
 
+      - name: Download PostgreSQL image evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: postgres-image-evidence
+          path: release-evidence/
+
       - name: Create the release with pinned deployment inputs
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             dist/*
+            release-evidence/postgres-image-digests.json
             compose.yaml
             .env.example

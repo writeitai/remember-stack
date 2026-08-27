@@ -75,7 +75,7 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
 
     assert composed_stages == _SUPPORTED_WORKER_STAGES
     assert 'profiles: ["operations"]' in compose
-    assert 'command: ["project", "--plane", "all"]' in compose
+    assert 'command: ["project", "--plane", "p3"]' in compose
     for name in (
         "REMEMBERSTACK_SENTRY_DSN",
         "REMEMBERSTACK_SENTRY_ENVIRONMENT",
@@ -88,6 +88,13 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
+    for name, default in (
+        ("REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE", "4"),
+        ("REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S", "1"),
+        ("REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY", "2"),
+        ("REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB", "16384"),
+    ):
+        assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (
         "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH: "
         "${REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH:-false}" in compose

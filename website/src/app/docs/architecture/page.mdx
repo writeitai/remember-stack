@@ -20,8 +20,8 @@ RememberStack is a **DAG across three planes**, not a single ladder. The plane a
       │                                    │           (Postgres + object storage)
       │              ┌─────────────────────┤
       ▼              ▼                     ▼
-  P3 corpus fs    P1 search             P2 graph     Plane P — projections
-                  indexes                             (derived; rebuildable)
+  P3 corpus fs    P1 search             live graph   Read models
+                  indexes               (Postgres)
 
                   K knowledge pages (git)             Plane K — compiled + authored
 ```
@@ -30,11 +30,11 @@ RememberStack is a **DAG across three planes**, not a single ladder. The plane a
 | --- | --- | --- | --- | --- |
 | **E** | Per-document chain | Postgres (+ object bytes) | Append-only; windows close | n/a — *is* truth |
 | **K** | Debounced evidence change | Git | Compiled rewrite / authored edit | Recompile (semantic) |
-| **P** | Inline or scheduled cycle | None | Immutable snapshots | From Postgres every cycle |
+| **P / read models** | Inline or scheduled | None | P1 and graph are live; P3 is immutable | P1 maintenance / P3 rebuild |
 
 **Hard rule:** validity and invalidation live **only** in PostgreSQL. P1 search
-indexes are derived state beside the authority rows; the graph carries a
-filtered snapshot. Neither can become independent truth.
+indexes are derived state beside the authority rows; SQL/PGQ and recursive
+graph helpers read live PostgreSQL rows. Neither can become independent truth.
 
 ## Plane E — evidence spine
 
@@ -58,7 +58,7 @@ Git repository of knowledge pages:
 - **Compiled** — LLM writers produce citation-bearing prose; a deterministic driver owns staleness, routing, and commits.
 - **Authored** — human/agent commitments (principles, plans). Evidence changes **flag** them; nothing rewrites them silently.
 
-K is never a structural input to P1/P2 rebuilds. K pages and P3 cross-link as consumers of each other.
+K is never a structural input to P1 or graph reads. K pages and P3 cross-link as consumers of each other.
 
 Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
 
@@ -66,11 +66,12 @@ Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
 
 | Projection | Store | Serves |
 | --- | --- | --- |
-| **P1** | PostgreSQL 18 (`pgvector` + `pg_textsearch`) | Vector + BM25 over chunks and claims; semantic search over fact labels and entities |
-| **P2** | LadybugDB snapshot | Neighborhood / path / as-of graph over entities + relations |
+| **P1** | PostgreSQL 19 (`pgvector` + `pg_textsearch`) | Vector + BM25 over chunks and claims; semantic search over fact labels and entities |
+| **Live graph** | PostgreSQL 19 SQL/PGQ + recursive SQL | Immediate neighborhood / path / as-of graph served directly from committed entity and relation authority |
 | **P3** | Object tree / mount | Browsable corpus filesystem (`ls` / `cat` / `grep`) |
 
-All three can be dropped and rebuilt from the spine. That is what makes aggressive indexing safe.
+P1 can be repaired from authority and P3 can be rebuilt. The graph is a live
+relational view plus catalog metadata, so there is no graph snapshot to rebuild.
 
 ## Stores and authority
 
@@ -79,7 +80,7 @@ All three can be dropped and rebuilt from the spine. That is what makes aggressi
 | PostgreSQL | Spine plus derived P1 vectors and BM25 indexes | **E source of truth** for natural rows; P1 state is rebuildable |
 | Object storage — raw | Original bytes | Byte authority |
 | Object storage — artifacts | Converted Markdown, structure, media sidecars | Representation authority (replay, not regenerate-in-place) |
-| LadybugDB | P2 graph snapshot | Derived |
+| PostgreSQL SQL/PGQ graph | Live views over the E authority | Derived read model; no copied rows |
 | Git | Plane K | **K source of truth** (authored + compile history) |
 
 ## Write path vs read path
@@ -98,10 +99,10 @@ Exhaustive read path: [Retrieval](/docs/retrieval).
 
 Four surfaces, one precedence rule:
 
-1. **Mounts** (when available) — prefer for navigate/read/grep  
-2. **API** — enforcement point for query-engine reads; open SQL/Cypher + assured ops  
-3. **CLI** — same operations for shell agents  
-4. **MCP** — same operations for tool-using harnesses  
+1. **Mounts** (when available) — prefer for navigate/read/grep
+2. **API** — enforcement point for query-engine reads; open SQL + assured ops
+3. **CLI** — same operations for shell agents
+4. **MCP** — same operations for tool-using harnesses
 
 Deployment-rendered **consumption skill** teaches the two-layer model and is checked by cold-agent evals. See [Mounts and skill](/docs/mounts).
 
@@ -120,7 +121,7 @@ Adding a operation is inserting a row — surfaces stay in lockstep.
 
 - Content-addressed reuse: identical bytes paid once.
 - Edit-proportional reprocessing: unchanged chunks reuse claims/vectors.
-- Projection rebuilds are whole-corpus for P2/P3; P1 updates incrementally with measured maintenance.
+- P3 builds are whole-corpus; P1 updates incrementally and graph reads are live.
 - Spike-tested search and hub pagination at large row/edge counts (see project status / design spikes) — not a hosted SLA.
 
 ## Where deeper design lives

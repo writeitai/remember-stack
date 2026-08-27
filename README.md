@@ -124,7 +124,7 @@ Exactly **four** top-level assured operations (API / CLI / MCP):
 | `fact_context` | **Current or historical fact** context with live testimony |
 | `answer_context` | Both complete authority views in `ContextBundle/v1` |
 
-Plus open SQL, read-only Cypher, saved examples, and schema discovery.
+Plus open SQL, typed live-graph helpers, saved examples, and schema discovery.
 
 Every assured answer self-accounts: grain, freshness, contradictions, truncation, typed “no”s.
 
@@ -180,7 +180,7 @@ The managed cloud runs **this same engine**. Cloud adds operations and product c
 | --- | --- |
 | Docs | [docs.remember.dev](https://docs.remember.dev) |
 | Managed product | [remember.dev](https://remember.dev) |
-| Release | [v0.4.3](https://github.com/writeitai/remember-stack/releases/tag/v0.4.3) |
+| Release | [v0.5.0](https://github.com/writeitai/remember-stack/releases/tag/v0.5.0) |
 
 ---
 

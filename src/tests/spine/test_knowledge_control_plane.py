@@ -22,7 +22,6 @@ from rememberstack.core import knowledge_content_hash
 from rememberstack.core import knowledge_inputs_hash
 from rememberstack.core import knowledge_summary_hash
 from rememberstack.core import validate_knowledge_page_output
-from rememberstack.model import CommunityRuleParams
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocSetRuleParams
 from rememberstack.model import EntityRuleParams
@@ -142,12 +141,11 @@ class _Corpus:
     """Small authoritative state that distinguishes every routing-rule kind."""
 
     def __init__(self, *, engine: Engine) -> None:
-        """Seed entities, facts, stable claim coordinates, scope, and community."""
+        """Seed entities, facts, stable claim coordinates, and scope."""
         self.engine = engine
         self.control = KnowledgeControlPlane(engine=engine)
         self.driver = KnowledgeRoutingDriver(control_plane=self.control)
         self.scope_id = uuid4()
-        self.community_id = uuid4()
         self.entities = {
             "root": uuid4(),
             "child": uuid4(),
@@ -162,7 +160,6 @@ class _Corpus:
         with engine.begin() as connection:
             self._seed_registry(connection=connection)
             self._seed_evidence(connection=connection)
-            self._seed_community(connection=connection)
 
     def page(
         self,
@@ -500,38 +497,6 @@ class _Corpus:
             },
         )
 
-    def _seed_community(self, *, connection: Connection) -> None:
-        """Seed one P2 community and its two member keys."""
-        snapshot_id = uuid4()
-        connection.execute(
-            text(
-                "INSERT INTO projection_snapshots (snapshot_id, deployment_id,"
-                " plane, version, gcs_uri, status, is_latest) VALUES"
-                " (:s, :d, 'P2_graph', 'test', 'mem://graph', 'published', true)"
-            ),
-            {"s": snapshot_id, "d": _DEPLOYMENT_ID},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO communities (community_id, deployment_id, snapshot_id,"
-                " label, size, algorithm) VALUES (:c, :d, :s, 'root', 2, 'louvain')"
-            ),
-            {"c": self.community_id, "d": _DEPLOYMENT_ID, "s": snapshot_id},
-        )
-        for entity_id in (self.entities["root"], self.entities["child"]):
-            connection.execute(
-                text(
-                    "INSERT INTO entity_graph_metrics (deployment_id, entity_id,"
-                    " snapshot_id, community_id) VALUES (:d, :e, :s, :c)"
-                ),
-                {
-                    "d": _DEPLOYMENT_ID,
-                    "e": entity_id,
-                    "s": snapshot_id,
-                    "c": self.community_id,
-                },
-            )
-
 
 class _WriterSession:
     """Deterministic stock-harness fake returning only raw declared files."""
@@ -661,7 +626,7 @@ def _writer_files(*, lineage_id: UUID, chunk_content_hash: str) -> dict[str, str
     }
 
 
-def test_all_seven_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
+def test_all_six_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
     """Every closed D45 rule kind has typed params and exact candidate SQL."""
     pages = {
         "entity": corpus.page(
@@ -673,10 +638,6 @@ def test_all_seven_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
         ),
         "predicate": corpus.page(
             params=PredicateBeatRuleParams(predicate="works_for"), slug="predicate"
-        ),
-        "community": corpus.page(
-            params=CommunityRuleParams(community_id=corpus.community_id),
-            slug="community",
         ),
         "doc_set": corpus.page(
             params=DocSetRuleParams(source_kind="google_drive"), slug="doc-set"
@@ -708,9 +669,6 @@ def test_all_seven_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
     assert {fact.fact_id for fact in snapshots["predicate"].facts} == {
         corpus.relations["root"]
     }
-    assert corpus.observations["child"] in {
-        fact.fact_id for fact in snapshots["community"].facts
-    }
     assert corpus.relations["root"] in {
         fact.fact_id for fact in snapshots["doc_set"].facts
     }
@@ -740,7 +698,6 @@ def test_all_seven_rules_materialize_and_evaluate(corpus: _Corpus) -> None:
     assert ("entity", "entity", str(corpus.entities["root"])) in keys
     assert ("entity_subtree", "entity", str(corpus.entities["child"])) in keys
     assert ("predicate_beat", "predicate", "works_for") in keys
-    assert ("community", "community", str(corpus.community_id)) in keys
     assert ("doc_set", "doc_source", "google_drive") in keys
     assert ("scope_interests", "predicate", "works_for") in keys
     assert ("manual", "entity", str(corpus.entities["outside"])) in keys
@@ -2020,7 +1977,6 @@ def test_planning_snapshot_reports_only_unhoused_delta_candidates(
         delta=KnowledgeEvidenceDelta(
             relation_ids=(corpus.relations["root"], corpus.relations["outside"]),
             claim_ids=(corpus.claims["drive"], corpus.claims["email"]),
-            community_ids=(corpus.community_id,),
         ),
         page_sizes={page: 101},
         page_size_limit_bytes=100,
@@ -2035,7 +1991,6 @@ def test_planning_snapshot_reports_only_unhoused_delta_candidates(
     assert aggregates[corpus.entities["outside"]] == {outside_fact, outside_claim}
     assert outside_fact in aggregates[corpus.entities["acme"]]
     assert snapshot.overflow_artifact_ids == (page,)
-    assert snapshot.community_ids == (corpus.community_id,)
 
 
 def test_planner_worker_archives_then_routes_typed_decisions(corpus: _Corpus) -> None:

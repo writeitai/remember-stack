@@ -812,10 +812,29 @@ _SELECT_ENTITY_ROOT_AND_STATUS = text(
 
 _BLAST_RADIUS = text(
     """
-    SELECT coalesce(sum(mention_count + graph_degree), 0)::int
-    FROM entities
-    WHERE deployment_id = :deployment_id
-      AND entity_id = ANY(:entity_ids)
+    WITH selected AS (
+      SELECT entity_id, mention_count
+      FROM entities
+      WHERE deployment_id = :deployment_id
+        AND entity_id = ANY(:entity_ids)
+    ), adjacency AS (
+      SELECT endpoint_id, count(*)::int AS degree
+      FROM (
+        SELECT subject_entity_id AS endpoint_id
+        FROM rememberstack_graph_internal.relations_current
+        WHERE deployment_id = :deployment_id
+          AND subject_entity_id = ANY(:entity_ids)
+        UNION ALL
+        SELECT object_entity_id AS endpoint_id
+        FROM rememberstack_graph_internal.relations_current
+        WHERE deployment_id = :deployment_id
+          AND object_entity_id = ANY(:entity_ids)
+      ) AS endpoints
+      GROUP BY endpoint_id
+    )
+    SELECT coalesce(sum(selected.mention_count + coalesce(adjacency.degree, 0)), 0)::int
+    FROM selected
+    LEFT JOIN adjacency ON adjacency.endpoint_id = selected.entity_id
     """
 )
 

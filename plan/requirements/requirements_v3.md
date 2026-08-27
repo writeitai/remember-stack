@@ -75,7 +75,7 @@ Two content kinds, one shared guarantee — **every K artifact records the evide
 on** (citations), so staleness, deletion reach, and audit are mechanical, never guessed:
 
 - **Compiled knowledge**: LLM-written pages derived from the evidence each page's recorded
-  **routing rule** selects (entity / community / predicate / document-set keys — evaluated
+  **routing rule** selects (entity / entity-subtree / predicate / document-set / scope-interest / manual keys — evaluated
   mechanically, chosen by an LLM planner); regenerated when stale (semantically reproducible);
   refreshed incrementally, never globally; body machine-owned — human input enters via
   per-page **curation** (pins / exclusions / corrections) that regeneration must honor and can
@@ -84,7 +84,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   decisions); never auto-regenerated; cites the evidence it was based on and is **flagged for
   review when that evidence changes**.
 - **K1 — General knowledge** *(formerly L3)*: the default scope — progressive-disclosure
-  summaries (entity, topic, source pages) over the evidence.
+  entity and source pages plus the root index over the evidence; there are no
+  community/topic pages.
 - **K2 — Special-purpose scopes** *(formerly L4)*: pluggable purpose scopes (people profiles,
   business planning, as-is/to-be migration tracking, a personal operating doctrine, …);
   multiple scopes coexist and each anchors its vocabulary in a shared model page. A scope may
@@ -92,7 +93,7 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   content is promoted and changed only by its accountable author, while citations and watches
   keep it connected to changing evidence (D73).
 
-### Plane P — Projections (derived, no authority; rebuilt on schedule)
+### Plane P — Projections and live structural reads (no independent authority)
 
 - **P1 — Search indexes**: PostgreSQL-native vector/BM25 indexes over chunks,
   claims, facts, and entity profiles; chunks use one private normalized-text
@@ -102,9 +103,10 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   their transcript/description happened to mention — D65; the media embedding model is
   per-deployment configuration, and its absence is reported as a stated capability boundary);
   fully rebuildable from the spine plus immutable artifacts.
-- **P2 — Graph** *(formerly L6)*: relationships between entities; bi-temporal; supports
-  as-of queries; ontology starts small and evolves by governance; fully rebuildable from the
-  spine.
+- **Live graph** *(formerly physical P2/L6)*: PostgreSQL 19 property-graph
+  metadata over normalized authority views plus bounded recursive traversal;
+  relationships are bi-temporal and support as-of queries. It copies no graph
+  rows, has no projection generation, and becomes visible by ordinary MVCC.
 - **P3 — Corpus filesystem**: the corpus organized as a navigable **directory tree**, materialized
   to object storage and **mounted read-only** so agentic workers can browse the memory on their
   filesystem; built from document placement hints + entities/relations (K pages are
@@ -214,12 +216,16 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
 
 **Fixed engine choices** — the system's identity, never abstracted behind ports:
 
-- Relational spine and derived P1 search projection: **PostgreSQL 18**, kept on
-  the current patched 18.x minor, with
+- Relational spine, derived P1 search projection, and live graph:
+  **PostgreSQL 19**. Before GA, pin the latest proven beta/RC image and keep
+  storage disposable/replayable; after GA, keep the current patched 19.x minor.
+  Install
   **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
   dimensions) and **pg_textsearch** (BM25). Pgvectorscale
   remains an unchosen future proposal, not a baseline dependency or automatic
-  default (D94). Graph: **LadybugDB**.
+  default (D94). Fixed one-hop graph patterns use SQL/PGQ; bounded recursive SQL
+  supplies depth-two, variable, and shortest traversal. There is no Ladybug/P2 graph
+  data snapshot (D98).
 - Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
   principle.
 - Plane K compilation: **Codex / OpenCode** as the planner/writer agents over a **single git

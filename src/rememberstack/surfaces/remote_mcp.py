@@ -12,6 +12,7 @@ from uuid import UUID
 
 from rememberstack import __version__
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
@@ -71,12 +72,10 @@ class _RemoteMemoryWriteBackend:
         )
 
     def pipeline_readiness(
-        self, *, version_ids: tuple[UUID, ...], require_projections: bool
+        self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
         """Proxy readiness inspection through the typed HTTP SDK."""
-        return self._client.pipeline_readiness(
-            version_ids=version_ids, require_projections=require_projections
-        )
+        return self._client.pipeline_readiness(version_ids=version_ids, require=require)
 
     def max_ingest_body_bytes(self) -> int | None:
         """No capability document is served yet — do not invent a client ceiling."""
@@ -94,7 +93,7 @@ class RemoteOperationMcpServer:
         """List remote write tools, assured operations, then open-query tools.
 
         Order is stable: write/readiness tools, operations from
-        ``GET /operations``, then the nine open-query tools when the remote
+        ``GET /operations``, then the seven open-query tools when the remote
         deployment mounts the open facade (same composition gate as local MCP
         and HTTP).
         """
@@ -167,7 +166,7 @@ class RemoteOperationMcpServer:
 
         ``GET /query/space`` is mounted only when ``build_api`` composes
         ``open_query``. A valid-enough discovery identity is the authority that
-        the nine static tools may be advertised; missing, unavailable, empty,
+        the seven static tools may be advertised; missing, unavailable, empty,
         wrong-schema, or malformed-hash responses fail closed so ``tools/list``
         never claims routes that are absent or untrustworthy.
         """

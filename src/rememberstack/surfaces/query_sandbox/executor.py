@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import psycopg
 from psycopg import sql as pgsql
+from pydantic import ValidationError
 
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
@@ -43,6 +44,7 @@ from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
 from rememberstack.surfaces.query_sandbox.result import ResultLimits
@@ -56,10 +58,20 @@ _EVALUATED_AT_RELATIONS: Final = frozenset(
 # As-of functions answer at an instant the caller names, which is equally a
 # single applied instant; every other public function is not instant-scoped.
 _AS_OF_FUNCTIONS: Final = frozenset({"facts_as_of"})
-_GRAPH_FUNCTIONS: Final = frozenset({"graph_neighborhood", "graph_path"})
-_GRAPH_CAP_SETTING: Final = "rememberstack.graph_cap_reached"
-_GRAPH_CAP_WARNING: Final = (
-    "one or more graph helpers reached an internal depth, edge, or path cap"
+_GRAPH_FUNCTIONS: Final = frozenset(
+    {"graph_neighborhood", "graph_path", "graph_citation_path"}
+)
+_GRAPH_STATUS_COLUMN: Final = "__rememberstack_graph_statuses"
+_GRAPH_MARKER_COLUMN: Final = "__rememberstack_present"
+_GRAPH_ORDINAL_COLUMN: Final = "__rememberstack_order_ordinal"
+_GRAPH_TRUNCATION_REASONS: Final = frozenset(
+    {
+        "depth_budget",
+        "expansion_budget",
+        "frontier_budget",
+        "result_budget",
+        "time_budget",
+    }
 )
 
 _TYPE_NAMES: Final = {
@@ -97,6 +109,168 @@ def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
     except psycopg.Error:
         return str(oid)
     return str(row[0]) if row and row[0] else str(oid)
+
+
+def _graph_deployment_binding_is_valid(
+    *,
+    bindings: Sequence[tuple[str, str, tuple[object, ...]]],
+    parameters: Sequence[object],
+    deployment_id: UUID,
+) -> bool:
+    """Require every graph call's first argument to be authenticated ``$1``."""
+    graph_bindings = [binding for binding in bindings if binding[1] in _GRAPH_FUNCTIONS]
+    if not graph_bindings or not parameters:
+        return False
+    try:
+        supplied_deployment = UUID(str(parameters[0]))
+    except (TypeError, ValueError):
+        return False
+    if supplied_deployment != deployment_id:
+        return False
+    for _, _, arguments in graph_bindings:
+        if not arguments:
+            return False
+        first = arguments[0]
+        if (
+            not isinstance(first, tuple)
+            or len(first) < 2
+            or first[0] != "$"
+            or first[1] != 1
+        ):
+            return False
+    return True
+
+
+def _effective_statement_timeout_ms(
+    *, uses_graph_helper: bool, requested_timeout_ms: int
+) -> int:
+    """Clamp every graph-helper statement to five seconds in every tier."""
+    return (
+        min(requested_timeout_ms, 5_000) if uses_graph_helper else requested_timeout_ms
+    )
+
+
+def _is_graph_clock_error(*, uses_graph_helper: bool, message: str) -> bool:
+    """Recognize only the exact helper-owned partial-clock validation failure."""
+    return uses_graph_helper and (
+        "a bitemporal traversal takes both clocks or neither" in message.lower()
+    )
+
+
+def _consume_graph_carrier(
+    *,
+    columns: tuple[ResultColumn, ...],
+    rows: list[tuple[object, ...]],
+    graph_functions: Sequence[tuple[int, str]],
+) -> tuple[
+    tuple[ResultColumn, ...], list[tuple[object, ...]], tuple[GraphInvocation, ...]
+]:
+    """Remove internal carrier fields and preserve terminal graph work status."""
+    names = [column.name for column in columns]
+    try:
+        marker_index = names.index(_GRAPH_MARKER_COLUMN)
+        status_index = names.index(_GRAPH_STATUS_COLUMN)
+        names.index(_GRAPH_ORDINAL_COLUMN)
+    except ValueError as error:
+        raise SandboxRejection(
+            code=QueryErrorCode.GRAPH_UNAVAILABLE,
+            message="the live graph status carrier is unavailable",
+        ) from error
+    if not rows:
+        raise SandboxRejection(
+            code=QueryErrorCode.GRAPH_UNAVAILABLE,
+            message="the live graph did not return terminal status",
+        )
+    statuses = rows[0][status_index]
+    if not isinstance(statuses, list) or len(statuses) != len(graph_functions):
+        raise SandboxRejection(
+            code=QueryErrorCode.GRAPH_UNAVAILABLE,
+            message="the live graph returned incomplete terminal status",
+        )
+    invocations: list[GraphInvocation] = []
+    for status, (ordinal, function) in zip(statuses, graph_functions, strict=True):
+        if not isinstance(status, dict) or status.get("row_kind") != "status":
+            raise SandboxRejection(
+                code=QueryErrorCode.GRAPH_UNAVAILABLE,
+                message="the live graph returned invalid terminal status",
+            )
+        status_truncated = status.get("truncated")
+        status_reason = status.get("truncation_reason")
+        if status_truncated is True:
+            if status_reason not in _GRAPH_TRUNCATION_REASONS:
+                raise SandboxRejection(
+                    code=QueryErrorCode.GRAPH_UNAVAILABLE,
+                    message="the live graph returned invalid truncation status",
+                )
+        elif status_truncated is False:
+            if status_reason is not None:
+                raise SandboxRejection(
+                    code=QueryErrorCode.GRAPH_UNAVAILABLE,
+                    message="the live graph returned inconsistent truncation status",
+                )
+        else:
+            raise SandboxRejection(
+                code=QueryErrorCode.GRAPH_UNAVAILABLE,
+                message="the live graph returned inconsistent truncation status",
+            )
+        try:
+            invocations.append(
+                GraphInvocation.model_validate(
+                    {
+                        "ordinal": ordinal,
+                        "function": function,
+                        "truncated": status_truncated,
+                        "truncation_reason": status_reason,
+                        "examined_edges": status.get("examined_edges"),
+                        "returned_paths": status.get("returned_paths"),
+                        "effective_depth": status.get("effective_depth"),
+                        "effective_expansion_budget": status.get(
+                            "effective_expansion_budget"
+                        ),
+                        "effective_frontier_budget": status.get(
+                            "effective_frontier_budget"
+                        ),
+                        "effective_result_budget": status.get(
+                            "effective_result_budget"
+                        ),
+                        "effective_time_budget_ms": status.get(
+                            "effective_time_budget_ms"
+                        ),
+                        "applied_valid_at": status.get("applied_valid_at"),
+                        "applied_believed_at": status.get("applied_believed_at"),
+                        "evaluated_at": status.get("evaluated_at"),
+                    }
+                )
+            )
+        except ValidationError as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.GRAPH_UNAVAILABLE,
+                message="the live graph returned invalid terminal status",
+            ) from error
+    hidden = {_GRAPH_MARKER_COLUMN, _GRAPH_ORDINAL_COLUMN, _GRAPH_STATUS_COLUMN}
+    public_indices = [index for index, name in enumerate(names) if name not in hidden]
+    public_columns = tuple(columns[index] for index in public_indices)
+    public_rows = [
+        tuple(row[index] for index in public_indices)
+        for row in rows
+        if row[marker_index] is True
+    ]
+    return public_columns, public_rows, tuple(invocations)
+
+
+def _graph_truncation_disclosure(
+    *, invocations: Sequence[GraphInvocation]
+) -> tuple[bool, str | None, tuple[str, ...]]:
+    """Aggregate graph caps while retaining one warning per invocation."""
+    truncated = tuple(invocation for invocation in invocations if invocation.truncated)
+    reason = truncated[0].truncation_reason if truncated else None
+    warnings = tuple(
+        "graph helper"
+        f" {invocation.ordinal} ({invocation.function}) reached"
+        f" {invocation.truncation_reason}"
+        for invocation in truncated
+    )
+    return bool(truncated), reason, warnings
 
 
 def _encoded_size(value: object) -> int:
@@ -409,9 +583,28 @@ class QuerySandboxExecutor:
     ) -> QueryResult:
         limits = TIER_LIMITS[tier]
         semantic_invocations: tuple[SemanticInvocation, ...] = ()
+        graph_invocations: tuple[GraphInvocation, ...] = ()
         bridge_parameters: dict[str, object] = {}
-        graph_cap_reached = False
         uses_graph_helper = bool(set(validated.referenced_functions) & _GRAPH_FUNCTIONS)
+        effective_statement_timeout_ms = _effective_statement_timeout_ms(
+            uses_graph_helper=uses_graph_helper,
+            requested_timeout_ms=statement_timeout_ms,
+        )
+        if uses_graph_helper and not _graph_deployment_binding_is_valid(
+            bindings=validated.srf_bindings,
+            parameters=parameters,
+            deployment_id=self._deployment_id,
+        ):
+            return self._failure(
+                QueryErrorCode.INVALID_PARAMETER,
+                "the first graph-helper argument must be the authenticated deployment parameter",
+                request_id,
+                started,
+                clock,
+                limits_model,
+                principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
+            )
         executable = validated.sql
         needs_projection, needs_embedder = required_adapters(validated.srf_bindings)
         if not explain and (
@@ -430,7 +623,7 @@ class QuerySandboxExecutor:
 
         try:
             with self._transaction(
-                limits_ms=limits, statement_timeout_ms=statement_timeout_ms
+                limits_ms=limits, statement_timeout_ms=effective_statement_timeout_ms
             ) as cursor:
                 differences = live_schema_differences_psycopg(
                     connection=cursor.connection
@@ -499,9 +692,8 @@ class QuerySandboxExecutor:
                 # Always a mapping, never None: psycopg's placeholder binding is
                 # what the escaping in the gate assumes, and it must not
                 # switch on and off with the parameter count.
-                if uses_graph_helper:
-                    cursor.execute(f"SET LOCAL {_GRAPH_CAP_SETTING} = 'false'".encode())
                 cursor.execute(statement.encode(), bound)
+                descriptions = tuple(cursor.description or ())
                 columns = tuple(
                     ResultColumn(
                         name=d.name,
@@ -510,18 +702,20 @@ class QuerySandboxExecutor:
                         # nullability for computed columns; the contract says
                         # so rather than guessing per expression.
                     )
-                    for d in (cursor.description or ())
+                    for d in descriptions
                 )
                 raw = cursor.fetchmany(row_cap + 1)
                 if uses_graph_helper and not explain:
-                    cursor.execute(
-                        (
-                            f"SELECT current_setting('{_GRAPH_CAP_SETTING}', true)"
-                            "::boolean"
-                        ).encode()
+                    graph_functions = tuple(
+                        (ordinal, function)
+                        for ordinal, (_, function, _) in enumerate(
+                            validated.srf_bindings
+                        )
+                        if function in _GRAPH_FUNCTIONS
                     )
-                    cap_row = cursor.fetchone()
-                    graph_cap_reached = bool(cap_row and cap_row[0])
+                    (columns, raw, graph_invocations) = _consume_graph_carrier(
+                        columns=columns, rows=raw, graph_functions=graph_functions
+                    )
         except SandboxRejection as rejection:
             return self._failure(
                 rejection.code,
@@ -548,6 +742,28 @@ class QuerySandboxExecutor:
             return self._failure(
                 QueryErrorCode.LOCK_TIMEOUT,
                 "a required lock was not available in time",
+                request_id,
+                started,
+                clock,
+                limits_model,
+                principal,
+                query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
+            )
+        except psycopg.errors.InvalidParameterValue as error:
+            graph_clock_error = _is_graph_clock_error(
+                uses_graph_helper=uses_graph_helper, message=str(error)
+            )
+            return self._failure(
+                (
+                    QueryErrorCode.INVALID_PARAMETER
+                    if graph_clock_error
+                    else QueryErrorCode.EXECUTION_ERROR
+                ),
+                (
+                    "a graph traversal requires both temporal clocks or neither"
+                    if graph_clock_error
+                    else "the statement failed during execution"
+                ),
                 request_id,
                 started,
                 clock,
@@ -627,17 +843,18 @@ class QuerySandboxExecutor:
                 }
             )
         )
+        (graph_cap_reached, graph_truncation_reason, graph_warnings) = (
+            _graph_truncation_disclosure(invocations=graph_invocations)
+        )
         truncation_reason = (
             "row_cap"
             if truncated
             else (
                 "byte_cap"
                 if byte_truncated
-                else ("graph_cap" if graph_cap_reached else None)
+                else (graph_truncation_reason if graph_cap_reached else None)
             )
         )
-        warnings = (_GRAPH_CAP_WARNING,) if graph_cap_reached else ()
-
         outcome = QueryResult(
             request_id=request_id,
             deployment_id=self._deployment_id,
@@ -659,8 +876,9 @@ class QuerySandboxExecutor:
             evaluated_at=evaluated_at,
             pg_snapshot_at=pg_snapshot_at,
             elapsed_ms=(time.monotonic() - clock) * 1000,
-            warnings=warnings,
+            warnings=graph_warnings,
             semantic_invocations=semantic_invocations,
+            graph_invocations=graph_invocations,
         )
         self._audit.emit(outcome=outcome, principal=principal)
         return outcome

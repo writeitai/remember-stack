@@ -1,450 +1,729 @@
-# P2 Graph Layer — Design (formerly L6)
+# Live PostgreSQL Graph — Binding Design
 
-Drill-down of the P2 (graph) requirements from `../requirements/requirements_v3.md`. Inspirations: Graphiti/Zep
-(bi-temporal edges, episode provenance, communities) and the supersession-architecture review
-(graph restricted to entity adjacency, single source of truth for validity, no replicated
-invalidation state).
+**Status:** binding under D98
 
-For a worked explanation of the claims / relations / evidence model and bi-temporality, see
-`../analysis/concepts.md`.
+**Date:** 2026-08-27
 
-> **Re-evaluated 2026-08-14.** D13 and LadybugDB remain binding. Moving P1 into
-> PostgreSQL does not imply moving P2: Apache AGE retains a duplicate graph
-> projection, shares the authority database's resource/fault boundary, and has
-> not yet proved the traversal-time temporal predicate required by filtered
-> shortest paths. Direct recursive PostgreSQL is the smaller future candidate
-> only if full public Cypher is deliberately removed. See the
-> [analysis](../analysis/postgresql_p2_graph_analysis.md) and the open,
-> unchosen [proposal](../../design/proposals/postgresql_p2_graph.md).
+**Supersedes:** the LadybugDB P2 design under D13/D44/D82
 
-## 1. Role: a derived projection, never an authority
+**Analysis:**
+[`postgres19_sqlpgq_live_graph_analysis.md`](../analysis/postgres19_sqlpgq_live_graph_analysis.md)
 
-The single most important decision. The graph is a **read-optimized projection of facts that
-already live in Postgres**. It makes no decisions, holds no state of its own, and can be
-deleted and rebuilt at any time without data loss.
+## 1. Problem and decision
 
-Concretely:
+RememberStack needs entity neighborhoods, relationship paths, temporal graph
+questions, and document citation navigation. PostgreSQL already owns every
+entity, fact, clock, merge redirect, and document identity that those answers
+depend on. The former LadybugDB P2 copied that state into immutable graph
+generations and added an export/build/publish/download/open lifecycle.
 
-- **Validity is decided upstream.** Supersession, contradiction, and entity merges all happen
-  in the E2/E3 pipeline (adjudication at the relation level, D3) and are recorded in Postgres.
-  The graph mirrors the outcome. (Graphiti
-  runs LLM-driven edge invalidation at graph-write time; we deliberately don't — that judgment
-  already happened at E2. The graph writer is dumb and deterministic.)
-- **No embeddings in the graph.** Semantic entry points come from PostgreSQL P1. Storing
-  vectors in two places is how stores drift apart (documented Mem0 failure mode). The graph's
-  job starts when you already have an entity ID.
-- **No supersession blocking in the graph.** `(entity_id, predicate)` blocking runs on Postgres
-  scalar indexes — transactional, cheap, and available even when the graph is mid-rebuild.
+There are no compatibility consumers. The graph is therefore served directly
+from PostgreSQL 19:
 
-What the graph IS for:
+- PostgreSQL authority views are the graph element tables. Graph rows are not
+  copied into another store.
+- PostgreSQL 19 SQL/PGQ property graphs and `GRAPH_TABLE` implement fixed
+  one-hop graph patterns in the cutover architecture.
+- Work-bounded PostgreSQL frontier functions implement variable-depth
+  neighborhoods and shortest paths, including temporal filtering during
+  expansion.
+- LadybugDB, public Cypher, P2 data snapshots, generations, manifests, graph
+  files, reader swaps, and graph-specific backup/restore state are removed.
 
-| Query | Example |
-|---|---|
-| Neighborhood expansion | "everything we know about entity X" — typed, time-filtered adjacency |
-| Relationship lookup | "how are X and Y connected?" (1–2 hops) |
-| As-of reconstruction | "what did we believe about X on 2025-03-01?" |
-| Structural navigation | citation chains, person↔org affiliations, doc↔entity mentions |
-| graph analytics | communities, PageRank, paths — feeding K1 topic hints (§7) |
+This is one storage model with two query syntaxes, not two graph engines:
 
-## 2. Ontology and schema
-
-LadybugDB is schema-full (typed node/rel tables). Resolution (**D44**): **one `Entity` node table with
-`type` as a property** (not per-type tables) and **one generic `RELATES` table with `predicate` as a
-property** (not per-predicate tables) — the vocabulary is governed, extensible *registry data*, not DDL
-(D5/D18). `UUID` is a valid node primary key (verified in LadybugDB source/tests). The whole projection is
-defined by Postgres `v_graph_*` views (`postgres_schema_design.md` §10.A), loaded via `COPY … FROM
-SQL_QUERY('pg', …)` or the Parquet hop. Full translation analysis:
-`../analysis/ladybug_translation_research/SYNTHESIS.md`.
-
-```cypher
-// Nodes
-CREATE NODE TABLE Entity(
-  id UUID PRIMARY KEY,          // canonical entity_id — survivors only (merged entities redirected, §10.A)
-  name STRING,                  // canonical_name
-  type STRING,                  // registry value: 8 D18 core types (Person|Organization|Place|Document|
-                                //   Event|Concept|Project|Product) + extension subtypes — DATA, not schema
-  summary STRING,               // short registry blurb (optional)
-  created_at TIMESTAMP          // entities.created_at AT TIME ZONE 'UTC'
-);
-
-CREATE NODE TABLE Document(
-  id UUID PRIMARY KEY,          // documents.doc_id (distinct id-space from Entity)
-  title STRING,
-  source_uri STRING,
-  published_at DATE             // (current version's published_at AT TIME ZONE 'UTC')::date — v_graph_documents joins the lineage's current version (D55)
-);
-
-// Semantic edges — projections of RELATIONS (entity→entity facts), not of claims
-CREATE REL TABLE RELATES(
-  FROM Entity TO Entity,
-  predicate STRING,             // governed predicate vocabulary, see §3 (D18)
-  relation_id UUID,             // provenance — hydrate relation + evidence from Postgres
-  fact STRING,                  // short label, NOT the full claim text
-  evidence_count INT64, contradict_count INT64, confidence DOUBLE,
-  contradiction_group UUID,     // both live sides of an unresolved contradiction share it
-  valid_from TIMESTAMP,         // ┐
-  valid_until TIMESTAMP,        // │ bi-temporal, inherited verbatim (cast AT TIME ZONE 'UTC')
-  ingested_at TIMESTAMP,        // │
-  invalidated_at TIMESTAMP      // ┘  (relations.status, a GENERATED column, is NOT projected — liveness
-);                              //     is derived in Cypher: invalidated_at IS NULL — D6)
-
-// Structural edges — from E0/E1 metadata, not claims
-CREATE REL TABLE MENTIONED_IN(FROM Entity TO Document, mention_count INT64, first_seen TIMESTAMP); // aggregate, §10.A
-CREATE REL TABLE DOC_CROSSREF(FROM Document TO Document, kind STRING, context STRING); // cites|links_to|attaches|replies_to
-CREATE REL TABLE IS_DOCUMENT(FROM Entity TO Document);  // bridge: a Document-typed entity ↔ its E0 doc row
+```text
+PostgreSQL authority tables
+        |
+        +-- memory_v1 live/history views -- SQL/PGQ fixed patterns
+        |
+        +-- memory_v1 live/history views -- recursive SQL bounded traversal
 ```
 
-> **Observations and claims do NOT project (D43/D18).** A non-relational fact (a value about one entity —
-> "Acme's headcount is 600") has no entity object, so it cannot be a REL (a LadybugDB endpoint must be a
-> node, never a literal); it lives on its PostgreSQL authority row with a
-> private current semantic vector and does not enter P2. Two correctness rules govern the projection
-> (§10.A / D44): **merge-redirect** endpoints to surviving entities (a merge is a redirect, not a rewrite,
-> so a naive `status='active'` join silently drops merged-endpoint edges), and **keep every retracted
-> edge** (`invalidated_at` set, with no invalidation-age filter, D69) for transaction-time as-of — dropping
-> only edges whose survivor-redirected endpoint was retired/forgotten (§13).
+The supported capability is the **live graph**. The legacy filename is retained
+only to keep established corpus links stable; it is not a current plane name.
+P1 remains a private,
+rebuildable PostgreSQL search projection; P3 remains the artifact projection.
 
-### Relations vs. claims — distinct concepts, distinct records
+## 2. Product contract
 
-Claims (E2) and graph edges are NOT the same thing, and the mapping is many-to-many:
+The live graph provides:
 
-- a **claim** is a verifiable natural-language assertion as made by a source — possibly n-ary,
-  qualified, an opinion or prediction; many claims flatten to no triplet at all
-- a **relation** is a normalized binary fact `(subject_entity, predicate, object_entity)` —
-  its identity is the fact itself, independent of who asserted it
-- one claim can yield several relations; one relation can be evidenced by many claims
+| Operation | Default | Engine | Hard database clamp |
+| --- | ---: | --- | ---: |
+| Current/as-of entity neighborhood | 2 hops | SQL/PGQ at 1 hop; work-bounded frontier BFS at 2–4 hops | 4 hops, 500 returned edges and a 2,000-edge expansion budget |
+| Entity-to-entity path | 4 hops | work-bounded frontier BFS | 6 hops, 10 complete paths, 500 returned edges and a 2,000-edge expansion budget |
+| Citation/document path | 6 hops | directed work-bounded frontier BFS | 6 hops and the same complete-path/result/expansion budgets |
+| Fixed relationship shape | explicit pattern | SQL/PGQ | 1 hop in shipped statements |
 
-So Postgres holds a first-class `relations` table (subject_id, predicate, object_id,
-bi-temporal fields) plus `relation_evidence(relation_id, claim_id, stance: supports |
-contradicts)`. A **relation-normalization step** in the E3 stage (after claim extraction +
-entity resolution) maps eligible claims onto relations against the predicate registry:
+These are product bounds, not suggested client values. Server code and the SQL
+functions clamp them even if a caller asks for more. Any tier limit may be
+lower. The response discloses truncation and the effective bounds.
 
-- `(s, p, o)` already exists with compatible validity → claim added as **evidence**
-  (confidence up, no new fact — ten papers asserting the same affiliation = one edge)
-- conflict detected → supersession/contradiction adjudication runs **at the relation level**
-  ("Alice left Acme" supersedes the fact, not one sentence in one paper)
+The graph query path is read-only and makes zero LLM calls. A graph hop always
+starts from a resolved id. Name resolution and semantic/BM25 entry-point search
+remain retrieval responsibilities, not graph behavior.
 
-Rules:
+## 3. Authority and element model
 
-- **Only canonical entities enter the graph.** Alias resolution and `same_as` merging happen in
-  the Postgres registry before projection. The graph never contains two nodes for one entity.
-- **Edges project relations, not claims.** Edge count scales with distinct facts, not corpus
-  redundancy. Attribute claims ("X was founded in 1998") and non-normalizable claims stay
-  E2-only — retrievable via PostgreSQL P1 and authority hydration. This keeps the graph lean (rough sizing at 1M
-  docs: ~50M claims → far fewer distinct relations → graph of a few GB, comfortably embedded).
-- **Contradictions project too**: an unresolved contradiction between relations becomes two
-  live edges with a shared `contradiction_group` property, so retrieval can surface both sides.
-- This matches Graphiti's actual model: their edges are facts with episode lists as
-  provenance — episodes ≈ our claims, edge ≈ our relation.
+### 3.1 Sources
 
-## 3. Predicate vocabulary governance
+The property-graph element tables are private live relational views chosen to
+keep PostgreSQL 19's current SQL/PGQ rewriter from flattening the full
+evidence-rich public authority graph into pathological plans. They contain no
+stored rows. Public result hydration and audit authority remain the normalized
+`memory_v1` views:
 
-Free-text predicates explode ("works_at" / "employed_by" / "is employee of") and silently break
-both entity-keyed blocking and graph queries. So:
+| Graph element | Source view | Key |
+| --- | --- | --- |
+| `entity` vertex | `rememberstack_graph_internal.entities_live` | `(deployment_id, entity_id)` |
+| `document` vertex | `rememberstack_graph_internal.documents_live` | `(deployment_id, doc_id)` |
+| `relates` current edge | `rememberstack_graph_internal.relations_current` | `(deployment_id, relation_id)` |
+| `relates` historical edge | `rememberstack_graph_internal.relations_history` | `(deployment_id, relation_id)` |
+| `mentioned_in` edge | `entity_document_mentions` | `(deployment_id, entity_id, doc_id)` |
+| `document_crossref` edge | `rememberstack_graph_internal.crossrefs_live` | `(deployment_id, crossref_id)` |
 
-- A **predicate registry table in Postgres**: `predicate, description, synonyms[], status`.
-- E2 extraction is constrained to the registry vocabulary, with an `other:<freetext>` escape
-  hatch.
-- A periodic job reviews frequent `other:` values and promotes them (or maps them to existing
-  predicates). The ontology evolves by governance, not by accretion.
-- Seed vocabulary = the **16 core predicates** (D18, extended by D64: `works_for, member_of,
-  affiliated_with, founded, located_in, part_of, authored, created, about, knows_about, knows,
-  participated_in, works_on, uses, reports_to, related_to`); the authoritative list +
-  domain/range signatures live in `registries_design.md` §4.
-  Extend per K2 domain via packs. (The graph stores `predicate` as a property — D18 domain/range is
-  enforced upstream by the E3 normalizer, not in the graph.)
+The private views contain active survivor entities only and require surviving
+relation provenance. They resolve original endpoints through survivor
+membership, so a merge is a redirect rather than an edge rewrite or
+disappearance. Retired or forgotten endpoints do not appear. The server uses
+SQL/PGQ only to select bounded relation/node identifiers, then hydrates them
+from `memory_v1.graph_edges_current` or
+`memory_v1.graph_edges_visible_history` in the same repeatable-read,
+read-only transaction. Facts, evidence, claims, and observations remain
+ordinary PostgreSQL records; only normalized binary relations become semantic
+edges.
 
-## 4. Bi-temporality and as-of queries
+All keys contain `deployment_id`, and every SQL/PGQ or frontier-BFS operation
+takes it as an explicit first argument and joins on it. A source or destination
+reference therefore cannot cross a deployment even if UUID generation or a
+fixture is faulty. Property-graph `KEY` clauses over views are declarations,
+not backing unique constraints; acceptance tests independently assert key
+uniqueness on every source view.
 
-Edges carry the four bi-temporal timestamps of their **relation** (the Graphiti/Zep edge
-model; D3):
+### 3.2 Property graphs
 
-- `valid_from` / `valid_until` — when the fact was true in the world
-- `ingested_at` / `invalidated_at` — when the system learned it / learned it was superseded
+Migrations create two catalog objects:
 
-(Claims carry *different*, **immutable** time evidence — `asserted_at`, the D41
-source-asserted interval, `ingested_at` — and never an `invalidated_at`: the revisable
-four-column window exists only at the relation level. See D3/D41.)
+- `memory_v1.memory_current`: current entity/document vertices, semantic
+  edges, mentions, and document cross-references;
+- `memory_v1.memory_history`: current survivor entity vertices and all
+  historically visible semantic edges, including their two time windows.
 
-Default retrieval filter (current beliefs):
+The executable core of the semantic declarations is:
 
-```cypher
-MATCH (a:Entity {id: $id})-[r:RELATES]-(b:Entity)
-WHERE r.invalidated_at IS NULL
-  AND (r.valid_until IS NULL OR r.valid_until > $now)
-RETURN a, r, b;
+```sql
+CREATE PROPERTY GRAPH memory_v1.memory_current
+  VERTEX TABLES (
+    rememberstack_graph_internal.entities_live AS entity
+      KEY (deployment_id, entity_id)
+      LABEL entity PROPERTIES
+        (deployment_id, entity_id, canonical_name, profile_summary),
+    rememberstack_graph_internal.documents_live AS document
+      KEY (deployment_id, doc_id)
+      LABEL document PROPERTIES
+        (deployment_id, doc_id, title, source_uri, published_at)
+  )
+  EDGE TABLES (
+    rememberstack_graph_internal.relations_current AS relates
+      KEY (deployment_id, relation_id)
+      SOURCE KEY (deployment_id, subject_entity_id)
+        REFERENCES entity (deployment_id, entity_id)
+      DESTINATION KEY (deployment_id, object_entity_id)
+        REFERENCES entity (deployment_id, entity_id)
+      LABEL relates PROPERTIES
+        (deployment_id, relation_id, predicate),
+    memory_v1.entity_document_mentions AS mentioned_in
+      KEY (deployment_id, entity_id, doc_id)
+      SOURCE KEY (deployment_id, entity_id)
+        REFERENCES entity (deployment_id, entity_id)
+      DESTINATION KEY (deployment_id, doc_id)
+        REFERENCES document (deployment_id, doc_id)
+      LABEL mentioned_in PROPERTIES
+        (deployment_id, mention_count, first_mentioned_at, last_mentioned_at),
+    rememberstack_graph_internal.crossrefs_live AS document_crossref
+      KEY (deployment_id, crossref_id)
+      SOURCE KEY (deployment_id, from_doc_id)
+        REFERENCES document (deployment_id, doc_id)
+      DESTINATION KEY (deployment_id, to_doc_id)
+        REFERENCES document (deployment_id, doc_id)
+      LABEL document_crossref PROPERTIES
+        (deployment_id, crossref_id, kind, context, created_at)
+  );
 ```
 
-Time-travel (`as_of` on both axes — "what was true at T as we knew it at T"):
+The history graph uses the same composite entity vertex and maps the private
+`relations_history` view as `relates`, exposing only deployment/relation ids,
+predicate, and the four clock columns required to filter expansion. Migrations
+own the complete DDL. A source-view shape migration drops and recreates
+dependent property graphs in the same transaction. The public authority views
+remain the contract for returned labels, confidence, evidence/support counts,
+contradiction state, and provenance; private element properties are planning
+inputs, not a second public truth surface.
 
-```cypher
-WHERE r.ingested_at <= $as_of
-  AND (r.invalidated_at IS NULL OR r.invalidated_at > $as_of)
-  AND r.valid_from <= $as_of
-  AND (r.valid_until IS NULL OR r.valid_until > $as_of)
+D98 drops the six legacy `v_graph_entities`, `v_graph_documents`,
+`v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`, and
+`v_graph_is_document` snapshot-export views. `v_graph_survivor` remains only as
+the pre-existing private merge-resolution authority behind the
+deployment-labelled `v_memory_entity_survivor`; neither is a graph copy or a
+public query-space surface.
+
+Property graphs are schema metadata. They contain no copied rows and have no
+data generation id. Migrations create them after restore. If catalog metadata
+is missing at schema head, readiness fails closed; the operator-only
+`remember ops graph-catalog ensure` command compares the expected semantic
+contract through PostgreSQL 19's `property_graphs`, `pg_element_tables`,
+`pg_element_table_key_columns`, `pg_edge_table_components`,
+`pg_element_table_labels`, `pg_element_table_properties`, `pg_labels`,
+`pg_label_properties`, `pg_property_data_types`, and
+`pg_property_graph_privileges` information-schema views. It may use
+`pg_get_propgraphdef()` as diagnostic output, but does not make a brittle raw
+DDL-string comparison its authority. It transactionally recreates only the
+catalog objects and their explicit grants. It never repairs or writes
+authority rows.
+
+### 3.3 No entity types
+
+D96 removed entity classes. The `entity` label means only “registry entity”; it
+does not reinstate Person/Organization/etc. `entities.type`, typed labels, and
+domain/range gates must not reappear through graph DDL. Classification-like
+facts live in observations and profile prose.
+
+## 4. Query execution
+
+### 4.1 SQL/PGQ from day one
+
+Server-owned fixed patterns use PostgreSQL 19 SQL/PGQ. For example, a directed
+one-hop shape has this form:
+
+```sql
+SELECT *
+FROM GRAPH_TABLE (
+  memory_v1.memory_current
+  MATCH (a IS entity)-[r IS relates]->(b IS entity)
+  WHERE a.deployment_id = $1
+    AND a.entity_id = $2
+  COLUMNS (
+    r.relation_id AS relation_id,
+    r.predicate AS predicate,
+    b.entity_id AS neighbor_entity_id
+  )
+) AS g;
 ```
 
-**Multi-hop as-of (D44 correction, sharpened by the source investigation).** For
-variable-length traversal, the temporal predicate must be written **inside the recursive
-pattern** — LadybugDB's inline recursive predicate `(r, _ | WHERE …)`. It is evaluated per
-edge *during* traversal (source-verified at the neighbor-scan level, `on_disk_graph.cpp:308`;
-a failing edge never enters the search frontier), so `SHORTEST` finds the shortest path **in
-the as-of subgraph**:
+The admitted PG19 subset is deliberately explicit: fixed path concatenation;
+vertex and full-edge patterns; directed or either-direction matching; element
+variables; element-local and graph-pattern predicates; individual labels or
+label disjunction; property references; and a mandatory `COLUMNS` result.
+Named views, composite keys and references, explicit labels, and explicit
+column/expression properties are allowed in graph DDL. `GRAPH_TABLE` remains
+an ordinary relational `FROM` item, so server-owned statements may alias,
+join, filter, order, and implicitly correlate it to an earlier `FROM` item.
+PostgreSQL 19 does **not** accept an explicit `LATERAL` keyword before
+`GRAPH_TABLE`; shipped SQL uses the working comma-join form.
 
-```cypher
-MATCH p = (a:Entity {id:$id})
-    -[rs:RELATES* SHORTEST 1..3 (r, _ | WHERE
-          r.ingested_at <= $as_of
-      AND (r.invalidated_at IS NULL OR r.invalidated_at > $as_of)
-      AND (r.valid_from  IS NULL OR r.valid_from  <= $as_of)
-      AND (r.valid_until IS NULL OR r.valid_until >  $as_of))]-
-    (b:Entity)
-RETURN p;
+No production query assumes support for path variables, different-edge,
+TRAIL/SIMPLE/ACYCLIC modes, quantified paths or edges, shortest/any-path
+search, path alternation/union, non-local element predicates, label
+conjunction/negation/wildcards, graph-element identity/topology predicates,
+within-match aggregates, path functions, optional/export result modes, or
+inline view element tables. Those features are explicitly absent from the
+PostgreSQL 19 conformance table. The application exposes ordinary UUID
+properties when it needs element identity.
+
+Shipped PGQ statements are static application SQL, parameterized, deployment
+scoped, and limited to one explicit hop. Current shapes use `memory_current`;
+fixed as-of shapes use `memory_history` and put both
+half-open clock predicates on every matched edge. The result is relational and
+may join authority tables for hydration in the same statement.
+
+The one-hop neighborhood is the deliberate dual-implementation seam. The
+recursive/frontier result contract is canonical. The PGQ statement and its
+bounded server-side result fold together must:
+
+1. match only semantic `relates` edges, exactly like the frontier helper; the
+   mention and document-cross-reference labels in the same property graph are
+   not neighborhood edges;
+2. treat semantic discovery as undirected while retaining stored edge
+   direction;
+3. exclude the anchor as a returned neighbor;
+4. have PGQ return the admitted one-hop edge set with predicate/time filters;
+5. have the server choose the lexicographically smallest relation-id
+   representative per endpoint, then order and page those identifiers;
+6. disclose the same returned-edge cap, expansion budget, and truncation state
+   as the canonical helper.
+
+PostgreSQL 19's default is repeatable-elements matching. The one-hop statement
+therefore keeps anchor exclusion (`y.entity_id <> x.entity_id`) in the
+graph-pattern `WHERE` after the complete `MATCH`, where cross-element
+comparisons are valid.
+
+Because PG19 has no inside-match work counter, each fixed PGQ operation begins
+with a separate static, indexed, tenant-and-anchor-first relational guard in
+the same read-only repeatable-read transaction. The guard expands the anchor's
+merge membership, probes both raw relation endpoint indexes, counts temporal-
+and-predicate-eligible candidate rows, and uses a `budget + 1` limit. Counting
+before the graph views remove missing provenance is deliberately conservative:
+those rows are still possible rewrite work. The graph role receives only the
+columns needed for this guard. Application control flow inspects its one
+decision row and does not send the `GRAPH_TABLE` statement to PostgreSQL unless
+the guard admits it. Refusal therefore cannot depend on planner short-circuit
+behavior: it returns zero graph data plus the disclosed truncation reason and
+effective-budget metadata without planning or evaluating the graph pattern.
+The admitted PGQ remains static and uses PG19's implicit comma-join correlation
+from its deployment/anchor bounds into `GRAPH_TABLE`; it never spells an
+explicit `LATERAL`. `EXPLAIN (ANALYZE, BUFFERS)` acceptance proves both the
+standalone guard and graph rewrite use endpoint indexes and do not scan a
+deployment-wide eligible edge relation. `statement_timeout` remains a final
+safety boundary, not the work-budget implementation.
+
+Byte-identical PGQ/frontier parity is required at depth one whenever
+the guard proves the request is within `expansion_budget`; fixtures include
+skew, parallel edges, and temporal filtering below that budget. The
+over-budget contracts are deliberately different and separately tested:
+server-owned PGQ returns zero data rows plus
+`truncation_reason = 'expansion_budget'` without evaluating the graph pattern,
+while a direct recursive-helper call may return its deterministic partial
+prefix plus the same reason. The typed depth-one operation always uses the PGQ
+rule; depth two and above always use the frontier helper, so routing is fixed
+before execution and there is no runtime fallback that could hide a mismatch.
+PostgreSQL 19 Beta 3's view-backed two-hop rewrite exceeded the binding
+transaction bound and did not retain endpoint-anchored access. It is therefore
+not on the request path until a later PostgreSQL release passes both gates.
+Dense-hub fixtures assert each disclosed contract; they are not part of the
+byte-parity set. This deliberate one-hop implementation satisfies the operator
+requirement to use the standard graph surface from the cutover without making
+SQL/PGQ the traversal engine.
+
+PostgreSQL 19 does not implement element-pattern quantifiers or shortest-path
+modes. No implementation may emulate runtime depth by generating an unbounded
+number of joins. When the operation is variable-length or asks for shortest,
+it uses the frontier functions.
+
+### 4.2 Work-bounded frontier traversal
+
+A recursive common table expression explains the graph semantics, but the
+existing `memory_v1.graph_neighborhood` and `memory_v1.graph_path` functions
+are not retained implementations. They materialize the tenant-wide edge set
+and enumerate simple paths to the depth cap before limiting results. D98
+replaces them with a level-at-a-time, work-bounded frontier implementation.
+
+The public SQL functions have a clean-cut signature with required
+`deployment_id` first. Neighborhood, entity path, and citation path each take
+explicit returned-result and expanded-edge budgets, internally clamped to the
+product maxima. They emit zero or more `row_kind = 'data'` rows and exactly one
+terminal `row_kind = 'status'` row carrying truncation, examined-edge/frontier
+counters, and every effective budget—even for an empty result. The query
+sandbox-visible data rows repeat the same final truncation and work counters,
+so even a broad projection cannot report a known partial traversal as complete.
+The terminal carrier remains authoritative because it alone survives an empty
+caller result. The query
+sandbox materializes each invocation once, exposes only data rows to the caller
+query, and right-joins the final caller result to aggregated reserved metadata
+columns so the executor can suppress the status-only carrier and populate
+`QueryResult.graph_invocations` plus aggregate truncation fields. This remains
+one PostgreSQL statement and one evaluation clock;
+no transaction/session GUC communicates truncation.
+
+On the public SQL surface the first argument is not caller-selectable: the AST
+binder requires the reserved authenticated deployment parameter. A literal,
+caller-owned parameter, absent binding, or value unequal to that binding fails
+with the public `invalid_parameter` code before the function runs and performs no graph
+access. This cannot be reported as an honest-but-wrong empty neighborhood.
+
+The reference implementation is a `STABLE`, `SECURITY INVOKER` PL/pgSQL level
+loop whose frontier, seen vertices/edges, candidate paths, counters, and result
+buffer live only in bounded local variables/arrays. It performs `SELECT`-only
+indexed adjacency probes and writes no regular or temporary table. This is the
+only named implementation because graph transactions are `READ ONLY` and a
+`STABLE` function cannot execute SQL writes. An alternative set-based form may
+replace it only after proving identical semantics and bounds. It must expand only the current frontier through direct
+indexed joins on `(deployment_id, subject_entity_id)` and
+`(deployment_id, object_entity_id)`. It must not materialize an unanchored edge
+view. Function-local state ends with the invocation; pool reuse tests still
+prove no session or transaction state crosses calls.
+
+Every expansion must:
+
+1. filter `deployment_id` before joining an edge;
+2. filter predicate selection before expansion;
+3. filter both temporal windows before expansion;
+4. apply the operation-specific visited rule below;
+5. stop before exceeding the database depth, frontier, expanded-edge, returned
+   result, or statement-time clamps;
+6. preserve each edge's stored subject/object direction even when semantic
+   discovery is undirected;
+7. order deterministically before applying a limit;
+8. report truncation from returned data rather than connection-local state.
+
+Visited state is not one global rule. Neighborhood keeps a global
+`best_depth_by_vertex`, admits all candidates discovered on the same frontier
+level, then deterministically chooses the minimum-hop/lexicographically smallest
+representative for each neighbor after that level completes; distinct parallel
+edge ids remain eligible under the returned-edge contract. Entity and citation
+path helpers keep visited vertices and edge ids **per candidate path**, so they
+can return bounded equal-length alternatives, while one global
+`first_target_depth` prevents any deeper expansion. Every retained candidate and
+alternative counts against the frontier/expansion/result budgets.
+
+For shortest path, the implementation completes one deterministically ordered
+frontier level at a time and stops after the first target-bearing level (or
+after collecting the bounded number of equal-length paths on that level). It
+never enumerates deeper paths after a shortest result is known. If a frontier
+or expanded-edge budget is reached before proof completes, it returns no false
+path and marks the result truncated/inconclusive. An invalid one-hop edge never
+enters the frontier and cannot hide a valid two-hop route. Filtering a path
+after shortest-path selection is a correctness bug.
+
+Traversal is bounded BFS semantics implemented inside PostgreSQL. A native
+graph extension is a non-goal unless measurements later prove that this
+implementation misses a contracted SLO while preserving the same correctness
+and work budgets.
+
+Citation traversal is directed from `from_doc_id` to `to_doc_id`; it follows
+`document_crossref.from_doc_id -> to_doc_id`. It never treats co-citation or a
+reverse link as a citation chain.
+
+### 4.3 Temporal semantics
+
+With neither instant supplied, traversal reads `graph_edges_current`. With both
+instants supplied, it reads `graph_edges_visible_history` and applies
+both half-open windows to every edge:
+
+```sql
+(ingested_at IS NULL OR ingested_at <= believed_at)
+AND (invalidated_at IS NULL OR invalidated_at > believed_at)
+AND (valid_from IS NULL OR valid_from <= valid_at)
+AND (valid_until IS NULL OR valid_until > valid_at)
 ```
 
-> **Never combine `SHORTEST` (or `ALL SHORTEST` / `WEIGHTED_SHORTEST`) with an outer
-> `WHERE all(r IN rels(p) …)` filter.** The outer form is applied **after** matching — no
-> optimizer pushdown exists — so `SHORTEST` searches the *unfiltered* graph, the filter then
-> discards the found path, and the query **silently returns nothing** although a longer path
-> satisfying the predicate existed at `$as_of`. With plain (non-shortest) `*1..k` matching the
-> outer form is merely wasteful; with any shortest-path mode it is a correctness bug. Inline
-> predicates accept rel-only or node-only conjuncts (our temporal filter is rel-only — fits).
-> Full evidence and the complete querying rulebook every implementer and agent must follow:
-> `../analysis/ladybug_query_semantics.md`.
+The API and SQL functions accept both clocks or neither. Supplying exactly one
+raises PostgreSQL `invalid_parameter_value`; public surfaces map that to the
+exhaustive `invalid_parameter` code. It never invents a second instant. The
+answer is the shortest path in the eligible subgraph, not a filtered path from
+the unfiltered graph.
 
-You **cannot** `MATCH`-traverse a `PROJECT_GRAPH[_CYPHER]` projection — projected graphs feed GDS
-algorithms only (PageRank/components/paths); path `MATCH` runs on the persistent catalog (`USE GRAPH`).
-For heavy/repeat as-of analytics, materialize a persistent as-of graph (`CREATE GRAPH` at rebuild). This
-**refines D10**, whose "as-of via projected graphs" holds for *algorithms*, not path traversal. (Source-
-verified; `../analysis/ladybug_translation_research/SYNTHESIS.md` §4.)
+Current structural edges are not presented as historical. A future need for
+historical mentions or cross-references requires authority history and a new
+decision; it must not infer history from current rows.
 
-Supersession never deletes an edge — adjudication closes the **relation's** window in
-Postgres, the projection mirrors it into the edge's `valid_until`/`invalidated_at`. The
-evidence claims keep their own bi-temporal record (when asserted / when ingested) — two
-clocks, two purposes: claims record what sources said and when; relations record what the
-system currently holds true. History stays queryable forever.
+### 4.4 Transaction snapshot
 
-## 5. Sync architecture: rebuild-first, snapshots for readers
+A statement sees one PostgreSQL MVCC snapshot. A relation committed before a
+later statement becomes graph-visible without a rebuild. `memory_current`,
+`graph_edges_current`, and a graph helper called with neither explicit instant
+capture one `statement_timestamp()` value and use it for every current predicate
+and emitted `evaluated_at` in that statement, preserving D41.
 
-LadybugDB's concurrency model (verified): **one READ_WRITE process XOR many READ_ONLY
-processes** on the same database files. Don't fight this — design around it.
+A compound typed operation that searches, traverses, and hydrates across
+multiple statements uses a `REPEATABLE READ, READ ONLY` transaction, captures
+one `evaluation_at` at operation entry, and passes that value explicitly as
+both graph instants. Its PGQ step uses `memory_history` with the same explicit
+predicates rather than `memory_current`. Thus all stages see one MVCC snapshot
+and one temporal instant without changing the public current-view definition.
+Long read transactions remain bounded by statement/transaction timeouts so
+they do not pin vacuum indefinitely.
 
-### The writer: periodic full rebuild
+“Live” means no projection publication lag. It does not erase valid-time or
+belief-time semantics.
 
-Instead of incremental event application, the P2 worker **rebuilds the whole graph from
-Postgres on every cycle**. The projection inputs are the Postgres **`v_graph_*` views** (D44,
-`postgres_schema_design.md` §10.A) — they encapsulate the casts (timestamptz→UTC, enum→text), the
-**merge-redirect** of endpoints to surviving entities, the **keep-retracted** rule (endpoint joins are
-the retention boundary), and the `MENTIONED_IN` aggregation, so the worker is dumb:
+## 5. Retrieval behavior
 
-1. Read the projection views. Two transports consume the *same* views:
-   - **Parquet hop (committed baseline, D7):** `COPY (SELECT * FROM v_graph_<t>) TO '<t>.parquet'`, then
-     `COPY <T> FROM '<t>.parquet'` into a fresh LadybugDB DB (bulk path; tens of millions of rows in
-     minutes). **Load order: all node tables before any rel table** (endpoints resolve against node PKs
-     at COPY time — a missing endpoint throws).
-   - **ATTACH-direct (optimization, spike before adopting):** `ATTACH '<pg-ro-conn>' AS pg (dbtype
-     postgres)` then `COPY <T> FROM SQL_QUERY('pg', 'SELECT * FROM v_graph_<t>')` — no Parquet hop. Both
-     `COPY <Node|Rel> FROM SQL_QUERY` are verified; pending: cross-DB scan throughput/pushdown at 10⁷–10⁸.
-2. **Validation gate before publish:** every retained edge endpoint resolved to exactly one emitted
-   survivor (no merge cycle, no dangling endpoint), and per-table graph-count == view-count. A failure
-   **aborts** the snapshot.
-3. Checkpoint, upload to GCS as an **immutable versioned snapshot**
-   (`gs://…/graph/snapshots/<timestamp>/`), then update the `latest` pointer. Graph-derived analytics
-   (PageRank/communities, D11) are computed **after** load and written back to Postgres — never
-   reprojected into the node tables (that would be circular).
+The default retrieval path remains D97:
 
-Why rebuild-first instead of incremental:
+1. semantic/BM25 search finds chunks, facts, observations, or candidate entity
+   names in PostgreSQL P1;
+2. authority confirmation and identity resolution produce survivor entity ids;
+3. the live graph expands those ids with no required predicate filter;
+4. fact text, observations, claims, and evidence are hydrated from authority;
+5. the existing fusion, diversity, token, and evidence rules construct the
+   answer context.
 
-- **Zero drift by construction.** The "rebuildable from Postgres" requirement isn't a dusty
-  disaster-recovery script — it's exercised every cycle. Consistency checking, merge
-  handling, and out-of-order event headaches all disappear.
-- **Entity merges become trivial.** A merge that re-points thousands of edges is a nightmare
-  incrementally and a no-op in a rebuild.
-- **It fits the trigger model.** P2 is a debounced aggregate layer anyway (requirements v2) —
-  nobody needs second-level graph freshness; the cadence (start: hourly) is the freshness SLA.
-- **Cheap at our scale.** A few GB rebuilt in minutes on one Cloud Run job. Only when rebuild
-  time outgrows the cadence does incremental application pay for itself — and the watermark
-  machinery can then be added without changing readers at all.
+The change improves freshness and consistency: P1 search, graph expansion, and
+authority hydration can share one database snapshot. Retrieval no longer
+reports or reasons about `p2_built_at`, graph generation availability, local
+graph hydration, or a pointer swap.
 
-### The readers: read-only snapshot copies
+It does not make graph expansion the universal first stage. Unanchored
+questions still need semantic/BM25 entry points. Observations still are not
+graph neighbors. Predicate is optional narrowing, not the default recall key.
 
-The retrieval API/CLI never touch the writer's files. Each API instance:
+The implementation records channel provenance such as `graph_pgq` or
+`graph_recursive`, effective bounds, truncation, and query duration. That is
+execution provenance; it must not change ranking solely because one syntax was
+used.
 
-- downloads the `latest` snapshot to local disk at startup,
-- opens it `READ_ONLY` (multiple processes allowed — this is exactly the supported mode),
-- polls the `latest` pointer and hot-swaps to a new snapshot when it appears.
+## 6. Global graph analytics
 
-This gives horizontally scalable reads, zero lock contention, cross-cloud friendliness
-(Hetzner Postgres never serves graph queries), and free point-in-time debugging — old
-snapshots ARE the graph as-of their timestamp.
+The system does not compute Ladybug PageRank, k-core, weakly connected
+components, Louvain communities, community labels, or K community/topic
+routing. The P2 analytics worker, snapshot-keyed metrics, K `community` rule,
+and `community_changed` trigger are absent. These were real K-plane consumers,
+not retrieval signals; D98 deliberately removes that unproved product surface
+rather than preserving a generation lifecycle for it.
 
-### Alternative (a deliberate non-goal): incremental between rebuilds
+The one retained scalar, entity graph degree, is computed from current
+PostgreSQL relation adjacency inside the clustering/blast-radius query. The
+pre-D98 `entities.graph_degree` and `memory_v1.entities_current.graph_degree`
+columns remain only as clean-cut compatibility shape: the migration resets the
+base column to zero and no writer refreshes it. Consumers must not interpret
+that compatibility value as degree. This avoids rebuilding the broad dependent
+public-view graph merely to remove one column while ensuring there is no
+background graph snapshot or stale metric to serve.
 
-Rebuild-first is the design. Incremental application is documented here only as the alternative
-we would adopt **if** sub-hour graph freshness ever became a hard requirement — it is *not* part
-of the current design. The shape, for the record: keep the periodic full rebuild as the anchor,
-and between rebuilds apply claim events from a Postgres outbox (`graph_events`, watermark stored
-in Postgres) to a working copy, publishing micro-snapshots; the rebuild still bounds drift to
-one cycle. At the target scale, rebuild-first is sufficient (§5).
+Reintroducing global analytics requires a separate analysis with a concrete
+consumer, freshness contract, scale measurement, and resource/isolation plan.
+It may use PostgreSQL batch SQL or an external disposable analytical job, but
+its artifacts do not become graph authority.
 
-## 5b. Verified LadybugDB capabilities (source tree + official docs)
+## 7. Security and admission boundary
 
-Surveyed from the vendored source (`../../_additional_context/ladybug`) and docs.ladybugdb.com:
+- Database roles are least privilege. The migration owner owns property
+  graphs; the internal read role receives explicit `SELECT ON PROPERTY GRAPH`
+  for only the graphs it needs plus explicit access to the element views and
+  traversal functions. Property-graph ownership does not lend base-relation
+  privileges to a caller, and PG19 documents no `ALL PROPERTY GRAPHS IN
+  SCHEMA` or default-privilege shortcut.
+- Every application statement contains a deployment predicate. Composite
+  element keys are defense in depth, not a substitute for the predicate.
+- Typed graph endpoints call only fixed SQL or the bounded functions. They do
+  not interpolate identifiers, labels, properties, predicates, or depth.
+- Public Cypher is removed.
+- Public arbitrary SQL/PGQ is not admitted while the exhaustive `pglast` gate
+  embeds PostgreSQL 18 grammar. `pglast` 8.4 rejects PGQ syntax, so bypassing
+  the parser or maintaining a second lexical allowlist is forbidden.
+- A future PG19-capable AST parser may admit SQL/PGQ only after the existing
+  default-deny query-space review is extended for property graphs,
+  `GRAPH_TABLE`, functions, cost checks, and result limits.
+- The PostgreSQL-18 grammar gate in front of a PostgreSQL-19 server is itself
+  an explicit compatibility boundary. Release tests diff reserved/unreserved
+  keywords, admitted statement/node shapes, and callable built-ins between
+  majors and prove that new PG19 syntax/functions are rejected by default.
+  An AST accepted under the PG18 grammar may execute only through the existing
+  function/view allowlists; no name-resolution semantic drift is assumed safe.
 
-| Capability | Status |
-|---|---|
-| Vector index | HNSW extension (cosine/l2/l2sq/dotproduct), **node-table properties ONLY** — rel/edge properties cannot be vector-indexed |
-| Filtered vector search | yes, via projected graphs (`PROJECT_GRAPH`, `PROJECT_GRAPH_CYPHER`) |
-| FTS | BM25 + stemming (28 languages) extension, **node-table STRING properties ONLY**; stopword changes require index rebuild |
-| Paths / BFS | native Cypher: `*min..max`, `SHORTEST`, `ALL_SHORTEST`, `WEIGHTED_SHORTEST`, TRAIL/ACYCLIC modes |
-| Projected graphs | inputs to **GDS algorithms only** — cannot be `MATCH`-traversed (D44); as-of *traversal* uses inline recursive predicates (§4) |
-| Recursive-pattern predicates | `[e* … (r, n \| WHERE …)]` — evaluated **during traversal** (per-edge at the neighbor scan; node side via semi-mask); rel-only/node-only conjuncts; composes with `SHORTEST`/`ALL SHORTEST` (`../analysis/ladybug_query_semantics.md`) |
-| Graph algorithms | PageRank, K-Core, WCC/SCC — **no Louvain/Leiden** (community detection needs an external pass) |
-| Bulk load | multi-threaded `COPY FROM` Parquet/Arrow/CSV/NPY; `ATTACH` DuckDB/Postgres/SQLite |
-| Concurrency | confirmed: one READ_WRITE process XOR many READ_ONLY processes; in-memory mode; WAL + checkpointing |
-| Serving | embedded only — no REST server; Python/Node/Rust/Java/WASM bindings |
+SQL/PGQ starts immediately in server-owned statements; public SQL/PGQ syntax
+is a separate admission feature.
 
-Two design touch-ups this verification forces:
+### Surface and transport contract
 
-- **As-of traversal**: there are no native temporal query semantics — implemented via
-  **inline recursive-pattern predicates** on the temporal columns (§4; evaluated during
-  traversal). Projected graphs serve *algorithms* only (D44), and the outer
-  `all(r IN rels(p) …)` form is post-hoc — never combine it with `SHORTEST` (§4 warning).
-- **Communities**: Louvain/Leiden are not shipped. Run community detection externally
-  (e.g. igraph/graspologic over the same Parquet export that feeds the rebuild) and write
-  assignments to Postgres; PageRank/K-Core/WCC can run natively in LadybugDB.
+The three bounded graph operations are first-class typed HTTP and Python SDK
+methods in D98. A dedicated `remember graph …` CLI command and dedicated MCP
+graph tools are intentionally outside this cut. CLI and MCP retain their
+general ingest and assured-recall contracts; where the OSS open-query
+capability is enabled, their existing SQL query tools can call only the
+allowlisted bounded graph helpers under the same parser, role, timeout, and
+result limits. That helper access is not public arbitrary SQL/PGQ syntax and is
+not an excuse to synthesize query text.
 
-## 6. Retrieval flow — each store does one job
+Any later dedicated CLI/MCP graph verb must delegate to the typed operation
+rather than generate Cypher, SQL/PGQ, or a divergent traversal. Its adoption
+trigger is demonstrated need for graph topology as a first-class agent/shell
+result; transport expansion does not block removal of the snapshot system.
 
-"No embeddings in the graph" means no vectors inside the LadybugDB snapshot — it does NOT mean
-relations aren't semantically searchable. The semantic index for relations lives in the
-private PostgreSQL **P1 fact projection**, keyed by `relation_id`.
+## 8. Capacity and isolation
 
-### Decision record: why relation vectors live in P1, not LadybugDB
+Live graph reads share PostgreSQL CPU, buffer cache, I/O, temp space, and
+autovacuum with authority writes, pgvector, and pg_textsearch. The API uses a
+separate graph connection pool/role with:
 
-Considered and rejected: putting fact-label embeddings + HNSW into the graph snapshot for
-one-engine hybrid search. Four reasons:
+- a short graph-specific `statement_timeout`;
+- `transaction_timeout` and `idle_in_transaction_session_timeout`;
+- bounded pool concurrency;
+- conservative `work_mem` applied transaction-locally before entering the
+  graph role;
+- read-only transactions;
+- API row/byte limits in addition to SQL clamps;
+- cancellation when the client request ends.
 
-1. **Hard blocker — node-only indexes.** LadybugDB cannot vector- or FTS-index relationship
-   properties. Indexing facts in-graph would require reifying every relation as a node
-   (Entity→RelationNode→Entity), roughly doubling graph size and contorting every traversal.
-2. **Snapshot economics.** 5–15M fact embeddings at 1024–1536 dims fp32 ≈ 20–90 GB inside
-   every snapshot (vs. a few GB without), plus a full HNSW build per rebuild cycle (hours, not
-   minutes). This kills the rebuild-first + ship-to-readers model that the rest of the design
-   depends on.
-3. **P1 exists regardless.** E1 chunks and E2 claims are not graph objects; their vectors
-   must live in P1 anyway. Splitting the vector estate across two engines means two
-   embedding pipelines, two index-maintenance regimes, two sets of failure modes.
-4. **The join we avoid is cheap.** Vector search returns top-k (~100s) relation_ids; the graph
-   then does ID-keyed expansion/BFS on them. That cross-store hop is microseconds of ID
-   lookups — not worth an architecture to eliminate.
+Indexes remain on authority tables, because graph sources are views. At
+minimum, relation access supports `(deployment_id, subject_entity_id)`,
+`(deployment_id, object_entity_id)`, current-row predicates, predicate
+filtering, and temporal range filtering. Cross-reference and mention sources
+support both endpoints under `deployment_id`. `EXPLAIN (ANALYZE, BUFFERS)` on
+representative fixtures is an implementation gate.
 
-Division of labor: **PostgreSQL P1 = entry** (semantic candidate generation for facts,
-semantic + BM25 candidate generation for claims/chunks, and scalar filters),
-**LadybugDB = structure** (expansion, paths, graph-distance reranking, as-of traversal via
-projected graphs). Revisit only if the snapshot model itself changes (e.g. an incremental
-writer makes in-graph HNSW maintenance plausible) — and even then, reason #1 must first
-disappear upstream.
+The scale contract is bounded work at every supported cardinality: no operation
+may examine more than its expansion budget or retain more than its frontier,
+returned-result, temp-space, and time budgets. At representative target-scale
+fixtures, default two-hop neighborhood and four-hop path queries must complete
+inside the configured statement timeout without spills or an unanchored scan
+of the tenant relation set. Measurements record hardware, cardinality, skew,
+and p50/p95/p99 rather than weakening correctness to a small-fixture promise.
 
-### Fact-label search (in-row PostgreSQL P1, D94)
+## 9. PostgreSQL 19 and extension posture
 
-Each natural relation row carries a canonical **fact label** ("Alice Novak works
-at Acme as VP of Engineering"), its one current derived embedding, and
-attestation. Subject, predicate, object, validity, invalidation, and evidence
-count remain their existing authority columns and are filtered inside the
-ranked PostgreSQL statement; they are not copied into a search table. The label
-is regenerated when adjudication materially changes the relation.
+The reference image moves directly to the latest PostgreSQL 19 prerelease,
+initially the exact PostgreSQL 19 Beta 3 image digest proven in the analysis.
+There are no user databases to preserve. Until GA:
 
-This is Graphiti's edge-fact search on the natural PostgreSQL fact row. Searching
-distinct facts instead of raw claims shrinks the search space ~5–10× and stops high-redundancy
-facts from crowding the result list; normalized columns give filtered semantic search (predicate,
-entity scope, as-of windows) inside the ranked statement. Fact-label BM25 remains an explicit
-open-query deferral; D94 does not silently add a public lexical-facts channel.
+- no prerelease database contains irreplaceable production data;
+- migrations and representative fixtures must replay from empty storage;
+- every beta/RC bump rebuilds the image and runs the full migration,
+  pgvector/HNSW, pg_textsearch/BM25, pg_partman, PGQ, traversal, backup, and
+  restore gates;
+- the complete extension/PGQ/traversal matrix passes on both `linux/amd64` and
+  `linux/arm64`, with per-architecture image/artifact digests recorded;
+- prerelease-to-prerelease data-directory compatibility is not assumed;
+- GA is another tested image replacement, after which ordinary supported
+  major/minor upgrade policy resumes.
 
-### Search paths by query shape
+The reference image pins pgvector and pg_partman packages. `pg_textsearch`
+1.3.1 needs the small reviewed PostgreSQL 19 source compatibility patch proven
+by 71/71 upstream regression tests; the image builds it from a pinned source
+commit and patch checksum until upstream publishes a PostgreSQL 19 build. Its
+PostgreSQL License permits use, modification, and distribution when the
+required notices accompany copies. OSS release engineering owns rebasing and
+retiring the patch, links the upstream compatibility issue before release, and
+records source, patch, notice, compiler/toolchain, and per-architecture binary
+checksums. No floating `main` branches enter the image.
 
-| Query shape | Path |
-|---|---|
-| "How are A and B related?" | entity resolution → graph adjacency (no vectors) |
-| "Who works at Acme?" | structured: relations `object=acme, predicate=works_for` (scalar only; D18 registry predicate) |
-| "Alice's career changes?" | semantic over P1 relations, scoped to subject=alice; structured and graph signals may rerank |
-| vague / no clear entity | semantic over relations AND claims; claim hits join to relations via evidence |
-| "what did source X say" | claim/chunk search (E1/E2); relations hydrate *down* to evidence |
+## 10. Failure, recovery, forget, and upgrade
 
-### Pipeline
+### Failure
 
-```
-query ──► entry points ──────────► expansion + rerank ──► hydration
-          PG P1 relations          LadybugDB              Postgres authority
-          (semantic)               neighborhood, paths,   relation → evidence
-          PG P1 claims/chunks      as-of filtering,       claims → sources,
-          (pgvector +              graph-distance         validity metadata,
-           pg_textsearch)          reranking from         GCS pointers
-          PG registry (entity
-          name/alias lookup)       focal entities
-```
+A graph-query timeout or cancellation fails that operation and does not affect
+authority state. There is no stale local graph fallback and no previous graph
+generation to serve. Retrieval may continue with its non-graph channels only
+when the operation's assurance contract permits degradation and the response
+discloses it.
 
-### Reranking (Graphiti-inspired, zero LLM calls at query time)
+### Recovery
 
-- **RRF fusion** of the lexical/semantic/structured channels — default
-- **graph-distance reranker**: BFS distance in the snapshot from the agent's focal entities
-  ("facts near Alice") — the highest-value idea in Graphiti's search stack
-- **evidence-count boost** (≈ Graphiti's episode-mentions reranker) — free from
-  `evidence_count`
-- optional **cross-encoder** as a flagged final stage for quality-over-latency calls
-- hard rule: the core search path makes **no LLM calls** (this is how Zep hits ~300ms P95)
+Database recovery restores authority, P1, graph source views, functions, and
+property-graph catalog definitions together. Property graph DDL is replayable
+metadata. At schema head, missing/mismatched catalog metadata fails readiness
+and is repaired only by the reviewed operator `graph-catalog ensure` command or
+fresh restore/replay—not silently by a no-op Alembic invocation. There is no
+graph object-store inventory, download, validation, pointer reconciliation, or
+local cache recovery.
 
-The API exposes composable primitives (entity lookup, `neighborhood(entity_id, predicates?,
-as_of?, hops?)`, `path(a, b, max_hops)`, relation/claim search with filters) **plus named
-search recipes** (`relation_hybrid_rrf`, `relation_near_entity`, `claims_verbatim`, …) so
-agents pick a strategy instead of assembling plumbing per call.
+### Hard forget
 
-## 7. Communities and K1 hints
+The authority deletion/tombstone transaction and live source views remove
+forgotten material from later graph statements immediately. Backups follow the
+single PostgreSQL retention/erasure contract. There are no Ladybug files or P2
+generations to enumerate or purge. In-flight statements may retain their MVCC
+snapshot only until the bounded transaction ends.
 
-LadybugDB ships some graph algorithms natively (PageRank, K-Core, connected components). Run
-them on the snapshot after rebuild, write results **back to Postgres** (community assignments,
-centrality scores) — the graph stays a projection. Uses, in priority order:
+### Schema and version upgrades
 
-Note (corrected 2026-07-19, **D72**): `LOUVAIN` **is** shipped in the deployed engine's algo
-extension — verified live on the build we run, and verified to be real community detection
-(two cliques joined by one bridge split correctly, where WCC sees a single component). The
-whole analytics pass therefore runs natively on the freshly built snapshot: PageRank, K-Core,
-WCC, and Louvain. The earlier external-pass plan (igraph/graspologic over the Parquet export,
-D11) is superseded and kept only as the documented fallback shape.
+Migrations create/drop property graphs transactionally around incompatible
+view changes. Rollback means deploying the preceding application and replaying
+its schema on a compatible PostgreSQL image; it never means reviving Ladybug.
+During PostgreSQL 19 prereleases, rollback is rebuild-and-restore from a
+logical/known-compatible source, not reusing an unverified data directory.
 
-Community topic **labels** (`communities.label` — the human-readable name K1 topic pages and
-compile hints carry) are written during the same writeback by a batched micro-LLM call over
-each community's top members by PageRank (small model, versioned under the
-`community_detector` component). Labels are navigation aids only; nothing load-bearing reads
-them.
+## 11. Observability and readiness
 
-1. **K1 compile hints**: communities ≈ candidate topics; "claims in community C changed" is a
-   better incremental-refresh trigger for K1 summaries than per-file signals (Zep uses
-   communities exactly this way).
-2. **Entity importance**: PageRank as a salience prior for retrieval ranking and K topic
-   prioritization.
-3. **Registry hygiene**: tiny disconnected components often indicate entity-resolution misses.
+Graph health is database/query health, not projection-generation health.
+Per-deployment readiness is data-independent and therefore also succeeds for a
+new empty deployment. It checks:
 
-## 8. Failure modes
+1. PostgreSQL is reachable at the required schema revision;
+2. both property graphs exist with the expected element aliases;
+3. graph catalogs, exact grants, and helper definitions/versions match;
+4. fixed one-hop PGQ and each helper execute under the deployment-bound role
+   against a UUID proven absent in the same read-only repeatable-read snapshot,
+   returning an empty data result (and the helper terminal status) without
+   crossing deployment scope; and
+5. transaction-local graph limits and statement timeout are effective after
+   `SET LOCAL ROLE`. The graph role's `rolconfig` is audited as a defensive
+   login baseline, but PostgreSQL does not activate `ALTER ROLE ... SET`
+   values merely because a session executes `SET ROLE`.
 
-| Failure | Handling |
-|---|---|
-| Snapshot corruption / bad rebuild | Validation gate before `latest` pointer moves; readers never see it; previous snapshot stays serving |
-| Writer crash mid-cycle | Snapshot upload is atomic (write-then-pointer-swap); next cycle just reruns — rebuilds are idempotent by construction |
-| PG↔graph drift | Impossible beyond one cycle (rebuild) — no reconciliation jobs needed |
-| Graph size growth | The D69 default is unbounded by invalidation age: retain every relation whose survivor-redirected endpoints remain emitted active nodes. Measure snapshot size/rebuild time and transaction-time demand; a finite hot-snapshot horizon requires a later binding P2 design revision with an explicit fallback contract, not a hidden Phase-0 value. |
-| Predicate explosion | Registry governance (§3); rebuild makes vocabulary cleanups retroactive for free |
+No synthetic entity, document, edge, or sentinel is written into tenant
+authority for readiness. Seeded-edge immediate visibility and the
+invalid-short/valid-longer temporal path are CI, release, restore-drill, and
+dogfood acceptance fixtures only; they are removed after their isolated test
+transaction/deployment and never enter customer retrieval, P3/K, forget, or
+storage-meter state.
 
-## 9. Open questions
+The absence probe generates a candidate UUID, verifies `NOT EXISTS` across the
+entity and document element views for the authenticated deployment, and only
+then uses it as the anchor in that same snapshot. A collision causes another
+bounded attempt and then a typed readiness failure; it never turns a
+probabilistic guess into the contract and never writes a reservation row.
 
-1. Rebuild cadence to start — hourly or every 6h? (Cost is one Cloud Run job + a few GB of GCS
-   traffic per cycle.)
-2. Do `MENTIONED_IN` edges link to documents only, or also to PageIndex nodes (finer-grained,
-   bigger graph)?
-3. Should attribute claims ever project into the graph (as entity properties), or stay
-   E2-only? (Current call: E2-only.)
-4. Where do retrieval API readers run — same Cloud Run service as the rest of the API, with
-   snapshot on local SSD? Snapshot size will decide.
-5. Parameter binding inside inline recursive predicates (`(r, _ | WHERE r.ingested_at <=
-   $as_of)`) is unverified upstream — no LadybugDB test exercises it
-   (`../analysis/ladybug_query_semantics.md` R5). One-line test at implementation time;
-   fallback is literalizing the timestamp into the query string.
+The clean-cut public readiness request is
+`{"version_ids":[…],"require":{"pipeline":true,"p1":true,"live_graph":true,"p3":false}}`.
+Those four Boolean keys are exhaustive; `require_projections` and compatibility
+aliases are absent. The response retains exact stage rows and contains one
+`capabilities` member per key with `required`, `ready`, `checked_at`, and a
+typed non-secret reason. Overall `ready` is the conjunction of required members.
+`live_graph` applies the checks above and never waits for a build; `p3`
+separately proves a published version newer than the requested terminal stages.
+
+Metrics include operation, execution mode, depth, examined/returned
+edges/paths, truncation, duration, timeout/cancel/error, pool wait, temp bytes,
+and PostgreSQL query identity. They contain ids/cardinalities, not fact text or
+secret connection material.
+
+There is no `p2_generation`, `built_at`, snapshot age, download state, local
+graph path, or rebuild-ready signal.
+
+## 12. Acceptance gates
+
+Implementation is accepted only when all of these pass:
+
+1. fresh PostgreSQL 19 migration creates both property graphs over views and
+   each declared element `KEY` query proves unique;
+2. one-hop SQL/PGQ tests prove tenant isolation, direction, labels,
+   current/as-of visibility, anchor exclusion, deduplication, deterministic
+   truncation, and byte-identical parity with the canonical traversal at depth
+   one for under-budget inputs; separate
+   dense-hub tests prove PGQ's zero-data refusal and the helper's deterministic
+   partial-prefix over-budget contracts;
+3. frontier tests prove required `deployment_id`, current/history source
+   selection, both half-open clocks, invalid-short/valid-longer shortest path,
+   directed citation behavior, cycle safety, early target termination,
+   deterministic ordering, whole-path limits, hard frontier/expansion/result
+   clamps, and clean scratch/pool reuse;
+4. typed graph API parity covers neighborhood/path/citation results without
+   Ladybug or Cypher;
+5. retrieval tests prove live newly committed edges are available without a
+   graph build and that graph provenance/truncation are preserved;
+6. forget and restore tests find no graph artifact inventory and prove view
+   disappearance after commit;
+7. HNSW, BM25, pg_partman, migration, PG18-parser/PG19-executor negative tests,
+   and query-space tests pass on both linux/amd64 and linux/arm64 images;
+8. repository searches and dependency locks contain no active Ladybug runtime,
+   P2 generation worker, public Cypher route, or P2 readiness contract;
+9. representative query plans prove frontier-anchored deployment-first index
+   access and the configured concurrency test does not starve authority
+   writes/search;
+10. `SELECT ON PROPERTY GRAPH` DDL is proven; the ten graph information-schema
+    views and `pg_get_propgraphdef()` report the expected semantic contract;
+    and least-privilege tests determine and enforce invoker ACL behavior on
+    every underlying view (no owner-based privilege escalation);
+11. cold-start, backup/restore, missing-catalog fail-closed, and operator
+    `graph-catalog ensure` drills pass;
+12. K tests and repository searches prove no community scope/rule/event/page
+    or snapshot-keyed analytics consumer remains.
+
+## 13. Costs and rejected alternatives
+
+The decision trades Ladybug's optimized embedded adjacency and built-in global
+algorithms for a much smaller operational system and live consistency. Deep
+traversal can consume more PostgreSQL resources; this is contained with bounds,
+indexes, timeouts, and pool isolation and measured before adding machinery.
+
+Rejected by this design:
+
+- retaining Ladybug for public Cypher or analytics;
+- Apache AGE, because its label tables duplicate/dual-write current authority
+  and its shortest-path helper does not carry the arbitrary two-clock edge
+  predicate;
+- pgGraph, because its CSR artifacts reintroduce generations and its inspected
+  release lacks PostgreSQL 19 and the required per-edge temporal predicate;
+- SQL/PGQ alone, because PostgreSQL 19 lacks quantified and shortest paths;
+- recursive SQL alone, because the operator explicitly requires SQL/PGQ as the
+  standard one-hop fixed-pattern surface from the cutover;
+- closure tables, unbounded generated joins, parser bypasses, and a permanent
+  dual-run migration.
+
+The escalation trigger is evidence: if supported, representative traversals
+miss their SLO after query/index tuning, record the workload and evaluate a
+native accelerator in a new proposal. A native bounded BFS/DFS implementation
+is an optimization, not authority and not permission to weaken temporal
+correctness.

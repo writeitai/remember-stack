@@ -291,7 +291,7 @@ CREATE TABLE scope_interests (
   FOREIGN KEY (deployment_id, scope_id) REFERENCES scopes (deployment_id, scope_id) ON DELETE CASCADE
 );
 COMMENT ON TABLE scope_interests IS
-  'Per-scope interest list (D16): the predicate/type footprint that defines the scope''s PROJECT_GRAPH_CYPHER view and what its K2 compilation selects. A query/compile-time selection over fully-extracted facts — never a promotion trigger (D28 withdrawn).';
+  'Per-scope interest list (D16/D98): the predicate/metadata footprint that selects live PostgreSQL graph/fact rows and K2 compilation inputs. A query/compile-time selection over fully-extracted facts — never a promotion trigger (D28 withdrawn).';
 """
 _TABLES = (
     "deployments",

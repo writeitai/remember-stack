@@ -48,6 +48,7 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.model.client import PipelineReadinessReport
+from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.documents import IngestedVersion
 
 logger = logging.getLogger(__name__)
@@ -95,16 +96,15 @@ _INGEST_DESCRIPTION: Final = (
 
 _PIPELINE_READINESS_DESCRIPTION: Final = (
     "Inspect whether one or more document version_ids have finished the"
-    " continuous pipeline (and optionally projections) and are safe to recall."
+    " requested pipeline and serving capabilities and are safe to recall."
     " Call after ingest with the returned version_id."
     " ready=true means assured recall operations may see the content (subject to retrieval"
     " relevance)."
-    " require_projections=false answers 'can I recall this yet?' against"
-    " continuous stages only (structure/extract/index) — use this default for"
-    " post-ingest polling on typical OSS Compose (which does not run projection"
-    " workers)."
-    " require_projections=true additionally requires published aggregate"
-    " projections (locally: the operations profile with projection workers)."
+    " require must explicitly name all four capabilities: pipeline, p1,"
+    " live_graph, and p3. For ordinary recall polling require pipeline, p1, and"
+    " live_graph, but set p3=false unless a published CorpusFS snapshot is part"
+    " of the caller's contract. The live graph is PostgreSQL state and never"
+    " waits for a projection build."
     " Terminal stop: if any stages[].status is failed or dead_letter, STOP"
     " polling and report the stage to the user — do not keep polling."
     " Bounded poll: wait ~30s after ingest, then poll every 30–60s with mild"
@@ -239,7 +239,7 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
 _PIPELINE_READINESS_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["version_ids"],
+    "required": ["version_ids", "require"],
     "properties": {
         "version_ids": {
             "type": "array",
@@ -248,13 +248,19 @@ _PIPELINE_READINESS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "items": {"type": "string", "minLength": 1},
             "description": "Document version UUIDs from ingest.",
         },
-        "require_projections": {
-            "type": "boolean",
-            "default": True,
+        "require": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["pipeline", "p1", "live_graph", "p3"],
+            "properties": {
+                "pipeline": {"type": "boolean"},
+                "p1": {"type": "boolean"},
+                "live_graph": {"type": "boolean"},
+                "p3": {"type": "boolean"},
+            },
             "description": (
-                "false: ready when continuous stages finish (use for 'can I"
-                " recall yet?' on default Compose). true: also require published"
-                " projections (operations profile / projection workers)."
+                "Exhaustive capability request. Ordinary recall polling uses"
+                " pipeline=true, p1=true, live_graph=true, p3=false."
             ),
         },
     },
@@ -324,9 +330,9 @@ class MemoryWriteBackend(Protocol):
         ...
 
     def pipeline_readiness(
-        self, *, version_ids: tuple[UUID, ...], require_projections: bool
+        self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
-        """Inspect continuous-stage and projection readiness for version ids."""
+        """Inspect explicitly requested capabilities for version ids."""
         ...
 
     def max_ingest_body_bytes(self) -> int | None:
@@ -586,12 +592,8 @@ def _run_pipeline_readiness(
     *, arguments: Mapping[str, object], backend: MemoryWriteBackend
 ) -> dict[str, object]:
     """Parse readiness args and return the report as a plain JSON dict."""
-    version_ids, require_projections = _parse_pipeline_readiness_arguments(
-        arguments=arguments
-    )
-    report = backend.pipeline_readiness(
-        version_ids=version_ids, require_projections=require_projections
-    )
+    version_ids, require = _parse_pipeline_readiness_arguments(arguments=arguments)
+    report = backend.pipeline_readiness(version_ids=version_ids, require=require)
     return report.model_dump(mode="json")
 
 
@@ -1080,11 +1082,9 @@ def _decode_base64(value: str) -> bytes:
 
 def _parse_pipeline_readiness_arguments(
     *, arguments: Mapping[str, object]
-) -> tuple[tuple[UUID, ...], bool]:
+) -> tuple[tuple[UUID, ...], ReadinessRequirements]:
     """Validate readiness tool args and parse UUID version ids."""
-    _reject_unknown_keys(
-        arguments=arguments, allowed={"version_ids", "require_projections"}
-    )
+    _reject_unknown_keys(arguments=arguments, allowed={"version_ids", "require"})
     raw_ids = arguments.get("version_ids")
     if not isinstance(raw_ids, list) or not raw_ids:
         raise MemoryToolArgumentError(
@@ -1116,15 +1116,19 @@ def _parse_pipeline_readiness_arguments(
                     message=f"version_ids[{index}] is not a valid UUID: {item!r}."
                 )
             ) from error
-    require_projections = arguments.get("require_projections", True)
-    # bool is a subclass of int; reject 0/1 integers explicitly.
-    if type(require_projections) is not bool:
+    raw_require = arguments.get("require")
+    try:
+        require = ReadinessRequirements.model_validate(raw_require)
+    except ValidationError as error:
         raise MemoryToolArgumentError(
             error=_invalid_arguments(
-                message="require_projections must be a boolean when provided."
+                message=(
+                    "require must contain exactly the Boolean keys pipeline, p1,"
+                    " live_graph, and p3."
+                )
             )
-        )
-    return tuple(version_ids), require_projections
+        ) from error
+    return tuple(version_ids), require
 
 
 def _parse_versioning_mode(value: object) -> Literal["snapshot", "living"]:
@@ -1173,10 +1177,8 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
     if ingested.created:
         guidance = (
             "Ingest accepted. Wait until pipeline_readiness.ready is true before"
-            " treating this content as recallable. Prefer require_projections=false"
-            " for 'can I recall this yet?' (continuous stages only); default OSS"
-            " Compose does not run projection workers — require_projections=true"
-            " additionally needs published projections (operations profile)."
+            " treating this content as recallable. Require pipeline, p1, and"
+            " live_graph; set p3=false unless CorpusFS publication is required."
             " Poll algorithm: wait ~30s, then poll every 30–60s with mild back-off"
             " (floor ~15s). STOP immediately if any stages[].status is failed or"
             " dead_letter and report that stage. After ~20–30 minutes without"
@@ -1188,7 +1190,8 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
         guidance = (
             "Ingest was a content-hash no-op (created=false): this version already"
             " exists and no new pipeline run was started. Call pipeline_readiness"
-            " once with require_projections=false; if ready=true the content is"
+            " once with pipeline/p1/live_graph required and p3=false; if ready=true"
+            " the content is"
             " already recallable. If a stage is failed/dead_letter, stop and report"
             " it — do not keep polling."
         )
@@ -1201,7 +1204,15 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
         "pipeline": {
             "status": "accepted_not_ready",
             "next_tool": PIPELINE_READINESS_TOOL_NAME,
-            "poll_with": {"version_ids": [version_id], "require_projections": False},
+            "poll_with": {
+                "version_ids": [version_id],
+                "require": {
+                    "pipeline": True,
+                    "p1": True,
+                    "live_graph": True,
+                    "p3": False,
+                },
+            },
             "guidance": guidance,
         },
     }

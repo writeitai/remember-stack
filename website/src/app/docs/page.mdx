@@ -47,7 +47,7 @@ One line: **E is what we ingested, K is what we concluded, P is how we reach it 
 Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers). That is not marketing color; it drives the surface design:
 
 1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
-2. **Query when files cannot.** Semantic search, graph traversal, time-travel, hydration, open SQL/Cypher — via API, CLI, and MCP with the **same** operations.
+2. **Query when files cannot.** Semantic search, live graph traversal, time-travel, hydration, and open SQL — via API, CLI, and MCP with the **same** operations.
 3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
 4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the four assured operations. Automated cold-agent checks guard that curriculum.
 
@@ -74,7 +74,10 @@ Exactly **four** top-level assured operations:
 | `fact_context` | **Current or historical fact** context with live testimony under budget |
 | `answer_context` | Both complete authority views in `ContextBundle/v1` |
 
-Plus open query: sandboxed SQL, read-only Cypher over the graph snapshot, saved `examples.*` queries, and schema discovery. Full contracts: [Retrieval](/docs/retrieval), [API](/docs/reference/api).
+Plus open query: sandboxed SQL, typed live-graph helpers, saved `examples.*`
+queries, and schema discovery. The helpers read PostgreSQL live; there is no
+graph snapshot or public Cypher surface. Full contracts:
+[Retrieval](/docs/retrieval), [API](/docs/reference/api).
 
 ## Open source = full engine
 

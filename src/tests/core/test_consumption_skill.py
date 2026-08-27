@@ -90,13 +90,13 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         context=_context(mounted=True, knowledge_page_count=2)
     )
 
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "2.2.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "3.0.0"
     assert skill.filename == "SKILL.md"
     assert TWO_LAYER_HEADLINE_FULL in skill.content
     assert TWO_LAYER_HEADLINE_NOTE in skill.content
     assert "Choose how to query" in skill.content
     assert "query_sql" in skill.content
-    assert "query_cypher" in skill.content
+    assert "query_cypher" not in skill.content
     assert WRONG_CLAIM_WINDOW_CURRENT_TRUTH_SQL in skill.content
     assert 'Questions of the form "is this true now?" go here' in skill.content
     assert "`support: withdrawn`" in skill.content
@@ -118,7 +118,7 @@ def test_empty_k_and_unmounted_surfaces_degrade_honestly() -> None:
     )
 
     assert "known empty: no K pages are registered" in skill.content
-    assert "Use open SQL/Cypher" in skill.content
+    assert "Use open SQL" in skill.content
     assert "Prefer open" not in skill.content
     assert "No mounts are available in this harness" in skill.content
     assert "/memory/corpus" not in skill.content

@@ -74,7 +74,7 @@ JOIN entities AS survivor
   ON survivor.entity_id = resolved.survivor
  AND survivor.deployment_id = source.deployment_id;
 COMMENT ON VIEW v_memory_entity_survivor IS
-  'Private deployment-labelled adapter over the single v_graph_survivor merge authority. A cyclic or dangling redirect reaches no terminal entity and therefore emits no row; valid chains have no guessed maximum depth. Not part of memory_v1 and never granted to a query role.';
+  'Private deployment-labelled adapter over the single v_graph_survivor merge authority. A cyclic or dangling redirect reaches no terminal entity and therefore emits no row; valid chains have no guessed maximum depth. Not part of memory_v1 and never granted to a deployment query role; a bounded internal graph role may receive exact-column read access.';
 
 CREATE OR REPLACE VIEW memory_v1.sections_live (
   deployment_id,

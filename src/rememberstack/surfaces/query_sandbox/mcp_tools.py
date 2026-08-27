@@ -1,6 +1,6 @@
-"""Static MCP tool schemas for the nine open-query facade operations (§3.1).
+"""Static MCP tool schemas for the seven open-query facade operations (§3.1).
 
-Infrastructure tools only — the seventeen `examples.*` identities remain
+Infrastructure tools only — the eighteen `examples.*` identities remain
 registry entries and never become top-level MCP tools. Local and remote MCP
 servers share these descriptors and dispatch helpers so tools/list and
 tools/call stay aligned.
@@ -33,12 +33,10 @@ if TYPE_CHECKING:
     from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 
 
-#: The nine §3.1 facade operations, also the static MCP tool names.
+#: The seven open-query facade operations, also the static MCP tool names.
 OPEN_QUERY_TOOL_NAMES: tuple[str, ...] = (
     "query_sql",
     "explain_sql",
-    "query_cypher",
-    "explain_cypher",
     "describe_query_space",
     "search_query_space",
     "list_saved_queries",
@@ -52,11 +50,6 @@ _SAVED_QUERY_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _TOOL_ARGUMENT_SPECS: Final[dict[str, tuple[frozenset[str], frozenset[str]]]] = {
     "query_sql": (frozenset({"sql", "parameters", "max_rows"}), frozenset({"sql"})),
     "explain_sql": (frozenset({"sql", "parameters"}), frozenset({"sql"})),
-    "query_cypher": (
-        frozenset({"cypher", "parameters", "max_rows", "confirm"}),
-        frozenset({"cypher"}),
-    ),
-    "explain_cypher": (frozenset({"cypher", "parameters"}), frozenset({"cypher"})),
     "describe_query_space": (frozenset({"pattern", "include_examples"}), frozenset()),
     "search_query_space": (frozenset({"query", "k"}), frozenset({"query"})),
     "list_saved_queries": (frozenset({"namespace", "status"}), frozenset()),
@@ -72,7 +65,7 @@ _TOOL_ARGUMENT_SPECS: Final[dict[str, tuple[frozenset[str], frozenset[str]]]] = 
 
 
 def open_query_tool_descriptors() -> list[dict[str, object]]:
-    """MCP tools/list entries for the nine open-query infrastructure tools."""
+    """MCP tools/list entries for the seven open-query infrastructure tools."""
     return [
         {
             "name": "query_sql",
@@ -108,48 +101,6 @@ def open_query_tool_descriptors() -> list[dict[str, object]]:
                     "parameters": {"type": "array", "items": {}},
                 },
                 "required": ["sql"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "query_cypher",
-            "description": (
-                "Run one read-only Cypher statement over the published P2"
-                " snapshot. Returns QueryResult/v1 with grade snapshot_graph"
-                " and mandatory built_at/age."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "cypher": {"type": "string"},
-                    "parameters": {"type": "object"},
-                    "max_rows": {"type": "integer", "minimum": 0},
-                    "confirm": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": (
-                            "When true, confirm projected Entity/RELATES ids"
-                            " against live PostgreSQL."
-                        ),
-                    },
-                },
-                "required": ["cypher"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "explain_cypher",
-            "description": (
-                "Engine plan for one Cypher statement without executing it;"
-                " same parser, read-only, tenancy, and cap gates."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "cypher": {"type": "string"},
-                    "parameters": {"type": "object"},
-                },
-                "required": ["cypher"],
                 "additionalProperties": False,
             },
         },
@@ -255,8 +206,8 @@ def validate_open_query_arguments(
 ) -> dict[str, object]:
     """Strictly validate MCP open-query tool arguments without coercion.
 
-    Rejects non-string text fields, non-boolean flags, non-object Cypher
-    parameters, non-array SQL parameters, bool-as-int, out-of-range
+    Rejects non-string text fields, non-boolean flags, non-array SQL
+    parameters, bool-as-int, out-of-range
     integers (``max_rows`` min 0, ``version`` min 1, ``k`` in 1..25),
     missing required fields, and unknown extra keys. Shared by local MCP
     dispatch and remote MCP-to-SDK dispatch.
@@ -293,18 +244,6 @@ def validate_open_query_arguments(
             validated["max_rows"] = _require_int(
                 args["max_rows"], field="max_rows", minimum=0
             )
-    elif name in ("query_cypher", "explain_cypher"):
-        validated["cypher"] = _require_str(args["cypher"], field="cypher")
-        if "parameters" in args:
-            validated["parameters"] = _require_cypher_parameters(args["parameters"])
-        else:
-            validated["parameters"] = None
-        if "max_rows" in args:
-            validated["max_rows"] = _require_int(
-                args["max_rows"], field="max_rows", minimum=0
-            )
-        if "confirm" in args:
-            validated["confirm"] = _require_bool(args["confirm"], field="confirm")
     elif name == "describe_query_space":
         # Explicit null is a type error for string fields; only omission defaults.
         if "pattern" in args:
@@ -395,22 +334,6 @@ def dispatch_open_query_tool(
             facade.explain_sql(
                 sql=str(args["sql"]),
                 parameters=_as_sequence(args.get("parameters", ())),
-            )
-        )
-    if name == "query_cypher":
-        return _query_result_payload(
-            facade.query_cypher(
-                cypher=str(args["cypher"]),
-                parameters=_as_mapping(args.get("parameters")),
-                max_rows=_optional_int(args.get("max_rows")),
-                confirm=bool(args.get("confirm", False)),
-            )
-        )
-    if name == "explain_cypher":
-        return _query_result_payload(
-            facade.explain_cypher(
-                cypher=str(args["cypher"]),
-                parameters=_as_mapping(args.get("parameters")),
             )
         )
     if name == "describe_query_space":
@@ -528,18 +451,6 @@ def _as_sequence(value: object) -> Sequence[object]:
     )
 
 
-def _as_mapping(value: object) -> Mapping[str, object] | None:
-    """Return named Cypher parameters after validation, or None when omitted."""
-    if value is None:
-        return None
-    if isinstance(value, Mapping):
-        return {str(key): item for key, item in value.items()}
-    raise SandboxRejection(
-        code=QueryErrorCode.INVALID_PARAMETER,
-        message="parameters must be a JSON object of named Cypher values",
-    )
-
-
 def _optional_int(value: object) -> int | None:
     """Accept only a non-bool integer, or None when the field is omitted."""
     if value is None:
@@ -609,20 +520,3 @@ def _require_sql_parameters(value: object) -> tuple[object, ...]:
             message="parameters must be a JSON array of bound values",
         )
     return tuple(value)
-
-
-def _require_cypher_parameters(value: object) -> Mapping[str, object]:
-    """Require a JSON object of named Cypher parameters (not an array)."""
-    if not isinstance(value, Mapping) or isinstance(value, (str, bytes, bytearray)):
-        raise SandboxRejection(
-            code=QueryErrorCode.INVALID_PARAMETER,
-            message="parameters must be a JSON object of named Cypher values",
-        )
-    # Keys must already be strings on the wire; refuse non-string keys.
-    for key in value:
-        if not isinstance(key, str):
-            raise SandboxRejection(
-                code=QueryErrorCode.INVALID_PARAMETER,
-                message="Cypher parameter names must be strings",
-            )
-    return dict(value)

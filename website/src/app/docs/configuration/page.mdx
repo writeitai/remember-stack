@@ -25,7 +25,7 @@ One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMEN
 | Extra / artifact | Role |
 | --- | --- |
 | `rememberstack` (base) | Typed SDK, remote CLI/MCP, lineage-aware remote ingest |
-| `rememberstack[server]` | API, workers, PostgreSQL/Ladybug adapters, local ops CLI |
+| `rememberstack[server]` | API, workers, PostgreSQL 19 adapters, local ops CLI |
 | `rememberstack[connectors-watched-directory]` | Names the watched-dir connector surface (stdlib) |
 | `rememberstack[k]` | Names the Plane K install surface |
 | `rememberstack[benchmark]` | LoCoMo / scorer deps |
@@ -62,6 +62,19 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the spine |
 
 Replace every local-only secret before any non-isolated use.
+
+### Live-graph resources
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | Dedicated PostgreSQL graph-pool connections (default `4`) |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | Maximum wait for a graph-pool connection (default `1` second) |
+| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | Per-process admitted graph expansions (default `2`) |
+| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | Transaction-local graph `work_mem` ceiling per memory node (default `16384` KiB) |
+
+Size these four values together with PostgreSQL shared memory and host reserve.
+Increasing pool or concurrency independently multiplies worst-case memory; the
+managed service applies a stricter host-level admission calculation.
 
 ### Provider (OpenRouter)
 

@@ -1,9 +1,21 @@
 # Retrieval Design — the Query Machine
 
+> **Binding D98 amendment (2026-08-27).** The graph channel reads live
+> PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
+> depth-two/variable neighborhoods, entity paths, and citation paths use bounded
+> recursive SQL. There is no Ladybug reader, P2 snapshot/generation,
+> `built_at`, local graph file, or nominate-then-drop graph hydration boundary.
+> A compound assured read uses one bounded `REPEATABLE READ, READ ONLY`
+> transaction when search, graph expansion, and authority hydration require a
+> common MVCC snapshot. P1 still nominates semantic/BM25 entry points and
+> authority still supplies facts/evidence. The graph execution contract is
+> [`p2_graph_design.md`](p2_graph_design.md); all other D48–D51, D87, and D97
+> contracts remain binding.
+
 How agents get answers out of the memory: the primitives, assured operations, the response contract,
 the consumption surfaces (API / CLI / MCP / mounted filesystems), and the rules that keep a
-multi-store system honest. Binding design for decisions **D48–D51** as amended
-by D94 (PostgreSQL-native P1), building on D9 (parallel channels + RRF, zero
+multi-surface system honest. Binding design for decisions **D48–D51** as amended
+by D94/D98 (PostgreSQL-native search and graph), building on D9 (parallel channels + RRF, zero
 LLM on the query path), D10/D44 (as-of mechanics),
 D16 (scope views), D41 (`claims_as_of` and its bar), D43 (observation retrieval), D22 (the
 retrieval eval). Driven by the scenario battery `plan/analysis/retrieval_scenarios.md`
@@ -20,8 +32,8 @@ points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
 > immutable claims, adjudicated relations/observations, all anchored on canonical entities with
 > bi-temporal validity), **K** (compiled + authored knowledge pages in git), and **P**
-> (projections: PostgreSQL-native P1 search state, P2 LadybugDB graph
-> snapshot, P3 corpus filesystem).
+> (derived reads: PostgreSQL-native P1 search state, PostgreSQL live graph,
+> and the P3 corpus filesystem).
 > Two **grains** matter everywhere here: the **evidence grain** (claims — *what sources
 > asserted*, immutable, possibly stale or contradictory) and the **fact grain**
 > (relations/observations — *what the system holds or held true*, with adjudicated validity
@@ -62,17 +74,18 @@ agent that wants NL planning does it in its own head — that is what it is. (An
 
 ## 2. The correctness rule: projections propose, the spine disposes (D48)
 
-Every fast entry channel is a projection with **lag**: P1 embeddings are
-written asynchronously into private PostgreSQL search tables, the graph is an
-hours-old snapshot (P2, D7), and K is debounced. The design resolves the
+Derived entry channels have different freshness: P1 embeddings are written
+asynchronously into private PostgreSQL search tables, the graph is a live read
+over authority views, P3 is a published snapshot, and K is debounced. The design resolves the
 mixed-freshness problem (`questions.md` #23) with one invariant — **scoped precisely to the
 query engine**:
 
 > **Stale projections may nominate candidates; only authoritative PostgreSQL
 > rows confirm truth.** P1 nomination and confirmation share one PostgreSQL
-> statement/MVCC snapshot. P2 nominations pass through by-ID hydration against
-> the live spine. In both cases validity, invalidation and contradiction state
-> come from invariant-bearing authority views, never the projection row.
+> statement/MVCC snapshot. Live graph traversal reads the same invariant-bearing
+> PostgreSQL authority views directly and therefore has no nominate-then-confirm
+> boundary. Validity, invalidation, and contradiction state never come from a
+> copied projection row.
 
 **Where the invariant does NOT apply — and what covers those surfaces instead.** Two
 consumption paths never pass through hydration, and the design says so rather than
@@ -95,24 +108,23 @@ overclaiming:
 
 Consequences, spelled out (S42, S43):
 
-- On the query engine, staleness can only cost **recall** (a fact too new to be indexed is
-  not found), never **correctness** (a superseded fact cannot pass the
-  same-statement P1 authority join or P2 hydration). Recall lag is bounded by projection cadence and
-  *reported* (§5 freshness stamps); correctness is live, always.
+- On the query engine, P1 lag can only cost **recall** (a fact too new to be
+  indexed is not found), never **correctness** (a superseded fact cannot pass
+  the same-statement authority join). Graph expansion itself is live and has
+  no generation lag. P1 lag is reported (§5); correctness is live, always.
 - P1 authority rejection is ordinary filtering within the ranked statement and
-  is reported through candidate/eligible counters. The caller-visible
-  **nominate-then-drop** hydration artifact remains for P2 and deep source-body
-  hydration; the envelope reports those drops honestly.
-- **Compound results revalidate as units, not rows (S17, S21).** A graph *path* is only
-  meaningful whole: if hydration invalidates one edge of a nominated path, the **path is
-  dropped as a unit** (and counted in `dropped_by_hydration`) — never returned with a hole.
-  The engine does not silently recompute an alternative live path (that would hide snapshot
-  staleness); the honest answer is the drop plus the P2 snapshot timestamp, and the caller
-  re-queries if freshness matters. The same unit rule applies to any future compound shape.
-- P1 entry and authority filtering now run together in PostgreSQL; P2 expansion
-  remains on the API node's local snapshot. This removes P1's cross-store
-  confirmation round trip while preserving progressive hydration to evidence
-  and source bytes (overall_design §7).
+  is reported through candidate/eligible counters. Deep source-body hydration
+  can still lose a candidate at a later eligibility/locator boundary; the
+  envelope reports those drops honestly.
+- **Compound results remain units, not rows (S17, S21).** A graph *path* is
+  meaningful only whole. The live traversal selects from eligible authority
+  views in one statement/transaction snapshot; if later evidence/source-byte
+  hydration cannot complete the requested compound result, the path is dropped
+  as a unit and counted, never returned with a hole.
+- P1 entry, live graph expansion, and authority filtering run in PostgreSQL.
+  Assured compound reads share one bounded read-only transaction when they need
+  one snapshot, while source-byte hydration still progresses to GCS
+  (overall_design §7).
 
 ## 3. Primitives — the typed, zero-LLM operations
 
@@ -125,7 +137,7 @@ never trigger anything** — all K/E triggering originates from writes).
 | `resolve` | text, type?, context_entities? → ranked entity candidates | query-time entity resolution over the registry's **non-LLM tiers T0–T3** (T0 canonical-alias exact, T1 trigram, T2 phonetic, T3 embedding similarity — embedding a query string is not an LLM call and the semantic channel does it anyway; **no T4 adjudication on the hot path**, D17). Inflected names (S50) ride the stored canonical aliases + T1/T2. Ambiguity → ranked candidates, never a silent guess (S51). Returns **current** identities, following `merged_into` survivor chains with the redirect disclosed (S60); *pre-merge* identity reconstruction is the transcript-based `identity_as_of` recipe (S61), never automatic | S1, S50, S51, S60 |
 | `lookup` | relations(s?, p?, o?) / observations(entity, property?) / claims(doc?, entity?) / entity(id) / document(id) | scalar reads on the spine and its indexes; observation property matching is semantic-over-statement (D43) | S1–S4, S26 |
 | `search` | channel × target × query, filters, k — channels: semantic \| bm25 \| fts; targets: chunks \| claims \| relations \| observations \| k_pages \| **media_segments** (D65) | PostgreSQL-native P1 entry: pgvector semantic indexes, pg_textsearch BM25 indexes, and authority joins in one statement (D94). `media_segments` is the **cross-modal** target — a logical target over per-modality PostgreSQL indexes: one row per standalone image / video keyframe-or-shot / bounded audio segment, embedded by CLIP-class models that map pixels (or audio) and *text queries* into a shared vector space — so "the photo with the small red connector" matches pixels the description never mentioned (access is not discovery: an agent can open any file it *found*, never one it didn't retrieve). Rows carry modality + embedding family/version + representation + immutable source locator, hydrate to representation passage + preview + raw deep link, and RRF-fuse with the text channels (rank fusion only — different embedding families are never compared by raw distance); embedders are port config (D63), capability advertised **per query→target modality pair** — **any unconfigured pair reports as a typed `boundary`** (§5), never a silent gap | S6, S46, S52, S62 |
-| `graph` | neighborhood(entity, hops, predicates?) / path(a, b, max_hops) | P2 snapshot traversal; as-of via inline path predicates (D44) | S17–S22 |
+| `graph` | neighborhood(entity, hops, predicates?) / path(a, b, max_hops) / citation_path(a, b, max_hops) | live PostgreSQL fixed SQL/PGQ plus work-bounded frontier traversal; both as-of predicates apply during expansion (D98) | S17–S22 |
 | `fuse` | result_sets → RRF-merged set | reciprocal-rank fusion of parallel channels (D9), exposed as an operator so *agent-composed* channel sets fuse the same way recipes do | S46 |
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
 | `hydrate` | ids, depth: record \| evidence \| sources \| bytes, locator? | the §2 confirmation hop + progressive deepening: record → evidence rows + claims → documents → GCS handles. At `depth=bytes` an optional **source locator** (D65) scopes the fetch to a time interval / region, returning a seekable, codec-aware segment (§7 — unmounted parity for media) | S5, S59, all |
@@ -195,11 +207,11 @@ temporal question cannot be composed this way, that is a design finding, not a r
 
 Two honest limits on `believed_at`, stated rather than discovered (S43, S61):
 
-- **Per-channel transaction-time horizons.** Postgres holds full belief history. Under D69 the
-  *hot* P2 relation view is unbounded by invalidation age: it keeps every relation whose
-  survivor-redirected endpoints remain emitted active nodes, so P2 reports a `null` (unbounded)
-  retention-age horizon. Endpoint retirement/forgetting remains a structural projection boundary,
-  not an age horizon. P1 carries live-filtered copies and may have a real channel horizon. The
+- **Per-channel transaction-time horizons.** PostgreSQL holds full belief history. The
+  live `graph_edges_visible_history` authority is unbounded by invalidation age
+  for relations whose survivor-resolved endpoints remain visible, so the graph
+  reports a `null` (unbounded) retention-age horizon. Endpoint retirement/forgetting remains a
+  live visibility boundary, not an age horizon. P1 carries live-filtered derived state and may have a real channel horizon. The
   envelope exposes each channel's **`believed_at` horizon**; whenever one is finite, a query before
   it gets a typed `boundary` naming the fallback rather than a silent truncation.
 - **Identity is resolved in the current regime by default.** `resolve`/`hydrate` follow
@@ -298,7 +310,7 @@ answer itself** — because the caller is an agent that must *reason about* the 
                    ...mode_specific_fields},            // at, from/to, or valid_at as declared
   freshness: {                                          // per contributing source (S42)
       pg: live_ts, p1: {max_write_lag, believed_at_horizon},
-      p2: {snapshot_ts, believed_at_horizon},           // horizons: §3 — beyond them, `boundary`
+      graph: {live_at: pg.live_ts, believed_at_horizon},// horizons: §3 — beyond them, `boundary`
       k:  {compiled_at, stale: bool, open_flags: n} },  // ← k_layers spike 9 lands here
   truncation:   {truncated: bool, returned, estimated_total, continuation} | null,  // S18/S49
   dropped_by_hydration: n,                             // §2 nominate-then-drop honesty (paths drop as units)
@@ -554,9 +566,10 @@ labels, same trust model (§9).
 - **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate operations or saved queries at
   the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per plan in the
   eval harness. Batch: throughput-bound, no latency promise.
-- **Locality:** API nodes hold the current P2 snapshot on local disk
-  (hot-swapped per D7); PostgreSQL serves P1 semantic/BM25 entry, authority
-  joins and registry lookups. LadybugDB is embedded in-process (D13) — no graph server.
+- **Locality:** PostgreSQL serves P1 semantic/BM25 entry, live graph expansion,
+  authority joins, and registry lookups. API nodes hold no local graph data;
+  graph-specific pool/concurrency, statement/transaction timeouts, and hard
+  expansion/result limits contain shared-resource load (D98).
 - **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
   filtered ANN/BM25 search; multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).

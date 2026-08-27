@@ -15,7 +15,7 @@ from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
 #: Bumped for the D87 four-operation clean cut and context contracts.
-CONSUMPTION_SKILL_VERSION: Final = "2.2.0"
+CONSUMPTION_SKILL_VERSION: Final = "3.0.0"
 
 
 def render_consumption_skill(
@@ -73,8 +73,8 @@ def _three_choices() -> str:
         " None is preferred in prose; pick by what the task needs:\n\n"
         f"{bullets}\n\n"
         "Open infrastructure entry points: `query_sql`, `explain_sql`,"
-        " `query_cypher`, `explain_cypher`, `describe_query_space`,"
-        " `search_query_space`, `list_saved_queries`, `describe_saved_query`,"
+        " `describe_query_space`, `search_query_space`, `list_saved_queries`,"
+        " `describe_saved_query`,"
         " `run_saved_query`. Discover schema with `describe_query_space` or"
         " `remember query space` before writing filters."
     )
@@ -95,7 +95,7 @@ def _deployment(*, context: ConsumptionSkillContext) -> str:
         else f"{deployment.knowledge_page_count} K page(s) are registered"
     )
     empty_k = (
-        "This deployment currently has no K pages. Use open SQL/Cypher or"
+        "This deployment currently has no K pages. Use open SQL or"
         " assured operations rather than inventing a missing summary. When"
         " mounts exist, fall back to the P3 corpus tree for orientation."
         if deployment.knowledge_page_count == 0
@@ -155,7 +155,7 @@ def _assured_operations(*, operations: tuple[ConsumptionOperation, ...]) -> str:
         "Exactly four platform intent operations ship; three return D49"
         " Envelopes and `answer_context` returns `ContextBundle/v1`:\n\n"
         f"{core_rows}\n\n"
-        "All other shipped retrieval patterns are open SQL/Cypher or non-tool "
+        "All other shipped retrieval patterns are open SQL or non-tool "
         "`examples.*` saved queries; there is no compatibility operation catalog."
     )
 
@@ -208,9 +208,9 @@ def _time_and_media() -> str:
         "occurs;\n"
         "- `valid_from` / `valid_until` say **when a fact held in the world**;\n"
         "- `ingested_at` / `believed_at` say **when the system knew it**.\n\n"
-        "Cypher results disclose `built_at` and `age_seconds` for the P2 snapshot "
-        "cut. Freshness targets and alerts never relabel, reject, or silently "
-        "refresh a snapshot answer.\n\n"
+        "Live graph traversal shares PostgreSQL authority and has no snapshot"
+        " generation. Its bounded-work status still matters: inspect truncation"
+        " before treating absence as exhaustive.\n\n"
         "For media-derived evidence, read `evidence_mode`: `source_expression` is "
         "rendered speech/text, `model_observation` is what a model reports seeing, "
         "and `model_interpretation` is the model's interpretation. When tone or a "
@@ -228,9 +228,9 @@ def _envelope() -> str:
         "truncation/continuation, and `dropped_by_hydration`. A result inside a "
         "live contradiction group must include or point to its co-members; "
         "report the competing sides instead of silently picking one.\n\n"
-        "For open SQL/Cypher, every answer is `QueryResult/v1`. Inspect "
-        "`grade` (`exploratory_tabular` or `snapshot_graph`), "
-        "`truncated`/`truncation_reason`, warnings, `p2_snapshot` provenance, "
+        "For open SQL, every answer is `QueryResult/v1`. Inspect "
+        "`grade`, `truncated`/`truncation_reason`, warnings, "
+        "`graph_invocations` for per-helper work status, "
         "confirmation/nomination drop counts, and `saved_query` stamps. "
         "Empty SQL is untyped; never promote it to a D49 negative.\n\n"
         "Negative Envelope results require different moves:\n\n"
@@ -262,8 +262,8 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
         "## Filesystem first when mounts exist\n\n"
         f"{availability}\n\n"
         "When mounts exist, prefer them for navigation, reading, and grep. Reserve "
-        "API/CLI/MCP for operations with no filesystem equivalent: open SQL and "
-        "Cypher, semantic/lexical SRFs, graph traversal, temporal as-of queries, "
+        "API/CLI/MCP for operations with no filesystem equivalent: open SQL, "
+        "semantic/lexical SRFs, graph traversal, temporal as-of queries, "
         "hydration, transcripts, and deltas. Start in P3 or K, not raw. Follow an "
         "explicit raw pointer only when the original is needed, and use the "
         "deployment's audited raw-access mechanism."
@@ -276,12 +276,10 @@ def _working_rules() -> str:
         "## Before acting on a memory answer\n\n"
         "1. Did I use facts, not claims, for a current-truth question?\n"
         "2. Did I keep fact, evidence, and compiled grains labeled separately?\n"
-        "3. For Cypher, did I disclose and respect `built_at` / age rather than "
-        "treat the row as live?\n"
+        "3. For graph traversal, did I inspect the terminal work-budget status?\n"
         "4. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
-        "5. Did I re-ground snapshot ids in live SQL when the task needs current "
-        "truth?\n"
+        "5. Did I keep world-validity and system-belief clocks paired?\n"
         "6. Did I hydrate to evidence or raw source when the stakes required it?"
     )
 

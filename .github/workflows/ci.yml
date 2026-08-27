@@ -47,6 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -73,6 +74,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -97,10 +99,11 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 18 with required extensions
+      - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -127,10 +130,11 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 18 with required extensions
+      - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -155,10 +159,11 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 18 with required extensions
+      - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -183,10 +188,11 @@ jobs:
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     steps:
       - uses: actions/checkout@v4
-      - name: Start PostgreSQL 18 with required extensions
+      - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.12.6"
           enable-cache: true
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -300,12 +306,12 @@ jobs:
             run --rm projections
           readiness="$(
             curl --fail --header 'Content-Type: application/json' \
-              --data "[\"$version_id\"]" \
-              'http://localhost:8000/readiness?require_projections=true'
+              --data "{\"version_ids\":[\"$version_id\"],\"require\":{\"pipeline\":true,\"p1\":true,\"live_graph\":true,\"p3\":true}}" \
+              'http://localhost:8000/readiness'
           )"
           printf '%s' "$readiness" |
             docker compose --env-file .env.example exec -T api python -c \
-              'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["projections"])'
+              'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
       - name: Stage an upgrade from the prior schema
         run: |
@@ -365,7 +371,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_16_0037'
+            'SELECT version_num FROM alembic_version')" = 'p9_17_0038'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

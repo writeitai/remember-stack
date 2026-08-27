@@ -34,13 +34,13 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+from rememberstack.workers.forget import CorpusForgetRebuilder
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 from rememberstack.workers.forget import ForgetProjectionRebuilder
 from rememberstack.workers.forget import HardForgetHandler
 from rememberstack.workers.forget import HardForgetReadiness
 from rememberstack.workers.forget import HardForgetService
 from rememberstack.workers.forget import KnowledgeCycleForgetRebuilder
-from rememberstack.workers.forget import ProjectionPairForgetRebuilder
 from rememberstack.workers.knowledge_authored import KnowledgeAuthoredSynchronizer
 from rememberstack.workers.knowledge_authored import KnowledgeDispatchHandler
 from rememberstack.workers.knowledge_authored import KnowledgeWorkflowDispatcher
@@ -70,13 +70,6 @@ from rememberstack.workers.p1 import label_relation_component_version
 from rememberstack.workers.p1 import LabelFactsHandler
 from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.p1 import P1Settings
-from rememberstack.workers.p2 import GraphRebuildSettings
-from rememberstack.workers.p2 import GraphRebuildWorker
-from rememberstack.workers.p2 import GraphSnapshotReader
-from rememberstack.workers.p2 import SnapshotValidationError
-from rememberstack.workers.p2_analytics import AnalyticsSettings
-from rememberstack.workers.p2_analytics import COMMUNITY_DETECTOR_VERSION
-from rememberstack.workers.p2_analytics import GraphAnalyticsWorker
 from rememberstack.workers.p3 import CorpusFsBuilder
 from rememberstack.workers.p3 import CorpusFsSettings
 from rememberstack.workers.p3 import P3_BUILDER_VERSION
@@ -146,19 +139,12 @@ __all__ = (
     "HardForgetReadiness",
     "HardForgetService",
     "KnowledgeCycleForgetRebuilder",
-    "ProjectionPairForgetRebuilder",
+    "CorpusForgetRebuilder",
     "RunResult",
     "StageHandler",
     "CorpusFsBuilder",
     "CorpusFsSettings",
     "P3_BUILDER_VERSION",
-    "AnalyticsSettings",
-    "COMMUNITY_DETECTOR_VERSION",
-    "GraphAnalyticsWorker",
-    "GraphRebuildSettings",
-    "GraphRebuildWorker",
-    "GraphSnapshotReader",
-    "SnapshotValidationError",
     "CycleFinalizer",
     "DeletionService",
     "DeadLetterReplayer",

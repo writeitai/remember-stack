@@ -165,7 +165,7 @@ JOIN entities AS terminal
  AND terminal.entity_id = c.cur
  AND terminal.merged_into IS NULL;  -- only a terminated chain resolves
 COMMENT ON VIEW v_memory_entity_survivor IS
-  'Private merge-redirect resolution: maps an entity id to the terminal survivor of its merged_into chain. Resolution is fail-closed because acyclicity is not schema-enforced: a chain that does not reach an unmerged entity within the depth bound — a cycle, an over-long chain, or a redirect to a missing row — yields no row at all, so the entity is absent from every survivor-joined relation rather than being exposed as its own survivor. Not part of memory_v1 and never granted to a query role.';
+  'Private merge-redirect resolution: maps an entity id to the terminal survivor of its merged_into chain. Resolution is fail-closed because acyclicity is not schema-enforced: a chain that does not reach an unmerged entity within the depth bound — a cycle, an over-long chain, or a redirect to a missing row — yields no row at all, so the entity is absent from every survivor-joined relation rather than being exposed as its own survivor. Not part of memory_v1 and never granted to a deployment query role; a bounded internal graph role may receive exact-column read access.';
 """
 
 # ── E0 content surface ────────────────────────────────────────────────────
@@ -702,7 +702,7 @@ CREATE VIEW memory_v1.entities_current (
   profile_summary,      -- Registry-maintained blurb about the entity; it is labeled orientation text and is never asserted evidence.
   live_mention_count,   -- Exact count of the mentions of this entity in the CURRENT content of live lineages, which is zero when every mention of it survives only in a superseded version.
   live_document_count,  -- Exact count of the live document lineages whose CURRENT content mentions this entity, which is zero for the same reason.
-  graph_degree,         -- Relation degree cached from the latest published graph snapshot, which is orientation and can lag live state.
+  graph_degree,         -- Deprecated compatibility scalar fixed at zero after D98; consumers compute live relation degree from PostgreSQL adjacency.
   created_at,           -- When the entity was minted.
   updated_at            -- When the entity registry row was last maintained.
 ) AS
@@ -772,7 +772,7 @@ WHERE e.status = 'active'
       AND provenance.entity_id = e.entity_id
   );
 COMMENT ON VIEW memory_v1.entities_current IS
-  'One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity''s rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is copied from the latest published graph snapshot and is therefore orientation that can lag live state; profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning.';
+  'One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity''s rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is a deprecated compatibility scalar fixed at zero after D98; blast-radius consumers compute current degree directly from PostgreSQL relation adjacency. profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning.';
 
 CREATE VIEW memory_v1.entity_aliases_current (
   deployment_id,        -- The deployment that owns the alias.
@@ -1318,9 +1318,10 @@ JOIN memory_v1.documents_live AS source
  AND source.doc_id = x.from_doc_id
 JOIN memory_v1.documents_live AS target
   ON target.deployment_id = x.deployment_id
- AND target.doc_id = x.to_doc_id;
+ AND target.doc_id = x.to_doc_id
+WHERE x.resolved AND x.to_doc_id IS NOT NULL;
 COMMENT ON VIEW memory_v1.document_crossrefs_live IS
-  'One row per cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). A reference whose target was never ingested, or whose source or target lineage has been forgotten, is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.';
+  'One row per resolved cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). An unresolved reference, a reference whose target was never ingested, or one whose source or target lineage has been forgotten is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.';
 
 CREATE VIEW v_memory_page_citation_visible (
   deployment_id,

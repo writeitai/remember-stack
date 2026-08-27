@@ -1,5 +1,13 @@
 # Registries Design — Entity Resolution, Ontology, Governance
 
+> **Binding D98 amendment (2026-08-27).** Registry merges and predicate changes
+> flow into the live PostgreSQL graph through normalized views after commit.
+> There is no `PROJECT_GRAPH_CYPHER`, Ladybug projection, or P2 rebuild. Scope
+> remains a query/compile-time filter over authority; it is not copied graph
+> state. D98 also supersedes D11: Louvain/Leiden community assignment,
+> community K routing, and community refresh hints are removed. Pre-D98
+> graph-projection/community wording below is superseded.
+
 The plane-E substrate that canonicalizes entities and predicates. Distills the registry
 research (`plan/analysis/registry_research/SYNTHESIS.md`, R1–R10) and the entity-registry
 analysis (`plan/analysis/entity_registry.md`) into binding design. Formalizes objection O5;
@@ -91,18 +99,19 @@ resolver_versions(resolver_version, tier_config jsonb, thresholds jsonb, configu
 ```
 
 Invariants: `entity_id` is **never reused**; a merge is a **redirect** (`merged_into`), never a
-rewrite (Wikidata model) — everything downstream that stored the old ID still resolves; P2
-rebuild (D7) re-points graph edges on merge/un-merge for free. At application time the proposed
-survivor resolves through the complete live redirect closure. The absorbed target must still be
-active (or already resolve to that same survivor); otherwise the stale proposal is rejected for
-re-evaluation. This prevents a queued review from creating a redirect cycle or silently absorbing
-a newer cluster under an obsolete blast-radius calculation.
+rewrite (Wikidata model) — everything downstream that stored the old ID still resolves. Live
+graph views resolve redirects at read time, so a merge/un-merge does not rewrite or rebuild a
+copied graph. At application time the proposed survivor resolves through the complete live
+redirect closure. The absorbed target must still be active (or already resolve to that same
+survivor); otherwise the stale proposal is rejected for re-evaluation. This prevents a queued
+review from creating a redirect cycle or silently absorbing a newer cluster under an obsolete
+blast-radius calculation.
 
 ### Entity profiles — maintenance of `profile_summary` / `embedding`
 
 The registry caches two derived fields per entity, and they are **inputs to the cascade
 below**, so their maintenance is owned here. `profile_summary` — a short blurb ("Czech ML
-researcher at CTU; works on entity resolution") — is shown on the P2 graph node and the P3
+researcher at CTU; works on entity resolution") — is exposed on the live graph vertex and the P3
 entity index, and is given to **T4 adjudication as candidate context** (comparing a new
 "J. Novak" mention against a candidate is a much easier judgment when the candidate carries a
 profile — the Graphiti lesson). The **profile embedding and its attestation**
@@ -564,9 +573,10 @@ activation never changes, replaces, or counts as part of the 8/16/116 universal 
 - **Three speeds, one registry:** core (slow, each element a commitment) → scope extensions
   (fast, each an experiment) → `other:<freetext>` escape (ungoverned, monitored — the promotion
   funnel). Frequent `other:` values are the system reporting an ontology gap.
-- **Scopes share one graph and one entity space (D16):** a scope's vocabulary is its footprint
-  in the shared graph; scope views are `PROJECT_GRAPH_CYPHER` projections declared in
-  `scope_interests`, never separate databases.
+- **Scopes share one graph and one entity space (D16/D98):** a scope's
+  vocabulary is a query/compile-time predicate and metadata footprint declared
+  in `scope_interests` over the live PostgreSQL graph/fact views, never a
+  separate database or Cypher projection.
 
 ### How an entity gets its type
 
@@ -769,7 +779,8 @@ every merge must be undoable. Three mechanisms, all in Postgres (the single auth
   pointing at the survivor (Wikidata-style), so undoing is just removing the redirect.
 
 No OSS ER system (Splink, dedupe, Zingg, Graphiti) ships un-merge, so building it is genuinely
-ours to do — and the P2 rebuild (D7) re-points the graph on every merge/un-merge for free.
+ours to do. Live graph views resolve redirect chains from the same PostgreSQL transaction, so
+merge/un-merge visibility needs no secondary rebuild.
 
 **Distrust promiscuous signals (the "generic-identifier guard").** Some signals look identifying
 but aren't — `info@company.com`, a placeholder, a very common name. If one alias suddenly links
@@ -787,7 +798,7 @@ auto-merge above a degree/evidence threshold — wrongly merging two
 
 A periodic job reviews frequent `other:<freetext>` predicates and either maps them to an
 existing predicate or promotes them to a scope extension / the core. Promotion = inserting/
-retyping rows; retyping is retroactively clean in P2 after rebuild (D7). **The one expensive
+retyping rows; live graph views observe retyping immediately. **The one expensive
 operation is *splitting* a heavily-used predicate** (D15 flags it; D7 retro-clean does not cover
 splits cleanly) — hence start strict with a small core. *(Open: the promotion workflow owner +
 the split cost are under-researched — registry SYNTHESIS G5.)*

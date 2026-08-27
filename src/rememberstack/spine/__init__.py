@@ -20,6 +20,8 @@ from rememberstack.spine.extension_packs import PackAnchorError
 from rememberstack.spine.extension_packs import PackConflictError
 from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.forget import ForgetCatalog
+from rememberstack.spine.graph_catalog import ensure_graph_catalog
+from rememberstack.spine.graph_catalog import GraphCatalogEnsureResult
 from rememberstack.spine.knowledge import KnowledgeCommitBusyError
 from rememberstack.spine.knowledge import KnowledgeCompilationError
 from rememberstack.spine.knowledge import KnowledgeCompileContextMissingError
@@ -64,6 +66,8 @@ __all__ = (
     "SyncCatalog",
     "FactCatalog",
     "ForgetCatalog",
+    "ensure_graph_catalog",
+    "GraphCatalogEnsureResult",
     "OBSERVATION_ADJUDICATOR_VERSION",
     "ObservationAdjudicator",
     "ProfileRefreshResult",

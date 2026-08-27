@@ -4,7 +4,7 @@ The shipping surface is:
 
 * **Assured operations** — ``resolve_entity``, ``testimony_context``,
   ``fact_context``, and ``answer_context``
-* **Open query** — SQL / Cypher / query-space discovery / saved queries when the
+* **Open query** — SQL / query-space discovery / saved queries when the
   deployment has them wired
 
 The agent uses the same closed operation catalog as API, CLI, SDK, and MCP, then
@@ -116,7 +116,7 @@ class RetrievalBundle:
             )
         if self.edges:
             sections.append(
-                "## Graph edges / paths (P2)\n"
+                "## Live graph edges / paths\n"
                 + "\n".join(f"- {t}" for t in self.edges[:30])
             )
         if self.pages:

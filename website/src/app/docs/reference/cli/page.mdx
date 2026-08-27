@@ -32,7 +32,7 @@ in the deployment. One deployment is one trust domain.
 
 ```bash
 remember --version
-# RememberStack 0.4.3
+# RememberStack 0.5.0
 ```
 
 ## `remember login` / `remember logout`
@@ -64,11 +64,12 @@ Client command precedence: `--token` / `--api-url` on the subcommand, then
 
 ## `remember operations`
 
-Choose among native snapshot Cypher, live SQL, and the four assured
-operations. `remember operations list|run` exposes only those four one-call
-operations. `remember query` remains the separate SQL, Cypher, discovery, and
-saved-query surface. The API and MCP render the same operation rows, so all
-three transports stay in lockstep.
+Choose among live SQL and the four assured operations. `remember operations
+list|run` exposes only those four one-call operations. `remember query` remains
+the separate SQL, discovery, and saved-query surface. Typed live-graph helpers
+are available through the HTTP API and `MemoryClient`; there is no dedicated
+graph CLI subcommand. The API and MCP render the same assured-operation rows,
+so those transports stay in lockstep.
 
 ### `remember operations list`
 
@@ -111,8 +112,6 @@ When the deployment API composes the open-query facade:
 | --- | --- |
 | `remember query sql` | One sandboxed SQL statement → `QueryResult/v1` |
 | `remember query explain-sql` | `EXPLAIN` without execution |
-| `remember query cypher` | Read-only snapshot Cypher |
-| `remember query explain-cypher` | Cypher plan without execution |
 | `remember query space` | Manifest-backed discovery (two-layer headline + full members) |
 | `remember query search-space` | Search checked-in manifest text only |
 | `remember query list-saved` | Saved-query registry metadata |
@@ -213,7 +212,7 @@ remember ops inspect --deployment <deployment-uuid>
 ```
 
 Prints one typed JSON report containing route/status counts, DLQ totals and
-groups, a poison-target summary, the current P2/P3 snapshot pointers, and a
+groups, a poison-target summary, the current P3 snapshot pointer, and a
 currency-ledger audit. Variable-size evidence is returned as a bounded sample;
 its complete total is reported separately. `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT`
 sets the shared cap (default 20, maximum 1000).
@@ -250,18 +249,27 @@ route. HTTP export, when configured, lives on a **separate bind**.
 
 ```bash
 remember ops rebuild \
-  --plane p2 \
   --deployment <deployment-uuid> \
   --snapshot-root ./snapshots \
-  --workdir ./rebuild-work \
   --version drill-2026-07-21
 ```
 
-`--plane p2` invokes the production full graph rebuild; `--plane p3` invokes
-the production corpus-filesystem builder. Both publish immutable snapshots
-through the same validation and pointer-swap path used normally. The command
-adds no separate recovery implementation. `--workdir` is consumed by P2 and
-accepted uniformly for P3.
+This invokes the production P3 corpus-filesystem builder and publishes an
+immutable snapshot through the normal validation and pointer-swap path. The
+live PostgreSQL graph has no data rebuild command or work directory.
+
+### `remember ops graph-catalog ensure`
+
+```bash
+remember ops graph-catalog ensure
+```
+
+Semantically compares both property graphs through PostgreSQL 19's graph
+information-schema views, verifies helper versions, role limits, and grants,
+and prints normalized `pg_get_propgraphdef()` diagnostics. If replayable graph
+metadata is missing or mismatched, it recreates the private no-row source views,
+property-graph definitions, bounded helpers, and grants in one transaction. It
+never writes tenant authority rows and never builds a graph data snapshot.
 
 ## `remember review`
 

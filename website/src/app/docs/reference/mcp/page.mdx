@@ -1,7 +1,7 @@
 export const metadata = {
   title: "MCP Reference",
   description:
-    "The MCP surface: memory write tools, four assured operations, and nine static open-query infrastructure tools. examples.* are never top-level tools.",
+    "The MCP surface: memory write tools, four assured operations, and seven static open-query infrastructure tools. examples.* are never top-level tools.",
 };
 
 # MCP Reference
@@ -28,7 +28,7 @@ why the system believes or believed the fact.
 | **Store** memory | `ingest`, then poll `pipeline_readiness` |
 | **Recall** testimony / current or historical facts | `testimony_context`, `fact_context`, or `answer_context` |
 | **Resolve** an ambiguous identity | `resolve_entity` |
-| **Explore** SQL/Cypher / saved queries | Nine open-query infrastructure tools when composed |
+| **Explore** SQL / saved queries | Seven open-query infrastructure tools when composed |
 
 The MCP surface exposes the deployment's four assured-operation registry rows
 as MCP tools. That namespace is closed: adding a query pattern means adding an
@@ -40,7 +40,7 @@ There is no generic `recall` or `search` MCP alias. Low-level direct primitives
 remain HTTP/SDK infrastructure; MCP agents use the assured operations or the
 open-query surface.
 
-When the open-query facade is composed, **nine static open-query
+When the open-query facade is composed, **seven static open-query
 infrastructure tools** are listed alongside operation tools. Local and remote
 MCP share the same schemas and strict argument validation. Shipped
 `examples.*` saved queries are **never** top-level tools — they run only
@@ -64,17 +64,15 @@ Stable order:
 3. **Open-query tools** when the open facade is composed
 
 The operation registry contains exactly:
-`resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`. The seventeen
+`resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`. The eighteen
 demoted patterns are discoverable `examples.*` saved queries, not tools.
 
 | Infrastructure tool | Purpose |
 | --- | --- |
 | `ingest` | E0 write — store a document; returns `version_id` immediately |
-| `pipeline_readiness` | Whether version(s) finished the continuous pipeline / projections |
+| `pipeline_readiness` | Whether version(s) finished explicitly requested capabilities |
 | `query_sql` | Sandboxed SQL → `QueryResult/v1` |
 | `explain_sql` | EXPLAIN without execution |
-| `query_cypher` | Read-only snapshot Cypher |
-| `explain_cypher` | Cypher plan without execution |
 | `describe_query_space` | Manifest-backed discovery (full first-call payload) |
 | `search_query_space` | Search manifest text only |
 | `list_saved_queries` | Registry metadata |
@@ -112,7 +110,10 @@ UTC ISO-8601), `source_version_ref`. Lineage fields require the
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
-    "poll_with": { "version_ids": ["…"], "require_projections": false },
+    "poll_with": {
+      "version_ids": ["…"],
+      "require": { "pipeline": true, "p1": true, "live_graph": true, "p3": false }
+    },
     "guidance": "Ingest accepted. Wait until pipeline_readiness.ready is true …"
   }
 }
@@ -135,7 +136,7 @@ limit is served — process safety on the MCP host, not a cloud ceiling (O1).
 | Argument | Required | Notes |
 | --- | --- | --- |
 | `version_ids` | yes | 1–1000 UUID strings from `ingest` |
-| `require_projections` | no | Engine default `true`. For “can I recall this yet?” after ingest, prefer **`false`** (continuous stages only). `true` also requires published projections (locally: the operations profile with projection workers). Default OSS Compose does **not** run projections — polling with `true` can wait forever while E/P1 stages are green. |
+| `require` | yes | Exact Boolean keys `pipeline`, `p1`, `live_graph`, and `p3`. Ordinary recall uses the first three as `true` and `p3=false`; set `p3=true` only when CorpusFS is required. |
 
 Success content is the engine `PipelineReadinessReport` JSON (no second
 envelope).
@@ -143,11 +144,10 @@ envelope).
 **Agent poll algorithm:**
 
 1. `ingest` → read `version_id`, `created`.
-2. If `created=false`, call `pipeline_readiness` once with
-   `require_projections: false`; if `ready`, recall; else poll.
-3. If `created=true`, wait ~30s, then poll with
-   `require_projections: false` (unless you specifically need published
-   projections and are on a profile that runs them).
+2. If `created=false`, call `pipeline_readiness` once with pipeline, P1, and
+   live graph required and P3 false; if `ready`, recall; else poll.
+3. If `created=true`, wait ~30s, then poll with the same exhaustive request
+   (set `p3=true` only when you specifically need the published corpus tree).
 4. While `ready=false` and no stage is `failed` / `dead_letter`: wait 30–60s
    (back-off, floor ~15s), poll again.
 5. On `ready=true`: call the appropriate assured operation (often `answer_context`).
@@ -233,16 +233,16 @@ registry's grain bar guarantees it). `answer_context` keeps the complete
 evidence and fact envelopes in separate `testimony` and `facts` fields; it has
 no single output grain and never flattens the two authorities.
 
-Open-query tools return `QueryResult/v1` (grade `exploratory_tabular` for SQL,
-`snapshot_graph` for Cypher) or content-free discovery payloads. Caps, drops,
-and snapshot provenance are part of the contract.
+Open-query tools return `QueryResult/v1` with grade `exploratory_tabular` or
+content-free discovery payloads. Caps, drops, and PostgreSQL snapshot timing
+are part of the contract.
 
 ## Transport
 
 Run `remember mcp` to start the dependency-light stdio JSON-RPC server. It reaches
 the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION` when set, renders
 `tools/list` as write tools + `GET /operations` (omitted when that route is
-404) + the nine open-query tools when composed, and proxies `tools/call` to
+404) + the seven open-query tools when composed, and proxies `tools/call` to
 `POST /ingest`, `POST /readiness`,
 `POST /operations/{name}`, or the matching `/query/…` route. The server supports
 the MCP `initialize`, `tools/list`, and `tools/call` lifecycle; notifications

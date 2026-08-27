@@ -1480,17 +1480,19 @@ def test_two_independent_builds_deploy_the_same_schema(database_url: str) -> Non
 def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
     """Only the bound roles hold privileges, and only the bound ones.
 
-    Batch B introduces the role split (design §4.2 as amended: physical
-    routing plus grants, no row-level security), so "no grants at all" is no
-    longer the property to assert — "no grant beyond the enumerated ones" is.
-    The query role reads the public views and nothing else; PUBLIC holds
-    nothing anywhere.
+    Batch B introduces the query role and D98 adds the bounded graph role
+    (physical routing plus grants, no row-level security), so "no grants at
+    all" is no longer the property to assert — "no grant beyond the enumerated
+    ones" is. Both runtime roles hold only SELECT here; PUBLIC holds nothing.
     """
     # The query login is per deployment (Batch B): its name carries the
     # database, so the gate matches the prefix rather than a fixed name.
     allowed_grantees = {"rememberstack_view_owner"}
     query_role_prefix = "rememberstack_query"
     with corpus.engine.connect() as connection:
+        graph_role = connection.execute(
+            text("SELECT 'rememberstack_graph_' || current_database()")
+        ).scalar_one()
         view_grants = _rows(
             connection=connection,
             sql=(
@@ -1508,18 +1510,58 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
                 " WHERE table_schema = 'memory_v1' AND grantee = 'PUBLIC'"
             ),
         )
+        graph_guard_columns = _rows(
+            connection=connection,
+            sql=(
+                "SELECT table_name, column_name, privilege_type FROM"
+                " information_schema.role_column_grants"
+                " WHERE table_schema = 'public' AND grantee = :graph_role"
+            ),
+            graph_role=graph_role,
+        )
+        graph_public_table_grants = _rows(
+            connection=connection,
+            sql=(
+                "SELECT table_name, privilege_type FROM"
+                " information_schema.role_table_grants"
+                " WHERE table_schema = 'public' AND grantee = :graph_role"
+            ),
+            graph_role=graph_role,
+        )
 
     for row in view_grants:
         grantee = row["grantee"]
         is_query_role = grantee.startswith(query_role_prefix)
-        assert grantee in allowed_grantees or is_query_role, (
+        is_graph_role = grantee == graph_role
+        assert grantee in allowed_grantees or is_query_role or is_graph_role, (
             f"unexpected grantee {grantee}"
         )
-        if is_query_role:
+        if is_query_role or is_graph_role:
             assert row["privilege_type"] == "SELECT", (
-                "query role holds more than SELECT"
+                "query/graph role holds more than SELECT"
             )
     assert public_grants == []
+    assert {
+        (row["table_name"], row["column_name"], row["privilege_type"])
+        for row in graph_guard_columns
+    } == {
+        ("relations", column, "SELECT")
+        for column in (
+            "deployment_id",
+            "relation_id",
+            "subject_entity_id",
+            "object_entity_id",
+            "predicate",
+            "valid_from",
+            "valid_until",
+            "ingested_at",
+            "invalidated_at",
+        )
+    } | {
+        ("v_memory_entity_survivor", column, "SELECT")
+        for column in ("deployment_id", "entity_id", "survivor_entity_id")
+    }
+    assert graph_public_table_grants == []
 
 
 def test_every_declared_row_key_is_unique_on_the_fixture_corpus(
@@ -1681,7 +1723,7 @@ def _forbidden_identifiers(*, corpus: _Corpus, target_id: str) -> set[str]:
         ),
         "claim": (corpus.claim["a"],),
         "fact_provenance": (corpus.fact["current"],),
-        "p2_edge": (corpus.fact["current"],),
+        "graph_edge": (corpus.fact["current"],),
         "k_target": (
             corpus.doc["kcited"],
             corpus.version["kcited.v1"],
@@ -1776,7 +1818,7 @@ def _apply_deletion(*, connection: Connection, corpus: _Corpus, target_id: str) 
             {"claim": corpus.claim["a"]},
         )
         return
-    if target_id in {"fact_provenance", "p2_edge"}:
+    if target_id in {"fact_provenance", "graph_edge"}:
         connection.execute(
             text("DELETE FROM relation_evidence WHERE relation_id = :relation"),
             {"relation": corpus.fact["current"]},

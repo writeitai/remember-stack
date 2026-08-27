@@ -22,7 +22,7 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 
 ## Mental model in three steps
 
-1. **Nominate** — P1 search, P2 graph, open SQL/Cypher, or an assured op’s internal chain proposes candidates (may lag).
+1. **Nominate** — P1 search, live graph SQL, open SQL, or an assured op’s internal chain proposes candidates (P1 may lag; graph does not).
 2. **Confirm** — by-ID hydration against live Postgres re-reads validity, invalidation, contradiction membership, currency.
 3. **Account** — response envelope (or `QueryResult/v1` for open query) states grain, freshness, drops, truncation, negatives.
 
@@ -37,7 +37,7 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 | High-recall source context for a question | **`testimony_context`** |
 | Both complete authority views | **`answer_context`** |
 | Exact name → entity | **`resolve_entity`** (T0 exact) |
-| Ad-hoc analytics / joins / graph patterns | **Open SQL / Cypher / saved queries** |
+| Ad-hoc analytics / joins / graph patterns | **Open SQL / graph helpers / saved queries** |
 | Why do we believe X? | Evidence hydration / audit SQL / transcript endpoints where exposed |
 | Change feed | Open query / delta-oriented saved patterns |
 
@@ -74,8 +74,8 @@ unknown ID.
 
 Three neutral powers:
 
-1. **Cypher** — native graph over **published P2 snapshot** (`built_at` / age disclosed).
-2. **SQL** — sandboxed live/evidence-composable reads over versioned views + allowlisted SRFs (semantic/lexical nomination bridges, graph helpers).
+1. **SQL** — sandboxed live/evidence-composable reads over versioned views + allowlisted SRFs (semantic/lexical nomination bridges and graph helpers).
+2. **Typed graph methods** — SQL/PGQ for fixed one-hop patterns and bounded recursive SQL for deeper/shortest paths, all live in PostgreSQL.
 3. **Assured ops** — typed envelopes for the common intents.
 
 Discovery: `GET /query/space` opens with the two-layer headline, honesty warnings, and worked examples. Full page: [Open query space](/docs/retrieval/open-query).
@@ -94,7 +94,7 @@ Assured ops and operations compose **typed zero-LLM engine primitives** internal
 **Agents should not invent HTTP paths for every primitive.** Callable public surfaces are:
 
 - assured ops (`/operations/…`)
-- open query (`/query/sql`, `/query/cypher`, saved queries)
+- open query (`/query/sql`, discovery, saved queries)
 - a smaller set of direct primitive endpoints (see [API reference](/docs/reference/api) and [Primitives](/docs/retrieval/primitives) surface column)
 
 ## Temporal parameters
@@ -133,7 +133,7 @@ The consumption skill encodes this; cold-agent skill checks fail plans that trea
 | --- | --- |
 | Map (this page) | Surfaces, assured ops, invariant |
 | Envelope contract | [Response envelope](/docs/retrieval/envelope) |
-| SQL/Cypher/saved | [Open query space](/docs/retrieval/open-query) |
+| SQL/graph helpers/saved | [Open query space](/docs/retrieval/open-query) |
 | Primitive catalog | [Primitives](/docs/retrieval/primitives) |
 | Mounts + skill | [Mounts](/docs/mounts) |
 

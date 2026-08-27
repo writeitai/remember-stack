@@ -1,5 +1,12 @@
 # Packaging & Distribution — Artifacts, Task Execution, Code Architecture (Design)
 
+> **Binding D98 amendment (2026-08-27).** The shipped database is the pinned
+> PostgreSQL 19 image with pgvector, pg_textsearch, pg_partman, and native
+> SQL/PGQ. Packaging contains no Ladybug wheel, graph snapshot volume, graph
+> builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph
+> operations and public bounded SQL helpers remain. Pre-D98 references to open
+> Cypher or P2 packaging are removed requirements.
+
 What the open-source library *ships as*, how work physically executes on both deployment
 profiles, and how the codebase is structured so the substrate stays swappable without
 spaghetti. Binding design for decision **D62**, filling in what D60 (the OSS boundary) and D61
@@ -42,7 +49,7 @@ consumers are harnesses (requirements §Retrieval); operators install `[server]`
 ## 2. The client surface (what the base package exposes)
 
 - **Query**: the typed SDK + CLI + MCP server over the retrieval API (D48–D51, D87) —
-  primitives, the four closed assured operations, D49 envelopes, open SQL/Cypher, and governed
+  primitives, the four closed assured operations, D49 envelopes, open SQL with bounded live-graph helpers, and governed
   saved queries. MCP renders the four platform-owned assured descriptors plus open-query
   infrastructure; customer and `examples.*` saved queries do not become top-level intent tools.
 - **Ingest — lineage-aware by contract**: `client.ingest(bytes|path, *, source_kind=…,
@@ -223,8 +230,9 @@ ports and published extension points, keeping it portable off GCP too.
   raw + artifact objects, the K git repository, and the separately durable D74 hard-forget
   manifest root. Operators move those stores with their native tools (`pg_dump`/`pg_restore`,
   provider object copy, and ordinary Git); the library does not wrap them in `remember export` /
-  `remember import`, define a universal archive, or schedule backups. P1/P2/P3 are derived and are
-  rebuilt after restore rather than transported. This is the cloud↔self-host migration
+  `remember import`, define a universal archive, or schedule backups. P1 and P3 are derived and are
+  rebuilt after restore rather than transported; the live graph is PostgreSQL metadata/views and
+  restores with the database. This is the cloud↔self-host migration
   contract in both directions without turning the OSS library into an operations product.
 
 The portable restore order is deliberately small and fail-closed:
@@ -237,7 +245,8 @@ The portable restore order is deliberately small and fail-closed:
    normal schema migrations.
 4. Run the ordinary hard-forget readiness pass before any serving surface opens. It rematerializes
    missing local intent and re-honors every manifest against every restored store.
-5. Rebuild P1/P2/P3 through their normal production builders, run the S55/control canaries, and
+5. Rebuild P1 and P3 through their normal production builders, ensure the property-graph catalog
+   and bounded traversal helpers, run the S55/control canaries, and
    only then admit traffic.
 
 Credentials, provider configuration, backup retention, transfer progress, retries, manifest-root
