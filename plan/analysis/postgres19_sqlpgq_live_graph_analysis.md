@@ -538,6 +538,15 @@ the D48 absence rule and D98's PGQ/current-snapshot semantics while removing
 both repeated evaluation and cross-deployment materialization rather than
 raising a timeout or introducing a fallback traversal.
 
+Migration review added one lifecycle constraint. Because the fresh
+`p9_17_0038` source now contains the deployment-lateral view, downgrading
+`p9_18_0039` to that revision must restore the same definition. Restoring the
+older correlated definition would leave two databases stamped
+`p9_17_0038` with different query plans depending on whether they arrived by a
+fresh upgrade or a downgrade. The corrective migration therefore uses the
+deployment-scoped definition in both directions; the revision boundary stays
+schema- and plan-identical.
+
 ## 9. Recommendation and design inputs
 
 Accept the live PostgreSQL graph and direct PG19 Beta 3 cut with these binding

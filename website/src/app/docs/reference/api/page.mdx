@@ -403,7 +403,10 @@ The saved `examples.claims_hybrid_rrf` and `examples.chunks_hybrid_rrf`
 patterns expose either half when a caller needs only one evidence type; they
 run through `/query/saved/examples/{name}/run` and are not assured operations.
 The four operation descriptors expose their integer `version`, so clients can
-pin the behavior that produced an answer.
+pin the behavior that produced an answer. The current catalog is
+`resolve_entity@1`, `testimony_context@1`, `fact_context@2`, and
+`answer_context@2`; the two fact-bearing operations advanced for D97's default
+neighborhood semantics.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities

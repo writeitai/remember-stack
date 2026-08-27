@@ -90,6 +90,12 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
         "fact_context",
         "answer_context",
     )
+    assert tuple(operation.version for operation in CANONICAL_OPERATIONS) == (
+        1,
+        1,
+        2,
+        2,
+    )
     descriptors = {
         descriptor.name: descriptor
         for descriptor in operation_descriptors(operations=CANONICAL_OPERATIONS)

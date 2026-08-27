@@ -562,7 +562,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v14 pipeline, live graph, and fresh P3 projection"
+            " RS-LoCoMo-Full-v15 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1166,7 +1166,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v14")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v15")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1176,7 +1176,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v14")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v15")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1433,7 +1433,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v14: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v15: "
             + ", ".join(mismatches)
         )
 

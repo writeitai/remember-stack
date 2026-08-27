@@ -42,6 +42,13 @@ _PRIMITIVE_CHAINS = {
     AssuredOperationName.FACT_CONTEXT: ("graph_neighborhood", "fact_context"),
 }
 
+_VERSIONS = {
+    AssuredOperationName.RESOLVE_ENTITY: 1,
+    AssuredOperationName.TESTIMONY_CONTEXT: 1,
+    AssuredOperationName.FACT_CONTEXT: 2,
+    AssuredOperationName.ANSWER_CONTEXT: 2,
+}
+
 
 def lint_assured_operation(
     operation: AssuredOperation, *, expected: AssuredOperation
@@ -52,9 +59,11 @@ def lint_assured_operation(
             f"expected canonical operation {expected.name.value!r},"
             f" got {operation.name.value!r}"
         )
-    if operation.version != 1:
+    expected_version = _VERSIONS[operation.name]
+    if operation.version != expected_version:
         raise AssuredOperationLintError(
-            f"operation {operation.name.value!r} must use canonical version 1"
+            f"operation {operation.name.value!r} must use canonical version"
+            f" {expected_version}"
         )
     expected_contract = _CONTRACTS[operation.name]
     actual = (

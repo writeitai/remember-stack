@@ -2148,7 +2148,7 @@
             "title": "ContextBundleV1",
             "type": "object"
           },
-          "version": 1
+          "version": 2
         },
         {
           "channels": {
@@ -4027,7 +4027,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 1
+          "version": 2
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -37492,5 +37492,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "4676e6ce71c07740bc95b4f23e9857deeb712267764d7c3f03e8c13e4d6cc102"
+  "surface_manifest_hash": "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
 }

@@ -7,12 +7,13 @@
 > proves property-graph catalog/function health; the benchmark preflight
 > separately proves immediate committed-edge visibility on its isolated sample.
 > P3 is
-> still explicitly built. This rolls the current protocol to `full-v14`; older
+> still explicitly built. D97's changed assured descriptors subsequently roll
+> the current protocol to `full-v15`; older
 > version-transition paragraphs remain historical evidence only.
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v14 run.
+> paid v15 run.
 
 ## 1. Acceptance boundary
 
@@ -38,7 +39,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v14
+protocol                RS-LoCoMo-Full-v15
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -62,6 +63,15 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v14 → v15 (2026-08-27 — D97 default entity neighborhood):** The
+`fact_context` and `answer_context` descriptors advance to version 2 because
+anchored current/point-in-time reads add bounded neighborhood expansion,
+`hops`/`predicate`, and the 19-anchor cap. The `surface_manifest_hash`, catalog
+hash, adapter identity, and protocol fingerprint roll together. Dataset,
+models, prompts, call budgets, and the complete 21-tool catalog size are
+unchanged. V14 and v15 scores are not comparable; accepting this contract does
+not authorize a paid v15 run.
 
 **v13 → v14 (2026-08-27 — PostgreSQL 19 live graph):** D98 removes the two
 Cypher tools and every P2 build/readiness/snapshot input. The complete answer
@@ -634,11 +644,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v14 \
+  --protocol full-v15 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v14`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v15`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

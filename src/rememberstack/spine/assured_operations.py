@@ -62,6 +62,11 @@ class AssuredOperationRegistry:
             canonical = AssuredOperationName(name)
         except ValueError:
             return None
+        expected = next(
+            operation
+            for operation in CANONICAL_OPERATIONS
+            if operation.name is canonical
+        )
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
@@ -69,7 +74,7 @@ class AssuredOperationRegistry:
                     {
                         "deployment_id": deployment_id,
                         "name": canonical.value,
-                        "version": 1,
+                        "version": expected.version,
                     },
                 )
                 .mappings()
@@ -283,6 +288,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.FACTS,
+        version=2,
     ),
     AssuredOperation(
         name=AssuredOperationName.ANSWER_CONTEXT,
@@ -302,6 +308,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.CONTEXT_BUNDLE_V1,
         output_grain=None,
         answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
+        version=2,
     ),
 )
 
@@ -383,7 +390,6 @@ _ACTIVE_OPERATIONS = text(
     FROM assured_operations
     WHERE deployment_id = :deployment_id AND status = 'active'
       AND name = ANY(CAST(:names AS assured_operation_name[]))
-      AND version = 1
     ORDER BY name
     """  # noqa: S608 -- columns are a module constant
 )

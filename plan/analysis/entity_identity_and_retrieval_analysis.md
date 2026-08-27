@@ -434,3 +434,35 @@ Rejected repairs:
   physical capacity;
 - sharing the worker/write engine: background load can consume the very slots
   intended to keep interactive reads bounded.
+
+---
+
+## 9. Exact-tip public-contract findings (2026-08-27)
+
+The closure review of WP-I.6 found two public-identity consequences that the
+implementation had not carried through mechanically.
+
+First, D97 changes `fact_context` selection semantics and bounds: an anchored
+current/point-in-time read now expands a bounded live-graph neighborhood,
+accepts `hops` and `predicate`, and reserves one entity slot for neighbors.
+`answer_context` inherits that changed fact child. Publishing both as version
+1 would make pre-D97 and post-D97 traces claim the same contract identity even
+though the same input can return different facts. The existing operation
+version rule therefore requires `fact_context@2` and `answer_context@2`;
+`resolve_entity@1` and `testimony_context@1` are unchanged.
+
+Second, those descriptor changes alter the complete answer-tool catalog and
+the `surface_manifest_hash`. A LoCoMo run retaining the `full-v14` name would
+look comparable to the pre-D97 live-graph protocol even though its ordinary
+fact recipe differs. The benchmark identity must roll to `full-v15`; the
+dataset, model seats, call budgets, and 21-tool catalog size stay unchanged.
+This is protocol bookkeeping, not authorization for a paid run.
+
+The same review found an availability-contract hole: if the primary relation
+or observation P1 channel is unpublished, `P1SearchUnavailableError` escaped
+the assured operation as an HTTP 500. That state is expected during a policy
+cut and must remain fail-closed, but it is not an untyped server defect. The
+default recipe therefore maps primary-channel unavailability to the same typed
+fact-context boundary used for bounded database/graph unavailability. The
+optional profile channel remains an additive recall path and may still be
+skipped when it alone is unpublished.

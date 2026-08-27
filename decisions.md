@@ -2904,9 +2904,15 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D98 amendment.** The current protocol is `RS-LoCoMo-Full-v14`: it does not
-> build or expose P2/Cypher, verifies live PostgreSQL graph readiness and P3,
-> and fingerprints the 21-tool catalog. Earlier protocol text is historical.
+> **D97 amendment.** The current protocol is `RS-LoCoMo-Full-v15`: it retains
+> the D98 live-graph 21-tool surface but fingerprints the D97
+> `fact_context@2` / `answer_context@2` neighborhood semantics. V14 and earlier
+> protocol identities are historical.
+>
+> **D98 amendment.** `RS-LoCoMo-Full-v14` removed P2/Cypher from the answer
+> surface, verified live PostgreSQL graph readiness and P3, and fingerprinted
+> the 21-tool catalog. That graph cut remains binding; earlier protocol text is
+> historical.
 
 > **Refined by D85 and D87.** V10 and v11 remain historical protocol records.
 > The D87 assured catalog requires the separately fingerprinted v12 contract in
@@ -4113,8 +4119,10 @@ hop. Hindsight retrieves by fact text + shared entities; Graphiti walks
 predicate vocabulary falls over on the D5 escape hatch.
 
 **Consequences.** Assured context operations (D87) default to the same
-shape. No new query-path LLM (D9). Graph hops still need an id, not a
-raw name.
+shape. The changed public identities are `fact_context@2` and
+`answer_context@2`; version 1 remains the pre-D97 historical contract, not an
+alias. The LoCoMo protocol rolls from v14 to v15 with the descriptor/manifest
+change. No new query-path LLM (D9). Graph hops still need an id, not a raw name.
 
 **Design / analysis / sequencing.** same as D95.
 

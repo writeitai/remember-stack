@@ -939,7 +939,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v14", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v15", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1758,8 +1758,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v14","protocol_fingerprint":'
-        '"fc7a8060181e27c73cbf1ca39490c00fe729c72ac4ef224e5e3ba22dd1e7e6e5",'
+        '{"protocol_name":"RS-LoCoMo-Full-v15","protocol_fingerprint":'
+        '"027e4e5a8711476f78c8996eaf3c5739c95579740d46f64e3b42dbd03775d490",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1977,7 +1977,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v14"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v15"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2

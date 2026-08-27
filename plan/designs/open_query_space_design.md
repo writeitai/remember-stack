@@ -403,11 +403,12 @@ remain. `resolve_entity` is the sole assured name/alias authority, while
 
 An implementation change that alters any descriptor, selection semantics,
 bound, field, negative, or association increments that operation's version and
-rolls `surface_manifest_hash`. None of the three context operations requests
-graph expansion; they use P1 nominations and PostgreSQL authorities. Explicit
-graph expansion uses the live SQL helpers or `examples.multi_hop_context`. A
-later measured descriptor may add an explicit graph option only through the
-§1.13 gate and never by silently changing these operations' answers.
+rolls `surface_manifest_hash`. D97 applies that rule: `fact_context@2` adds the
+bounded live-graph neighborhood before P1 fact-text nomination, and
+`answer_context@2` carries that changed fact child. `resolve_entity@1` and
+`testimony_context@1` remain unchanged. Explicit deeper or path-shaped graph
+work still uses the live SQL helpers or `examples.multi_hop_context`; it is not
+silently added to an assured response.
 
 ### 3.2 `memory_v1` view catalog
 
@@ -1347,11 +1348,11 @@ or cap change changes the hash. An internal property-graph catalog change rolls
 the separate graph contract/version and must pass graph readiness and parity
 tests before deployment.
 
-`RS-LoCoMo-Full-v14` pins `surface_manifest_hash`, the four assured-operation
-descriptors, and the complete 21-tool answer catalog. V9–v13 runs remain
+`RS-LoCoMo-Full-v15` pins `surface_manifest_hash`, the four assured-operation
+descriptors, and the complete 21-tool answer catalog. V9–v14 runs remain
 self-describing historical evidence; the aborted v12 answer pass remains
 self-describing operational evidence and is not a v13 score. There is no
-surface compatibility arm. V14 traces record manifest hash, assured-operation
+surface compatibility arm. V15 traces record manifest hash, assured-operation
 calls, SQL hashes, graph-helper operation/depth/truncation metadata, errors,
 caps, and latency/cost. Raw SQL and parameters follow §7 retention. The answer agent receives only product behavior
 available to customers, and accepting this design does not authorize a paid

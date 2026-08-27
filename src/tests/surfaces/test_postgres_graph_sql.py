@@ -223,3 +223,19 @@ def test_private_entity_source_materializes_provenance_once() -> None:
         assert "provenance AS MATERIALIZED" in entity_source
         assert entity_source.count("FROM provenance") == 1
         assert "v_memory_entity_survivor" not in entity_source
+
+
+def test_provenance_plan_downgrade_restores_the_fresh_p9_17_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One revision stamp cannot name different fresh and downgraded plans."""
+    executed: list[str] = []
+    monkeypatch.setattr(
+        p9_18_0039_graph_entity_provenance_plan.op, "execute", executed.append
+    )
+
+    p9_18_0039_graph_entity_provenance_plan.downgrade()
+
+    assert executed == [
+        p9_18_0039_graph_entity_provenance_plan._MATERIALIZED_ENTITY_VIEW
+    ]

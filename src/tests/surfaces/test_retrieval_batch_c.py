@@ -184,6 +184,14 @@ class _UnavailableProfileIndex(_FactIndex):
         raise P1SearchUnavailableError("entities semantic channel is not ready")
 
 
+class _UnavailableFactIndex(_FactIndex):
+    """Fail the primary fact channel as it can be during a policy cut."""
+
+    def search_facts_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+        """Expose primary-channel unavailability through the P1 port contract."""
+        raise P1SearchUnavailableError("relations semantic channel is not ready")
+
+
 class _GraphNeighborhood:
     """Record D97 traversal arguments and return one bounded neighbor."""
 
@@ -1086,6 +1094,32 @@ def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
     assert len(read_pool.deadlines) == 1
     assert read_pool.deadlines[0] is not None
     assert started + 24.0 < read_pool.deadlines[0] < started + 26.0
+
+
+def test_default_fact_context_maps_primary_p1_unavailability_to_boundary(
+    corpus: _Corpus,
+) -> None:
+    """An unpublished primary fact channel is a typed negative, never HTTP 500."""
+    index = _UnavailableFactIndex(fact_keys=())
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=index,
+        model_provider=corpus.provider,
+        embedding_model="batch-c",
+        fact_read_pool=corpus.read_pool,
+    )
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=None,
+        query="What is current?",
+        evaluated_at=_NOW,
+    )
+
+    assert answer.negative is not None
+    assert answer.negative.kind is NegativeKind.BOUNDARY
+    assert "P1 fact channels" in answer.negative.explanation
+    assert answer.facts == ()
 
 
 def test_default_fact_context_fails_closed_without_bounded_fact_pool(

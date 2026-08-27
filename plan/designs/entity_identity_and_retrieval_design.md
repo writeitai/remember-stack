@@ -441,7 +441,12 @@ retrieval.
 
 Assured operations (`fact_context`, `answer_context`, D87) follow the
 same default: do not require a predicate list to return an entity’s
-facts and one-hop relations.
+facts and one-hop relations. Because this changes the pre-D97 selection
+semantics, parameters, and entity bound, the canonical descriptors are
+`fact_context@2` and `answer_context@2`. The unaffected
+`resolve_entity` and `testimony_context` descriptors remain version 1.
+Primary P1 fact-channel unavailability returns a typed `boundary`; it
+must not escape as an untyped HTTP 500 or widen to another authority.
 
 Clean neighborhoods are part of this contract. Filler-noun entities
 and duplicate-me Company twins make hops wrong even when the walk is

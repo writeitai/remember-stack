@@ -888,6 +888,13 @@ class QueryEngine:
                     _required_entity_ids=required_entity_ids,
                     _optional_entity_nodes=optional_entity_nodes,
                 )
+            except P1SearchUnavailableError:
+                return _fact_context_graph_boundary(
+                    time=selected_time,
+                    evaluated_at=evaluation,
+                    explanation="the primary P1 fact channels are not ready",
+                    workaround="retry after P1 relation and observation publication",
+                )
             except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
                 return _fact_context_graph_boundary(
                     time=selected_time,
