@@ -586,7 +586,7 @@ def _hac_pieces(
     members: list[dict[str, object]],
     vectors: dict[str, tuple[float, ...]],
     distance_cut: float,
-    exclusions: frozenset[tuple[str, str]] = frozenset(),
+    exclusions: frozenset[tuple[str, str]],
 ) -> tuple[tuple[dict[str, object], ...], ...]:
     """Agglomerative clustering, centroid linkage, cut at `distance_cut`.
 
@@ -687,12 +687,8 @@ _GATHER_NEIGHBORHOOD = text(
         FROM aliases
         JOIN entities ON entities.deployment_id = aliases.deployment_id
                      AND entities.entity_id = aliases.entity_id
-        LEFT JOIN generic_identifier_guard AS guard
-          ON guard.deployment_id = aliases.deployment_id
-         AND guard.normalized_lemma = aliases.normalized_lemma
         WHERE aliases.deployment_id = :deployment_id
           AND entities.status IN ('active', 'merged')
-          AND NOT coalesce(guard.is_downweighted, false)
           AND (similarity(aliases.normalized_lemma, :lemma) >= 0.3
                OR daitch_mokotoff(aliases.normalized_lemma)
                   && daitch_mokotoff(:lemma))

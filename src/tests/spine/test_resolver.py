@@ -979,8 +979,8 @@ def test_generic_identifier_guard_downweights_shared_lemma(
         reference=EntityRef(name="Jan Novakk"),
         claim=_claim(claim_text="Jan Novakk joined the remote meeting."),
     )
-    assert near_variant.created
-    assert len(provider.generated_prompts) == prompts_before
+    assert not near_variant.created
+    assert len(provider.generated_prompts) == prompts_before + 1
 
 
 def test_ungrounded_surface_does_not_write_source_alias(

@@ -916,38 +916,46 @@ _T1_T2_BLOCK = text(
     """
     WITH t1 AS (
         SELECT DISTINCT ON (aliases.entity_id)
-               aliases.entity_id, similarity(aliases.normalized_lemma, :lemma) AS score
+               aliases.entity_id,
+               similarity(aliases.normalized_lemma, :lemma) AS score,
+               coalesce(guard.is_downweighted, false) AS is_downweighted
         FROM aliases
         LEFT JOIN generic_identifier_guard AS guard
           ON guard.deployment_id = aliases.deployment_id
          AND guard.normalized_lemma = aliases.normalized_lemma
         WHERE aliases.deployment_id = :deployment_id
-          AND NOT coalesce(guard.is_downweighted, false)
           AND similarity(aliases.normalized_lemma, :lemma) >= :floor
-        ORDER BY aliases.entity_id, score DESC
+        ORDER BY aliases.entity_id, is_downweighted, score DESC
     ),
     t2 AS (
-        SELECT DISTINCT aliases.entity_id
+        SELECT DISTINCT ON (aliases.entity_id)
+               aliases.entity_id,
+               coalesce(guard.is_downweighted, false) AS is_downweighted
         FROM aliases
         LEFT JOIN generic_identifier_guard AS guard
           ON guard.deployment_id = aliases.deployment_id
          AND guard.normalized_lemma = aliases.normalized_lemma
         WHERE aliases.deployment_id = :deployment_id
-          AND NOT coalesce(guard.is_downweighted, false)
           AND daitch_mokotoff(aliases.normalized_lemma)
               && daitch_mokotoff(:lemma)
+        ORDER BY aliases.entity_id, is_downweighted
     )
     SELECT entities.entity_id, entities.canonical_name,
            coalesce(t1.score, 0.0) AS trigram_score,
            CASE WHEN t1.entity_id IS NOT NULL THEN 'T1' ELSE 'T2' END
-               AS blocking_tier
+               AS blocking_tier,
+           CASE
+             WHEN t1.entity_id IS NOT NULL AND NOT t1.is_downweighted THEN false
+             WHEN t2.entity_id IS NOT NULL AND NOT t2.is_downweighted THEN false
+             ELSE true
+           END AS is_downweighted
     FROM entities
     LEFT JOIN t1 ON t1.entity_id = entities.entity_id
     LEFT JOIN t2 ON t2.entity_id = entities.entity_id
     WHERE entities.deployment_id = :deployment_id
       AND entities.status = 'active'
       AND (t1.entity_id IS NOT NULL OR t2.entity_id IS NOT NULL)
-    ORDER BY coalesce(t1.score, 0.0) DESC
+    ORDER BY is_downweighted, coalesce(t1.score, 0.0) DESC, entities.entity_id
     LIMIT :limit
     """
 )
