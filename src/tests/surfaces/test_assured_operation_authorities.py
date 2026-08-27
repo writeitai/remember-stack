@@ -160,6 +160,7 @@ def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
         time=CurrentFactTime(),
         evaluated_at=datetime.now(UTC),
         entity_ids=(),
+        ranking_entity_ids=(),
         predicate=None,
         deadline=monotonic() + 30,
     )

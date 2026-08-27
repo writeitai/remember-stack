@@ -13,6 +13,7 @@ import binascii
 from collections import Counter
 from collections.abc import Callable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import UTC
@@ -33,6 +34,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
@@ -572,6 +574,7 @@ class QueryEngine:
         evaluated_at: datetime | None = None,
         _database_deadline: float | None = None,
         _required_entity_ids: tuple[UUID, ...] | None = None,
+        _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
         _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
@@ -584,6 +587,11 @@ class QueryEngine:
         )
         if not set(required_entity_ids).issubset(entity_ids):
             raise ValueError("required fact-context anchors must be inside entity_ids")
+        optional_entity_nodes = dict(_optional_entity_nodes or {})
+        if not set(optional_entity_nodes).issubset(entity_ids):
+            raise ValueError("optional fact-context nodes must be inside entity_ids")
+        if set(optional_entity_nodes).intersection(required_entity_ids):
+            raise ValueError("required fact-context anchors cannot be optional nodes")
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         database_deadline = (
@@ -612,6 +620,7 @@ class QueryEngine:
             deployment_id=deployment_id,
             query=query,
             entity_ids=entity_ids,
+            ranking_entity_ids=required_entity_ids,
             predicate=predicate,
             time=selected_time,
             evaluated_at=evaluation,
@@ -626,6 +635,35 @@ class QueryEngine:
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
+            confirmed_scope_ids = entity_ids
+            confirmed_optional_nodes: tuple[GraphNode, ...] = ()
+            if entity_ids:
+                _configure_fact_context_connection(
+                    connection=connection, deadline=database_deadline
+                )
+                current_scope_ids = _current_context_entity_ids(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    entity_ids=entity_ids,
+                )
+                if not set(required_entity_ids).issubset(current_scope_ids):
+                    return _unknown_context_entity(
+                        grain=Grain.FACT,
+                        evaluated_at=evaluation,
+                        temporal_scope=_fact_temporal_scope(
+                            time=selected_time, evaluated_at=evaluation
+                        ),
+                    )
+                confirmed_scope_ids = tuple(
+                    entity_id
+                    for entity_id in entity_ids
+                    if entity_id in current_scope_ids
+                )
+                confirmed_optional_nodes = tuple(
+                    node
+                    for entity_id, node in optional_entity_nodes.items()
+                    if entity_id in current_scope_ids
+                )
             confirmed_rows: list[RowMapping] = []
             visited_candidates = 0
             confirmation_batch_size = _fact_context_confirmation_batch_size(k=k)
@@ -636,7 +674,8 @@ class QueryEngine:
                     candidate_keys=tuple(batch),
                     time=selected_time,
                     evaluated_at=evaluation,
-                    entity_ids=entity_ids,
+                    entity_ids=confirmed_scope_ids,
+                    ranking_entity_ids=required_entity_ids,
                     predicate=predicate,
                     deadline=database_deadline,
                 )
@@ -735,6 +774,7 @@ class QueryEngine:
                 time=selected_time, evaluated_at=evaluation
             ),
             facts=facts,
+            nodes=confirmed_optional_nodes,
             evidence=tuple(evidence_by_id.values()),
             fact_evidence=associations,
             evidence_totals=exact_totals,
@@ -751,7 +791,9 @@ class QueryEngine:
                     not candidate_depth_exhausted and not confirmation_incomplete
                 ),
             ),
-            dropped_by_hydration=dropped,
+            dropped_by_hydration=(
+                dropped + len(optional_entity_nodes) - len(confirmed_optional_nodes)
+            ),
             negative=None
             if facts
             else Negative(
@@ -799,6 +841,7 @@ class QueryEngine:
             *,
             scoped_entity_ids: tuple[UUID, ...],
             required_entity_ids: tuple[UUID, ...] | None = None,
+            optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
         ) -> Envelope:
             """Run fact confirmation inside the shared operation deadline."""
             try:
@@ -813,8 +856,9 @@ class QueryEngine:
                     evaluated_at=evaluation,
                     _database_deadline=database_deadline,
                     _required_entity_ids=required_entity_ids,
+                    _optional_entity_nodes=optional_entity_nodes,
                 )
-            except (DBAPIError, TimeoutError):
+            except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
                 return _fact_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
@@ -843,7 +887,7 @@ class QueryEngine:
                             time=selected_time, evaluated_at=evaluation
                         ),
                     )
-        except (DBAPIError, TimeoutError):
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
             return _fact_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
@@ -891,8 +935,15 @@ class QueryEngine:
                     ),
                     believed_at=evaluation,
                     limit=anchor_limit,
+                    _deadline=database_deadline,
                 )
-            except (DBAPIError, GraphBusyError, GraphHydrationError, TimeoutError):
+            except (
+                DBAPIError,
+                SQLAlchemyTimeoutError,
+                GraphBusyError,
+                GraphHydrationError,
+                TimeoutError,
+            ):
                 return _fact_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
@@ -937,7 +988,7 @@ class QueryEngine:
                     deployment_id=deployment_id,
                     entity_ids=tuple(neighbors),
                 )
-        except (DBAPIError, TimeoutError):
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
             return _fact_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
@@ -954,7 +1005,9 @@ class QueryEngine:
         }
         scoped_ids = (*anchors, *neighbors)
         facts = confirmed_facts(
-            scoped_entity_ids=scoped_ids, required_entity_ids=anchors
+            scoped_entity_ids=scoped_ids,
+            required_entity_ids=anchors,
+            optional_entity_nodes=neighbors,
         )
         if (
             facts.negative is not None
@@ -962,13 +1015,19 @@ class QueryEngine:
         ):
             return facts
         fact_truncation = facts.truncation
-        graph_estimated = sum(
-            (
-                graph.truncation.estimated_total
-                if graph.truncation is not None
-                else len(graph.nodes)
+        late_stale_neighbor_count = len(neighbors) - len(facts.nodes)
+        graph_estimated = max(
+            0,
+            sum(
+                (
+                    graph.truncation.estimated_total
+                    if graph.truncation is not None
+                    else len(graph.nodes)
+                )
+                for graph in graph_answers
             )
-            for graph in graph_answers
+            - stale_neighbor_count
+            - late_stale_neighbor_count,
         )
         fact_estimated = (
             fact_truncation.estimated_total
@@ -985,7 +1044,6 @@ class QueryEngine:
         )
         return facts.model_copy(
             update={
-                "nodes": tuple(neighbors.values()),
                 "dropped_by_hydration": (
                     facts.dropped_by_hydration + stale_neighbor_count
                 ),
@@ -996,7 +1054,7 @@ class QueryEngine:
                             fact_truncation is not None and fact_truncation.truncated
                         )
                     ),
-                    returned=len(facts.facts) + len(neighbors),
+                    returned=len(facts.facts) + len(facts.nodes),
                     estimated_total=fact_estimated + graph_estimated,
                     total_is_exact=(
                         graph_exact
@@ -2276,6 +2334,7 @@ class QueryEngine:
         deployment_id: UUID,
         query: str,
         entity_ids: tuple[UUID, ...],
+        ranking_entity_ids: tuple[UUID, ...],
         predicate: str | None,
         time: FactTime,
         evaluated_at: datetime,
@@ -2296,7 +2355,9 @@ class QueryEngine:
             deployment_id=deployment_id,
         )
 
-        def nominate(*, scope: tuple[UUID, ...]) -> tuple[P1Nomination, ...]:
+        def nominate(
+            *, scope: tuple[UUID, ...], ranking_scope: tuple[UUID, ...]
+        ) -> tuple[P1Nomination, ...]:
             """Run the selected bounded P1 fact nomination in one entity scope."""
             arguments: dict[str, object] = {
                 "deployment_id": str(deployment_id),
@@ -2306,12 +2367,13 @@ class QueryEngine:
                 "time": time,
                 "evaluated_at": evaluated_at,
                 "entity_ids": tuple(str(item) for item in scope),
+                "ranking_entity_ids": tuple(str(item) for item in ranking_scope),
             }
             if predicate is not None:
                 arguments["equality_filters"] = {"predicate": predicate}
             return cast("tuple[P1Nomination, ...]", method(**arguments))
 
-        nominated = nominate(scope=entity_ids)
+        nominated = nominate(scope=entity_ids, ranking_scope=ranking_entity_ids)
         entity_method = getattr(self._search_index, "search_entities_scored", None)
         if entity_ids or not callable(entity_method):
             return nominated
@@ -2332,7 +2394,10 @@ class QueryEngine:
         if not profile_ids:
             return nominated
         return _fuse_fact_nominations(
-            channels=(nominated, nominate(scope=profile_ids)),
+            channels=(
+                nominated,
+                nominate(scope=profile_ids, ranking_scope=profile_ids),
+            ),
             limit=FACT_CONTEXT_CANDIDATE_K + 1,
         )
 
@@ -2978,6 +3043,7 @@ def _confirm_fact_context(
     time: FactTime,
     evaluated_at: datetime,
     entity_ids: tuple[UUID, ...],
+    ranking_entity_ids: tuple[UUID, ...],
     predicate: str | None,
     deadline: float,
 ) -> tuple[RowMapping, ...]:
@@ -2997,6 +3063,7 @@ def _confirm_fact_context(
                 "deployment_id": deployment_id,
                 "fact_ids": fact_ids,
                 "entity_ids": list(entity_ids),
+                "ranking_entity_ids": list(ranking_entity_ids),
                 "predicate": predicate,
                 **_fact_time_parameters(time=time, evaluated_at=evaluated_at),
             },
@@ -3568,7 +3635,7 @@ _FACT_CONTEXT_ENTITY_PREDICATE = """
 
 _FACT_CONTEXT_COVERAGE = """
       (SELECT count(DISTINCT anchor)::integer
-       FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)
+       FROM unnest(CAST(:ranking_entity_ids AS uuid[])) AS requested(anchor)
        WHERE requested.anchor = fact.subject_entity_id
           OR requested.anchor = fact.object_entity_id)
 """

@@ -104,11 +104,13 @@ def test_unscoped_fact_search_orders_by_vector_distance_first() -> None:
 
 
 def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
-    """A real entity scope still ranks multi-anchor coverage before distance."""
+    """Eligible neighbors do not become primary fact-ranking anchors."""
     engine = MagicMock(spec=Engine)
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.scalar_one.return_value = True
     index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+    anchor_id = str(uuid4())
+    neighbor_id = str(uuid4())
 
     assert (
         index.search_facts_scored(
@@ -118,14 +120,19 @@ def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
             kind="relation",
             time=CurrentFactTime(),
             evaluated_at=_NOW,
-            entity_ids=(str(uuid4()),),
+            entity_ids=(anchor_id, neighbor_id),
+            ranking_entity_ids=(anchor_id,),
         )
         == ()
     )
 
     ranked_sql = str(connection.execute.call_args_list[-1].args[0])
+    parameters = connection.execute.call_args_list[-1].args[1]
     assert "AS coverage" in ranked_sql
+    assert ":ranking_entity_ids" in ranked_sql
     assert "ORDER BY coverage DESC," in ranked_sql
+    assert parameters["entity_ids"] == [anchor_id, neighbor_id]
+    assert parameters["ranking_entity_ids"] == [anchor_id]
 
 
 def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
@@ -160,6 +167,8 @@ def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> No
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.scalar_one.return_value = True
     index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+    anchor_id = str(uuid4())
+    neighbor_id = str(uuid4())
 
     assert (
         index.nominate_facts_scored(
@@ -169,16 +178,21 @@ def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> No
             kind="relation",
             time=CurrentFactTime(),
             evaluated_at=_NOW,
-            entity_ids=(str(uuid4()), str(uuid4())),
+            entity_ids=(anchor_id, neighbor_id),
+            ranking_entity_ids=(anchor_id,),
         )
         == ()
     )
 
     ranked_sql = str(connection.execute.call_args_list[-1].args[0])
+    parameters = connection.execute.call_args_list[-1].args[1]
     assert "v_memory_entity_survivor" in ranked_sql
     assert "memory_v1.facts_visible_history" not in ranked_sql
     assert "AS coverage" in ranked_sql
+    assert ":ranking_entity_ids" in ranked_sql
     assert "ORDER BY coverage DESC," in ranked_sql
+    assert parameters["entity_ids"] == [anchor_id, neighbor_id]
+    assert parameters["ranking_entity_ids"] == [anchor_id]
 
 
 @pytest.mark.parametrize(
@@ -329,6 +343,17 @@ def seeded(database_engine: Engine) -> dict[str, object]:
             at=_NOW,
             resolver_version="d94-test",
         )
+        seed_entity_mention(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            entity_id=entity_c,
+            doc_id=one.doc_id,
+            chunk_id=one.chunk_id,
+            claim_id=one_claim,
+            surface_form="Cedar",
+            at=_NOW,
+            resolver_version="d94-test",
+        )
         connection.execute(
             text(
                 "UPDATE chunks SET location_facts_json ="
@@ -470,6 +495,7 @@ def seeded(database_engine: Engine) -> dict[str, object]:
         "both_claim": both_claim,
         "both_chunk": both.chunk_id,
         "two_anchor_fact": two_anchor_fact,
+        "one_anchor_fact": one_anchor_fact,
         "near": near,
     }
 
@@ -512,6 +538,26 @@ def test_multi_anchor_coverage_precedes_similarity_and_candidate_cut(
         evaluated_at=_NOW,
         entity_ids=entity_ids,
     )
+    anchor_ranked_facts = index.search_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=query,
+        k=1,
+        kind="relation",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW,
+        entity_ids=entity_ids,
+        ranking_entity_ids=(str(seeded["entity_a"]),),
+    )
+    anchor_ranked_nominations = index.nominate_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=query,
+        k=1,
+        kind="relation",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW,
+        entity_ids=entity_ids,
+        ranking_entity_ids=(str(seeded["entity_a"]),),
+    )
     nominated_claims = index.nominate_testimony_scored(
         deployment_id=str(_DEPLOYMENT_ID),
         grain="claim",
@@ -534,6 +580,12 @@ def test_multi_anchor_coverage_precedes_similarity_and_candidate_cut(
     assert tuple(item.item_id for item in facts) == (str(seeded["two_anchor_fact"]),)
     assert tuple(item.item_id for item in nominated_facts) == (
         str(seeded["two_anchor_fact"]),
+    )
+    assert tuple(item.item_id for item in anchor_ranked_facts) == (
+        str(seeded["one_anchor_fact"]),
+    )
+    assert tuple(item.item_id for item in anchor_ranked_nominations) == (
+        str(seeded["one_anchor_fact"]),
     )
     assert tuple(item.item_id for item in nominated_claims) == (
         str(seeded["both_claim"]),

@@ -889,6 +889,7 @@ class PostgresP1Index:
         evaluated_at: datetime | None = None,
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank facts after applying identity, temporal, and entity authority."""
         _require_vector(vector)
@@ -913,6 +914,11 @@ class PostgresP1Index:
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
+        ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
+        if not set(ranking_ids).issubset(entity_ids):
+            raise ValueError(
+                "fact ranking entity_ids must be inside the eligible scope"
+            )
         parameters.update(
             {
                 "deployment_id": UUID(deployment_id),
@@ -922,6 +928,7 @@ class PostgresP1Index:
                 "branch_limit": k,
                 "limit": k,
                 "entity_ids": _uuid_strings(entity_ids),
+                "ranking_entity_ids": _uuid_strings(ranking_ids),
             }
         )
         key_sql = ""
@@ -943,7 +950,8 @@ class PostgresP1Index:
             )
             coverage_select = (
                 "(SELECT count(DISTINCT anchor)::integer"
-                " FROM unnest(CAST(:entity_ids AS uuid[])) AS requested(anchor)"
+                " FROM unnest(CAST(:ranking_entity_ids AS uuid[]))"
+                " AS requested(anchor)"
                 " WHERE requested.anchor = fact.subject_entity_id"
                 "    OR requested.anchor = fact.object_entity_id) AS coverage,"
             )
@@ -1003,6 +1011,7 @@ class PostgresP1Index:
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank cheap base-table candidates for a caller that confirms every row."""
         _require_vector(vector)
@@ -1027,6 +1036,11 @@ class PostgresP1Index:
         time_sql, parameters = _fact_time(
             selected_time, evaluated_at=evaluation, alias="indexed"
         )
+        ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
+        if not set(ranking_ids).issubset(entity_ids):
+            raise ValueError(
+                "fact ranking entity_ids must be inside the eligible scope"
+            )
         parameters.update(
             {
                 "deployment_id": UUID(deployment_id),
@@ -1036,6 +1050,7 @@ class PostgresP1Index:
                 "branch_limit": k,
                 "limit": k,
                 "entity_ids": _uuid_strings(entity_ids),
+                "ranking_entity_ids": _uuid_strings(ranking_ids),
             }
         )
         if entity_ids:
@@ -1060,11 +1075,17 @@ class PostgresP1Index:
                 continue
             if entity_ids and fact_kind == "relation":
                 scope_select = """
-                        (CASE WHEN subject_scope.entity_id IS NULL THEN 0 ELSE 1 END
+                        (CASE
+                             WHEN subject_scope.survivor_entity_id
+                                  = ANY(CAST(:ranking_entity_ids AS uuid[]))
+                             THEN 1 ELSE 0
+                           END
                          + CASE
                              WHEN object_scope.entity_id IS NULL
                                OR object_scope.survivor_entity_id
                                   = subject_scope.survivor_entity_id
+                               OR object_scope.survivor_entity_id
+                                  <> ALL(CAST(:ranking_entity_ids AS uuid[]))
                              THEN 0 ELSE 1
                            END) AS coverage,
                 """
@@ -1082,7 +1103,13 @@ class PostgresP1Index:
                     "coverage DESC, indexed.embedding <=> CAST(:query_vector AS vector)"
                 )
             elif entity_ids:
-                scope_select = "1 AS coverage,"
+                scope_select = """
+                        CASE
+                            WHEN subject_scope.survivor_entity_id
+                                 = ANY(CAST(:ranking_entity_ids AS uuid[]))
+                            THEN 1 ELSE 0
+                        END AS coverage,
+                """
                 scope_join = """
                  JOIN scoped_entities AS subject_scope
                    ON subject_scope.entity_id = indexed.subject_entity_id

@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
 from threading import BoundedSemaphore
+from time import monotonic
 from typing import cast
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
@@ -53,6 +55,16 @@ class GraphBusyError(RuntimeError):
 
 class GraphHydrationError(RuntimeError):
     """A traversal row no longer matches the authority rows in its MVCC cut."""
+
+
+def _deadline_timeout_ms(*, default_ms: int, deadline: float | None) -> int:
+    """Clamp one PostgreSQL timeout to a caller's remaining wall-clock budget."""
+    if deadline is None:
+        return default_ms
+    remaining_ms = int((deadline - monotonic()) * 1_000)
+    if remaining_ms <= 0:
+        raise TimeoutError("live graph operation deadline expired")
+    return min(default_ms, remaining_ms)
 
 
 class GraphQueries:
@@ -91,6 +103,7 @@ class GraphQueries:
         limit: int = DEFAULT_NEIGHBORHOOD_CAP,
         continuation: str | None = None,
         include_paths: bool = False,
+        _deadline: float | None = None,
     ) -> Envelope:
         """Return minimum-hop live neighbors and optionally their paths."""
         _validate_clocks(valid_at=valid_at, believed_at=believed_at)
@@ -109,7 +122,7 @@ class GraphQueries:
                 explanation="the continuation cursor is not a live-graph cursor",
                 workaround="restart the traversal without a continuation cursor",
             )
-        with self._transaction() as connection:
+        with self._transaction(deadline=_deadline) as connection:
             evaluation = _evaluation_instant(connection=connection)
             if not _entity_exists(
                 connection=connection,
@@ -337,44 +350,63 @@ class GraphQueries:
         )
 
     @contextmanager
-    def _transaction(self) -> Iterator[Connection]:
+    def _transaction(self, *, deadline: float | None = None) -> Iterator[Connection]:
         """Open a bounded read-only repeatable-read graph transaction."""
-        if not self._slots.acquire(timeout=self._pool_wait_seconds):
+        pool_wait_seconds = self._pool_wait_seconds
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("live graph operation deadline expired")
+            pool_wait_seconds = min(pool_wait_seconds, remaining)
+        if not self._slots.acquire(timeout=pool_wait_seconds):
             raise GraphBusyError("live graph concurrency limit reached")
         try:
-            with self._engine.connect().execution_options(
-                isolation_level="REPEATABLE READ"
-            ) as connection:
-                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-                quoted_role = str(
-                    connection.execute(
-                        text(
-                            "SELECT quote_ident("
-                            "'rememberstack_graph_' || current_database())"
-                        )
-                    ).scalar_one()
-                )
-                connection.exec_driver_sql("SET LOCAL statement_timeout = '5s'")
-                connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
-                connection.exec_driver_sql(
-                    "SET LOCAL idle_in_transaction_session_timeout = '5s'"
-                )
-                connection.exec_driver_sql("SET LOCAL transaction_timeout = '6s'")
-                connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
-                connection.exec_driver_sql(
-                    "SET LOCAL max_parallel_workers_per_gather = 0"
-                )
-                connection.exec_driver_sql(
-                    "SET LOCAL search_path = memory_v1, pg_catalog"
-                )
-                connection.exec_driver_sql(
-                    f"SET LOCAL work_mem = '{self._work_mem_kib}kB'"
-                )
-                connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_role}")
-                try:
-                    yield connection
-                finally:
-                    connection.rollback()
+            try:
+                with self._engine.connect().execution_options(
+                    isolation_level="REPEATABLE READ"
+                ) as connection:
+                    connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                    statement_timeout_ms = _deadline_timeout_ms(
+                        default_ms=5_000, deadline=deadline
+                    )
+                    transaction_timeout_ms = _deadline_timeout_ms(
+                        default_ms=6_000, deadline=deadline
+                    )
+                    connection.exec_driver_sql(
+                        f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'"
+                    )
+                    connection.exec_driver_sql(
+                        f"SET LOCAL transaction_timeout = '{transaction_timeout_ms}ms'"
+                    )
+                    quoted_role = str(
+                        connection.execute(
+                            text(
+                                "SELECT quote_ident("
+                                "'rememberstack_graph_' || current_database())"
+                            )
+                        ).scalar_one()
+                    )
+                    connection.exec_driver_sql("SET LOCAL lock_timeout = '500ms'")
+                    connection.exec_driver_sql(
+                        "SET LOCAL idle_in_transaction_session_timeout = '5s'"
+                    )
+                    connection.exec_driver_sql("SET LOCAL temp_file_limit = '65536kB'")
+                    connection.exec_driver_sql(
+                        "SET LOCAL max_parallel_workers_per_gather = 0"
+                    )
+                    connection.exec_driver_sql(
+                        "SET LOCAL search_path = memory_v1, pg_catalog"
+                    )
+                    connection.exec_driver_sql(
+                        f"SET LOCAL work_mem = '{self._work_mem_kib}kB'"
+                    )
+                    connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_role}")
+                    try:
+                        yield connection
+                    finally:
+                        connection.rollback()
+            except SQLAlchemyTimeoutError as error:
+                raise GraphBusyError("live graph connection pool timed out") from error
         finally:
             self._slots.release()
 

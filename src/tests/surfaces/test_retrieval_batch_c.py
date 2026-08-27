@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import current_temporal_scope
@@ -835,16 +836,18 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.observation_id,)
     assert tuple(node.entity_id for node in answer.nodes) == (corpus.subject_id,)
     assert corpus.observation_id not in {node.entity_id for node in answer.nodes}
-    assert graph.calls == [
-        {
-            "entity_id": corpus.object_id,
-            "hops": 1,
-            "predicates": (),
-            "valid_at": _NOW,
-            "believed_at": _NOW,
-            "limit": 19,
-        }
-    ]
+    assert len(graph.calls) == 1
+    assert isinstance(graph.calls[0]["_deadline"], float)
+    assert {
+        key: value for key, value in graph.calls[0].items() if key != "_deadline"
+    } == {
+        "entity_id": corpus.object_id,
+        "hops": 1,
+        "predicates": (),
+        "valid_at": _NOW,
+        "believed_at": _NOW,
+        "limit": 19,
+    }
     assert answer.freshness.pg_live_ts == _NOW
     assert index.requested_entity_ids == [
         (str(corpus.object_id), str(corpus.subject_id))
@@ -870,6 +873,38 @@ def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
     assert corpus.subject_id in {node.entity_id for node in answer.nodes}
 
 
+def test_live_graph_rejects_an_expired_composed_operation_deadline() -> None:
+    """A composed graph read expires before semaphore or pool admission."""
+    graph = GraphQueries(engine=cast(Engine, object()), deployment_id=_DEPLOYMENT_ID)
+
+    with pytest.raises(TimeoutError, match="deadline expired"):
+        graph.neighborhood(entity_id=uuid4(), _deadline=0.0)
+
+
+def test_default_fact_context_keeps_anchor_fact_rank_after_neighborhood_expansion(
+    corpus: _Corpus,
+) -> None:
+    """A two-endpoint neighbor relation cannot evict a better anchor observation."""
+    engine, _index = corpus.query_engine_for_keys(
+        fact_keys=(
+            ("observation", corpus.bank_observation_id),
+            ("relation", corpus.relation_id),
+        )
+    )
+    graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
+
+    answer = engine.default_fact_context(
+        deployment_id=_DEPLOYMENT_ID,
+        graph_queries=cast(Any, graph),
+        query="list banks",
+        entity_ids=(corpus.object_id,),
+        k=1,
+        evaluated_at=_NOW,
+    )
+
+    assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
+
+
 def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
     corpus: _Corpus,
 ) -> None:
@@ -890,6 +925,11 @@ def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts
     assert answer.nodes == ()
     assert answer.negative is None
     assert answer.dropped_by_hydration == 1
+    assert answer.truncation is not None
+    assert answer.truncation.truncated is False
+    assert answer.truncation.returned == 1
+    assert answer.truncation.estimated_total == 1
+    assert answer.truncation.total_is_exact is True
     assert index.requested_entity_ids == [(str(corpus.subject_id),)]
 
 
@@ -922,7 +962,11 @@ def test_default_fact_context_rechecks_only_caller_supplied_anchors(
     )
 
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
-    assert checked_scopes[-1] == (corpus.subject_id,)
+    assert checked_scopes[-1] == (corpus.subject_id, corpus.object_id)
+    assert answer.nodes == ()
+    assert answer.dropped_by_hydration == 1
+    assert answer.truncation is not None
+    assert answer.truncation.returned == answer.truncation.estimated_total == 1
 
 
 @pytest.mark.parametrize(
@@ -931,6 +975,7 @@ def test_default_fact_context_rechecks_only_caller_supplied_anchors(
         GraphBusyError("busy"),
         GraphHydrationError("stale"),
         OperationalError("graph query", {}, Exception("timed out")),
+        SQLAlchemyTimeoutError("graph pool timed out"),
     ],
 )
 def test_default_fact_context_maps_graph_failures_to_a_boundary(
@@ -973,6 +1018,7 @@ def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
     assert answer.negative is not None
     assert answer.negative.kind is NegativeKind.BOUNDARY
     assert len(graph.calls) == 1
+    assert graph.calls[0]["_deadline"] == 25.0
     assert index.requested_k == []
 
 

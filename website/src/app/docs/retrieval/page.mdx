@@ -54,10 +54,11 @@ These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patte
 | `fact_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `k`, `evidence_per_fact`, `time`) | **fact** | Entity-neighborhood relations and observations + associated testimony |
 | `answer_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `time`) | `ContextBundle/v1` | Complete testimony and neighborhood-aware fact envelopes, kept separate |
 
-Entity IDs are optional. Omit them for deployment-wide retrieval; supply one to
-twenty confirmed IDs when identity should constrain the candidate set. Resolve
-ambiguous names first. The operations never guess a name or silently drop an
-unknown ID.
+Entity IDs are optional. Omit them for deployment-wide retrieval. Testimony
+accepts up to 20 confirmed IDs; the neighborhood-aware fact and answer
+operations accept up to 19 so the 20-entity combined scope always reserves one
+neighbor slot. Resolve ambiguous names first. The operations never guess a name
+or silently drop an unknown ID.
 
 For a current or point-in-time read with `entity_ids`, `fact_context` starts
 from those anchors, walks one live-graph hop by default, then searches relation labels

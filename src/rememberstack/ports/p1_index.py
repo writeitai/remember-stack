@@ -260,8 +260,9 @@ class P1ScoredSearchPort(Protocol):
         evaluated_at: datetime | None = None,
         equality_filters: Mapping[str, str] | None = None,
         entity_ids: tuple[str, ...] = (),
+        ranking_entity_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored facts, with optional D87 time eligibility before top-k."""
+        """Scored facts with separate eligible scope and ranking anchors."""
         ...
 
     def search_entities_scored(
