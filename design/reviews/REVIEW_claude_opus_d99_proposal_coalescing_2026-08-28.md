@@ -72,3 +72,7 @@ observability, binding-language, snapshot-alternative, and test findings are
 retained here for the immediate follow-up rather than silently dismissed or
 expanded into this PR.
 
+The same PR added the reviewer's two-second PostgreSQL contender lock timeout
+after worker CI exposed an unrelated fixture-name typo in that new test. The
+test correction does not change production behavior or resolve the findings
+listed above.

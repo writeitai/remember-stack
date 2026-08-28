@@ -722,7 +722,7 @@ def test_proposal_attestation_does_not_wait_for_busy_evidence_lock(
 ) -> None:
     """A real PostgreSQL try-lock reports contention without blocking."""
     index = _ScriptedEntityIndex()
-    entity_id = _arrive(engine=database_engine, index=index, name="Caroline")
+    entity_id = _arrive(engine=database_engine, index=index, name="Robert Klein")
     lock_key = f"{_DEPLOYMENT_ID}:obs:{entity_id}"
 
     with database_engine.begin() as holder:
@@ -731,6 +731,7 @@ def test_proposal_attestation_does_not_wait_for_busy_evidence_lock(
             {"key": lock_key},
         )
         with database_engine.begin() as contender:
+            contender.execute(text("SET LOCAL lock_timeout = '2s'"))
             assert (
                 current_profile_entity_ids(
                     connection=contender,
