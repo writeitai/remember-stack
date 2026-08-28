@@ -8,6 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql.elements import TextClause
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.entity_profile_input import entity_profile_embedding_input
@@ -448,8 +450,10 @@ def current_profile_entity_ids(
     busy member made this nomination defer to a later profile publication.
     """
     ordered_entity_ids = tuple(sorted(set(entity_ids), key=str))
-    connection.execute(
-        _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+    _acquire_profile_lock(
+        connection=connection,
+        statement=_LOCK_IDENTITY_SHARED,
+        key=f"{deployment_id}:identity-epoch",
     )
     member_ids: set[UUID] = set()
     for entity_id in ordered_entity_ids:
@@ -522,7 +526,11 @@ def _locked_profile_state(
         ).scalars()
     )
     for member_id in sorted(set(member_ids), key=str):
-        connection.execute(_LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"})
+        _acquire_profile_lock(
+            connection=connection,
+            statement=_LOCK_ENTITY,
+            key=f"{deployment_id}:obs:{member_id}",
+        )
     entity = (
         connection.execute(
             _SELECT_ENTITY, {"deployment_id": deployment_id, "entity_id": entity_id}
@@ -535,6 +543,24 @@ def _locked_profile_state(
     return entity, _load_salient_facts(
         connection=connection, deployment_id=deployment_id, entity_id=entity_id
     )
+
+
+def _acquire_profile_lock(
+    *, connection: Connection, statement: TextClause, key: str
+) -> None:
+    """Translate only an advisory-lock statement timeout into safe contention."""
+    try:
+        connection.execute(statement, {"key": key})
+    except OperationalError as exc:
+        cause = exc.orig
+        if (
+            getattr(cause, "sqlstate", None) == "57014"
+            and "advisory lock" in str(cause).lower()
+        ):
+            raise ProfileRefreshContendedError(
+                f"entity profile lock remained busy: {key}"
+            ) from exc
+        raise
 
 
 def _terminal_profile_result(

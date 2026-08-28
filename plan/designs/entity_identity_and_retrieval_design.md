@@ -358,6 +358,17 @@ operator can inspect or replay queued proposals. Merge and unmerge continue to
 refresh affected profiles through the non-recursive base refresher so a merge
 does not recursively trigger itself.
 
+Profile publication has its own bounded identity/evidence lock wait. A
+PostgreSQL statement timeout whose cause is specifically an advisory-lock wait
+is translated to `ProfileRefreshContendedError`; it is not a generic database
+failure. Evidence workers have already committed the authoritative fact change
+before this disposable projection step, so they record the typed contention,
+leave the projection fail-closed, and complete without replaying paid
+normalization or adjudication. A later evidence mutation owns another refresh
+attempt. Review, forget, and other callers that require synchronous repair may
+let the typed contention propagate and retry their operation. Query timeouts,
+connection failures, and all other database errors remain failures.
+
 ### 3.3.2 Resolver provider calls do not hold the lemma transaction lock
 
 The normalized-lemma advisory lock remains the database-enforced serialization

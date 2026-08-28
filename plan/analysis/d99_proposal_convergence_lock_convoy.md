@@ -110,3 +110,31 @@ an operator accepts a proposal. The next fresh run must separately report:
 - final pending proposal membership and blast radius; and
 - the ordinary no-acceptance score before any clearly labeled post-review
   diagnostic.
+
+## v0.7.2 validation follow-up
+
+The fresh v0.7.2 `conv-26` run used Compose project `locomov072c26`, deployment
+`8e874002-50e1-40bf-816b-7c80431ce2b1`, and exact release commit
+`009f868af732c58387f364febeee418825c46715`. The original proposal convoy did
+not recur: observation waves advanced and broad proposal passes deferred when
+they encountered an already-busy evidence lock. Short waits still appeared in
+the opposite direction while a proposal transaction that had acquired all of
+its try-locks completed database-only review work.
+
+The run nevertheless stopped safely with one `adjudicate_supersession` dead
+letter. Its profile-refresh step exhausted all three work attempts waiting on
+an observation lock held by provider-backed adjudication transactions. The
+profile refresher deliberately bounds this wait with `statement_timeout`, but
+the resulting PostgreSQL `57014` advisory-lock cancellation escaped as generic
+`OperationalError`; the evidence-worker boundary therefore could not apply its
+existing safe `ProfileRefreshContendedError` policy. At stop, the driver had
+reported one dead letter and preserved the stack; no score was produced.
+
+The narrow follow-up is to translate only SQLSTATE `57014` cancellations whose
+cause names an advisory-lock wait inside profile snapshotting into the existing
+typed profile-contention outcome. This does not swallow slow queries,
+connection failures, or other database errors. Authoritative facts are already
+durable at that boundary, and the profile is disposable/fail-closed, so replaying
+paid normalization is not required; later evidence publication owns another
+refresh attempt. A real PostgreSQL regression proof holds the entity evidence
+lock on one connection and verifies the contender receives the typed outcome.

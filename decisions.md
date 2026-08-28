@@ -4352,10 +4352,16 @@ convergence.
 Operationally, T3 outcome counts, provisional-mint count, incomplete-search
 count, convergence reports, proposal deduplication, and resolver-revalidation
 retries become required health evidence. Ordinary drain must finish without
-manual worker serialization in the deterministic acceptance workload; repeated
-real contention may still consume the outer work-ledger attempt budget and
-dead-letter visibly for ordinary operator replay. A convergence failure leaves already-durable facts
-and profiles intact and retries idempotently; it does not roll them back.
+manual worker serialization in the deterministic acceptance workload. A
+profile snapshot that reaches its bounded PostgreSQL statement timeout while
+waiting specifically on an advisory identity/evidence lock is typed as
+`ProfileRefreshContendedError`, not a generic database failure. Evidence
+workers have already committed the authoritative fact change and may complete
+without replaying paid work; the disposable profile remains fail-closed until
+a later evidence mutation refreshes it. Synchronous repair callers may
+propagate and retry that typed outcome. Other SQL timeouts and database errors
+remain failures. A convergence failure leaves already-durable facts and
+profiles intact and retries idempotently; it does not roll them back.
 
 **Rejected.** Keep binary T4 and tune the prompt/confidence; restore exact-name
 auto-merge; remove work limits; treat a bounded prefix as exhaustive; park
