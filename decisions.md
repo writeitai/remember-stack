@@ -2904,6 +2904,13 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
+> **D99 amendment.** The current protocol is `RS-LoCoMo-Full-v16`. It retains
+> v15's 21-tool surface, dataset, models, and budgets while rolling the D99
+> resolver/convergence generations. The answer loop mechanically enforces its
+> existing instruction that identity metadata alone cannot justify `Unknown`:
+> one bounded content-bearing read is required. Existing malformed-reader retry
+> remains unchanged.
+>
 > **D97 amendment.** The current protocol is `RS-LoCoMo-Full-v15`: it retains
 > the D98 live-graph 21-tool surface but fingerprints the D97
 > `fact_context@2` / `answer_context@2` neighborhood semantics. V14 and earlier
@@ -3997,6 +4004,13 @@ statistics without a duplicated claim-search table.
 
 ## D95. Entity identity is the real-world referent
 
+> **D99 amendment (2026-08-28).** T4 is tri-state; only supported
+> `different` creates a cannot-link or contributes to authoritative novelty.
+> Insufficient evidence or truncated candidate/adjudication work may mint only
+> a merge-eligible provisional fragment, followed by post-profile neighborhood
+> convergence. Provider calls run outside the lemma-lock transaction with
+> locked revalidation before commit. D99 contains the complete amendment.
+
 **Decision (2026-08-26; T0 rule revised same day).** One `entity_id` per
 real-world referent. Names generate **candidates**; they are not the
 verdict. **T0 never auto-merges.** Exact lemma match only **lists**
@@ -4007,8 +4021,10 @@ The verdict is T3 or T4:
   accept a repeat of a known person without an LLM — this is the scale
   path, not T0.
 - **T4** when the profile is empty, fights the claim, or several exact
-  candidates exist. If T4 says not the same, **mint** another entity
-  with that spelling.
+  candidates exist. D99 makes this tri-state: `same` links, supported
+  `different` contributes to an authoritative new referent only after a
+  complete candidate pass, and insufficient/truncated work may mint only a
+  merge-eligible provisional fragment.
 
 A short `profile_summary` (plus salient observations) is evidence for
 T3/T4, never the identity key. Job, city, and employer changes update
@@ -4224,3 +4240,130 @@ expansion is live PostgreSQL execution rather than P2 hydration while
 preserving zero-LLM retrieval, authority confirmation, evidence hydration,
 bounded and truncation-honest results, and PostgreSQL-native P1. D82's default-deny public
 query principle remains; only its public Cypher surface is removed.
+
+## D99. Identity uncertainty is provisional and converges after profile publication
+
+**Decision (2026-08-28).** Amend D95 so T4 returns exactly three evidentiary
+outcomes: `same`, positively supported `different`, and
+`insufficient_evidence`. Only `different` writes an automatic
+`resolution_exclusions` cannot-link. Candidate generation and T4 adjudication
+retain their strict work limits, but both report completeness. A checked prefix
+that found no match cannot prove that an unchecked candidate is absent.
+
+Here `complete` means **not truncated by the configured result limit**; it does
+not claim perfect T1/T2 blocking recall. An authoritative cascade outcome means
+that no candidate was surfaced by an untruncated blocking pass and every
+surfaced candidate received supported `different`, not that the real world was
+searched exhaustively.
+
+When relations or observations require an endpoint before identity is decidable,
+the resolver may mint an active, merge-eligible **provisional fragment**. The
+append-only resolution decision records `identity_authority=provisional`, the
+candidate completeness/adjudication counts, the bounded candidate/verdict audit,
+and one deterministic T3 outcome reason. It writes no exclusion for an
+insufficient or unchecked candidate. An authoritative same-lemma novelty mint
+requires an untruncated candidate set and supported `different` verdicts for
+every surfaced candidate, within the configured blocking recall ceiling.
+
+Publishing a current profile after relation evidence, or after the D88/D90
+entity observation flush that opens only when every claim in that document
+version has finished normalization (the claim-normalize barrier), nominates the
+refreshed entity's distinct alias lemmas to D21's existing bounded
+neighborhood clusterer. This is the production convergence boundary. Missing or
+stale profiles remain ambiguity. Automatic clustering stays fail-closed without
+an accepted D22 calibration; configured reversible small merges remain allowed,
+and the existing blast-radius guard routes large components to one deduplicated
+human review proposal. Proposal identity is deterministic over deployment,
+sorted live roots, and cluster-configuration fingerprint. Exact replay
+deduplicates; changed membership inserts a replacement and auto-resolves only
+overlapping pending proposals, never resolved history. Human-confirmed and positively supported difference
+edges remain hard cannot-links. The migration marks pre-D99 automatic binary
+rows as ineffective `legacy_binary` audit records; human rows remain effective.
+A new supported-different or human decision can revalidate the canonical pair,
+and a later superseding decision can retire it while retaining decision ids.
+
+The normalized-lemma PostgreSQL advisory lock continues to serialize identity
+writes, but T3 embeddings and T4 generation no longer run inside its transaction.
+The resolver snapshots and fingerprints the bounded candidates/profiles under a
+short lock, calls providers unlocked, then reacquires the lock and reconstructs
+the snapshot before commit. Changed state discards and meters the stale result
+and retries a bounded number of times. Exhaustion is a typed retryable contention
+failure; stale authority never commits. This follows the profile refresher's
+existing optimistic revalidation pattern.
+
+Every final resolution decision records why T3 accepted, evaluated without
+accepting, or could not run: `accepted`, `below_threshold`,
+`multiple_candidates`, `profile_missing`, `profile_stale`,
+`embedding_missing_or_wrong_generation`, or `embedding_hash_mismatch`. The
+fixed vocabulary is safe for aggregate metrics; entity identifiers and names
+remain audit fields and are forbidden as metric labels. D95's several-candidate
+route still goes to T4. A unique-top/margin T3 policy requires a separate D22
+curve and explicit D95 amendment.
+
+For benchmark agents, an ambiguous `resolve_entity` response remains explicit
+and never becomes a silent guess, but identity metadata alone cannot justify
+terminal `Unknown`. The LoCoMo answer loop enforces at least one bounded
+testimony/fact/combined-context attempt first. The existing accounted
+invalid-completion retry already covers malformed structured reader output and
+is not duplicated.
+
+The ordinary v16 benchmark keeps `auto_merge_enabled=false` and performs no
+human proposal acceptance before scoring. This prevents gold-informed operator
+action from becoming a hidden answer tool. Unattended fragmentation may persist
+until a proposal is accepted; v16 records proposal/member/blast diagnostics and
+tests content fallback separately from any later review experiment.
+
+**Context.** A fresh v0.6.0 LoCoMo `conv-26` run created 19 active exact-name
+Caroline entities and four Melanie entities. T3 made zero of 1,089 decisions.
+All 87 exclusions were automatic; 58 separated Caroline fragments. The second
+Caroline arrived 109 ms after the first and received a high-confidence T4
+non-match whose rationale said identity could not be established because no
+profile existed. Candidate loading stopped at ten and T4 at three, yet three
+rejections could mint another entity. Every fragment eventually had a current
+profile; no production caller invoked neighborhood clustering, no merge event
+ran, and the earlier exclusions would have blocked repair. One normalization
+item also timed out while provider latency extended the lemma-lock transaction.
+
+**Consequences.** Under-merging remains safer than false merging, but it is now
+explicit and repairable instead of becoming false negative authority. Ingestion
+continues through thin evidence. Resolution decisions grow by bounded diagnostic
+JSON only; there is no second entity registry or provisional status table.
+`resolution_exclusions` gains explicit basis/effectiveness and logical
+support/retirement decision pointers so clustering can distinguish authority.
+Provider calls may be wasted on a revalidation conflict, but their spend remains
+metered and the bounded retry prevents livelock. Convergence adds local profile-
+publication work and review proposals, never a deployment-wide sweep. Merge and
+unmerge remain append-only, reversible PostgreSQL redirects and are visible to
+the live graph after commit. With fail-closed auto merge, an unattended run can
+remain fragmented until an operator accepts a proposal; D99 makes that state
+diagnosable and non-poisoning rather than claiming silent convergence.
+
+Operationally, T3 outcome counts, provisional-mint count, incomplete-search
+count, convergence reports, proposal deduplication, and resolver-revalidation
+retries become required health evidence. Ordinary drain must finish without
+manual worker serialization in the deterministic acceptance workload; repeated
+real contention may still consume the outer work-ledger attempt budget and
+dead-letter visibly for ordinary operator replay. A convergence failure leaves already-durable facts
+and profiles intact and retries idempotently; it does not roll them back.
+
+**Rejected.** Keep binary T4 and tune the prompt/confidence; restore exact-name
+auto-merge; remove work limits; treat a bounded prefix as exhaustive; park
+ingestion until identity is certain; globally re-cluster the deployment; enable
+uncalibrated automatic merge; discard all legacy exclusions without
+retaining their audit, or keep legacy binary rows effective without new
+evidence; increase lock timeout; silently choose one ambiguous retrieval
+candidate; add a second malformed-answer retry subsystem.
+
+**Design.** `plan/designs/entity_identity_and_retrieval_design.md` §3 and §7;
+`plan/designs/registries_design.md` §3 and §6.
+
+**Analysis.**
+`plan/analysis/entity_resolution_uncertainty_and_convergence.md`.
+
+**Issue.** #319.
+
+**Amends.** D95's binary T4, unconditional T4 non-match mint/exclusion, and
+lemma-lock consequence; D21's incremental clustering lifecycle; D22's per-tier
+diagnostics; D24 proposal idempotency; D78's benchmark-agent `Unknown` guard.
+Preserves D20 registry self-containment, D95's no exact-name auto-merge rule,
+D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.

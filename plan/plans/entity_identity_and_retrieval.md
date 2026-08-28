@@ -74,6 +74,7 @@ drain because “reviewers mentioned it” — operator waived BC.
 | WP-I.5 | **T0 = candidate list only** (never auto-merge), after a **recorded passing I.3+I.4 eval run**. Hits = **distinct active `entity_id`s**. T3 may accept one candidate when profile exists (design §3.1.1). T4 when empty profile / conflict / several candidates. Same lemma may mint; `resolution_exclusions` on T4 no-match; populate `generic_identifier_guard` when a lemma spans ≥2 **entities** (blocking, not T0-verdict) | design §3.1–3.2; D95 | WP-I.1, WP-I.3, WP-I.4 | `resolver.py` T0/T3/T4/mint/exclusions | father/son → two ids (T4); empty-profile second `Jan` → T4 not T0 merge; repeat profiled `James` → T3 accept without T4; SAP shorthand → one id via T3/T4 not T0; two provenances on one id still **one** candidate |
 | WP-I.6 | D97 default path: `resolve` → lookup observations+relations → `neighborhood` empty predicates → ID-constrained fact-text search (`assured_operations.py`, `operation_executor.py`, `query_engine.py`); optional dynamic predicate (any stored name, including `other:`); no type filter | design §7; D97, D98 | WP-I.2, WP-I.5 | those files + recipes | hop returns `other:*` neighbors; observations via lookup not graph nodes; no new query-path LLM; “list banks” matches observation/profile text; ambiguity / unavailable live graph / caps are explicit |
 | WP-I.7 | Same-PR website pages for each user-visible WP above (D66) | D66 | with the WP it documents | `website/src/app/docs/**` | docs describe shipped behavior only |
+| WP-I.8 | **D99 uncertainty/convergence correction.** Tri-state T4; exclusions only from supported `different`; candidate/T4 completeness and provisional-mint evidence; bounded T3 outcome reasons; snapshot/unlocked-provider/locked-revalidation resolver; current-profile nomination into idempotent neighborhood convergence; benchmark `Unknown` guard after identity-only reads | design §3.1–3.3.3, §7, §9, §11; D99 | WP-I.5, WP-I.6 | resolver/model tests; convergence production composition and proposal dedupe; benchmark loop guard; same-PR website/project-status update if public behavior changes | insufficient/truncated decisions write no false cannot-link or authoritative novelty; stale provider decisions cannot commit; touched current profiles reach convergence; father/son stays split; T3 reasons aggregate; ambiguous lookup cannot terminate `Unknown` without a content read |
 
 **Parallelism:** I.3 and I.4 may be **developed** in parallel after I.2;
 both must **merge before** I.5. I.6 implementation can start against
@@ -86,7 +87,9 @@ runs before app code that omits `type`. One release. No dual writer.
 **Exit:** design §11 tests green on the §8 golden slice; one **global**
 resolver curve **and** per-tier diagnostics; T0 false-merge on common
 names is a failing test if I.5 regresses; I.5 does not merge without a
-passing post-I.4 eval record.
+passing post-I.4 eval record. I.8 additionally requires the D99 deterministic
+gates before another paid identity rerun; the existing uncalibrated cluster cut
+remains review-only.
 
 **Non-goals:** reintroducing hats; expand/contract typed columns;
 mixed-generation E3 drain; LoCoMo-only prompts; `mention_id` on
