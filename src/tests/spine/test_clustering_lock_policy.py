@@ -26,18 +26,24 @@ class _EmptyResult:
         """Return no gathered neighborhood members."""
         return ()
 
+    def scalar_one(self) -> bool:
+        """Model an uncontended try-lock acquisition."""
+        return True
+
 
 class _RecordingConnection:
     """Record SQL strings while returning an empty gather result."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, try_lock_acquired: bool = True) -> None:
         """Start with no executed statements."""
-        self.statements: list[str] = []
+        self._try_lock_acquired = try_lock_acquired
+        self.executions: list[tuple[str, dict[str, object]]] = []
 
-    def execute(self, statement: object, parameters: object) -> _EmptyResult:
+    def execute(self, statement: object, parameters: object) -> object:
         """Record one statement and return the empty result."""
-        del parameters
-        self.statements.append(str(statement))
+        self.executions.append((str(statement), cast(dict[str, object], parameters)))
+        if "pg_try_advisory_xact_lock" in str(statement):
+            return _BooleanResult(acquired=self._try_lock_acquired)
         return _EmptyResult()
 
 
@@ -81,14 +87,58 @@ def test_recluster_executes_lock_selected_by_mutation_policy(
 
     clusterer.recluster_neighborhood(deployment_id=_DEPLOYMENT_ID, surface="Caroline")
 
-    identity_locks = [
+    selected = next(
         statement
-        for statement in engine.connection.statements
-        if "pg_advisory_xact_lock" in statement
-    ]
-    assert len(identity_locks) == 2
-    selected = identity_locks[1]
+        for statement, parameters in engine.connection.executions
+        if parameters["key"] == f"{_DEPLOYMENT_ID}:identity-epoch"
+    )
     assert ("pg_advisory_xact_lock_shared" in selected) is shared_expected
+
+
+@pytest.mark.parametrize(
+    ("auto_merge_enabled", "try_lock_expected"), ((False, True), (True, False))
+)
+def test_recluster_neighborhood_lock_matches_mutation_policy(
+    *, auto_merge_enabled: bool, try_lock_expected: bool
+) -> None:
+    """Proposal nomination coalesces while mutation keeps global serialization."""
+    engine = _RecordingEngine()
+    clusterer = EntityClusterer(
+        engine=cast(Engine, engine),
+        entity_index=cast(EntityIndexPort, _UnusedEntityIndex()),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(auto_merge_enabled=auto_merge_enabled),
+    )
+
+    clusterer.recluster_neighborhood(deployment_id=_DEPLOYMENT_ID, surface="Caroline")
+
+    statement, parameters = engine.connection.executions[0]
+    assert ("pg_try_advisory_xact_lock" in statement) is try_lock_expected
+    expected_key = (
+        f"{_DEPLOYMENT_ID}:cluster:caroline"
+        if try_lock_expected
+        else f"{_DEPLOYMENT_ID}:cluster"
+    )
+    assert parameters["key"] == expected_key
+
+
+def test_busy_proposal_neighborhood_is_coalesced_before_gather() -> None:
+    """A duplicate proposal nomination exits after its nonblocking lemma lock."""
+    engine = _RecordingEngine()
+    engine.connection = _RecordingConnection(try_lock_acquired=False)
+    clusterer = EntityClusterer(
+        engine=cast(Engine, engine),
+        entity_index=cast(EntityIndexPort, _UnusedEntityIndex()),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(auto_merge_enabled=False),
+    )
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="Caroline"
+    )
+
+    assert report.members == 0
+    assert len(engine.connection.executions) == 1
 
 
 def test_proposal_only_convergence_uses_shared_identity_epoch_lock() -> None:
@@ -118,6 +168,18 @@ class _ScalarResult:
         return self._values
 
 
+class _BooleanResult:
+    """One scalar boolean result for a try-lock."""
+
+    def __init__(self, *, acquired: bool) -> None:
+        """Store whether the scripted lock was acquired."""
+        self._acquired = acquired
+
+    def scalar_one(self) -> bool:
+        """Return the scripted acquisition result."""
+        return self._acquired
+
+
 class _OptionalMappingResult:
     """Empty mapping result for the post-lock profile read."""
 
@@ -133,9 +195,15 @@ class _OptionalMappingResult:
 class _ClosureConnection:
     """Script closure membership and record observation advisory-lock order."""
 
-    def __init__(self, *, closures: dict[UUID, tuple[UUID, ...]]) -> None:
+    def __init__(
+        self,
+        *,
+        closures: dict[UUID, tuple[UUID, ...]],
+        busy_member_id: UUID | None = None,
+    ) -> None:
         """Bind closures and start with no recorded observation locks."""
         self._closures = closures
+        self._busy_member_id = busy_member_id
         self.observation_lock_keys: list[str] = []
 
     def execute(self, statement: object, parameters: object) -> object:
@@ -145,6 +213,12 @@ class _ClosureConnection:
         if "WITH RECURSIVE members" in sql:
             entity_id = cast(UUID, values["entity_id"])
             return _ScalarResult(self._closures[entity_id])
+        if "pg_try_advisory_xact_lock" in sql:
+            key = cast(str, values["key"])
+            self.observation_lock_keys.append(key)
+            return _BooleanResult(
+                acquired=key != f"{_DEPLOYMENT_ID}:obs:{self._busy_member_id}"
+            )
         if "pg_advisory_xact_lock(hashtextextended" in sql:
             self.observation_lock_keys.append(cast(str, values["key"]))
             return _EmptyResult()
@@ -173,4 +247,27 @@ def test_profile_attestation_prelocks_union_of_closures_in_global_order() -> Non
         f"{_DEPLOYMENT_ID}:obs:{first}",
         f"{_DEPLOYMENT_ID}:obs:{middle}",
         f"{_DEPLOYMENT_ID}:obs:{root}",
+    ]
+
+
+def test_proposal_attestation_skips_busy_member_without_waiting() -> None:
+    """A proposal-only pass defers instead of convoying behind hot evidence."""
+    first = UUID("00000000-0000-0000-0000-000000000001")
+    busy = UUID("00000000-0000-0000-0000-000000000002")
+    later = UUID("00000000-0000-0000-0000-000000000003")
+    connection = _ClosureConnection(
+        closures={first: (first, busy, later)}, busy_member_id=busy
+    )
+
+    current = current_profile_entity_ids(
+        connection=cast(Connection, connection),
+        deployment_id=_DEPLOYMENT_ID,
+        entity_ids=(first,),
+        wait_for_locks=False,
+    )
+
+    assert current is None
+    assert connection.observation_lock_keys == [
+        f"{_DEPLOYMENT_ID}:obs:{first}",
+        f"{_DEPLOYMENT_ID}:obs:{busy}",
     ]

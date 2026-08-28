@@ -4313,6 +4313,16 @@ action from becoming a hidden answer tool. Unattended fragmentation may persist
 until a proposal is accepted; v16 records proposal/member/blast diagnostics and
 tests content fallback separately from any later review experiment.
 
+Proposal-only convergence is nonblocking and coalescing. A normalized lemma has
+at most one active proposal nomination; if another nomination owns that lemma
+or any member evidence lock is busy, the redundant pass ends without waiting.
+Later current-profile publication nominates the neighborhood again. A pass that
+may auto-merge retains the global blocking neighborhood lock plus exclusive
+identity-epoch and blocking member-evidence locks. Report generation cannot
+justify holding hundreds of entity locks while it waits behind one slow
+observation/provider transaction; identity mutation still requires the stronger
+serialization.
+
 **Context.** A fresh v0.6.0 LoCoMo `conv-26` run created 19 active exact-name
 Caroline entities and four Melanie entities. T3 made zero of 1,089 decisions.
 All 87 exclusions were automatic; 58 separated Caroline fragments. The second
@@ -4331,12 +4341,13 @@ JSON only; there is no second entity registry or provisional status table.
 `resolution_exclusions` gains explicit basis/effectiveness and logical
 support/retirement decision pointers so clustering can distinguish authority.
 Provider calls may be wasted on a revalidation conflict, but their spend remains
-metered and the bounded retry prevents livelock. Convergence adds local profile-
-publication work and review proposals, never a deployment-wide sweep. Merge and
-unmerge remain append-only, reversible PostgreSQL redirects and are visible to
-the live graph after commit. With fail-closed auto merge, an unattended run can
-remain fragmented until an operator accepts a proposal; D99 makes that state
-diagnosable and non-poisoning rather than claiming silent convergence.
+metered and the bounded retry prevents livelock. Convergence adds coalesced local
+profile-publication work and review proposals, never a deployment-wide sweep.
+Merge and unmerge remain append-only, reversible PostgreSQL redirects and are
+visible to the live graph after commit. With fail-closed auto merge, an
+unattended run can remain fragmented until an operator accepts a proposal; D99
+makes that state diagnosable and non-poisoning rather than claiming silent
+convergence.
 
 Operationally, T3 outcome counts, provisional-mint count, incomplete-search
 count, convergence reports, proposal deduplication, and resolver-revalidation
@@ -4358,7 +4369,8 @@ candidate; add a second malformed-answer retry subsystem.
 `plan/designs/registries_design.md` §3 and §6.
 
 **Analysis.**
-`plan/analysis/entity_resolution_uncertainty_and_convergence.md`.
+`plan/analysis/entity_resolution_uncertainty_and_convergence.md` and
+`plan/analysis/d99_proposal_convergence_lock_convoy.md`.
 
 **Issue.** #319.
 

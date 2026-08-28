@@ -96,7 +96,16 @@ class EntityClusterer:
         lemma = normalized_lemma(surface=surface)
         refresh_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
-            connection.execute(_LOCK_NEIGHBORHOOD, {"key": f"{deployment_id}:cluster"})
+            if self._config.auto_merge_enabled:
+                connection.execute(
+                    _LOCK_NEIGHBORHOOD, {"key": f"{deployment_id}:cluster"}
+                )
+            elif not bool(
+                connection.execute(
+                    _TRY_LOCK_NEIGHBORHOOD, {"key": f"{deployment_id}:cluster:{lemma}"}
+                ).scalar_one()
+            ):
+                return NeighborhoodReport(members=0)
             connection.execute(
                 _identity_epoch_lock(
                     auto_merge_enabled=self._config.auto_merge_enabled
@@ -126,7 +135,10 @@ class EntityClusterer:
                     entity_ids=tuple(
                         UUID(str(member["entity_id"])) for member in members
                     ),
+                    wait_for_locks=self._config.auto_merge_enabled,
                 )
+                if current_profile_ids is None:
+                    return NeighborhoodReport(members=len(members))
                 vectors = self._entity_index.entity_vectors(
                     deployment_id=str(deployment_id),
                     entity_ids=tuple(
@@ -789,6 +801,9 @@ def _centroid(vectors: list[tuple[float, ...]]) -> tuple[float, ...]:
 
 
 _LOCK_NEIGHBORHOOD = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+_TRY_LOCK_NEIGHBORHOOD = text(
+    "SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"
+)
 
 
 def _identity_epoch_lock(*, auto_merge_enabled: bool) -> TextClause:

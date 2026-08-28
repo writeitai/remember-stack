@@ -433,13 +433,19 @@ def profile_summary(*, salient_facts: tuple[str, ...]) -> str:
 
 
 def current_profile_entity_ids(
-    *, connection: Connection, deployment_id: UUID, entity_ids: tuple[UUID, ...]
-) -> frozenset[UUID]:
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    entity_ids: tuple[UUID, ...],
+    wait_for_locks: bool = True,
+) -> frozenset[UUID] | None:
     """Lock and attest exact current profile inputs for clustering.
 
     The caller retains the transaction, and therefore the evidence locks,
     while it reads vectors and decides. Missing, stale, retired, or empty
-    profiles are omitted so none can authorize either merge direction.
+    profiles are omitted so none can authorize either merge direction. A
+    proposal-only caller may request nonblocking locks; ``None`` then means a
+    busy member made this nomination defer to a later profile publication.
     """
     ordered_entity_ids = tuple(sorted(set(entity_ids), key=str))
     connection.execute(
@@ -455,7 +461,12 @@ def current_profile_entity_ids(
             ).scalars()
         )
     for member_id in sorted(member_ids, key=str):
-        connection.execute(_LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"})
+        result = connection.execute(
+            _LOCK_ENTITY if wait_for_locks else _TRY_LOCK_ENTITY,
+            {"key": f"{deployment_id}:obs:{member_id}"},
+        )
+        if not wait_for_locks and not bool(result.scalar_one()):
+            return None
 
     current: set[UUID] = set()
     for entity_id in ordered_entity_ids:
@@ -678,6 +689,7 @@ def _vector_literal(vector: tuple[float, ...]) -> str:
 
 
 _LOCK_ENTITY = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+_TRY_LOCK_ENTITY = text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))")
 
 _LOCK_IDENTITY_SHARED = text(
     "SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"
