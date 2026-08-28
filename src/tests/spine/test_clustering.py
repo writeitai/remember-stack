@@ -717,6 +717,32 @@ def test_clustering_attestation_preserves_caller_timeouts(
     assert idle_timeout == "3min"
 
 
+def test_proposal_attestation_does_not_wait_for_busy_evidence_lock(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A real PostgreSQL try-lock reports contention without blocking."""
+    index = _ScriptedEntityIndex()
+    entity_id = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    lock_key = f"{_DEPLOYMENT_ID}:obs:{entity_id}"
+
+    with database_engine.begin() as holder:
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": lock_key},
+        )
+        with database_engine.begin() as contender:
+            contender.execute(text("SET LOCAL lock_timeout = '2s'"))
+            assert (
+                current_profile_entity_ids(
+                    connection=contender,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_ids=(entity_id,),
+                    wait_for_locks=False,
+                )
+                is None
+            )
+
+
 def test_black_hole_guard_tightens_the_cut(
     database_engine: Engine, bootstrapped_deployment: None
 ) -> None:

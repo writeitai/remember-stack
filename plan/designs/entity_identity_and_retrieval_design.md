@@ -22,9 +22,11 @@ the *how*, not a phased MVP.
 **Decision log:** D95, D96, D97, D99
 **Analysis:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
-[`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md)
+[`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
+[`d99_proposal_convergence_lock_convoy.md`](../analysis/d99_proposal_convergence_lock_convoy.md)
 **D99 review:**
-[`Claude Opus`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md)
+[`Claude Opus — identity uncertainty`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md),
+[`Claude Opus — proposal coalescing`](../../design/reviews/REVIEW_claude_opus_d99_proposal_coalescing_2026-08-28.md)
 **Amends:** [`registries_design.md`](registries_design.md) §2 profiles,
 §3 cascade (T0 as verdict), §4 “How an entity gets its type”;
 [`e2_e3_claims_relations_design.md`](e2_e3_claims_relations_design.md)
@@ -328,15 +330,25 @@ Any component above the blast-radius cap produces one cluster review proposal.
 Human-confirmed and positively supported `different` exclusions remain hard
 cannot-links. Uncertainty never creates one, so it cannot poison later repair.
 When automatic merge is disabled, the proposal-only pass holds the deployment
-identity epoch in shared mode: it cannot merge or split identities, and the
-cluster nomination lock plus per-entity evidence locks still serialize its
-bounded snapshot. A pass authorized to auto-merge retains the exclusive epoch
-lock. This prevents a burst of report-only convergence nominations from
-forcing supersession adjudication and profile publication to wait behind
-report-only convergence transactions. The pass pre-locks the union of member
+identity epoch in shared mode: it cannot merge or split identities. Repeated
+nominations for the same normalized lemma are coalesced by a nonblocking
+neighborhood advisory lock. The pass also tries, rather than waits for, every
+member evidence lock; one busy member makes that nomination finish without a
+proposal. A later successful profile publication nominates the neighborhood
+again. This is safe because a report-only pass cannot change identity, while a
+proposal is useful only when every compared profile is from one coherent
+snapshot. It also prevents a large provisional component from making ordinary
+profile workers queue behind a proposal that is waiting for one slow provider-
+backed observation transaction.
+
+A pass authorized to auto-merge retains the global blocking neighborhood lock,
+the exclusive identity epoch lock, and blocking member evidence locks because
+it may split or merge identities. Both modes consider the union of member
 identity closures in one global entity-id order before reading profile inputs,
 matching the profile publisher's closure order and preventing cross-closure
-advisory-lock cycles.
+advisory-lock cycles. Proposal-only passes may run for different lemmas; if
+their blocking neighborhoods overlap, the sorted nonblocking evidence locks
+allow one coherent pass to proceed and make the other defer without a cycle.
 
 This is local convergence, not a deployment sweep: gather starts from the
 touched alias lemma, applies existing blocking reach and black-hole bounds, and
