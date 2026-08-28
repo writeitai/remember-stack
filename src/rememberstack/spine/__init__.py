@@ -34,11 +34,13 @@ from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.operations import error_class_from_traceback
 from rememberstack.spine.operations import OperationalCatalog
 from rememberstack.spine.operations import OperationalSettings
+from rememberstack.spine.profile_convergence import ConvergingProfileRefresher
 from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.profile_refresher import ProfileRefreshResult
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.resolver import CascadeResolver
+from rememberstack.spine.resolver import ResolutionContendedError
 from rememberstack.spine.resolver import RESOLVER_VERSION
 from rememberstack.spine.resolver import seed_resolver_version
 from rememberstack.spine.review import ReviewQueue
@@ -71,11 +73,13 @@ __all__ = (
     "OBSERVATION_ADJUDICATOR_VERSION",
     "ObservationAdjudicator",
     "ProfileRefreshResult",
+    "ConvergingProfileRefresher",
     "ObservationSettings",
     "OperationalCatalog",
     "OperationalSettings",
     "error_class_from_traceback",
     "RESOLVER_VERSION",
+    "ResolutionContendedError",
     "LifecycleCatalog",
     "KnowledgeCompilationError",
     "KnowledgeCommitBusyError",

@@ -562,7 +562,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v15 pipeline, live graph, and fresh P3 projection"
+            " RS-LoCoMo-Full-v16 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -906,6 +906,9 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         total_first_step_retries=sum(
             record.first_step_retries for record in context.state.answers.values()
         ),
+        total_unknown_guard_retries=sum(
+            record.unknown_guard_retries for record in context.state.answers.values()
+        ),
         judge_calls=(
             context.state.interrupted_judge_calls
             + sum(record.model_called for record in context.state.judges.values())
@@ -1166,7 +1169,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v15")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v16")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1176,7 +1179,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v15")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v16")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1433,7 +1436,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v15: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v16: "
             + ", ".join(mismatches)
         )
 
@@ -1646,7 +1649,9 @@ def _answer_one(
     agent_call_count = 0
     reader_attempts = 0
     first_step_retries = 0
+    unknown_guard_retries = 0
     invalid_completion_attempts = 0
+    guard_feedback: str | None = None
     prior_calls = state.interrupted_answer_calls + sum(
         record.agent_call_count for record in state.answers.values()
     )
@@ -1663,6 +1668,7 @@ def _answer_one(
             tools=tools,
             trace=tuple(trace),
             answer_word_cap=answer_word_cap,
+            guard_feedback=guard_feedback,
         )
         agent_observation = (
             None
@@ -1696,6 +1702,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1718,6 +1725,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1770,6 +1778,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1814,6 +1823,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts + int(bool(trace)),
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms + call_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1845,6 +1855,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1883,6 +1894,7 @@ def _answer_one(
                     reader_attempts + int(step.action == "answer" and bool(trace))
                 ),
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1907,11 +1919,38 @@ def _answer_one(
                     agent_call_count=agent_call_count,
                     reader_attempts=reader_attempts,
                     first_step_retries=first_step_retries,
+                    unknown_guard_retries=unknown_guard_retries,
                     reader_latency_ms=agent_latency_ms,
                     tool_calls=tuple(trace),
                     usages=tuple(usages),
                 )
             answer = step.answer or ""
+            guarded_terminal = False
+            if _is_unknown(answer=answer) and not _has_content_bearing_attempt(
+                trace=trace
+            ):
+                reader_attempts += 1
+                unknown_guard_retries += 1
+                can_continue = (
+                    agent_call_count < max_agent_calls_per_question
+                    and prior_calls + agent_call_count < max_agent_calls
+                    and state.evaluator_cost_usd < max_evaluator_cost_usd
+                )
+                if can_continue:
+                    if agent_observation is not None:
+                        agent_observation.finish(
+                            usage=response.usage,
+                            latency_ms=call_latency_ms,
+                            outcome="guarded_unknown",
+                        )
+                    guard_feedback = (
+                        'Terminal "Unknown" was rejected because the trace contains '
+                        "only identity or metadata reads. Call one content-bearing "
+                        "testimony, fact, context, primitive, row-returning query, "
+                        "or P3 search/read operation before answering Unknown."
+                    )
+                    continue
+                guarded_terminal = True
             if answer_word_cap is not None and len(answer.split()) > answer_word_cap:
                 if agent_observation is not None:
                     agent_observation.finish(
@@ -1930,6 +1969,7 @@ def _answer_one(
                     agent_call_count=agent_call_count,
                     reader_attempts=reader_attempts + 1,
                     first_step_retries=first_step_retries,
+                    unknown_guard_retries=unknown_guard_retries,
                     reader_latency_ms=agent_latency_ms,
                     claims=_claims_from_trace(
                         trace=tuple(trace), doc_sessions=doc_sessions
@@ -1961,8 +2001,11 @@ def _answer_one(
                 retrieval_latency_ms=tool_latency_ms,
                 reader_called=True,
                 agent_call_count=agent_call_count,
-                reader_attempts=reader_attempts + 1,
+                reader_attempts=(
+                    reader_attempts if guarded_terminal else reader_attempts + 1
+                ),
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 generated_answer=answer,
                 reader_usage=_aggregate_usage(usages=tuple(usages)),
@@ -1977,6 +2020,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -1994,6 +2038,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -2080,6 +2125,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -2140,6 +2186,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -2179,6 +2226,7 @@ def _answer_one(
                 agent_call_count=agent_call_count,
                 reader_attempts=reader_attempts,
                 first_step_retries=first_step_retries,
+                unknown_guard_retries=unknown_guard_retries,
                 reader_latency_ms=agent_latency_ms,
                 claims=_claims_from_trace(
                     trace=tuple(trace), doc_sessions=doc_sessions
@@ -2198,6 +2246,8 @@ def _answer_one(
                 response=tool_response,
             )
         )
+        if _has_content_bearing_attempt(trace=trace):
+            guard_feedback = None
     return _failed_answer(
         question=question,
         kind="invalid_response",
@@ -2207,6 +2257,7 @@ def _answer_one(
         agent_call_count=agent_call_count,
         reader_attempts=reader_attempts,
         first_step_retries=first_step_retries,
+        unknown_guard_retries=unknown_guard_retries,
         reader_latency_ms=agent_latency_ms,
         claims=_claims_from_trace(trace=tuple(trace), doc_sessions=doc_sessions),
         tool_calls=tuple(trace),
@@ -2431,6 +2482,7 @@ def _failed_answer(
     agent_call_count: int,
     reader_attempts: int = 0,
     first_step_retries: int = 0,
+    unknown_guard_retries: int = 0,
     reader_latency_ms: int | None = None,
     claims: tuple[RetrievedClaim, ...] = (),
     tool_calls: tuple[ToolCallRecord, ...] = (),
@@ -2455,10 +2507,45 @@ def _failed_answer(
         agent_call_count=agent_call_count,
         reader_attempts=reader_attempts,
         first_step_retries=first_step_retries,
+        unknown_guard_retries=unknown_guard_retries,
         reader_latency_ms=reader_latency_ms,
         reader_usage=_aggregate_usage(usages=usages) if usages else None,
         failure=_failure(kind=kind, message=message),
     )
+
+
+def _is_unknown(*, answer: str) -> bool:
+    """Recognize the protocol's exact terminal Unknown after light punctuation."""
+    return answer.strip().casefold().rstrip(".") == "unknown"
+
+
+def _has_content_bearing_attempt(*, trace: list[ToolCallRecord]) -> bool:
+    """Whether the trace contains one successful v16 content-bearing read."""
+    direct = {
+        "answer_context",
+        "fact_context",
+        "testimony_context",
+        "lookup_relations",
+        "transcript_relation",
+        "lookup_observations",
+        "search_claims",
+        "search_chunks",
+        "hydrate_relation",
+        "p3_search",
+        "p3_read",
+    }
+    for call in trace:
+        if not call.succeeded:
+            continue
+        if call.name in direct:
+            return True
+        if (
+            call.name in {"query_sql", "run_saved_query"}
+            and isinstance(call.response, dict)
+            and "rows" in call.response
+        ):
+            return True
+    return False
 
 
 def _claims_from_trace(

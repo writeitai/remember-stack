@@ -27,6 +27,7 @@ from rememberstack.model import ResolverConfig
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
+from rememberstack.spine import ResolutionContendedError
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
@@ -67,13 +68,10 @@ def _first_token_router(prompt: str, type_name: str) -> dict[str, object]:
         for line in prompt.splitlines()
         if line.startswith("CANDIDATE:")
     )
-    return {
-        "match": (
-            mention != candidate
-            and first_token("MENTION:") == first_token("CANDIDATE:")
-        ),
-        "confidence": 0.9,
-    }
+    is_same = mention != candidate and first_token("MENTION:") == first_token(
+        "CANDIDATE:"
+    )
+    return {"verdict": "same" if is_same else "different", "confidence": 0.9}
 
 
 @pytest.fixture(scope="module")
@@ -207,7 +205,9 @@ def test_cascade_mints_then_exact_and_fuzzy_candidates_reach_t4(
     database_engine: Engine,
 ) -> None:
     """T0/T1/T2 only generate candidates; T4 records both accepted paths."""
-    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "same", "confidence": 0.9}
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
 
     minted = resolver.resolve(
@@ -258,7 +258,9 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
     database_engine: Engine,
 ) -> None:
     """D95: father and son may share a name without T0 or clustering glue."""
-    provider = FakeModelProvider(generate_payload={"match": False, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "different", "confidence": 0.9}
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
 
     father = resolver.resolve(
@@ -279,7 +281,7 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
         decision = (
             connection.execute(
                 text(
-                    "SELECT method, features FROM resolution_decisions"
+                    "SELECT decision_id, method, features FROM resolution_decisions"
                     " WHERE entity_id = :entity_id"
                 ),
                 {"entity_id": son.entity_id},
@@ -289,7 +291,9 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
         )
         exclusion = connection.execute(
             text(
-                "SELECT entity_id_low, entity_id_high, reason, created_by::text"
+                "SELECT entity_id_low, entity_id_high, reason, created_by::text,"
+                " basis::text, is_effective, source_decision_id,"
+                " source_resolver_version"
                 " FROM resolution_exclusions"
             )
         ).one()
@@ -307,6 +311,14 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
     assert {exclusion[0], exclusion[1]} == {father.entity_id, son.entity_id}
     assert exclusion[2] == f"t4-no-match:{RESOLVER_VERSION}"
     assert exclusion[3] == "auto"
+    assert exclusion[4:] == (
+        "supported_different",
+        True,
+        decision["decision_id"],
+        RESOLVER_VERSION,
+    )
+    assert decision["features"]["identity_authority"] == "authoritative"
+    assert decision["features"]["t3_outcome"] == "profile_missing"
     assert guard == (2, True)
 
 
@@ -346,13 +358,264 @@ def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
     del jan
 
 
+def test_insufficient_evidence_mints_provisional_without_exclusion(
+    database_engine: Engine,
+) -> None:
+    """D99: thin evidence remains repairable instead of becoming a false edge."""
+    provider = FakeModelProvider(
+        generate_payload={
+            "verdict": "insufficient_evidence",
+            "confidence": 0.9,
+            "rationale": "No profile evidence distinguishes the referent.",
+        }
+    )
+    resolver = _resolver(engine=database_engine, provider=provider)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined the conversation."),
+    )
+
+    fragment = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline discussed a different session."),
+    )
+
+    assert fragment.created
+    with database_engine.connect() as connection:
+        features = connection.execute(
+            text(
+                "SELECT features FROM resolution_decisions"
+                " WHERE entity_id = :entity ORDER BY decided_at DESC LIMIT 1"
+            ),
+            {"entity": fragment.entity_id},
+        ).scalar_one()
+        exclusion_count = connection.execute(
+            text("SELECT count(*) FROM resolution_exclusions")
+        ).scalar_one()
+    assert features["identity_authority"] == "provisional"
+    assert features["search_complete"] is True
+    assert features["adjudicated_count"] == 1
+    assert features["candidate_adjudications"][0]["verdict"] == (
+        "insufficient_evidence"
+    )
+    assert exclusion_count == 0
+
+
+def test_truncated_candidate_prefix_cannot_authorize_novelty(
+    database_engine: Engine,
+) -> None:
+    """A checked prefix of supported differences still mints provisionally."""
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "different", "confidence": 0.9}
+    )
+    for statement in ("Lives in Bristol.", "Lives in Leeds."):
+        _seed_profiled_entity(
+            engine=database_engine,
+            provider=provider,
+            name="John Smith",
+            statement=statement,
+        )
+    resolver = CascadeResolver(
+        engine=database_engine,
+        model_provider=provider,
+        config=ResolverConfig(
+            resolver_version=RESOLVER_VERSION,
+            blocking_limit=1,
+            t4_max_candidates=1,
+            thresholds=_ALWAYS_ESCALATE,
+        ),
+        embedding_model="qwen/qwen3-embedding-8b",
+        small_model="openai/gpt-5.6-luna",
+        frontier_model="openai/gpt-5.6-sol",
+    )
+
+    fragment = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="John Smith"),
+        claim=_claim(claim_text="John Smith moved to Prague."),
+    )
+
+    with database_engine.connect() as connection:
+        features = connection.execute(
+            text(
+                "SELECT features FROM resolution_decisions"
+                " WHERE entity_id = :entity ORDER BY decided_at DESC LIMIT 1"
+            ),
+            {"entity": fragment.entity_id},
+        ).scalar_one()
+    assert features["identity_authority"] == "provisional"
+    assert features["search_complete"] is False
+    assert features["candidate_count"] == 1
+    assert features["adjudicated_count"] == 1
+
+
+def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) -> None:
+    """Provider latency is outside the transaction-scoped advisory lock."""
+    lock_was_free = False
+
+    def inspect_lock(_prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal lock_was_free
+        assert type_name == "AdjudicationVerdict"
+        with database_engine.begin() as connection:
+            lock_was_free = bool(
+                connection.execute(
+                    text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"{_DEPLOYMENT_ID}:lemma:caroline"},
+                ).scalar_one()
+            )
+        return {"verdict": "same", "confidence": 0.9}
+
+    provider = FakeModelProvider(generate_router=inspect_lock)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    first = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined."),
+    )
+    second = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline returned."),
+    )
+
+    assert second.entity_id == first.entity_id
+    assert lock_was_free is True
+
+
+def test_changed_candidate_snapshot_discards_stale_t4_result(
+    database_engine: Engine,
+) -> None:
+    """D99: a candidate arriving during T4 forces a fresh bounded decision."""
+    inserted_candidate = uuid4()
+    provider_calls = 0
+
+    def mutate_candidates(_prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal provider_calls
+        assert type_name == "AdjudicationVerdict"
+        provider_calls += 1
+        if provider_calls == 1:
+            with database_engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO entities (entity_id, deployment_id,"
+                        " canonical_name, normalized_name) VALUES"
+                        " (:entity, :deployment, 'Caroline', 'caroline')"
+                    ),
+                    {"entity": inserted_candidate, "deployment": _DEPLOYMENT_ID},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                        " alias_text, normalized_lemma, provenance) VALUES"
+                        " (:alias, :deployment, :entity, 'Caroline', 'caroline',"
+                        " 'llm_canonical')"
+                    ),
+                    {
+                        "alias": uuid4(),
+                        "deployment": _DEPLOYMENT_ID,
+                        "entity": inserted_candidate,
+                    },
+                )
+        return {"verdict": "same", "confidence": 0.9}
+
+    provider = FakeModelProvider(generate_router=mutate_candidates)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    first = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined."),
+    )
+
+    resolved = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline returned."),
+    )
+
+    with database_engine.connect() as connection:
+        features = connection.execute(
+            text(
+                "SELECT features FROM resolution_decisions"
+                " WHERE entity_id = :entity ORDER BY decided_at DESC LIMIT 1"
+            ),
+            {"entity": resolved.entity_id},
+        ).scalar_one()
+        mention_count = connection.execute(
+            text("SELECT count(*) FROM mentions")
+        ).scalar_one()
+    assert resolved.entity_id == first.entity_id
+    assert provider_calls == 2
+    assert features["candidate_count"] == 2
+    assert mention_count == 2
+
+
+def test_repeated_candidate_changes_exhaust_without_stale_commit(
+    database_engine: Engine,
+) -> None:
+    """Bounded optimistic retries end in a typed, commit-free error."""
+    provider_calls = 0
+
+    def keep_mutating(_prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal provider_calls
+        assert type_name == "AdjudicationVerdict"
+        provider_calls += 1
+        entity_id = uuid4()
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id,"
+                    " canonical_name, normalized_name) VALUES"
+                    " (:entity, :deployment, 'Caroline', 'caroline')"
+                ),
+                {"entity": entity_id, "deployment": _DEPLOYMENT_ID},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                    " alias_text, normalized_lemma, provenance) VALUES"
+                    " (:alias, :deployment, :entity, 'Caroline', 'caroline',"
+                    " 'llm_canonical')"
+                ),
+                {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
+            )
+        return {"verdict": "same", "confidence": 0.9}
+
+    provider = FakeModelProvider(generate_router=keep_mutating)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined."),
+    )
+
+    with pytest.raises(ResolutionContendedError):
+        resolver.resolve(
+            deployment_id=_DEPLOYMENT_ID,
+            reference=EntityRef(name="Caroline"),
+            claim=_claim(claim_text="Caroline returned."),
+        )
+
+    with database_engine.connect() as connection:
+        mention_count = connection.execute(
+            text("SELECT count(*) FROM mentions")
+        ).scalar_one()
+        decision_count = connection.execute(
+            text("SELECT count(*) FROM resolution_decisions")
+        ).scalar_one()
+    assert provider_calls == 3
+    assert mention_count == 1
+    assert decision_count == 1
+
+
 def test_low_confidence_small_verdict_escalates_to_frontier(
     database_engine: Engine,
 ) -> None:
     """The T4 ladder: a small-model verdict below the floor re-asks frontier."""
 
     def low_confidence_router(prompt: str, type_name: str) -> dict[str, object]:
-        return {"match": True, "confidence": 0.5}  # below the 0.75 floor
+        return {"verdict": "same", "confidence": 0.5}  # below the 0.75 floor
 
     provider = FakeModelProvider(generate_router=low_confidence_router)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -469,7 +732,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
 
     def false_merge_router(prompt: str, type_name: str) -> dict[str, object]:
         """Regress T4 to match everything, including same-name non-matches."""
-        return {"match": True, "confidence": 0.9}
+        return {"verdict": "same", "confidence": 0.9}
 
     broken = _resolver(
         engine=database_engine,
@@ -647,7 +910,9 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     database_engine: Engine,
 ) -> None:
     """WP-I.4: profile text drives T3 and precedes the T4 identity question."""
-    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "same", "confidence": 0.9}
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -687,7 +952,9 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     prompt = provider.generated_prompts[-1]
     assert "CANDIDATE PROFILE: KB Bank is a bank licensed by CNB" in prompt
     assert "CANDIDATE FACTS:\n- KB Bank is a bank licensed by CNB" in prompt
-    assert prompt.index("CANDIDATE FACTS:") < prompt.index("Same real-world entity?")
+    assert prompt.index("CANDIDATE FACTS:") < prompt.index(
+        "Choose exactly one identity verdict:"
+    )
 
     with database_engine.begin() as connection:
         connection.execute(
@@ -713,7 +980,9 @@ def test_sole_exact_candidate_with_current_profile_can_t3_accept(
     database_engine: Engine,
 ) -> None:
     """A known James takes the cheap profile path, never an exact-name verdict."""
-    provider = FakeModelProvider(generate_payload={"match": False, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "different", "confidence": 0.9}
+    )
     resolver = _resolver(
         engine=database_engine,
         provider=provider,
@@ -750,7 +1019,9 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
     database_engine: Engine,
 ) -> None:
     """Several same-name profiles stay ambiguous; cosine only orders T4."""
-    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "same", "confidence": 0.9}
+    )
     first = _seed_profiled_entity(
         engine=database_engine,
         provider=provider,
@@ -790,7 +1061,9 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
 
 def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) -> None:
     """T0 counts entity ids, not source/canonical alias rows."""
-    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "same", "confidence": 0.9}
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
     entity = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -827,7 +1100,9 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
     database_engine: Engine,
 ) -> None:
     """WP-I.1: claim surface App and canonical Application share one id."""
-    provider = FakeModelProvider(generate_payload={"match": True, "confidence": 0.9})
+    provider = FakeModelProvider(
+        generate_payload={"verdict": "same", "confidence": 0.9}
+    )
     resolver = _resolver(engine=database_engine, provider=provider)
     claim = _claim(claim_text="We opened the App to file the report.")
     minted = resolver.resolve(
@@ -1068,7 +1343,7 @@ def _normalize_through_shipped_resolver(
     provider = FakeModelProvider(
         generate_payloads={
             "NormalizationResponse": _payload(payload),
-            "AdjudicationVerdict": {"match": True, "confidence": 0.9},
+            "AdjudicationVerdict": {"verdict": "same", "confidence": 0.9},
         }
     )
     resolver = _resolver(engine=database_engine, provider=provider)

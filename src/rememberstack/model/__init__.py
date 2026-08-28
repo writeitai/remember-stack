@@ -304,6 +304,7 @@ from rememberstack.model.relations import ObservationCandidate
 from rememberstack.model.relations import RelationCandidate
 from rememberstack.model.relations import ResolvedEntity
 from rememberstack.model.resolution import AdjudicationVerdict
+from rememberstack.model.resolution import IdentityVerdict
 from rememberstack.model.resolution import ResolutionCandidate
 from rememberstack.model.resolution import ResolutionThresholds
 from rememberstack.model.resolution import ResolverConfig
@@ -338,6 +339,7 @@ __all__ = (
     "BudgetParked",
     "AddedContext",
     "AdjudicationVerdict",
+    "IdentityVerdict",
     "AggregateBucket",
     "AggregateReport",
     "AsOfTemporalScope",

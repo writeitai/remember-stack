@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v15"
-DEFAULT_PROTOCOL_KEY: Final = "full-v15"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-default-neighborhood-v15"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v16"
+DEFAULT_PROTOCOL_KEY: Final = "full-v16"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-identity-uncertainty-v16"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -153,6 +153,7 @@ PUBLIC TOOLS:
 
 TOOL TRACE SO FAR:
 {trace}
+{guard_feedback}
 
 QUESTION:
 {question}"""
@@ -194,8 +195,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V15 = LoCoMoProtocol(
-    key="full-v15",
+_FULL_V16 = LoCoMoProtocol(
+    key="full-v16",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -217,7 +218,7 @@ _FULL_V15 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V15.key: _FULL_V15}
+    {_FULL_V16.key: _FULL_V16}
 )
 
 
@@ -285,6 +286,7 @@ def render_answer_agent_prompt(
     tools: tuple[ToolDescriptor, ...],
     trace: tuple[ToolCallRecord, ...],
     answer_word_cap: int | None = None,
+    guard_feedback: str | None = None,
 ) -> str:
     """Render the frozen public tool catalog and trace, never gold annotations."""
     tool_payload = json.dumps(
@@ -302,6 +304,9 @@ def render_answer_agent_prompt(
     return ANSWER_AGENT_PROMPT_TEMPLATE.format(
         tools=tool_payload,
         trace=trace_payload or "[]",
+        guard_feedback=(
+            "\nGUARD FEEDBACK:\n" + guard_feedback if guard_feedback else ""
+        ),
         question=question,
         answer_word_cap_instruction=(
             f" The final answer must contain at most {answer_word_cap} words."

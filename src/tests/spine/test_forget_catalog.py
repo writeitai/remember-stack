@@ -832,8 +832,8 @@ def _seed_resolution_residuals(*, connection: Connection) -> None:
     connection.execute(
         text(
             "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
-            " entity_id_high, reason, created_by) VALUES"
-            " (:d, :exclusive, :shared, :token, 'human')"
+            " entity_id_high, reason, created_by, basis, is_effective) VALUES"
+            " (:d, :exclusive, :shared, :token, 'human', 'human', true)"
         ),
         {
             "d": _DEPLOYMENT_ID,

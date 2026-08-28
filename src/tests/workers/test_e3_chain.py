@@ -198,7 +198,7 @@ class _E3Rig:
                 "FactLabelResponse": {"label": "Alice Novak works for Acme."},
                 "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
                 "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
-                "AdjudicationVerdict": {"match": True, "confidence": 0.9},
+                "AdjudicationVerdict": {"verdict": "same", "confidence": 0.9},
             }
         )
         document_catalog = DocumentCatalog(engine=engine)

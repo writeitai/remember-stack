@@ -30,6 +30,7 @@ from rememberstack.model import AdjudicationVerdict
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EntityRef
+from rememberstack.model import IdentityVerdict
 from rememberstack.model import ModelRequest
 from rememberstack.model import ResolutionCandidate
 from rememberstack.model import ResolvedEntity
@@ -50,12 +51,19 @@ class ResolverVersionConflictError(Exception):
     """A resolver version re-registered with a different definition (D22)."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.08c"
+class ResolutionContendedError(RuntimeError):
+    """Candidate authority changed through every bounded resolver attempt."""
+
+
+RESOLVER_VERSION: Final = "resolver-2026.08d"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
+08d preserves D99 uncertainty and revalidates around unlocked provider calls.
 08c makes exact T0 candidate-only and records T4 non-match exclusions. 08b
 makes T3 profile-only and gives T4 current profile evidence. 08a cuts threshold
 provenance from per-type maps to one global set. Generation parameters remain
 part of provenance; T4 stays pinned to temperature=0.0."""
+
+RESOLUTION_MAX_ATTEMPTS: Final = 3
 
 _T4_PROMPT: Final = """You adjudicate entity identity for a memory system.
 Are these the same real-world entity? Answer strictly from the evidence given.
@@ -68,16 +76,50 @@ CANDIDATE PROFILE: {candidate_profile}
 CANDIDATE FACTS:
 {candidate_facts}
 
-Same real-world entity?"""
+Choose exactly one identity verdict:
+- same: evidence supports one real-world referent
+- different: evidence positively distinguishes two referents
+- insufficient_evidence: the evidence cannot decide"""
+
+
+@dataclass(frozen=True)
+class _CandidateState:
+    """One candidate plus the deterministic gate on its profile evidence."""
+
+    candidate: ResolutionCandidate
+    profile_gate: str
+
+
+@dataclass(frozen=True)
+class _CandidateSnapshot:
+    """The bounded candidate authority revalidated around provider calls."""
+
+    states: tuple[_CandidateState, ...]
+    search_complete: bool
+
+    @property
+    def candidates(self) -> tuple[ResolutionCandidate, ...]:
+        """Expose the public candidate values in their deterministic order."""
+        return tuple(state.candidate for state in self.states)
+
+
+@dataclass(frozen=True)
+class _T3Score:
+    """One T3 candidate score and its fixed-vocabulary gate outcome."""
+
+    candidate: ResolutionCandidate
+    score: float | None
+    gate: str
 
 
 @dataclass(frozen=True)
 class _DecisionOutcome:
-    """One candidate pass plus the durable negative evidence it produced."""
+    """One unlocked candidate pass and the authority it may commit."""
 
     accepted: tuple[ResolutionCandidate, str, float, dict[str, object]] | None
-    rejected_entity_ids: tuple[UUID, ...]
-    last_rejection: tuple[str, float, dict[str, object]] | None
+    different_entity_ids: tuple[UUID, ...]
+    last_adjudication: tuple[str, float, dict[str, object]] | None
+    decision_features: dict[str, object]
 
 
 class CascadeResolver:
@@ -115,68 +157,79 @@ class CascadeResolver:
         meter: CostMeterPort | None = None,
         call_key: str = "resolve",
     ) -> ResolvedEntity:
-        """Run the cascade for one reference; mint when nothing matches.
+        """Resolve against a revalidated snapshot, minting when needed.
 
-        Stops at the first confident decision. The mention and the
-        append-only verdict (tier, scores, config version) are written in the
-        same transaction as any mint. Cross-SURFACE duplicate mints (two
-        distinct variants racing on an empty registry) are deliberately not
-        serialized here — that is the clustering/merge machinery's job
-        (registries §6, WP-2.2); the lemma lock prevents the same-lemma race.
+        The lemma lock protects each short snapshot/commit transaction. T3 and
+        T4 run between them, so provider latency never extends the database
+        lock. A changed snapshot discards the stale result and retries.
         """
         self._ensure_registered(deployment_id=deployment_id)
         lemma = normalized_lemma(surface=reference.name)
-        with self._engine.begin() as connection:
-            connection.execute(_LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"})
-            exact_candidates = self._exact_candidates(
-                connection=connection, deployment_id=deployment_id, lemma=lemma
-            )
-            candidates = (
-                exact_candidates
-                if exact_candidates
-                else self._blocked_candidates(
+        for attempt in range(1, RESOLUTION_MAX_ATTEMPTS + 1):
+            with self._engine.begin() as connection:
+                connection.execute(
+                    _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
+                )
+                snapshot = self._candidate_snapshot(
                     connection=connection, deployment_id=deployment_id, lemma=lemma
                 )
-            )
             outcome = self._decide(
-                connection=connection,
                 deployment_id=deployment_id,
                 reference=reference,
                 claim=claim,
-                candidates=candidates,
+                snapshot=snapshot,
                 meter=meter,
-                call_key=call_key,
+                call_key=f"{call_key}:optimistic:{attempt}",
             )
-            if outcome.accepted is not None:
-                candidate, method, confidence, features = outcome.accepted
-                self._record_exclusions(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    anchor_entity_id=candidate.entity_id,
-                    excluded_entity_ids=outcome.rejected_entity_ids,
+            with self._engine.begin() as connection:
+                connection.execute(
+                    _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
                 )
-                return self._record(
+                current = self._candidate_snapshot(
+                    connection=connection, deployment_id=deployment_id, lemma=lemma
+                )
+                if current != snapshot:
+                    continue
+                decision_id = uuid4()
+                if outcome.accepted is not None:
+                    candidate, method, confidence, features = outcome.accepted
+                    resolved = self._record(
+                        connection=connection,
+                        decision_id=decision_id,
+                        deployment_id=deployment_id,
+                        reference=reference,
+                        claim=claim,
+                        lemma=lemma,
+                        entity_id=candidate.entity_id,
+                        method=method,
+                        confidence=confidence,
+                        features={**outcome.decision_features, **features},
+                        created=False,
+                    )
+                    self._record_exclusions(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        anchor_entity_id=candidate.entity_id,
+                        excluded_entity_ids=outcome.different_entity_ids,
+                        source_decision_id=decision_id,
+                    )
+                    return resolved
+                return self._mint(
                     connection=connection,
+                    decision_id=decision_id,
                     deployment_id=deployment_id,
                     reference=reference,
                     claim=claim,
                     lemma=lemma,
-                    entity_id=candidate.entity_id,
-                    method=method,
-                    confidence=confidence,
-                    features=features,
-                    created=False,
+                    considered=snapshot.candidates,
+                    different_entity_ids=outcome.different_entity_ids,
+                    adjudication=outcome.last_adjudication,
+                    decision_features=outcome.decision_features,
                 )
-            return self._mint(
-                connection=connection,
-                deployment_id=deployment_id,
-                reference=reference,
-                claim=claim,
-                lemma=lemma,
-                considered=candidates,
-                rejected_entity_ids=outcome.rejected_entity_ids,
-                rejection=outcome.last_rejection,
-            )
+        raise ResolutionContendedError(
+            f"identity candidates for {lemma!r} changed during "
+            f"{RESOLUTION_MAX_ATTEMPTS} resolver attempts"
+        )
 
     def _ensure_registered(self, *, deployment_id: UUID) -> None:
         """Verify the in-force config IS the registered resolver version.
@@ -271,39 +324,71 @@ class CascadeResolver:
             response_type=AdjudicationVerdict,
         )
         if verdict.output.confidence >= thresholds.t4_small_confidence_floor:
-            return verdict.output.match, "T4_small"
+            return verdict.output.verdict is IdentityVerdict.SAME, "T4_small"
         frontier = self._model_provider.generate(
             request=ModelRequest(
                 model=self._frontier_model, prompt=prompt, temperature=0.0
             ),
             response_type=AdjudicationVerdict,
         )
-        return frontier.output.match, "T4_frontier"
+        return frontier.output.verdict is IdentityVerdict.SAME, "T4_frontier"
 
     def _exact_candidates(
         self, *, connection: Connection, deployment_id: UUID, lemma: str
     ) -> tuple[ResolutionCandidate, ...]:
         """Return distinct active exact-lemma candidates; T0 never decides."""
+        return self._exact_snapshot(
+            connection=connection, deployment_id=deployment_id, lemma=lemma
+        ).candidates
+
+    def _candidate_snapshot(
+        self, *, connection: Connection, deployment_id: UUID, lemma: str
+    ) -> _CandidateSnapshot:
+        """Load the exact tier when non-empty, otherwise the loose blockers."""
+        exact = self._exact_snapshot(
+            connection=connection, deployment_id=deployment_id, lemma=lemma
+        )
+        if exact.states:
+            return exact
+        return self._blocked_snapshot(
+            connection=connection, deployment_id=deployment_id, lemma=lemma
+        )
+
+    def _exact_snapshot(
+        self, *, connection: Connection, deployment_id: UUID, lemma: str
+    ) -> _CandidateSnapshot:
+        """Load a bounded exact tier and say whether its result was truncated."""
         rows = (
             connection.execute(
                 _T0_CANDIDATES,
                 {
                     "deployment_id": deployment_id,
                     "lemma": lemma,
-                    "limit": self._config.blocking_limit,
+                    "limit": self._config.blocking_limit + 1,
                 },
             )
             .mappings()
             .all()
         )
-        return self._candidates_from_rows(
-            connection=connection, deployment_id=deployment_id, rows=rows
+        return self._snapshot_from_rows(
+            connection=connection,
+            deployment_id=deployment_id,
+            rows=rows,
+            search_complete=len(rows) <= self._config.blocking_limit,
         )
 
     def _blocked_candidates(
         self, *, connection: Connection, deployment_id: UUID, lemma: str
     ) -> tuple[ResolutionCandidate, ...]:
         """T1 trigram + T2 phonetic candidate generation (never a decision)."""
+        return self._blocked_snapshot(
+            connection=connection, deployment_id=deployment_id, lemma=lemma
+        ).candidates
+
+    def _blocked_snapshot(
+        self, *, connection: Connection, deployment_id: UUID, lemma: str
+    ) -> _CandidateSnapshot:
+        """Load loose blockers and report limit truncation without overclaiming recall."""
         rows = (
             connection.execute(
                 _T1_T2_BLOCK,
@@ -311,27 +396,36 @@ class CascadeResolver:
                     "deployment_id": deployment_id,
                     "lemma": lemma,
                     "floor": self._config.trigram_floor,
-                    "limit": self._config.blocking_limit,
+                    "limit": self._config.blocking_limit + 1,
                 },
             )
             .mappings()
             .all()
         )
-        return self._candidates_from_rows(
-            connection=connection, deployment_id=deployment_id, rows=rows
+        return self._snapshot_from_rows(
+            connection=connection,
+            deployment_id=deployment_id,
+            rows=rows,
+            search_complete=len(rows) <= self._config.blocking_limit,
         )
 
-    def _candidates_from_rows(
-        self, *, connection: Connection, deployment_id: UUID, rows: Sequence[RowMapping]
-    ) -> tuple[ResolutionCandidate, ...]:
-        """Attach current profile evidence to deterministic candidate rows."""
+    def _snapshot_from_rows(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        rows: Sequence[RowMapping],
+        search_complete: bool,
+    ) -> _CandidateSnapshot:
+        """Attach current profile evidence to one deterministic bounded prefix."""
+        bounded_rows = rows[: self._config.blocking_limit]
         profiles = load_entity_profile_evidence_many(
             connection=connection,
             deployment_id=deployment_id,
-            entity_ids=tuple(row["entity_id"] for row in rows),
+            entity_ids=tuple(row["entity_id"] for row in bounded_rows),
         )
-        candidates: list[ResolutionCandidate] = []
-        for row in rows:
+        states: list[_CandidateState] = []
+        for row in bounded_rows:
             entity_id = row["entity_id"]
             profile = profiles.get(entity_id)
             facts = profile.salient_facts if profile is not None else ()
@@ -339,62 +433,83 @@ class CascadeResolver:
                 build_profile_summary(salient_facts=facts) if facts else None
             )
             cached_summary = profile.profile_summary if profile is not None else None
-            candidates.append(
-                ResolutionCandidate(
-                    entity_id=entity_id,
-                    canonical_name=row["canonical_name"],
-                    blocking_tier=row["blocking_tier"],
-                    trigram_score=row["trigram_score"],
-                    profile_summary=(
-                        cached_summary if cached_summary == current_summary else None
+            if not facts:
+                profile_gate = (
+                    "profile_stale" if cached_summary is not None else "profile_missing"
+                )
+            elif cached_summary != current_summary:
+                profile_gate = "profile_stale"
+            else:
+                profile_gate = "current"
+            states.append(
+                _CandidateState(
+                    profile_gate=profile_gate,
+                    candidate=ResolutionCandidate(
+                        entity_id=entity_id,
+                        canonical_name=row["canonical_name"],
+                        blocking_tier=row["blocking_tier"],
+                        trigram_score=row["trigram_score"],
+                        profile_summary=(
+                            cached_summary
+                            if cached_summary == current_summary
+                            else None
+                        ),
+                        salient_facts=facts,
                     ),
-                    salient_facts=facts,
                 )
             )
-        return tuple(candidates)
+        return _CandidateSnapshot(states=tuple(states), search_complete=search_complete)
 
     def _decide(
         self,
         *,
-        connection: Connection,
         deployment_id: UUID,
         reference: EntityRef,
         claim: ClaimForNormalization,
-        candidates: tuple[ResolutionCandidate, ...],
+        snapshot: _CandidateSnapshot,
         meter: CostMeterPort | None,
         call_key: str,
     ) -> _DecisionOutcome:
-        """Let T3 accept one profiled candidate; send all residue to T4.
-
-        Multiple candidates are identity ambiguity even when one profile has a
-        high cosine score. T3 can therefore accept only when exactly one
-        candidate exists. Empty, conflicting, or multiple candidates reach
-        bounded T4 adjudication, and every explicit T4 non-match is returned
-        for durable exclusion recording.
-        """
+        """Decide one snapshot; only supported difference becomes exclusion."""
+        candidates = snapshot.candidates
         if not candidates:
             return _DecisionOutcome(
-                accepted=None, rejected_entity_ids=(), last_rejection=None
+                accepted=None,
+                different_entity_ids=(),
+                last_adjudication=None,
+                decision_features={
+                    "identity_authority": (
+                        "authoritative" if snapshot.search_complete else "provisional"
+                    ),
+                    "search_complete": snapshot.search_complete,
+                    "candidate_count": 0,
+                    "adjudicated_count": 0,
+                    "t3_outcome": "profile_missing",
+                    "candidate_adjudications": [],
+                },
             )
         thresholds = self._config.thresholds
         scored = self._t3_scores(
-            connection=connection,
             deployment_id=deployment_id,
             reference=reference,
             claim=claim,
-            candidates=candidates,
+            states=snapshot.states,
             meter=meter,
             call_key=f"{call_key}:t3",
         )
         ordered = sorted(
             scored,
-            key=lambda item: item[1] if item[1] is not None else -2.0,
+            key=lambda item: item.score if item.score is not None else -2.0,
             reverse=True,
         )
+        t3_outcome = _t3_outcome(scored=scored)
         adjudicated = 0
-        rejected_entity_ids: list[UUID] = []
-        last_rejection: tuple[str, float, dict[str, object]] | None = None
-        for candidate, score in ordered:
+        different_entity_ids: list[UUID] = []
+        last_adjudication: tuple[str, float, dict[str, object]] | None = None
+        audits: list[dict[str, object]] = []
+        for scored_candidate in ordered:
+            candidate = scored_candidate.candidate
+            score = scored_candidate.score
             if (
                 len(candidates) == 1
                 and score is not None
@@ -410,8 +525,16 @@ class CascadeResolver:
                             "embedding_score": score,
                         },
                     ),
-                    rejected_entity_ids=(),
-                    last_rejection=None,
+                    different_entity_ids=(),
+                    last_adjudication=None,
+                    decision_features={
+                        "identity_authority": "authoritative",
+                        "search_complete": snapshot.search_complete,
+                        "candidate_count": len(candidates),
+                        "adjudicated_count": 0,
+                        "t3_outcome": "accepted",
+                        "candidate_adjudications": [],
+                    },
                 )
             # A fighting score, several candidates, or no current profile is
             # ambiguity. T3 only accepts; it never mints a competing referent.
@@ -425,7 +548,19 @@ class CascadeResolver:
                 meter=meter,
                 call_key=f"{call_key}:t4:{candidate.entity_id}",
             )
-            if verdict.match:
+            audit = {
+                "entity_id": str(candidate.entity_id),
+                "blocking_tier": candidate.blocking_tier,
+                "embedding_score": score,
+                "t3_gate": scored_candidate.gate,
+                "verdict": verdict.verdict.value,
+                "confidence": verdict.confidence,
+                "model": model,
+                "rationale": verdict.rationale,
+            }
+            audits.append(audit)
+            last_adjudication = (seat, verdict.confidence, audit)
+            if verdict.verdict is IdentityVerdict.SAME:
                 return _DecisionOutcome(
                     accepted=(
                         candidate,
@@ -438,47 +573,56 @@ class CascadeResolver:
                             "rationale": verdict.rationale,
                         },
                     ),
-                    rejected_entity_ids=tuple(rejected_entity_ids),
-                    last_rejection=last_rejection,
+                    different_entity_ids=tuple(different_entity_ids),
+                    last_adjudication=last_adjudication,
+                    decision_features={
+                        "identity_authority": "authoritative",
+                        "search_complete": snapshot.search_complete,
+                        "candidate_count": len(candidates),
+                        "adjudicated_count": adjudicated,
+                        "t3_outcome": t3_outcome,
+                        "candidate_adjudications": audits,
+                    },
                 )
-            rejected_entity_ids.append(candidate.entity_id)
-            last_rejection = (
-                seat,
-                verdict.confidence,
-                {
-                    "blocking_tier": candidate.blocking_tier,
-                    "embedding_score": score,
-                    "model": model,
-                    "rationale": verdict.rationale,
-                },
-            )
+            if verdict.verdict is IdentityVerdict.DIFFERENT:
+                different_entity_ids.append(candidate.entity_id)
+        authoritative = (
+            snapshot.search_complete
+            and adjudicated == len(candidates)
+            and len(different_entity_ids) == len(candidates)
+        )
         return _DecisionOutcome(
             accepted=None,
-            rejected_entity_ids=tuple(rejected_entity_ids),
-            last_rejection=last_rejection,
+            different_entity_ids=tuple(different_entity_ids),
+            last_adjudication=last_adjudication,
+            decision_features={
+                "identity_authority": (
+                    "authoritative" if authoritative else "provisional"
+                ),
+                "search_complete": snapshot.search_complete,
+                "candidate_count": len(candidates),
+                "adjudicated_count": adjudicated,
+                "t3_outcome": t3_outcome,
+                "candidate_adjudications": audits,
+            },
         )
 
     def _t3_scores(
         self,
         *,
-        connection: Connection,
         deployment_id: UUID,
         reference: EntityRef,
         claim: ClaimForNormalization,
-        candidates: tuple[ResolutionCandidate, ...],
+        states: tuple[_CandidateState, ...],
         meter: CostMeterPort | None,
         call_key: str,
-    ) -> tuple[tuple[ResolutionCandidate, float | None], ...]:
-        """Cosine similarity against candidate profiles; None = no profile.
-
-        A missing/stale profile vector is AMBIGUITY (route to T4), never a
-        confident non-match (Codex review).
-        """
-        if not any(
-            candidate.profile_summary and candidate.salient_facts
-            for candidate in candidates
-        ):
-            return tuple((candidate, None) for candidate in candidates)
+    ) -> tuple[_T3Score, ...]:
+        """Score current profiles and retain fixed diagnostic gates for others."""
+        if not any(state.profile_gate == "current" for state in states):
+            return tuple(
+                _T3Score(candidate=state.candidate, score=None, gate=state.profile_gate)
+                for state in states
+            )
         query_vector = self._embed(
             surface=mention_profile_embedding_input(
                 name=reference.name, claim_context=claim.claim_text
@@ -486,25 +630,44 @@ class CascadeResolver:
             meter=meter,
             call_key=call_key,
         )
-        by_id = {
-            row["entity_id"]: (float(row["score"]), str(row["embedding_text_hash"]))
-            for row in connection.execute(
-                _ENTITY_VECTOR_SCORES,
-                {
-                    "deployment_id": deployment_id,
-                    "entity_ids": [candidate.entity_id for candidate in candidates],
-                    "embedding_model": self._embedding_model,
-                    "input_policy": ENTITY_INPUT_POLICY,
-                    "query_vector": _vector_literal(query_vector),
-                },
-            ).mappings()
-        }
-        scored: list[tuple[ResolutionCandidate, float | None]] = []
-        for candidate in candidates:
-            stored = by_id.get(candidate.entity_id)
-            if stored is None or candidate.profile_summary is None:
-                scored.append((candidate, None))
+        with self._engine.connect() as connection:
+            by_id = {
+                row["entity_id"]: row
+                for row in connection.execute(
+                    _ENTITY_VECTOR_SCORES,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_ids": [state.candidate.entity_id for state in states],
+                        "embedding_model": self._embedding_model,
+                        "input_policy": ENTITY_INPUT_POLICY,
+                        "query_vector": _vector_literal(query_vector),
+                    },
+                ).mappings()
+            }
+        scored: list[_T3Score] = []
+        for state in states:
+            candidate = state.candidate
+            if state.profile_gate != "current":
+                scored.append(
+                    _T3Score(candidate=candidate, score=None, gate=state.profile_gate)
+                )
                 continue
+            stored = by_id.get(candidate.entity_id)
+            if (
+                stored is None
+                or stored["embedding_missing"]
+                or stored["embedding_model"] != self._embedding_model
+                or stored["embedding_input_policy_version"] != ENTITY_INPUT_POLICY
+            ):
+                scored.append(
+                    _T3Score(
+                        candidate=candidate,
+                        score=None,
+                        gate="embedding_missing_or_wrong_generation",
+                    )
+                )
+                continue
+            assert candidate.profile_summary is not None
             expected_hash = embedding_text_hash(
                 entity_profile_embedding_input(
                     canonical_name=candidate.canonical_name,
@@ -512,8 +675,17 @@ class CascadeResolver:
                     salient_facts=candidate.salient_facts,
                 )
             )
+            if stored["embedding_text_hash"] != expected_hash:
+                scored.append(
+                    _T3Score(
+                        candidate=candidate, score=None, gate="embedding_hash_mismatch"
+                    )
+                )
+                continue
             scored.append(
-                (candidate, stored[0] if stored[1] == expected_hash else None)
+                _T3Score(
+                    candidate=candidate, score=float(stored["score"]), gate="scored"
+                )
             )
         return tuple(scored)
 
@@ -568,21 +740,23 @@ class CascadeResolver:
         self,
         *,
         connection: Connection,
+        decision_id: UUID,
         deployment_id: UUID,
         reference: EntityRef,
         claim: ClaimForNormalization,
         lemma: str,
         considered: tuple[ResolutionCandidate, ...],
-        rejected_entity_ids: tuple[UUID, ...],
-        rejection: tuple[str, float, dict[str, object]] | None,
+        different_entity_ids: tuple[UUID, ...],
+        adjudication: tuple[str, float, dict[str, object]] | None,
+        decision_features: dict[str, object],
     ) -> ResolvedEntity:
         """Create the canonical entity + alias with no unsafe name-only vector."""
         entity_id = uuid4()
         # the mint verdict records the tier that DECIDED novelty: T0 when
         # nothing blocked, else the rejecting tier's method and confidence
         # (Codex review — the audit trail keeps the actual path):
-        deciding_rejection = rejection if considered else None
-        method, confidence, extra = deciding_rejection or ("T0", 1.0, {})
+        deciding_adjudication = adjudication if considered else None
+        method, confidence, extra = deciding_adjudication or ("T0", 1.0, {})
         connection.execute(
             _INSERT_ENTITY,
             {
@@ -592,14 +766,9 @@ class CascadeResolver:
                 "normalized_name": lemma,
             },
         )
-        self._record_exclusions(
+        resolved = self._record(
             connection=connection,
-            deployment_id=deployment_id,
-            anchor_entity_id=entity_id,
-            excluded_entity_ids=rejected_entity_ids,
-        )
-        return self._record(
-            connection=connection,
+            decision_id=decision_id,
             deployment_id=deployment_id,
             reference=reference,
             claim=claim,
@@ -608,6 +777,7 @@ class CascadeResolver:
             method=method,
             confidence=confidence,
             features={
+                **decision_features,
                 "lemma": lemma,
                 "novelty": True,
                 "considered": [str(c.entity_id) for c in considered],
@@ -615,6 +785,14 @@ class CascadeResolver:
             },
             created=True,
         )
+        self._record_exclusions(
+            connection=connection,
+            deployment_id=deployment_id,
+            anchor_entity_id=entity_id,
+            excluded_entity_ids=different_entity_ids,
+            source_decision_id=decision_id,
+        )
+        return resolved
 
     def _record_exclusions(
         self,
@@ -623,6 +801,7 @@ class CascadeResolver:
         deployment_id: UUID,
         anchor_entity_id: UUID,
         excluded_entity_ids: tuple[UUID, ...],
+        source_decision_id: UUID,
     ) -> None:
         """Persist canonical auto non-match pairs without overwriting humans."""
         rows: list[dict[str, object]] = []
@@ -639,6 +818,8 @@ class CascadeResolver:
                     "entity_id_low": low,
                     "entity_id_high": high,
                     "reason": f"t4-no-match:{self._config.resolver_version}",
+                    "source_decision_id": source_decision_id,
+                    "source_resolver_version": self._config.resolver_version,
                 }
             )
         if rows:
@@ -648,6 +829,7 @@ class CascadeResolver:
         self,
         *,
         connection: Connection,
+        decision_id: UUID,
         deployment_id: UUID,
         reference: EntityRef,
         claim: ClaimForNormalization,
@@ -715,7 +897,7 @@ class CascadeResolver:
         connection.execute(
             _INSERT_DECISION,
             {
-                "decision_id": uuid4(),
+                "decision_id": decision_id,
                 "deployment_id": deployment_id,
                 "mention_id": mention_id,
                 "entity_id": entity_id,
@@ -853,6 +1035,18 @@ def _config_definition(*, config: ResolverConfig) -> dict[str, object]:
     }
 
 
+def _t3_outcome(*, scored: tuple[_T3Score, ...]) -> str:
+    """Collapse candidate gates to one deterministic aggregate outcome."""
+    if not scored:
+        raise ValueError("T3 outcome requires at least one candidate")
+    if len(scored) > 1:
+        return "multiple_candidates"
+    only = next(iter(scored))
+    if only.gate != "scored":
+        return only.gate
+    return "below_threshold"
+
+
 def _cosine(a: tuple[float, ...], b: tuple[float, ...] | None) -> float:
     """Cosine similarity; a candidate without a profile vector scores 0."""
     if b is None or len(a) != len(b):
@@ -962,15 +1156,18 @@ _T1_T2_BLOCK = text(
 
 _ENTITY_VECTOR_SCORES = text(
     """
-    SELECT entity_id,
-           1.0 - (embedding <=> CAST(:query_vector AS vector)) AS score,
-           embedding_text_hash
+    SELECT entity_id, embedding IS NULL AS embedding_missing, embedding_model,
+           embedding_input_policy_version, embedding_text_hash,
+           CASE
+             WHEN embedding IS NOT NULL
+              AND embedding_model = :embedding_model
+              AND embedding_input_policy_version = :input_policy
+             THEN 1.0 - (embedding <=> CAST(:query_vector AS vector))
+             ELSE NULL
+           END AS score
     FROM entities
     WHERE deployment_id = :deployment_id
       AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
-      AND embedding IS NOT NULL
-      AND embedding_model = :embedding_model
-      AND embedding_input_policy_version = :input_policy
     """
 )
 
@@ -1018,11 +1215,24 @@ _UPSERT_GENERIC_GUARD = text(
 _INSERT_RESOLUTION_EXCLUSION = text(
     """
     INSERT INTO resolution_exclusions (
-        deployment_id, entity_id_low, entity_id_high, reason, created_by
+        deployment_id, entity_id_low, entity_id_high, reason, created_by,
+        basis, is_effective, source_decision_id, source_resolver_version
     ) VALUES (
-        :deployment_id, :entity_id_low, :entity_id_high, :reason, 'auto'
+        :deployment_id, :entity_id_low, :entity_id_high, :reason, 'auto',
+        'supported_different', true, :source_decision_id, :source_resolver_version
     )
-    ON CONFLICT (deployment_id, entity_id_low, entity_id_high) DO NOTHING
+    ON CONFLICT (deployment_id, entity_id_low, entity_id_high) DO UPDATE SET
+        reason = EXCLUDED.reason,
+        created_by = EXCLUDED.created_by,
+        basis = EXCLUDED.basis,
+        is_effective = true,
+        source_decision_id = EXCLUDED.source_decision_id,
+        source_resolver_version = EXCLUDED.source_resolver_version,
+        retired_at = NULL,
+        retired_by_decision_id = NULL
+    WHERE resolution_exclusions.basis <> 'human'
+      AND (NOT resolution_exclusions.is_effective
+           OR resolution_exclusions.basis = 'legacy_binary')
     """
 )
 
