@@ -1,5 +1,14 @@
 # LoCoMo full-system benchmark design
 
+> **Binding D99 amendment (2026-08-28).** The current protocol is
+> `RS-LoCoMo-Full-v16`. It retains v15's dataset, models, tools, call budgets,
+> and existing two-additional-attempt malformed-reader recovery. The answer
+> loop now enforces the already-prompted rule that `resolve_entity` metadata is
+> not content evidence: terminal `Unknown` after identity-only reads is rejected
+> until one bounded testimony, fact, or combined-context read has been attempted.
+> Resolver/convergence generations roll with the release. V15 and v16 scores are
+> directional, not a strict protocol A/B.
+
 > **Binding D98 amendment (2026-08-27).** The benchmark no longer builds or
 > waits for P2 and does not expose Cypher to the answer agent. Graph questions
 > use typed live-graph operations and the bounded PostgreSQL SQL helpers;
@@ -7,13 +16,13 @@
 > proves property-graph catalog/function health; the benchmark preflight
 > separately proves immediate committed-edge visibility on its isolated sample.
 > P3 is
-> still explicitly built. D97's changed assured descriptors subsequently roll
-> the current protocol to `full-v15`; older
+> still explicitly built. D97's changed assured descriptors rolled the
+> pre-D99 protocol to `full-v15`; older
 > version-transition paragraphs remain historical evidence only.
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v15 run.
+> paid v16 run.
 
 ## 1. Acceptance boundary
 
@@ -39,7 +48,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v15
+protocol                RS-LoCoMo-Full-v16
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -63,6 +72,27 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v15 → v16 (2026-08-28 — D99 uncertainty and content fallback):** The engine
+uses tri-state identity adjudication, truncation-honest provisional fragments,
+post-profile convergence nomination, T3 gate diagnostics, and resolver
+snapshot/revalidation. The answer loop additionally rejects terminal `Unknown`
+when every successful read so far was identity metadata; it asks the same pinned
+model to continue within the existing tool/call/spend caps and requires one
+testimony/fact/combined-context attempt. No new tool, model, retry budget, or
+gold-derived hint is added. The prompt already stated this rule, but mechanical
+enforcement changes behavior, so the protocol identity and fingerprint roll.
+
+V16 uses the stock fail-closed cluster configuration:
+`auto_merge_enabled=false`. No human accepts or rejects merge proposals between
+ingest and scoring, because doing so after seeing this conversation's gold
+identity would make the benchmark operator an unrecorded answer oracle. The run
+records proposal count, member sets, blast radii, and active-fragment counts as
+identity diagnostics before scoring. Therefore unattended v16 may still expose
+several active candidates; its score tests the resolver changes plus graceful
+content fallback, while proposal quality is evaluated separately. A later
+operator-review experiment, if run, is a distinct diagnostic artifact and does
+not replace the ordinary v16 score.
 
 **v14 → v15 (2026-08-27 — D97 default entity neighborhood):** The
 `fact_context` and `answer_context` descriptors advance to version 2 because
@@ -273,7 +303,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and later instead measure the
-owner-selected Luna agent against their pinned surfaces; v15 retains that model
+owner-selected Luna agent against their pinned surfaces; v16 retains that model
 choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -476,7 +506,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v15; no benchmark-specific
+an integrity requirement and an answer channel in v16; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -595,15 +625,26 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v15 leaves it unset.
+   prepared protocol's `answer_word_cap` is set; v16 leaves it unset. If the
+   normalized answer is `Unknown` and no successful content-bearing tool has
+   been attempted, reject that step, render bounded guard feedback, and continue
+   the same loop. Content-bearing tools are the three context operations;
+   relation/observation/transcript/search/hydration primitives; row-returning
+   SQL or saved queries; and P3 search/read. Identity resolution and schema,
+   explain, list, or P3-list metadata do not satisfy the guard.
 6. Retry a completion that cannot produce the required JSON step up to two
    times, including before the first tool call. The allowance is shared across
    the loop; every attempt counts toward the normal per-question, run-wide, and
    cost budgets. Plain provider outages are never retried.
-7. Stop at eight tools or nine model calls; budget exhaustion is a visible wrong.
-8. Checkpoint the terminal answer or failure. `reader_attempts` counts only
+7. The forced continuation consumes the ordinary model-call, run-wide cost, and
+   tool budgets; it has no private retry allowance. If a guard fires when no
+   model call remains, the item terminates as the same visible wrong/`Unknown`
+   rather than exceeding a cap.
+8. Stop at eight tools or nine model calls; budget exhaustion is a visible wrong.
+9. Checkpoint the terminal answer or failure. `reader_attempts` counts only
    reader-position attempts after tool results; `first_step_retries` counts
-   additional calls made before any tool result.
+   additional calls made before any tool result; `unknown_guard_retries` counts
+   rejected terminal `Unknown` steps.
 
 The agent is instructed to choose the cheapest suitable channel:
 `testimony_context` for what sources said, `fact_context` for current or
@@ -617,11 +658,12 @@ filesystem orientation/grep/read. It must inspect graph truncation/work-bound
 fields and respect grain, validity, freshness, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v15): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v16): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
-before answering "Unknown". These are prompt discipline, not harness enforcement
-— the harness still only bounds call counts.
+before answering "Unknown". The first two remain prompt discipline. D99 makes
+only the content-before-`Unknown` rule a harness guard as specified above; the
+harness does not try to judge whether evidence was subjectively “useful.”
 
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
@@ -644,11 +686,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v15 \
+  --protocol full-v16 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v15`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v16`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

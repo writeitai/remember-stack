@@ -8,13 +8,20 @@
 > community K routing, and community refresh hints are removed. Pre-D98
 > graph-projection/community wording below is superseded.
 
+> **Binding D99 amendment (2026-08-28).** Identity uncertainty is provisional,
+> not a durable negative edge. Candidate completeness, tri-state T4,
+> post-profile neighborhood convergence, T3 gate diagnostics, and the resolver's
+> unlocked-provider/locked-revalidation transaction contract are normative in
+> [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md)
+> §3 and supersede binary-T4 wording below.
+
 The plane-E substrate that canonicalizes entities and predicates. Distills the registry
 research (`plan/analysis/registry_research/SYNTHESIS.md`, R1–R10) and the entity-registry
 analysis (`plan/analysis/entity_registry.md`) into binding design. Formalizes objection O5;
 decisions **D15–D24** (and D4/D5). Numbers here are starting points to be measured on the
 golden set (D22) / a corpus slice — not committed constants.
 
-> **Amended 2026-08-26 (D95–D96).** Identity, T0-as-verdict, and **entity types**
+> **Amended 2026-08-26/28 (D95–D96, D99).** Identity, T0-as-verdict, and **entity types**
 > (including first-mint `entities.type` and domain/range) are superseded by
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
 > This file remains current for blocking, clustering, review, **predicate** packs,
@@ -198,9 +205,11 @@ an exact lemma lists distinct active entity ids and never decides identity.
   floor. The old JW≥0.92 / cosine≥0.88 are placeholders to overwrite.
 - T0 hits are distinct active entity ids, not alias rows. A sole candidate
   with a current evidence-backed profile may T3-accept. Empty/conflicting
-  evidence or several candidates reaches T4. A T4 non-match may mint a second
-  id with the same lemma and records a durable `resolution_exclusions`
-  cannot-link pair; clustering honors those pairs.
+  evidence or several candidates reaches tri-state T4. Only positively
+  supported `different` creates a durable `resolution_exclusions` cannot-link.
+  `insufficient_evidence` or a truncated candidate/adjudication prefix may mint
+  a merge-eligible provisional fragment but cannot claim exhaustive novelty.
+  Every decision retains candidate completeness and a bounded T3 outcome reason.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
@@ -768,6 +777,17 @@ a full re-cluster** — the same grouping no matter what order documents arrived
 re-resolve the *1-hop neighborhood* — the entities one match-link away from the new mention —
 and look one link further only when the mention touches a *hub*, an entity already connected to
 many others.)
+
+This is a production lifecycle, not a callable left for tests: publishing a
+current profile after relation evidence or after the D88/D90 entity observation
+flush (which opens only when every claim in that document version has finished
+normalization—the claim-normalize barrier) nominates
+that entity's distinct alias lemmas for the bounded neighborhood operation.
+The deterministic proposal identity is deployment + sorted live root member
+ids + cluster-configuration fingerprint. Exact replay deduplicates; a changed
+member set creates a replacement and marks overlapping pending proposals
+`auto_resolved`, while resolved history is immutable. Merge-triggered profile
+refresh uses the base refresher without recursively nominating the same merge.
 
 **Keep every merge reversible.** Because over-merges are catastrophic *and* inevitable at scale,
 every merge must be undoable. Three mechanisms, all in Postgres (the single authority, D6):

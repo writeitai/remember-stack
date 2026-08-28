@@ -1,5 +1,15 @@
 # Entity identity and retrieval — design (binding)
 
+> **Binding D99 amendment (2026-08-28).** T4 distinguishes `same`,
+> positively supported `different`, and `insufficient_evidence`. Only
+> `different` creates an automatic cannot-link. An incomplete candidate or T4
+> prefix cannot prove novelty; ingestion may mint a merge-eligible provisional
+> fragment whose uncertainty remains in the append-only decision evidence.
+> Current profile publication invokes bounded neighborhood convergence.
+> Resolver provider calls run outside the lemma-lock transaction and commit
+> only after locked state revalidation. Section 3 and the implementation/test
+> contracts below contain the complete amended behavior.
+>
 > **Binding D98 amendment (2026-08-27).** Merge and identity changes are visible
 > through survivor-normalized PostgreSQL graph views after commit; there is no
 > P2 rebuild. The D95–D97 identity, profile, and retrieval behavior is otherwise
@@ -9,9 +19,12 @@
 implementation review still applies before code lands; this document is
 the *how*, not a phased MVP.
 **Date:** 2026-08-26
-**Decision log:** D95, D96, D97
+**Decision log:** D95, D96, D97, D99
 **Analysis:**
-[`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md)
+[`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
+[`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md)
+**D99 review:**
+[`Claude Opus`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md)
 **Amends:** [`registries_design.md`](registries_design.md) §2 profiles,
 §3 cascade (T0 as verdict), §4 “How an entity gets its type”;
 [`e2_e3_claims_relations_design.md`](e2_e3_claims_relations_design.md)
@@ -60,7 +73,7 @@ query planner.
 
 ## 2. Decisions this design implements
 
-**D95 — Identity is the referent.** One `entity_id` per real-world
+**D95/D99 — Identity is the referent; uncertainty is provisional.** One `entity_id` per real-world
 thing. A name generates **candidates**. **T0 never auto-merges** (exact
 lemma only lists ids). T3 may accept a repeat when a profile exists;
 T4 when the profile is empty, fights, or several candidates exist. The
@@ -70,6 +83,13 @@ auto-accept as a default-off “large corpus” switch is **rejected**; a
 narrower opt-in (closed unique namespace, not entity count) remains an
 [unchosen proposal](../../design/proposals/optional-exact-t0-accept.md),
 not WP-I.5.
+
+T4 has three evidentiary outcomes: `same`, `different`, and
+`insufficient_evidence`. Only a supported `different` verdict is a durable
+cannot-link. Candidate and adjudication limits bound work but do not prove that
+the unchecked tail contains no match. When ingestion needs an id before the
+evidence can decide, it may mint a merge-eligible provisional fragment and must
+reconsider the touched neighborhood after profiles become current.
 
 **D96 — No entity types; extract names; profile is observation prose.**
 Mentions are a diary of names (string, claim, span). E3 does not emit
@@ -105,10 +125,21 @@ id are still one candidate.
 **T0 never auto-accepts.** Same cleaned spelling is a clue, not a
 verdict. No common-name census. No “distinctive lemma” shortcut.
 
-- **0 candidates** → T1/T2 blocking; if nothing usable, **mint**.
+- **0 candidates after an untruncated block** → **mint an authoritative
+  cascade outcome**. This says the configured blocking pass surfaced no
+  candidate; it does not prove that an entity outside T1/T2's recall ceiling
+  cannot be the same referent.
 - **1 or more** → those ids are the candidate set. Decision is T3 or T4
-  (§3.1.1). If T4 says not the same as any of them, **mint** another id
-  with that spelling (§3.2).
+  (§3.1.1). If every candidate in a **complete** set receives a supported
+  `different` verdict, **mint** another authoritative id with that spelling
+  (§3.2). If candidate loading or T4 adjudication is truncated, the checked
+  prefix cannot authorize that conclusion.
+
+Candidate generation returns both the bounded candidate tuple and
+`search_complete`. Loading `limit + 1` rows is sufficient to prove whether the
+returned `limit` is a prefix. T4 similarly records `adjudicated_count` and
+whether every returned candidate received a verdict. Limits remain strict;
+completeness changes the authority of the outcome, not the amount of work.
 
 A thousand mentions of the same James are **not** a thousand T4 calls.
 Repeats are T3 once a profile exists.
@@ -117,16 +148,18 @@ Repeats are T3 once a profile exists.
 
 | Situation | Verdict | Why |
 |---|---|---|
-| No candidates after blocking | Mint | No LLM |
+| No candidates after an **untruncated** block | Authoritative cascade mint | No LLM; the configured blocking pass surfaced no candidate, without claiming perfect blocking recall |
 | One candidate, **profile exists**, mention+claim embedding sits on that profile (T3 accept band; starting threshold from D22, not a folklore constant) | **Accept, no T4** | Repeat “James” after we know him |
 | One candidate, **empty profile**, or profile **fights** the claim, or **several** exact candidates | **T4** | Father/son, second employee, first clash, thin identity |
 | T4: same | That `entity_id` | — |
-| T4: different | Mint | Same lemma, new referent |
+| T4: different for **every surfaced candidate in an untruncated set** | Authoritative cascade mint | Positive distinction within the configured blocking recall ceiling, not proof that no missed referent exists |
+| T4: insufficient evidence, or candidate/T4 prefix truncated | Provisional mint | Ingest remains available; no unchecked-tail novelty claim and no cannot-link from uncertainty |
 
 T3 embeds **mention (name + this claim) against the candidate’s
 profile** (name + summary + salient facts), never name-only vs
 name-only. Empty profile is **fail-safe**: do not treat high name-only
-cosine as certainty — that is T4 (or mint if T4 says new).
+cosine as certainty — that is T4. An uncertain T4 result may create a
+provisional fragment, but never a permanent exclusion.
 
 This is how father/son becomes possible (they reach T4 with different
 facts) **and** how a clean table stays affordable (repeats of a known
@@ -143,13 +176,37 @@ its adoption trigger is a closed unique namespace (SKUs, employee
 numbers), **not** entity count. Identifier-shaped T0 (email, LEI,
 ORCID) is a different future path, not name-lemma auto-merge.
 
-### 3.2 Same lemma, two ids
+### 3.2 Same lemma, two ids—or a provisional fragment
 
-If T4 says the mention is **not** any current candidate, **mint** a new
-`entity_id` with the same canonical spelling and a new alias row. The
-lemma advisory lock still serializes the race; it does not forbid a
-second row. `resolution_exclusions` records “these two are not the
-same” so T4 is not re-asked forever.
+If T4 positively distinguishes the mention from **every** member of a complete
+candidate set, **mint** a new authoritative `entity_id` with the same canonical
+spelling and a new alias row. The lemma advisory lock serializes the commit; it
+does not forbid a second row. `resolution_exclusions` records only the pairs
+that received a supported `different` verdict so clustering does not re-propose
+the pair.
+Each effective automatic row names its supporting append-only decision and
+resolver version. Human rows name `basis=human`.
+
+If any adjudicated candidate returns `insufficient_evidence`, candidate loading
+is truncated, or the T4 budget leaves candidates unchecked, ingestion may mint
+an active **provisional fragment** because relations and observations require an
+endpoint id. Its resolution-decision features record the bounded candidate ids,
+the per-candidate verdicts, `search_complete`, `adjudicated_count`, and
+`identity_authority=provisional`. It writes no exclusion for an insufficient or
+unchecked candidate. “Provisional” describes the authority of the mint; it is
+not a second public entity-status state and does not create a parallel registry.
+All active fragments already participate in the same reversible convergence
+mechanism (§3.3.1).
+
+The D99 migration classifies every pre-D99 `created_by=auto` row as
+`basis=legacy_binary, is_effective=false`; it remains audit evidence but cannot
+block convergence because the old schema could not prove whether “not match”
+meant difference or uncertainty. Existing human rows become effective
+`basis=human`. A later supported `different` or human verdict may revalidate the
+same canonical pair by updating its basis/support pointers; a later superseding
+decision may retire it with `is_effective=false`, `retired_at`, and the retiring
+decision id. Clustering reads only effective `supported_different` and `human`
+rows. The append-only decisions retain both the original and later evidence.
 
 Father/son and two employees in different cities are this path. SAP
 shorthand stays one id because T3/T4 see one referent, not because T0
@@ -226,10 +283,13 @@ CLAIM CONTEXT: {claim_text}
 CANDIDATE: {canonical_name}
 CANDIDATE PROFILE: {profile_summary or "(none)"}
 CANDIDATE FACTS: {salient observation statements or "(none)"}
-Same real-world entity?
+Choose exactly one identity verdict:
+- same: evidence supports one real-world referent
+- different: evidence positively distinguishes two referents
+- insufficient_evidence: the evidence cannot decide
 ```
 
-T4 answers **same / not-same** only. It does not emit `related_to`.
+T4 answers **same / different / insufficient_evidence** only. It does not emit `related_to`.
 Father/son, if the claim states kinship, is a **relation** written
 after both ids exist, not a merge.
 
@@ -240,6 +300,80 @@ share a vector because they share a spelling.
 
 City, job, employer, “is a bank” **update observations and then the
 profile**. They do not change `entity_id` and do not mint a type.
+
+### 3.3.1 Profile publication is the convergence boundary
+
+Every successful current-profile publication nominates the refreshed entity's
+distinct alias lemmas for bounded `recluster_neighborhood`. The production
+composition invokes that existing clusterer after relation-profile refresh and
+after observation-profile refresh. The latter runs in an entity observation
+flush only after every claim in that document version has finished relation
+normalization (the **claim-normalize barrier**, D88/D90), so the refresh sees
+the entity's globally ordered staged observations rather than a partial claim
+prefix. A later fragment refresh therefore sees every earlier current peer.
+Duplicate
+nominations are idempotent: an already-live equivalent merge is a no-op. A
+merge-review proposal uses a deterministic identity over deployment id, sorted
+live root entity ids, and the cluster-configuration fingerprint. Replaying the
+same member set/configuration therefore conflicts on the same `review_id` and
+does not queue twice. If the live member set changes, the new identity is a new
+proposal; in the same transaction it marks overlapping pending proposals
+`auto_resolved` with a supersession note naming the replacement. An accepted or
+rejected historical proposal is never rewritten.
+
+Convergence keeps D21/D24 safety. Missing or stale member profiles cannot merge
+or split. Automatic merge remains disabled without an accepted calibration;
+otherwise qualifying small pieces may use the configured reversible auto path.
+Any component above the blast-radius cap produces one cluster review proposal.
+Human-confirmed and positively supported `different` exclusions remain hard
+cannot-links. Uncertainty never creates one, so it cannot poison later repair.
+
+This is local convergence, not a deployment sweep: gather starts from the
+touched alias lemma, applies existing blocking reach and black-hole bounds, and
+records a report. Failure to converge does not roll back already-durable facts
+or profiles. The ordinary worker retry replays the idempotent nomination; an
+operator can inspect or replay queued proposals. Merge and unmerge continue to
+refresh affected profiles through the non-recursive base refresher so a merge
+does not recursively trigger itself.
+
+### 3.3.2 Resolver provider calls do not hold the lemma transaction lock
+
+The normalized-lemma advisory lock remains the database-enforced serialization
+point for identity writes. Resolution uses an optimistic three-part operation:
+
+1. lock briefly, load the bounded candidate/profile snapshot and completeness,
+   fingerprint it, then commit;
+2. run T3 embedding and T4 generation with no database transaction held; and
+3. lock again, reconstruct the same snapshot, and commit the mention/decision,
+   exclusions, aliases, and optional mint only if the fingerprint is unchanged.
+
+A changed fingerprint discards the stale provider result, records its cost, and
+retries from step 1 up to a bounded attempt count. Exhaustion raises a typed
+retryable contention error; it never commits stale identity authority. The
+worker ledger then applies its ordinary persisted backoff and attempt budget,
+which is distinct from the resolver's short in-call retries. Repeated contention
+can still end visibly in DLQ after that outer budget; the contract is explicit
+replay without manual worker-count changes, not an impossible guarantee that
+contention can never dead-letter. The
+fingerprint covers candidate ids/order, completeness, canonical names, current
+profile summaries and salient facts. Adding, retiring, merging, or refreshing a
+candidate therefore invalidates an in-flight decision. This is the same
+snapshot/unlocked-provider/revalidation pattern used by `ProfileRefresher`.
+
+### 3.3.3 T3 outcome diagnostics
+
+Every final resolution decision records one bounded T3 outcome and the candidate
+count. The allowed outcomes are `accepted`, `below_threshold`,
+`multiple_candidates`, `profile_missing`, `profile_stale`,
+`embedding_missing_or_wrong_generation`, and `embedding_hash_mismatch`. A
+candidate may carry its own gate in the audit JSON, but aggregate telemetry uses
+only this fixed vocabulary; entity ids and names are forbidden as metric labels.
+“Skipped” and “evaluated below threshold” are distinct.
+
+Several candidates continue to route to T4 under D95. A unique-top/margin T3
+policy is not silently introduced: it requires a D22 curve covering both
+same-referent positives and father/son or same-name-colleague negatives, followed
+by an explicit D95 amendment.
 
 **Forget (D74).** Hard-forget is lineage-scoped: a fact evidenced by
 another remaining document stays. The **profile** is a derived cache, so
@@ -427,6 +561,15 @@ does on the hot path — T0–T3 only, D17):
    clearly that filter (“who reports to X”). Any stored predicate is
    legal, including `other:`. Do not require `type` on `resolve`.
 
+`resolve_entity` candidate metadata exposes ambiguity; it is not testimony or
+fact content. The library returns that distinction and cannot compel an
+arbitrary external agent's next action. The repository's LoCoMo answer loop
+mechanically enforces its own content-before-`Unknown` rule: after an
+identity-only lookup it requires one bounded testimony, fact, or combined
+context attempt without silently choosing one candidate. That harness policy
+improves benchmark degradation while leaving library ambiguity explicit and
+does not substitute for identity convergence.
+
 The default operation has one absolute 25-second PostgreSQL budget. Pool
 admission, P1 channel-readiness checks, semantic fact nomination, optional
 entity-profile rescue, anchor/neighbor authority checks, graph expansion, and
@@ -483,10 +626,15 @@ Minimum rows:
 | Site | Contract |
 |---|---|
 | `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
-| `CascadeResolver.resolve` | T0 lists distinct entity ids, never auto-accepts; T3 may accept with profile; T4 if empty/conflict/many; same lemma may mint; no type argument |
-| `_T4_PROMPT` | `CANDIDATE PROFILE` + salient observation statements |
+| `CascadeResolver.resolve` | snapshot candidates + completeness under the lemma lock; decide outside the transaction; re-lock/revalidate before writing; bounded contention retry |
+| candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; an unchecked tail cannot prove novelty |
+| `AdjudicationVerdict` | `same` / `different` / `insufficient_evidence`; confidence + optional rationale |
+| `_T4_PROMPT` | candidate profile + salient observations + the explicit three-way evidentiary distinction |
+| resolution decision features | identity authority (`authoritative` / `provisional`), candidate completeness/adjudication, per-candidate T4 outcome, and one bounded T3 outcome reason |
+| `resolution_exclusions` | automatic rows only for supported `different`; uncertainty and unchecked candidates never become cannot-links |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
 | Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
+| convergence composition | after a current relation/observation profile refresh, nominate distinct touched alias lemmas to the existing bounded clusterer; deduplicate equivalent open review proposals |
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
@@ -495,6 +643,7 @@ Minimum rows:
 | `judge_pair` | lemma equality is not automatic match |
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
 | `resolve` primitive | drop `type?` |
+| LoCoMo answer loop | reject terminal `Unknown` after identity-only reads; require one content-bearing testimony/fact/context attempt; retain the existing bounded invalid-completion retry |
 | P3 Tier 1 | `entities/<entity_id>/` — not `entities/<type>/<entity_id>/` (`e0_files_design.md`) |
 
 **Type-cut consumer checklist** (same PR as the schema drop; not
@@ -526,6 +675,9 @@ generations are abandoned, not dual-run. Sequencing:
 | Alternative | Why it lost |
 |---|---|
 | Keep T0 exact as verdict | Homonyms impossible |
+| Keep binary T4 and tune its prompt/confidence | Cannot represent the difference between positive distinction and insufficient evidence; uncertainty still gains cannot-link authority |
+| Remove candidate/T4 limits | Unbounded provider work is not a scale contract; retain the limits and make completeness explicit |
+| Fail ingestion while identity is uncertain | Thin evidence could park ordinary ingestion indefinitely; a merge-eligible provisional fragment preserves availability without pretending novelty was proven |
 | Distinctive lemma + common-name stoplist | Second `Jan` still glues; thousands of locale-dependent names; uniqueness is a table property, not a name property |
 | Exact-T0 auto-accept as a default-off flag, enabled once the corpus is “large” | Large stores have more collisions, not fewer; T3+profile is the scale path. The flag itself is an [unchosen proposal](../../design/proposals/optional-exact-t0-accept.md) whose trigger is **not** entity count |
 | `(name, type)` unique | Forks SAP |
@@ -538,6 +690,7 @@ generations are abandoned, not dual-run. Sequencing:
 | Hats on facts | Duplicate of predicates + observation text |
 | Keep types for “list companies” | Enumerative lists come from observation/profile text; facets if ever added are derived from those facts |
 | Description as identity key | Move city → new person; profile is evidence, not the key |
+| Hold the lemma lock across provider calls | Serializes unrelated database work behind network latency; snapshot and revalidation preserve commit correctness with a short critical section |
 
 ---
 
@@ -545,7 +698,20 @@ generations are abandoned, not dual-run. Sequencing:
 
 - T0 never auto-merges: second `Jan` with empty profile goes to T4, not
   T0 accept. Repeat `James` with a profile can T3-accept without T4.
-  Second mint of same lemma after T4 no-match.
+  Second authoritative mint of the same lemma only after a complete candidate
+  set receives supported `different` verdicts.
+- `insufficient_evidence` and candidate/T4 truncation mint only provisional
+  fragments, write no unsupported exclusions, and preserve completeness and
+  T3/T4 diagnostics in the decision evidence.
+- Resolver provider calls occur with no lemma-lock transaction open; a
+  candidate/profile mutation before commit invalidates and retries the result.
+  Exhausted in-call retries enter ordinary work-ledger backoff and remain
+  replayable if the outer attempt budget reaches DLQ.
+- Every non-T3 decision records why T3 did not accept; multiple candidates,
+  stale profiles, missing/wrong-generation vectors, hash mismatch, and an
+  evaluated below-threshold score remain distinguishable.
+- A current profile refresh invokes bounded convergence. Equivalent replay
+  neither duplicates an open cluster proposal nor repeats a completed merge.
 - T4 sees profile **and** salient observations; two same-name vectors
   differ once profiles differ; “lives in Prague” can split homonyms.
 - `judge_pair` false-merge/false-split on §8 rows.
@@ -563,5 +729,8 @@ generations are abandoned, not dual-run. Sequencing:
 - Forget: exclusive entity still fully purged; **shared** survivor
   profile no longer contains the forgotten document’s distinctive
   phrase (D74).
+- The benchmark answer loop cannot accept `Unknown` after only
+  `resolve_entity`; one bounded content-bearing read is required. Existing
+  malformed-answer retries remain bounded and accounted.
 
 No LLM on the query path is added (D9).

@@ -201,6 +201,7 @@ CREATE TYPE entity_status          AS ENUM ('active','merged','retired');
 CREATE TYPE alias_provenance       AS ENUM ('source','llm_canonical');
 CREATE TYPE resolution_tier        AS ENUM ('T0','T1','T2','T3','T4_small','T4_frontier','human');
 CREATE TYPE decision_actor         AS ENUM ('auto','human');
+CREATE TYPE resolution_exclusion_basis AS ENUM ('supported_different','human','legacy_binary');
 
 CREATE TYPE review_item_kind       AS ENUM ('merge_cluster','split_cluster','type_conflict','generic_identifier','contradiction','support_withdrawn');
 CREATE TYPE review_status          AS ENUM ('pending','accepted','rejected','deferred','auto_resolved');
@@ -812,14 +813,26 @@ CREATE TABLE resolution_exclusions (
   entity_id_high  uuid NOT NULL,               -- greatest(a,b)
   reason          text,                        -- why they are known-distinct (evidence / reviewer note)
   created_by      decision_actor NOT NULL,     -- auto | human
+  basis           resolution_exclusion_basis NOT NULL, -- D99: positive difference, human verdict, or pre-D99 binary legacy
+  is_effective    boolean NOT NULL,             -- clustering consults only effective rows
+  source_decision_id uuid,                      -- LOGICAL FK: append-only resolution decision supporting an automatic edge
+  source_resolver_version text,                 -- resolver generation that produced supported_different
   created_at      timestamptz NOT NULL DEFAULT now(),
+  retired_at      timestamptz,
+  retired_by_decision_id uuid,                  -- LOGICAL FK: later decision that withdrew this constraint
   PRIMARY KEY (deployment_id, entity_id_low, entity_id_high),
   CHECK (entity_id_low < entity_id_high),
+  CHECK (basis <> 'legacy_binary' OR NOT is_effective),
+  CHECK (basis <> 'supported_different' OR
+         (source_decision_id IS NOT NULL AND source_resolver_version IS NOT NULL)),
+  CHECK ((is_effective AND retired_at IS NULL) OR
+         (NOT is_effective AND (basis = 'legacy_binary' OR retired_at IS NOT NULL))),
+  CHECK (retired_at IS NULL OR retired_by_decision_id IS NOT NULL),
   FOREIGN KEY (deployment_id, entity_id_low)  REFERENCES entities (deployment_id, entity_id),
   FOREIGN KEY (deployment_id, entity_id_high) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE resolution_exclusions IS
-  'Adjudicated non-match constraints (D21): block re-proposing a merge the clusterer or a human ruled out (two J. Smiths, father/son). Consulted by the cascade and clustering.';
+  'Adjudicated positive-difference constraints (D21/D99). Clustering consults only effective supported_different or human rows. Migration classifies pre-D99 auto rows as ineffective legacy_binary until a new supported-different or human decision revalidates the pair. Insufficient evidence or an unchecked candidate never creates this row; withdrawal retains the append-only supporting/retiring decision ids.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolver_versions — per-version tier config + one global threshold set (D17/D22/D96).
@@ -879,7 +892,7 @@ CREATE TABLE resolution_decisions (
   method          resolution_tier NOT NULL,    -- T0 | T3 | T4_small | T4_frontier | human (NOT T1/T2 — see CHECK)
   confidence      real NOT NULL,               -- tier confidence; bands in resolver_versions.thresholds
   is_new_entity   boolean NOT NULL DEFAULT false, -- true if this decision minted a new entity (no confident match)
-  features        jsonb,                       -- evidence used (trigram/phonetic/cosine scores incl. the surfacing blocking tier, LLM rationale)
+  features        jsonb,                       -- D99 evidence: identity authority, candidate completeness/adjudication, bounded T3 outcome, per-candidate T4 verdicts/rationales
   resolver_version text NOT NULL,              -- LOGICAL FK → resolver_versions; pins the thresholds in force
   decided_by      decision_actor NOT NULL DEFAULT 'auto',
   decided_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
@@ -888,7 +901,7 @@ CREATE TABLE resolution_decisions (
   CHECK (method NOT IN ('T1','T2'))            -- T1/T2 are candidate generation, never a verdict (D17)
 ) PARTITION BY RANGE (decided_at);
 COMMENT ON TABLE resolution_decisions IS
-  'Append-only resolution verdicts (D17/D21). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes the blocking tiers T1/T2 (block-loose/decide-tight); features keeps the per-tier evidence for audit.';
+  'Append-only resolution verdicts (D17/D21/D99). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; features keeps authoritative/provisional identity authority, search completeness, bounded T3 outcome, and per-candidate T4 evidence.';
 CREATE INDEX ix_resdec_mention ON resolution_decisions (mention_id);
 CREATE INDEX ix_resdec_entity  ON resolution_decisions (deployment_id, entity_id);
 CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE superseded_by IS NULL;
@@ -944,7 +957,7 @@ set), and the **eval-run history** (per-tier metrics with Wilson confidence inte
 -- versioned, in resolver_versions.tier_config (so routing thresholds are auditable per version).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE review_queue (
-  review_id       uuid PRIMARY KEY,
+  review_id       uuid PRIMARY KEY,             -- merge_cluster: deterministic UUID over deployment + sorted live roots + cluster-config fingerprint (D99)
   deployment_id   uuid NOT NULL REFERENCES deployments,
   item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | type_conflict | generic_identifier | contradiction
   candidate       jsonb NOT NULL,              -- the cluster: entity/mention ids + the Splink-style per-feature score waterfall + cluster card
@@ -960,7 +973,7 @@ CREATE TABLE review_queue (
   resolved_at     timestamptz
 );
 COMMENT ON TABLE review_queue IS
-  'Cluster-level human review queue (D24). Only the middle expected_impact band (boundaries in resolver_versions.tier_config) is routed to humans; hub merges never auto-accept. Verdicts append reversible, provenance-stamped rows to resolution_decisions/merge_events. verdict covers all item_kinds, not only merges.';
+  'Cluster-level human review queue (D24/D99). Exact merge-proposal replay deduplicates by deterministic review_id; changed membership inserts a replacement and auto_resolves overlapping pending proposals without rewriting resolved history. Hub merges never auto-accept. Verdicts append reversible, provenance-stamped rows.';
 CREATE INDEX ix_review_pending ON review_queue (deployment_id, expected_impact DESC) WHERE status = 'pending';
 
 -- ─────────────────────────────────────────────────────────────────────────
