@@ -33,6 +33,7 @@ from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
+from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import EmbeddingRequest
@@ -104,6 +105,10 @@ class SelfHostSettings(BaseSettings):
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
+    conversion_routes: dict[str, str] = Field(
+        default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
+    )
+    """The D38 MIME → converter-adapter-name table; setting the env replaces it."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -857,11 +862,11 @@ class SelfHostProfile:
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose exactly one implemented stage handler for one worker process."""
+        from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
         from rememberstack.core import ConversionRouter
-        from rememberstack.core import stock_passthrough_routes
         from rememberstack.model import ClusterConfig
         from rememberstack.model import ResolverConfig
         from rememberstack.spine import CascadeResolver
@@ -930,7 +935,11 @@ class SelfHostProfile:
                 catalog=documents,
                 raw_store=self._raw_store,
                 artifact_store=self._artifact_store,
-                router=ConversionRouter(routes=stock_passthrough_routes()),
+                router=ConversionRouter(
+                    routes=build_conversion_routes(
+                        route_names=self._settings.conversion_routes
+                    )
+                ),
             )
         if stage is PipelineStage.STRUCTURE:
             return StructureHandler(

@@ -13,8 +13,11 @@ from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
 
 if TYPE_CHECKING:
-    from rememberstack.adapters.markitdown_converter import MARKITDOWN_CONVERTER_VERSION
-    from rememberstack.adapters.markitdown_converter import MarkitdownConverter
+    from rememberstack.adapters.converters import build_conversion_routes
+    from rememberstack.adapters.converters.markitdown import (
+        MARKITDOWN_CONVERTER_VERSION,
+    )
+    from rememberstack.adapters.converters.markitdown import MarkitdownConverter
 
 __all__ = (
     "BoundedPostgresReadPool",
@@ -24,6 +27,7 @@ __all__ = (
     "CodexWriterAdapterSettings",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",
+    "build_conversion_routes",
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",
@@ -34,13 +38,17 @@ __all__ = (
 def __getattr__(name: str) -> object:
     """Load the media converter only for processes that actually compose it."""
     if name == "MARKITDOWN_CONVERTER_VERSION":
-        from rememberstack.adapters.markitdown_converter import (
+        from rememberstack.adapters.converters.markitdown import (
             MARKITDOWN_CONVERTER_VERSION,
         )
 
         return MARKITDOWN_CONVERTER_VERSION
     if name == "MarkitdownConverter":
-        from rememberstack.adapters.markitdown_converter import MarkitdownConverter
+        from rememberstack.adapters.converters.markitdown import MarkitdownConverter
 
         return MarkitdownConverter
+    if name == "build_conversion_routes":
+        from rememberstack.adapters.converters import build_conversion_routes
+
+        return build_conversion_routes
     raise AttributeError(name)

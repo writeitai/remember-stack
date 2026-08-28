@@ -48,6 +48,7 @@ from rememberstack.core import storage_class_for
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
+from rememberstack.model import ConversionResult
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -340,6 +341,7 @@ class ConvertHandler:
         content = self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
         try:
             result = converter.convert(content=content, mime=source.mime)
+            _require_coherent_envelope(result=result)
         except ConversionError as err:
             self._catalog.mark_version_failed(
                 version_id=source.version_id, error=str(err)
@@ -361,15 +363,61 @@ class ConvertHandler:
                 ],
             }
         )
+        source_map_bytes: bytes | None = None
+        if result.source_map is not None:
+            source_map_bytes = _json_bytes(
+                payload={
+                    "entries": [
+                        entry.model_dump(mode="json", exclude_none=True)
+                        for entry in result.source_map
+                    ]
+                }
+            )
+        asset_payloads: dict[str, bytes] = {}
+        asset_inventory: list[dict[str, object]] = []
+        for asset in result.derived_assets:
+            asset_uri = f"{base}/media/{asset.name}"
+            asset_payloads[asset_uri] = asset.content
+            asset_inventory.append(
+                {
+                    "name": asset.name,
+                    "kind": asset.kind,
+                    "media_type": asset.media_type,
+                    "uri": asset_uri,
+                    "sha256": hashlib.sha256(asset.content).hexdigest(),
+                    "locators": [
+                        locator.model_dump(mode="json", exclude_none=True)
+                        for locator in asset.locators
+                    ],
+                }
+            )
         manifest_bytes = _json_bytes(
             payload={
                 "route": converter.name,
                 "converter": {"name": converter.name, "version": converter.version},
                 "blockizer_version": BLOCKIZER_VERSION,
-                "execution": "library-local",
+                "components": [
+                    component.model_dump(mode="json")
+                    for component in result.manifest.components
+                ],
+                "coverage": result.manifest.coverage.model_dump(mode="json"),
+                "derivation_ranges": [
+                    labeled.model_dump(mode="json", exclude_none=True)
+                    for labeled in result.manifest.derivation_ranges
+                ],
+                "page_dimensions": [
+                    dims.model_dump(mode="json", exclude_none=True)
+                    for dims in result.manifest.page_dimensions
+                ],
                 "markdown_sha256": markdown_hash,
-                "source_map": None,
-                "derived_assets": [],
+                "source_map": None
+                if source_map_bytes is None or result.source_map is None
+                else {
+                    "uri": f"{base}/source_map.json",
+                    "sha256": hashlib.sha256(source_map_bytes).hexdigest(),
+                    "entry_count": len(result.source_map),
+                },
+                "derived_assets": asset_inventory,
                 "warnings": list(result.warnings),
             }
         )
@@ -389,7 +437,10 @@ class ConvertHandler:
             f"{base}/blocks.json": blocks_bytes,
             f"{base}/conversion.json": manifest_bytes,
             f"{base}/meta.json": meta_bytes,
+            **asset_payloads,
         }
+        if source_map_bytes is not None:
+            artifacts[f"{base}/source_map.json"] = source_map_bytes
         for uri, payload_bytes in artifacts.items():
             self._artifact_store.write_bytes(key=ObjectKey(uri), content=payload_bytes)
 
@@ -1460,3 +1511,39 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
 def _json_bytes(*, payload: dict[str, object]) -> bytes:
     """Serialize one artifact JSON document deterministically."""
     return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+
+
+def _require_coherent_envelope(*, result: ConversionResult) -> None:
+    """Reject a converter envelope that does not fit its own text (D65/§5).
+
+    Deterministic for the given bytes and converter version, so a violation is
+    a converter bug: it dead-letters exactly like any other ConversionError.
+    """
+    length = len(result.document_md)
+    ranges = result.manifest.derivation_ranges
+    if not ranges:
+        if length:
+            raise ConversionError(
+                "derivation labeling is total (§5): a non-empty document.md "
+                "must be fully labeled"
+            )
+    else:
+        contiguous = ranges[0].start == 0 and ranges[-1].end == length
+        if contiguous:
+            contiguous = all(
+                following.start == labeled.end
+                for labeled, following in zip(ranges, ranges[1:], strict=False)
+            )
+        if not contiguous:
+            raise ConversionError(
+                "derivation ranges must cover document.md exactly, "
+                "contiguously from 0 to its length"
+            )
+    for entry in result.source_map or ():
+        if entry.end > length:
+            raise ConversionError(
+                "source map entry extends past the end of document.md"
+            )
+    names = [asset.name for asset in result.derived_assets]
+    if len(names) != len(set(names)):
+        raise ConversionError("derived asset names must be unique")

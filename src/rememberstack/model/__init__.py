@@ -79,9 +79,24 @@ from rememberstack.model.consumption import ConsumptionScope
 from rememberstack.model.consumption import ConsumptionSkillContext
 from rememberstack.model.consumption import RenderedConsumptionSkill
 from rememberstack.model.consumption import S58Answer
+from rememberstack.model.conversion import ConversionCoverage
 from rememberstack.model.conversion import ConversionError
 from rememberstack.model.conversion import ConversionResult
+from rememberstack.model.conversion import ConverterManifest
+from rememberstack.model.conversion import DerivationRange
+from rememberstack.model.conversion import DerivedAsset
+from rememberstack.model.conversion import ImageRegionLocator
+from rememberstack.model.conversion import ManifestComponent
+from rememberstack.model.conversion import NormalizedRegion
+from rememberstack.model.conversion import PageDimensions
+from rememberstack.model.conversion import PageLocator
+from rememberstack.model.conversion import SourceLocator
+from rememberstack.model.conversion import SourceMapEntry
+from rememberstack.model.conversion import SourceRangeLocator
+from rememberstack.model.conversion import TimeLocator
+from rememberstack.model.conversion import UnknownConverterError
 from rememberstack.model.conversion import UnroutableMimeError
+from rememberstack.model.conversion import VideoRegionLocator
 from rememberstack.model.deployment import CoreManifestConflictError
 from rememberstack.model.deployment import DeploymentBootstrapConflictError
 from rememberstack.model.deployment import DeploymentBootstrapInput
@@ -384,8 +399,22 @@ __all__ = (
     "CurrencyMismatch",
     "ConnectorNotFoundError",
     "ContextPrefix",
+    "ConversionCoverage",
     "ConversionError",
     "ConversionResult",
+    "ConverterManifest",
+    "DerivationRange",
+    "DerivedAsset",
+    "ImageRegionLocator",
+    "ManifestComponent",
+    "NormalizedRegion",
+    "PageDimensions",
+    "PageLocator",
+    "SourceLocator",
+    "SourceMapEntry",
+    "SourceRangeLocator",
+    "TimeLocator",
+    "UnknownConverterError",
     "ConsumptionDeployment",
     "ConsumptionOperation",
     "ConsumptionScope",
@@ -656,6 +685,7 @@ __all__ = (
     "UnknownStageHandlerError",
     "UnmergeError",
     "UnroutableMimeError",
+    "VideoRegionLocator",
     "UploadRecord",
     "Validity",
     "VersionPipelineReadiness",
