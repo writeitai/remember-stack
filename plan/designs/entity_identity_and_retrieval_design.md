@@ -25,7 +25,8 @@ the *how*, not a phased MVP.
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
 [`d99_proposal_convergence_lock_convoy.md`](../analysis/d99_proposal_convergence_lock_convoy.md)
 **D99 review:**
-[`Claude Opus`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md)
+[`Claude Opus — identity uncertainty`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md),
+[`Claude Opus — proposal coalescing`](../../design/reviews/REVIEW_claude_opus_d99_proposal_coalescing_2026-08-28.md)
 **Amends:** [`registries_design.md`](registries_design.md) §2 profiles,
 §3 cascade (T0 as verdict), §4 “How an entity gets its type”;
 [`e2_e3_claims_relations_design.md`](e2_e3_claims_relations_design.md)
