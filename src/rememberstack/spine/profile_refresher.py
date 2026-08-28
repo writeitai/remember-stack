@@ -450,10 +450,8 @@ def current_profile_entity_ids(
     busy member made this nomination defer to a later profile publication.
     """
     ordered_entity_ids = tuple(sorted(set(entity_ids), key=str))
-    _acquire_profile_lock(
-        connection=connection,
-        statement=_LOCK_IDENTITY_SHARED,
-        key=f"{deployment_id}:identity-epoch",
+    connection.execute(
+        _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
     )
     member_ids: set[UUID] = set()
     for entity_id in ordered_entity_ids:
@@ -507,8 +505,10 @@ def _locked_profile_state(
         connection.execute(
             text("SET LOCAL idle_in_transaction_session_timeout = '15s'")
         )
-    connection.execute(
-        _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+    _acquire_profile_lock(
+        connection=connection,
+        statement=_LOCK_IDENTITY_SHARED,
+        key=f"{deployment_id}:identity-epoch",
     )
     entity = (
         connection.execute(

@@ -58,15 +58,17 @@ _OTHER_PREDICATE: Final = OTHER_PREDICATE_GRAMMAR
 def _run_profile_refresh(*, action: Callable[[], object], call_key: str) -> None:
     """Keep safe contention from replaying paid normalization work.
 
-    Every stale input is cleared before provider work. A later evidence
-    mutation owns another refresh attempt, so exhaustion here can safely
-    under-recall until that attempt converges instead of failing this work.
+    A busy initial evidence lock has not snapshotted provider input; a later
+    evidence mutation owns another refresh attempt. Optimistic exhaustion after
+    a snapshot has already cleared stale input. Both remain fail-closed and may
+    safely under-recall instead of replaying this paid work.
     """
     try:
         action()
     except ProfileRefreshContendedError:
         _logger.warning(
-            "profile.refresh_contended call_key=%s; stale cache remains empty", call_key
+            "profile.refresh_contended call_key=%s; profile remains fail-closed",
+            call_key,
         )
 
 
