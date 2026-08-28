@@ -22,6 +22,7 @@ from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+from sqlalchemy.sql.elements import TextClause
 
 from rememberstack.model import ClusterConfig
 from rememberstack.model import MergeApplicationError
@@ -97,7 +98,10 @@ class EntityClusterer:
         with self._engine.begin() as connection:
             connection.execute(_LOCK_NEIGHBORHOOD, {"key": f"{deployment_id}:cluster"})
             connection.execute(
-                _LOCK_IDENTITY_EXCLUSIVE, {"key": f"{deployment_id}:identity-epoch"}
+                _identity_epoch_lock(
+                    auto_merge_enabled=self._config.auto_merge_enabled
+                ),
+                {"key": f"{deployment_id}:identity-epoch"},
             )
             members = self._gather(
                 connection=connection, deployment_id=deployment_id, lemma=lemma
@@ -786,6 +790,14 @@ def _centroid(vectors: list[tuple[float, ...]]) -> tuple[float, ...]:
 
 _LOCK_NEIGHBORHOOD = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
+
+def _identity_epoch_lock(*, auto_merge_enabled: bool) -> TextClause:
+    """Use exclusive identity serialization only when clustering may mutate it."""
+    if auto_merge_enabled:
+        return _LOCK_IDENTITY_EXCLUSIVE
+    return _LOCK_IDENTITY_SHARED
+
+
 _SELECT_ENTITY_LEMMAS = text(
     """
     SELECT DISTINCT normalized_lemma
@@ -1165,6 +1177,10 @@ _CROSS_IDENTITY_CLOSURES = text(
 
 _LOCK_IDENTITY_EXCLUSIVE = text(
     "SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"
+)
+
+_LOCK_IDENTITY_SHARED = text(
+    "SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"
 )
 
 _INSERT_RIPPLE_REVIEW = text(

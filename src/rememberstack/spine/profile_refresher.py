@@ -441,8 +441,24 @@ def current_profile_entity_ids(
     while it reads vectors and decides. Missing, stale, retired, or empty
     profiles are omitted so none can authorize either merge direction.
     """
+    ordered_entity_ids = tuple(sorted(set(entity_ids), key=str))
+    connection.execute(
+        _LOCK_IDENTITY_SHARED, {"key": f"{deployment_id}:identity-epoch"}
+    )
+    member_ids: set[UUID] = set()
+    for entity_id in ordered_entity_ids:
+        member_ids.update(
+            UUID(str(member_id))
+            for member_id in connection.execute(
+                _SELECT_PROFILE_MEMBER_IDS,
+                {"deployment_id": deployment_id, "entity_id": entity_id},
+            ).scalars()
+        )
+    for member_id in sorted(member_ids, key=str):
+        connection.execute(_LOCK_ENTITY, {"key": f"{deployment_id}:obs:{member_id}"})
+
     current: set[UUID] = set()
-    for entity_id in sorted(set(entity_ids), key=str):
+    for entity_id in ordered_entity_ids:
         entity, facts = _locked_profile_state(
             connection=connection,
             deployment_id=deployment_id,

@@ -43,6 +43,7 @@ src/tests/model/test_forget.py
 src/tests/packaging/test_client_wheel.py
 src/tests/packaging/test_release_contract.py
 src/tests/spine/test_catalog_lanes.py
+src/tests/spine/test_clustering_lock_policy.py
 src/tests/spine/test_entity_eligibility.py
 src/tests/spine/test_profile_convergence.py
 src/tests/spine/test_query_space_manifest.py

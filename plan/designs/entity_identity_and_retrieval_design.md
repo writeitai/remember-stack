@@ -327,6 +327,16 @@ otherwise qualifying small pieces may use the configured reversible auto path.
 Any component above the blast-radius cap produces one cluster review proposal.
 Human-confirmed and positively supported `different` exclusions remain hard
 cannot-links. Uncertainty never creates one, so it cannot poison later repair.
+When automatic merge is disabled, the proposal-only pass holds the deployment
+identity epoch in shared mode: it cannot merge or split identities, and the
+cluster nomination lock plus per-entity evidence locks still serialize its
+bounded snapshot. A pass authorized to auto-merge retains the exclusive epoch
+lock. This prevents a burst of report-only convergence nominations from
+forcing supersession adjudication and profile publication to wait behind
+report-only convergence transactions. The pass pre-locks the union of member
+identity closures in one global entity-id order before reading profile inputs,
+matching the profile publisher's closure order and preventing cross-closure
+advisory-lock cycles.
 
 This is local convergence, not a deployment sweep: gather starts from the
 touched alias lemma, applies existing blocking reach and black-hole bounds, and
