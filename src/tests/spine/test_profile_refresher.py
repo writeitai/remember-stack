@@ -675,6 +675,8 @@ def test_non_lock_statement_timeout_remains_database_failure(
             connection.execute(text("SET LOCAL statement_timeout = '100ms'"))
             _acquire_profile_lock(
                 connection=connection,
-                statement=text("SELECT pg_sleep(1) WHERE :key IS NOT NULL"),
+                statement=text(
+                    "SELECT pg_sleep(1) WHERE CAST(:key AS text) IS NOT NULL"
+                ),
                 key="negative-timeout-proof",
             )
