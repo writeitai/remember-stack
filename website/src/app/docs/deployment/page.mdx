@@ -48,9 +48,9 @@ Pre-release volumes created by the older PostgreSQL image are not migrated. For
 this disposable quickstart, remove the old stack with
 `docker compose down --volumes` before starting a different PostgreSQL 19 prerelease checkout.
 
-`--build` deliberately tests the checked-out source. The public `v0.7.0` release
+`--build` deliberately tests the checked-out source. The public `v0.7.1` release
 also ships this Compose file pinned to
-`ghcr.io/writeitai/remember-stack:0.7.0`; release consumers use
+`ghcr.io/writeitai/remember-stack:0.7.1`; release consumers use
 `--no-build --pull always` so Compose cannot fall back to a local source build.
 
 Do **not** put cost export on the public query port. When you want HTTP export,
