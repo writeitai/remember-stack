@@ -119,6 +119,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_17_0038",
         "p9_18_0039",
         "p9_19_0040",
+        "p9_20_0041",
     )
     assert len(script.get_heads()) == 1
 
@@ -642,7 +643,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_19_0040"
+    assert head_before_noop == head_after_noop == "p9_20_0041"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -916,6 +917,105 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
             )
         assert tuple(downgraded) == ("entity-canonical-name-v1", False)
         assert dropped_indexes == (None, None, None)
+    finally:
+        engine.dispose()
+        command.downgrade(config=config, revision="base")
+        command.upgrade(config=config, revision="head")
+
+
+def test_resolution_uncertainty_migration_classifies_legacy_exclusions() -> None:
+    """D99 retires old automatic negatives while preserving human authority."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_19_0040")
+    deployment_id = uuid4()
+    entity_ids = tuple(sorted((uuid4() for _ in range(4)), key=str))
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment, 'd99-migration', 'D99 migration', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            for ordinal, entity_id in enumerate(entity_ids):
+                connection.execute(
+                    text(
+                        "INSERT INTO entities (entity_id, deployment_id,"
+                        " canonical_name, normalized_name) VALUES"
+                        " (:entity, :deployment, :name, :name)"
+                    ),
+                    {
+                        "entity": entity_id,
+                        "deployment": deployment_id,
+                        "name": f"legacy-{ordinal}",
+                    },
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
+                    " entity_id_high, reason, created_by) VALUES"
+                    " (:deployment, :auto_low, :auto_high, 'old-auto', 'auto'),"
+                    " (:deployment, :human_low, :human_high, 'human-review', 'human')"
+                ),
+                {
+                    "deployment": deployment_id,
+                    "auto_low": entity_ids[0],
+                    "auto_high": entity_ids[1],
+                    "human_low": entity_ids[2],
+                    "human_high": entity_ids[3],
+                },
+            )
+
+        command.upgrade(config=config, revision="p9_20_0041")
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT created_by::text, basis::text, is_effective"
+                    " FROM resolution_exclusions ORDER BY created_by::text"
+                )
+            ).all()
+            constraints = set(
+                connection.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid = 'resolution_exclusions'::regclass"
+                    )
+                ).scalars()
+            )
+        assert rows == [("auto", "legacy_binary", False), ("human", "human", True)]
+        assert {
+            "ck_resolution_exclusions_legacy_inactive",
+            "ck_resolution_exclusions_effective_retirement",
+            "ck_resolution_exclusions_retirement",
+        } <= constraints
+
+        command.downgrade(config=config, revision="p9_19_0040")
+        with engine.connect() as connection:
+            columns = set(
+                connection.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND table_name = 'resolution_exclusions'"
+                    )
+                ).scalars()
+            )
+            actors = tuple(
+                connection.execute(
+                    text(
+                        "SELECT created_by::text FROM resolution_exclusions"
+                        " ORDER BY created_by::text"
+                    )
+                ).scalars()
+            )
+        assert "basis" not in columns
+        assert actors == ("auto", "human")
     finally:
         engine.dispose()
         command.downgrade(config=config, revision="base")

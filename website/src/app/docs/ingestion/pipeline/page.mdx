@@ -148,13 +148,15 @@ Write-time cascade tiers:
 | T1 | Trigram / fuzzy candidate generation |
 | T2 | Phonetic candidate generation |
 | T3 | A sole candidate: mention name + claim context against an evidence-backed profile vector; empty/stale profiles cannot accept |
-| T4 | Gated LLM adjudication for empty/conflicting or multiple candidates, with candidate profile + current salient facts |
+| T4 | Tri-state LLM adjudication (`same` / supported `different` / `insufficient_evidence`) for empty/conflicting or multiple candidates, with candidate profile + current salient facts |
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
-Write-time T0 never accepts an exact name by itself. A T4 non-match may mint a
-second active entity with the same normalized lemma; the negative pair is
-stored as a clustering exclusion. Lemmas that span multiple entity ids are
+Write-time T0 never accepts an exact name by itself. A supported T4 `different`
+may mint a second active entity with the same normalized lemma and stores that
+pair as a clustering exclusion. Insufficient evidence, an unchecked candidate,
+or a truncated candidate prefix may mint only a provisional, merge-eligible
+fragment and never creates an exclusion. Lemmas that span multiple entity ids are
 marked promiscuous and rank below unguarded fuzzy/phonetic matches without
 being dropped from the candidate set. The shipped cascade has no exact-name
 auto-accept flag.
@@ -170,6 +172,12 @@ re-decision, but remains excluded from public entity resolution and search. Duri
 profile-policy cut, the self-host image's `setup` entrypoint clears name-only vectors, rebuilds
 active and merged entity profiles in bounded resumable pages, and publishes entity semantic
 search only after that pass completes.
+
+Current profile publication invokes bounded local clustering over the touched
+entity's alias lemmas. Identical merge-review proposals deduplicate by their
+live roots and cluster configuration. The default remains fail-closed:
+`auto_merge_enabled=false`, so unattended convergence produces reviewable
+diagnostics rather than an uncalibrated silent merge.
 
 Bare head nouns (`game`, `app`, `system`, `card`, `photo`, `module`, `the system`) are not minted as entities. Qualified names (`FIFA 23`, `James's Unity strategy game`) may mint. When the claim spelling differs from the canonical name (`App` vs `Application`), both surfaces are stored as aliases on the same id. Entities have **no type class**: extract emits names only. `works_for` between two people is allowed.
 

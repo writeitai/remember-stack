@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v15 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v16 protocol."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v15"]
-ProtocolName = Literal["RS-LoCoMo-Full-v15"]
+ProtocolKey = Literal["full-v16"]
+ProtocolName = Literal["RS-LoCoMo-Full-v16"]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
@@ -120,7 +120,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v15"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v16"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -299,6 +299,7 @@ class AnswerRecord(FrozenModel):
     agent_call_count: int = Field(default=0, ge=0)
     reader_attempts: int = Field(default=0, ge=0)
     first_step_retries: int = Field(default=0, ge=0)
+    unknown_guard_retries: int = Field(default=0, ge=0)
     reader_latency_ms: int | None = Field(default=None, ge=0)
     generated_answer: str | None = None
     reader_usage: ProviderCallUsage | None = None
@@ -321,6 +322,8 @@ class AnswerRecord(FrozenModel):
             raise ValueError("reader attempts cannot exceed agent calls")
         if self.first_step_retries > self.agent_call_count:
             raise ValueError("first-step retries cannot exceed agent calls")
+        if self.unknown_guard_retries > self.agent_call_count:
+            raise ValueError("Unknown-guard retries cannot exceed agent calls")
         if self.generated_answer is not None and self.reader_attempts < 1:
             raise ValueError("a generated answer requires a reader attempt")
         return self
@@ -389,7 +392,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v15"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v16"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)
@@ -402,6 +405,7 @@ class RunSummary(FrozenModel):
     answer_agent_calls: int = Field(ge=0)
     total_reader_retries: int = Field(ge=0)
     total_first_step_retries: int = Field(default=0, ge=0)
+    total_unknown_guard_retries: int = Field(default=0, ge=0)
     judge_calls: int = Field(ge=0)
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)

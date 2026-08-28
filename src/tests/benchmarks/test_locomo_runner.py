@@ -126,6 +126,113 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert len(provider.generated_prompts) == 2
 
 
+def test_unknown_after_identity_only_forces_one_content_read() -> None:
+    """V16 mechanically rejects Unknown after identity-only metadata."""
+    calls = 0
+
+    def decide(prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal calls
+        assert type_name == "AnswerAgentStep"
+        calls += 1
+        if calls == 1:
+            return {
+                "action": "tool",
+                "tool_name": "resolve_entity",
+                "arguments_json": '{"name":"Caroline"}',
+                "answer": None,
+            }
+        if calls == 2:
+            return {
+                "action": "answer",
+                "tool_name": None,
+                "arguments_json": "{}",
+                "answer": "Unknown",
+            }
+        if calls == 3:
+            assert "GUARD FEEDBACK" in prompt
+            return {
+                "action": "tool",
+                "tool_name": "testimony_context",
+                "arguments_json": '{"query":"Caroline"}',
+                "answer": None,
+            }
+        assert "GUARD FEEDBACK" not in prompt
+        return {
+            "action": "answer",
+            "tool_name": None,
+            "arguments_json": "{}",
+            "answer": "Unknown",
+        }
+
+    client, raw_client = _memory_client()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(_identity_tool(), _tool()),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer == "Unknown"
+    assert answer.agent_call_count == 4
+    assert answer.reader_attempts == 2
+    assert answer.unknown_guard_retries == 1
+    assert [call.name for call in answer.tool_calls] == [
+        "resolve_entity",
+        "testimony_context",
+    ]
+
+
+def test_unknown_guard_respects_the_ordinary_agent_call_cap() -> None:
+    """A final guarded Unknown is retained when no ordinary call remains."""
+    calls = 0
+
+    def decide(_prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal calls
+        assert type_name == "AnswerAgentStep"
+        calls += 1
+        if calls == 1:
+            return {
+                "action": "tool",
+                "tool_name": "resolve_entity",
+                "arguments_json": '{"name":"Caroline"}',
+                "answer": None,
+            }
+        return {
+            "action": "answer",
+            "tool_name": None,
+            "arguments_json": "{}",
+            "answer": "Unknown.",
+        }
+
+    client, raw_client = _memory_client()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(_identity_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=2,
+            max_agent_calls_per_question=2,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer == "Unknown."
+    assert answer.reader_attempts == 1
+    assert answer.unknown_guard_retries == 1
+    assert answer.agent_call_count == 2
+
+
 def test_agent_can_recover_from_rejected_sql_and_answer_from_open_query() -> None:
     """A normal exploratory 4xx is visible to the agent, not a forced zero."""
     calls = 0
@@ -939,7 +1046,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v15", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v16", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1758,8 +1865,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v15","protocol_fingerprint":'
-        '"027e4e5a8711476f78c8996eaf3c5739c95579740d46f64e3b42dbd03775d490",'
+        '{"protocol_name":"RS-LoCoMo-Full-v16","protocol_fingerprint":'
+        '"7633214d5728e893667c76b6a5455d24e91ae902b5c289a3ebf16a696b192fb2",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -1773,7 +1880,8 @@ def test_single_run_summary_json_is_unchanged(
         'Recall@k"},'
         '"failures":{"missing_answer":1,"missing_judge":1},'
         '"answer_agent_calls":0,"total_reader_retries":0,'
-        '"total_first_step_retries":0,"judge_calls":0,'
+        '"total_first_step_retries":0,"total_unknown_guard_retries":0,'
+        '"judge_calls":0,'
         '"tokens_in":0,"tokens_out":0,"evaluator_cost_usd":"0",'
         '"ingestion_cost_source":"deployment cost ledger; not available through '
         'benchmark SDK"}'
@@ -1977,7 +2085,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v15"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v16"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2076,6 +2184,19 @@ def _tool() -> ToolDescriptor:
         result_contract="envelope",
         output_grain="evidence",
         answer_intent="assertion_history",
+    )
+
+
+def _identity_tool() -> ToolDescriptor:
+    """Return the identity-only assured operation used by v16 guard proofs."""
+    return ToolDescriptor(
+        name="resolve_entity",
+        description="Resolve one entity name",
+        input_schema={"type": "object"},
+        result_schema={"type": "object"},
+        result_contract="envelope",
+        output_grain="entity_identity",
+        answer_intent="identity_resolution",
     )
 
 

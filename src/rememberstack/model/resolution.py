@@ -6,6 +6,7 @@ threshold set is golden-set measured and versioned in `resolver_versions` —
 never committed as an unmeasured constant.
 """
 
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -59,11 +60,19 @@ class ResolverConfig(BaseModel):
     thresholds: ResolutionThresholds = ResolutionThresholds()
 
 
+class IdentityVerdict(StrEnum):
+    """The three evidentiary identity outcomes produced by T4 (D99)."""
+
+    SAME = "same"
+    DIFFERENT = "different"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
 class AdjudicationVerdict(BaseModel):
-    """The T4 call's structured output: same entity or not, with confidence."""
+    """The T4 call's tri-state identity verdict with confidence and rationale."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    match: bool
+    verdict: IdentityVerdict
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     rationale: str | None = None

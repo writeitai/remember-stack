@@ -11,8 +11,11 @@ replays it. Blast radius routes big merges to review instead of auto (D24);
 the black-hole guard tightens the bar on runaway blobs.
 """
 
+import hashlib
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from sqlalchemy import bindparam
 from sqlalchemy import JSON
@@ -49,6 +52,33 @@ class EntityClusterer:
         self._entity_index = entity_index
         self._profile_refresher = profile_refresher
         self._config = config
+
+    def recluster_entities(
+        self,
+        *,
+        deployment_id: UUID,
+        entity_ids: tuple[UUID, ...],
+        meter: CostMeterPort | None = None,
+    ) -> tuple[NeighborhoodReport, ...]:
+        """Nominate each touched entity's distinct aliases for local convergence."""
+        if not entity_ids:
+            return ()
+        with self._engine.connect() as connection:
+            lemmas = tuple(
+                connection.execute(
+                    _SELECT_ENTITY_LEMMAS,
+                    {
+                        "deployment_id": deployment_id,
+                        "entity_ids": list(set(entity_ids)),
+                    },
+                ).scalars()
+            )
+        return tuple(
+            self.recluster_neighborhood(
+                deployment_id=deployment_id, surface=lemma, meter=meter
+            )
+            for lemma in lemmas
+        )
 
     def recluster_neighborhood(
         self, *, deployment_id: UUID, surface: str, meter: CostMeterPort | None = None
@@ -118,15 +148,16 @@ class EntityClusterer:
                     exclusions=exclusions,
                 )
                 changed_entity_ids: set[UUID] = set()
-                for piece in pieces:
-                    changed_entity_ids.update(
-                        self._split_disagreeing_members(
-                            connection=connection,
-                            deployment_id=deployment_id,
-                            piece=piece,
-                            vector_entity_ids=frozenset(vectors),
+                if self._config.auto_merge_enabled:
+                    for piece in pieces:
+                        changed_entity_ids.update(
+                            self._split_disagreeing_members(
+                                connection=connection,
+                                deployment_id=deployment_id,
+                                piece=piece,
+                                vector_entity_ids=frozenset(vectors),
+                            )
                         )
-                    )
                 merged: list[UUID] = []
                 queued = 0
                 for proposal in self._proposals(
@@ -136,13 +167,13 @@ class EntityClusterer:
                         not self._config.auto_merge_enabled
                         or proposal.blast_radius > self._config.blast_radius_cap
                     ):
-                        self._queue_for_review(
+                        inserted = self._queue_for_review(
                             connection=connection,
                             deployment_id=deployment_id,
                             proposal=proposal,
                             trigger_lemma=lemma,
                         )
-                        queued += 1
+                        queued += int(inserted)
                         continue
                     applied = self._merge(
                         connection=connection,
@@ -485,24 +516,100 @@ class EntityClusterer:
         deployment_id: UUID,
         proposal: MergeProposal,
         trigger_lemma: str,
-    ) -> None:
-        """Hub merges never auto (registries §6/D24): rank by expected impact."""
+    ) -> bool:
+        """Queue one deterministic proposal and supersede only pending overlap."""
         confidence = 0.5  # cluster-level confidence; refined with WP-2.6 cards
-        connection.execute(
-            _INSERT_REVIEW,
-            {
-                "review_id": uuid4(),
-                "deployment_id": deployment_id,
-                "candidate": {
-                    "survivor_id": str(proposal.survivor_id),
-                    "absorbed_ids": [str(a) for a in proposal.absorbed_ids],
-                    "trigger_lemma": trigger_lemma,
-                },
-                "blast_radius": proposal.blast_radius,
-                "confidence": confidence,
-                "expected_impact": proposal.blast_radius * (1.0 - confidence),
-            },
+        roots = tuple(sorted((proposal.survivor_id, *proposal.absorbed_ids), key=str))
+        config_fingerprint = hashlib.sha256(
+            self._config.model_dump_json().encode("utf-8")
+        ).hexdigest()
+        review_id = uuid5(
+            NAMESPACE_URL,
+            ":".join(
+                (
+                    "rememberstack:merge-cluster",
+                    str(deployment_id),
+                    *(str(entity_id) for entity_id in roots),
+                    config_fingerprint,
+                )
+            ),
         )
+        existing = (
+            connection.execute(_SELECT_REVIEW_STATE, {"review_id": review_id})
+            .mappings()
+            .one_or_none()
+        )
+        changed = False
+        if existing is None:
+            changed = (
+                connection.execute(
+                    _INSERT_REVIEW,
+                    {
+                        "review_id": review_id,
+                        "deployment_id": deployment_id,
+                        "candidate": {
+                            "survivor_id": str(proposal.survivor_id),
+                            "absorbed_ids": [str(a) for a in proposal.absorbed_ids],
+                            "trigger_lemma": trigger_lemma,
+                            "cluster_config_fingerprint": config_fingerprint,
+                        },
+                        "blast_radius": proposal.blast_radius,
+                        "confidence": confidence,
+                        "expected_impact": proposal.blast_radius * (1.0 - confidence),
+                    },
+                ).rowcount
+                == 1
+            )
+        elif (
+            existing["status"] == "auto_resolved"
+            and existing["verdict"] is None
+            and str(existing["verdict_note"] or "").startswith(
+                "superseded by merge proposal "
+            )
+        ):
+            changed = (
+                connection.execute(
+                    _REOPEN_SUPERSEDED_REVIEW,
+                    {
+                        "review_id": review_id,
+                        "candidate": {
+                            "survivor_id": str(proposal.survivor_id),
+                            "absorbed_ids": [str(a) for a in proposal.absorbed_ids],
+                            "trigger_lemma": trigger_lemma,
+                            "cluster_config_fingerprint": config_fingerprint,
+                        },
+                        "blast_radius": proposal.blast_radius,
+                        "confidence": confidence,
+                        "expected_impact": proposal.blast_radius * (1.0 - confidence),
+                    },
+                ).rowcount
+                == 1
+            )
+        elif existing["status"] != "pending":
+            return False
+        if not changed and (existing is None or existing["status"] != "pending"):
+            return False
+
+        pending = connection.execute(
+            _SELECT_PENDING_MERGE_REVIEWS, {"deployment_id": deployment_id}
+        ).mappings()
+        root_strings = {str(entity_id) for entity_id in roots}
+        for row in pending:
+            if row["review_id"] == review_id:
+                continue
+            candidate = row["candidate"]
+            if not isinstance(candidate, dict):
+                continue
+            existing_roots = {str(candidate.get("survivor_id"))} | {
+                str(value) for value in candidate.get("absorbed_ids", [])
+            }
+            if root_strings.isdisjoint(existing_roots):
+                continue
+            connection.execute(
+                _SUPERSEDE_PENDING_REVIEW,
+                {"review_id": row["review_id"], "replacement_id": review_id},
+            )
+        return changed
 
 
 def apply_merge(
@@ -679,6 +786,16 @@ def _centroid(vectors: list[tuple[float, ...]]) -> tuple[float, ...]:
 
 _LOCK_NEIGHBORHOOD = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 
+_SELECT_ENTITY_LEMMAS = text(
+    """
+    SELECT DISTINCT normalized_lemma
+    FROM aliases
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
+    ORDER BY normalized_lemma
+    """
+)
+
 _GATHER_NEIGHBORHOOD = text(
     """
     WITH RECURSIVE reached AS MATERIALIZED (
@@ -730,6 +847,8 @@ _SELECT_RESOLUTION_EXCLUSIONS = text(
     WHERE deployment_id = :deployment_id
       AND entity_id_low = ANY(CAST(:entity_ids AS uuid[]))
       AND entity_id_high = ANY(CAST(:entity_ids AS uuid[]))
+      AND is_effective
+      AND basis IN ('supported_different', 'human')
     """
 )
 
@@ -900,8 +1019,62 @@ _INSERT_REVIEW = text(
         :review_id, :deployment_id, 'merge_cluster', :candidate, :blast_radius,
         :confidence, :expected_impact
     )
+    ON CONFLICT (review_id) DO NOTHING
     """
 ).bindparams(bindparam("candidate", type_=JSON))
+
+_SELECT_REVIEW_STATE = text(
+    """
+    SELECT status::text AS status, verdict::text AS verdict, verdict_note
+    FROM review_queue
+    WHERE review_id = :review_id
+    """
+)
+
+_REOPEN_SUPERSEDED_REVIEW = text(
+    """
+    UPDATE review_queue
+    SET candidate = :candidate,
+        blast_radius = :blast_radius,
+        confidence = :confidence,
+        expected_impact = :expected_impact,
+        status = 'pending',
+        verdict = NULL,
+        verdict_note = NULL,
+        assigned_to = NULL,
+        result_decision_id = NULL,
+        resolved_at = NULL
+    WHERE review_id = :review_id
+      AND status = 'auto_resolved'
+      AND verdict IS NULL
+      AND verdict_note LIKE 'superseded by merge proposal %'
+    """
+).bindparams(bindparam("candidate", type_=JSON))
+
+_SELECT_PENDING_MERGE_REVIEWS = text(
+    """
+    SELECT review_id, candidate
+    FROM review_queue
+    WHERE deployment_id = :deployment_id
+      AND item_kind = 'merge_cluster'
+      AND status = 'pending'
+    """
+)
+
+_SUPERSEDE_PENDING_REVIEW = text(
+    """
+    UPDATE review_queue
+    SET status = 'auto_resolved',
+        verdict_note = 'superseded by merge proposal ' || CAST(:replacement_id AS text),
+        resolved_at = now()
+    WHERE review_id = :review_id AND status = 'pending'
+      AND EXISTS (
+        SELECT 1 FROM review_queue AS replacement
+        WHERE replacement.review_id = :replacement_id
+          AND replacement.status = 'pending'
+      )
+    """
+)
 
 _SELECT_MERGE_LOCKED = text(
     """

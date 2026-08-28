@@ -91,11 +91,16 @@ uv sync --extra benchmark
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v15 \
+  --protocol full-v16 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 Do not run remote stages until you have read the adapter README and accepted cost/isolation gates.
+
+V16 also prevents an identity-only lookup from becoming a terminal `Unknown`:
+the answer harness requires one ordinary content-bearing testimony, fact,
+context, primitive, row-returning query, or P3 search/read attempt first. It
+uses the existing call and cost budgets and records `unknown_guard_retries`.
 
 ### Honesty about scores
 

@@ -127,14 +127,21 @@ candidate profile and the current salient statements explicitly.
 At write time, an exact name is only a T0 candidate signal. It never silently
 accepts or merges an entity. One candidate with a current profile may be
 accepted by T3. Empty or conflicting evidence, and every multiple-candidate
-case, reaches T4. When T4 says a same-name mention is a different referent, the
-registry mints another id with that spelling and stores the non-match as a
-durable exclusion so later clustering cannot glue the pair back together.
+case, reaches tri-state T4: `same`, positively supported `different`, or
+`insufficient_evidence`. Only `different` creates a durable cannot-link. If
+evidence is insufficient or the bounded candidate pass is truncated, ingestion
+may mint an active provisional fragment; its decision is explicit and later
+profile evidence can repair it instead of being blocked by a false exclusion.
 
 Profile refreshes are evidence-change debounced. If evidence is withdrawn, the
 cached summary and vector rebuild or clear. Hard-forgetting one source of a
 shared entity rebuilds from the surviving sources, so forgotten phrases do not
 remain in the summary or semantic vector.
+
+A successful evidence-backed profile publication nominates that entity's alias
+neighborhood for bounded convergence. Automatic merging remains off until its
+profile-space threshold is calibrated; equivalent open review proposals are
+deduplicated, and every accepted merge remains a reversible redirect.
 
 Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve. There is no exact-name auto-accept switch in the shipped cascade.
 

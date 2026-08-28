@@ -862,11 +862,14 @@ class SelfHostProfile:
         from rememberstack.core import ChunkerParams
         from rememberstack.core import ConversionRouter
         from rememberstack.core import stock_passthrough_routes
+        from rememberstack.model import ClusterConfig
         from rememberstack.model import ResolverConfig
         from rememberstack.spine import CascadeResolver
         from rememberstack.spine import ChunkCatalog
         from rememberstack.spine import ClaimCatalog
+        from rememberstack.spine import ConvergingProfileRefresher
         from rememberstack.spine import DocumentCatalog
+        from rememberstack.spine import EntityClusterer
         from rememberstack.spine import EntityProfileRefresher
         from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
@@ -903,13 +906,22 @@ class SelfHostProfile:
         facts = FactCatalog(engine=self._engine)
 
         p1_settings = P1Settings.model_validate({})
-        profile_refresher = EntityProfileRefresher(
+        base_profile_refresher = EntityProfileRefresher(
             engine=self._engine,
             model_provider=self._model_provider,
             embedding_model=p1_settings.embedding_model,
         )
         index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
+        )
+        profile_refresher = ConvergingProfileRefresher(
+            refresher=base_profile_refresher,
+            clusterer=EntityClusterer(
+                engine=self._engine,
+                entity_index=index,
+                profile_refresher=base_profile_refresher,
+                config=ClusterConfig(),
+            ),
         )
         params = ChunkerParams()
         chunk_generation = chunker_version(params=params)

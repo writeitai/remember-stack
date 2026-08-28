@@ -17,6 +17,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import MergeProposal
 from rememberstack.model import UnmergeError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
@@ -264,10 +265,17 @@ def test_resolution_exclusion_is_a_clustering_cannot_link(
         connection.execute(
             text(
                 "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
-                " entity_id_high, reason, created_by) VALUES"
-                " (:deployment, :low, :high, 't4-no-match:test', 'auto')"
+                " entity_id_high, reason, created_by, basis, is_effective,"
+                " source_decision_id, source_resolver_version) VALUES"
+                " (:deployment, :low, :high, 't4-no-match:test', 'auto',"
+                " 'supported_different', true, :decision, 'resolver-test')"
             ),
-            {"deployment": _DEPLOYMENT_ID, "low": low, "high": high},
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "low": low,
+                "high": high,
+                "decision": uuid4(),
+            },
         )
 
     report = clusterer.recluster_neighborhood(
@@ -279,6 +287,59 @@ def test_resolution_exclusion_is_a_clustering_cannot_link(
     assert report.queued_for_review == 0
     assert _partition(engine=database_engine) == frozenset(
         {frozenset({"Robert Klein"}), frozenset({"R. Klein"})}
+    )
+
+
+def test_recluster_entities_nominates_distinct_touched_aliases(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """Profile publication reaches the bounded neighborhood entrypoint."""
+    del bootstrapped_deployment
+    index = _ScriptedEntityIndex()
+    clusterer = EntityClusterer(
+        engine=database_engine,
+        entity_index=index,
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(),
+    )
+    entity_id = _arrive(engine=database_engine, index=index, name="Robert Klein")
+
+    reports = clusterer.recluster_entities(
+        deployment_id=_DEPLOYMENT_ID, entity_ids=(entity_id, entity_id)
+    )
+
+    assert len(reports) == 1
+    assert reports[0].members == 1
+
+
+def test_legacy_binary_exclusion_does_not_block_convergence(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """D99 migration evidence has no cannot-link authority."""
+    del bootstrapped_deployment
+    index = _ScriptedEntityIndex()
+    clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
+    robert = _arrive(engine=database_engine, index=index, name="Robert Klein")
+    variant = _arrive(engine=database_engine, index=index, name="R. Klein")
+    low, high = sorted((robert, variant), key=lambda entity_id: entity_id.int)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
+                " entity_id_high, reason, created_by, basis, is_effective) VALUES"
+                " (:deployment, :low, :high, 'pre-d99', 'auto',"
+                " 'legacy_binary', false)"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "low": low, "high": high},
+        )
+
+    report = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert len(report.merged) == 1
+    assert _partition(engine=database_engine) == frozenset(
+        {frozenset({"Robert Klein", "R. Klein"})}
     )
 
 
@@ -438,6 +499,94 @@ def test_uncalibrated_profile_space_routes_every_merge_to_review(
     assert report.merged == ()
     assert report.queued_for_review == 1
     assert profile_refresher.entity_ids == []
+
+
+def test_merge_review_replay_is_deterministically_deduplicated(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """D99: the same live roots and config produce one pending proposal."""
+    index = _ScriptedEntityIndex()
+    clusterer = EntityClusterer(
+        engine=database_engine,
+        entity_index=index,
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(distance_cut=_CUT),
+    )
+    _arrive(engine=database_engine, index=index, name="Robert Klein")
+    _arrive(engine=database_engine, index=index, name="R. Klein")
+
+    first = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+    second = clusterer.recluster_neighborhood(
+        deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
+    )
+
+    assert first.queued_for_review == 1
+    assert second.queued_for_review == 0
+    with database_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT review_id, candidate FROM review_queue"
+                " WHERE item_kind = 'merge_cluster' AND status = 'pending'"
+            )
+        ).all()
+    assert len(rows) == 1
+    assert len(rows[0][1]["cluster_config_fingerprint"]) == 64
+
+
+def test_superseded_review_reopens_when_its_member_set_returns(
+    database_engine: Engine, bootstrapped_deployment: None
+) -> None:
+    """A changed pocket never cancels its only live replacement proposal."""
+    del bootstrapped_deployment
+    clusterer = EntityClusterer(
+        engine=database_engine,
+        entity_index=_ScriptedEntityIndex(),
+        profile_refresher=RecordingProfileRefresher(),
+        config=ClusterConfig(),
+    )
+    first, second, third = uuid4(), uuid4(), uuid4()
+    pair = MergeProposal(
+        survivor_id=first, absorbed_ids=(second,), blast_radius=2, mean_distance=0.1
+    )
+    expanded = MergeProposal(
+        survivor_id=first,
+        absorbed_ids=(second, third),
+        blast_radius=3,
+        mean_distance=0.1,
+    )
+
+    with database_engine.begin() as connection:
+        assert clusterer._queue_for_review(  # noqa: SLF001 - transaction proof
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            proposal=pair,
+            trigger_lemma="caroline",
+        )
+        assert clusterer._queue_for_review(  # noqa: SLF001 - transaction proof
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            proposal=expanded,
+            trigger_lemma="caroline",
+        )
+        assert clusterer._queue_for_review(  # noqa: SLF001 - transaction proof
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            proposal=pair,
+            trigger_lemma="caroline",
+        )
+
+    with database_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT status::text, candidate FROM review_queue"
+                " ORDER BY created_at, review_id"
+            )
+        ).all()
+    pending = [candidate for status, candidate in rows if status == "pending"]
+    assert len(pending) == 1
+    assert set(pending[0]["absorbed_ids"]) == {str(second)}
 
 
 def test_missing_absorbed_profile_never_authorizes_an_automatic_unmerge(

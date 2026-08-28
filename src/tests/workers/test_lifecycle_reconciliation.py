@@ -172,7 +172,7 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
     if type_name == "ObservationVerdict":
         return {"outcome": "new", "confidence": 0.9}
     if type_name == "AdjudicationVerdict":
-        return {"match": True, "confidence": 0.9}
+        return {"verdict": "same", "confidence": 0.9}
     raise AssertionError(f"unexpected response type {type_name}")
 
 

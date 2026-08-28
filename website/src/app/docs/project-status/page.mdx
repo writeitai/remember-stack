@@ -108,6 +108,20 @@ Current public release: [`v0.6.0`](https://github.com/writeitai/remember-stack/r
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
 
+## What landed after v0.6.0 (in v0.7.0)
+
+- Entity adjudication is tri-state. Thin evidence and bounded-prefix truncation
+  mint explicit provisional fragments without poisoning later convergence;
+  only positively supported difference creates an effective cannot-link.
+- T3/T4 provider calls no longer hold the normalized-lemma advisory-lock
+  transaction. Candidate/profile authority is revalidated before commit with
+  bounded retry on contention.
+- Successful profile publication invokes bounded local convergence. Automatic
+  merge remains fail-closed by default, and equivalent review proposals are
+  deterministic and deduplicated.
+- `RS-LoCoMo-Full-v16` retains v15's read surface and budgets while enforcing a
+  content-bearing attempt before terminal `Unknown` after identity-only reads.
+
 ## Intentionally not in the library
 
 - Multi-tenant hosted control plane, billing, or dashboards

@@ -84,6 +84,7 @@ EXPECTED_ENUMS: Final = (
     "saved_query_assurance",
     "saved_query_origin",
     "saved_query_status",
+    "resolution_exclusion_basis",
     "resolution_tier",
     "review_item_kind",
     "review_status",
@@ -331,9 +332,9 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 68,
+    "c": 73,
     "f": 121,
-    "n": 537,
+    "n": 539,
     "p": 70,
     "u": 35,
     "x": 1,

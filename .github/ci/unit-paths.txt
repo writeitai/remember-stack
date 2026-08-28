@@ -44,6 +44,7 @@ src/tests/packaging/test_client_wheel.py
 src/tests/packaging/test_release_contract.py
 src/tests/spine/test_catalog_lanes.py
 src/tests/spine/test_entity_eligibility.py
+src/tests/spine/test_profile_convergence.py
 src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
 src/tests/surfaces/test_assured_operation_authorities.py
