@@ -12,14 +12,18 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
+from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
+from rememberstack.spine.profile_refresher import _acquire_profile_lock
+from rememberstack.spine.profile_refresher import _locked_profile_state
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 from rememberstack.spine.settings import load_database_settings
 
@@ -634,3 +638,45 @@ def test_backfill_keyset_pages_every_clusterable_entity(
     assert result.updated == 0
     assert result.with_evidence == 0
     assert provider.embedded_texts == []
+
+
+@pytest.mark.parametrize(
+    "lock_key",
+    (f"{_DEPLOYMENT_ID}:identity-epoch", f"{_DEPLOYMENT_ID}:obs:{_FIRST_ENTITY}"),
+)
+def test_busy_profile_lock_is_typed_contention(
+    database_engine: Engine, lock_key: str
+) -> None:
+    """Real identity and evidence lock timeouts become typed contention."""
+    with database_engine.begin() as holder:
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": lock_key},
+        )
+        with pytest.raises(
+            ProfileRefreshContendedError, match="profile lock remained busy"
+        ):
+            with database_engine.begin() as contender:
+                contender.execute(text("SET LOCAL statement_timeout = '100ms'"))
+                _locked_profile_state(
+                    connection=contender,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_id=_FIRST_ENTITY,
+                    configure_timeouts=False,
+                )
+
+
+def test_non_lock_statement_timeout_remains_database_failure(
+    database_engine: Engine,
+) -> None:
+    """A slow non-lock statement must retain its generic database failure."""
+    with pytest.raises(OperationalError):
+        with database_engine.begin() as connection:
+            connection.execute(text("SET LOCAL statement_timeout = '100ms'"))
+            _acquire_profile_lock(
+                connection=connection,
+                statement=text(
+                    "SELECT pg_sleep(1) WHERE CAST(:key AS text) IS NOT NULL"
+                ),
+                key="negative-timeout-proof",
+            )
