@@ -189,6 +189,44 @@ class _UnlabeledConverter:
         )
 
 
+class _InvalidEnvelopeConverter:
+    """A buggy route whose envelope models refuse to construct."""
+
+    name = "invalid-envelope"
+    version = "invalid-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Raise pydantic ValidationError from inside envelope construction."""
+        del content, mime
+        return ConversionResult(
+            document_md="text\n",
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="bad", version="1", execution="library-local"
+                    ),
+                ),
+                coverage=ConversionCoverage(policy="p", complete=True),
+                derivation_ranges=(
+                    DerivationRange(
+                        start=0,
+                        end=5,
+                        derivation_kind="ocr",
+                        evidence_mode="source_expression",
+                    ),
+                ),
+            ),
+            derived_assets=(
+                DerivedAsset(
+                    name="../escape.png",
+                    kind="page_image",
+                    media_type="image/png",
+                    content=b"x",
+                ),
+            ),
+        )
+
+
 class _E0Rig:
     """One composed E0 chain: ingestor, worker, stores, and the spine handles."""
 
@@ -216,6 +254,7 @@ class _E0Rig:
                 "text/html": MarkitdownConverter(),
                 "application/x-fake-scan": _FakeScanConverter(),
                 "application/x-unlabeled": _UnlabeledConverter(),
+                "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
             }
         )
         registry = HandlerRegistry()
@@ -454,6 +493,7 @@ def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> N
     (asset,) = manifest["derived_assets"]
     assert asset["name"] == "pages/page-0001.png"
     assert asset["media_type"] == "image/png"
+    assert asset["description"] == "Fake page render"
     stored = rig.artifact_store.read_bytes(key=ObjectKey(asset["uri"]))
     assert stored == b"fake-png-bytes"
     assert asset["sha256"] == hashlib.sha256(stored).hexdigest()
@@ -474,6 +514,25 @@ def test_unlabeled_converter_output_dead_letters(rig: _E0Rig) -> None:
     )
     assert version["status"] == "failed"
     assert "labeled" in str(version["error"])
+
+
+def test_invalid_envelope_models_dead_letter_as_converter_bug(rig: _E0Rig) -> None:
+    """Envelope ValidationError is deterministic — dead-letter, never retry."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="broken.fake",
+            mime="application/x-invalid-envelope",
+            content=b"raw-bytes",
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] == "failed"
+    assert "invalid envelope" in str(version["error"])
 
 
 def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:

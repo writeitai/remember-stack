@@ -174,3 +174,23 @@ def test_page_dimensions_require_positive_geometry() -> None:
     """Zero-sized pages cannot anchor normalized regions."""
     with pytest.raises(ValidationError):
         PageDimensions(page=1, width=0, height=100)
+
+
+def test_region_precision_requires_the_region_coordinates() -> None:
+    """A locator claiming region precision without a bbox is a false promise."""
+    with pytest.raises(ValidationError):
+        PageLocator(page=1, precision="region")
+
+
+def test_complete_coverage_cannot_disclose_gaps() -> None:
+    """`complete=True` with gaps is self-contradictory and rejected."""
+    with pytest.raises(ValidationError):
+        ConversionCoverage(policy="all", complete=True, gaps=("page 3 skipped",))
+
+
+def test_execution_label_is_constrained_to_documented_forms() -> None:
+    """Free-text execution labels would lose the local-vs-provider audit line."""
+    ManifestComponent(name="x", version="1", execution="library-local")
+    ManifestComponent(name="x", version="1", execution="provider:mistral")
+    with pytest.raises(ValidationError):
+        ManifestComponent(name="x", version="1", execution="somewhere-else")

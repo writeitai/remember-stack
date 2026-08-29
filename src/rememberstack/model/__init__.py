@@ -93,6 +93,7 @@ from rememberstack.model.conversion import PageLocator
 from rememberstack.model.conversion import SourceLocator
 from rememberstack.model.conversion import SourceMapEntry
 from rememberstack.model.conversion import SourceRangeLocator
+from rememberstack.model.conversion import TimelineTrack
 from rememberstack.model.conversion import TimeLocator
 from rememberstack.model.conversion import UnknownConverterError
 from rememberstack.model.conversion import UnroutableMimeError
@@ -414,6 +415,7 @@ __all__ = (
     "SourceMapEntry",
     "SourceRangeLocator",
     "TimeLocator",
+    "TimelineTrack",
     "UnknownConverterError",
     "ConsumptionDeployment",
     "ConsumptionOperation",

@@ -25,6 +25,7 @@ from uuid import uuid4
 from uuid import uuid5
 
 from pydantic import Field
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -83,7 +84,7 @@ from rememberstack.workers.e0_summary import SectionSummarizer
 from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
 
-E0_CONVERT_VERSION: Final = "e0-convert-2026.07"
+E0_CONVERT_VERSION: Final = "e0-convert-2026.08"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
 E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07f:d79-wave2"
@@ -342,6 +343,13 @@ class ConvertHandler:
         try:
             result = converter.convert(content=content, mime=source.mime)
             _require_coherent_envelope(result=result)
+        except ValidationError as err:
+            # a converter that cannot build its own envelope models is a
+            # deterministic converter bug, exactly like an incoherent envelope
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=f"invalid envelope: {err}"
+            )
+            raise NonRetryableHandlerError(str(err)) from err
         except ConversionError as err:
             self._catalog.mark_version_failed(
                 version_id=source.version_id, error=str(err)
@@ -383,6 +391,7 @@ class ConvertHandler:
                     "name": asset.name,
                     "kind": asset.kind,
                     "media_type": asset.media_type,
+                    "description": asset.description,
                     "uri": asset_uri,
                     "sha256": hashlib.sha256(asset.content).hexdigest(),
                     "locators": [
@@ -404,6 +413,10 @@ class ConvertHandler:
                 "derivation_ranges": [
                     labeled.model_dump(mode="json", exclude_none=True)
                     for labeled in result.manifest.derivation_ranges
+                ],
+                "tracks": [
+                    track.model_dump(mode="json", exclude_none=True)
+                    for track in result.manifest.tracks
                 ],
                 "page_dimensions": [
                     dims.model_dump(mode="json", exclude_none=True)

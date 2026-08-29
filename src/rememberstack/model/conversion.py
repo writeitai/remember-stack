@@ -65,6 +65,11 @@ class ConverterManifest(BaseModel):
     """Per-page raster geometry for paged sources — what a consumer needs to
     interpret the original pixel coordinates behind normalized locators and
     to render region previews. Empty for pageless sources."""
+    tracks: tuple["TimelineTrack", ...] = ()
+    """The track table for multi-track media: every ``TimeLocator.track``
+    identifier a route emits must be defined here, with the selected track
+    marked, so time locators are interpretable (media_design §2/§4). Empty
+    for sources without a timeline."""
 
     @model_validator(mode="after")
     def ranges_ascend_without_overlap(self) -> Self:
@@ -86,8 +91,10 @@ class ManifestComponent(BaseModel):
 
     name: NonEmptyString
     version: NonEmptyString
-    execution: NonEmptyString
-    """Where the stage ran: ``library-local`` or ``provider:<name>`` (D61)."""
+    execution: str = Field(pattern=r"^(library-local|provider:[A-Za-z0-9._-]+)$")
+    """Where the stage ran: ``library-local`` or ``provider:<name>`` (D61) —
+    constrained so the local-versus-provider distinction privacy audits need
+    can never be lost to a free-text label."""
 
 
 class ConversionCoverage(BaseModel):
@@ -100,6 +107,13 @@ class ConversionCoverage(BaseModel):
     gaps: tuple[str, ...] = ()
     """Human-readable intervals/regions the route could not represent."""
 
+    @model_validator(mode="after")
+    def complete_means_no_gaps(self) -> Self:
+        """A result cannot claim completeness while disclosing gaps."""
+        if self.complete and self.gaps:
+            raise ValueError("a complete coverage result must not list gaps")
+        return self
+
 
 class PageDimensions(BaseModel):
     """One page's raster geometry as the converter read it (paged sources)."""
@@ -111,6 +125,18 @@ class PageDimensions(BaseModel):
     height: float = Field(gt=0)
     dpi: float | None = Field(default=None, gt=0)
     unit: NonEmptyString = "px"
+
+
+class TimelineTrack(BaseModel):
+    """One decoded media track: what a ``TimeLocator.track`` id refers to."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: NonEmptyString
+    kind: Literal["audio", "video", "subtitle"]
+    selected: bool
+    """Whether the route read this track for the canonical timeline."""
+    label: str | None = None
 
 
 class DerivationRange(BaseModel):
@@ -205,6 +231,13 @@ class PageLocator(BaseModel):
     page: int = Field(ge=1)
     bbox: NormalizedRegion | None = None
     precision: Literal["page", "region"]
+
+    @model_validator(mode="after")
+    def region_precision_requires_a_bbox(self) -> Self:
+        """A pointer claiming region precision must actually carry the region."""
+        if self.precision == "region" and self.bbox is None:
+            raise ValueError("precision 'region' requires a bbox")
+        return self
 
 
 class SourceRangeLocator(BaseModel):
@@ -306,4 +339,5 @@ class UnknownConverterError(Exception):
 ConversionResult.model_rebuild()
 ConverterManifest.model_rebuild()
 SourceMapEntry.model_rebuild()
+TimelineTrack.model_rebuild()
 DerivedAsset.model_rebuild()

@@ -20,8 +20,10 @@ from rememberstack.model import DerivationRange
 from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
 
-PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.07"
-"""Pins the passthrough route's behavior (strict UTF-8 decode, no rewriting)."""
+PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.08"
+"""Pins the passthrough route's behavior: strict UTF-8 decode, no rewriting,
+D65 envelope emission (manifest + total labeling). A contract change here
+must bump this so replay never reuses artifacts from the old shape."""
 
 STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = {
     "text/markdown": "passthrough",

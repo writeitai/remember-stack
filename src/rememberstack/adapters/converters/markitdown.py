@@ -14,8 +14,10 @@ from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ManifestComponent
 
-MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.1"
-"""Pins the markitdown library generation this route was validated against."""
+MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.2"
+"""Pins this route's generation: the markitdown 0.1.x library line plus D65
+envelope emission. Bumped whenever library or output contract changes so
+replay never reuses artifacts from an older shape."""
 
 
 class MarkitdownConverter:
