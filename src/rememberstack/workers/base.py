@@ -122,6 +122,21 @@ class HandlerOutcome(BaseModel):
 
 
 @runtime_checkable
+@runtime_checkable
+class TerminalFailureFinalizer(Protocol):
+    """Optional handler capability: finalize domain state on exhausted retries.
+
+    A retryable failure that dead-letters on its final attempt ends the work,
+    but the stage's domain row (e.g. a document version left `converting`)
+    would otherwise keep claiming in-flight progress forever. A handler that
+    implements this gets one call to make that state truthful.
+    """
+
+    def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
+        """Record the terminal failure on the stage's domain state."""
+        ...
+
+
 class StageHandler(Protocol):
     """One stage's transformation over one claimed unit of work."""
 
@@ -310,6 +325,19 @@ class Worker:
                 if retry_at is not None
                 else RunResultOutcome.DEAD_LETTERED
             )
+            if result_outcome is RunResultOutcome.DEAD_LETTERED and isinstance(
+                handler, TerminalFailureFinalizer
+            ):
+                try:
+                    handler.finalize_terminal_failure(
+                        work=claimed, error=str(exception)
+                    )
+                except Exception:  # noqa: BLE001 — finalization must not mask DLQ
+                    _logger.exception(
+                        "terminal-failure finalizer failed in stage %s for %s",
+                        claimed.stage,
+                        claimed.processing_id,
+                    )
             if retry_at is not None and self._queue is not None:
                 self._queue.announce(
                     processing_id=claimed.processing_id,

@@ -236,6 +236,18 @@ class _InvalidEnvelopeConverter:
         )
 
 
+class _TransientlyFailingConverter:
+    """A provider route whose backend never recovers within the attempt limit."""
+
+    name = "always-transient"
+    version = "transient-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Raise a plain (retryable) provider failure on every attempt."""
+        del content, mime
+        raise RuntimeError("provider unavailable")
+
+
 class _E0Rig:
     """One composed E0 chain: ingestor, worker, stores, and the spine handles."""
 
@@ -264,6 +276,7 @@ class _E0Rig:
                 "application/x-fake-scan": _FakeScanConverter(),
                 "application/x-unlabeled": _UnlabeledConverter(),
                 "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
+                "application/x-transient": _TransientlyFailingConverter(),
             }
         )
         registry = HandlerRegistry()
@@ -553,6 +566,29 @@ def test_invalid_envelope_models_dead_letter_as_converter_bug(rig: _E0Rig) -> No
     )
     assert version["status"] == "failed"
     assert "invalid envelope" in str(version["error"])
+
+
+def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
+    """When retryable convert attempts run out, the version stops claiming
+    in-flight work and records the terminal failure (never stuck converting)."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="flaky.fake", mime="application/x-transient", content=b"raw-bytes"
+        ),
+    )
+    outcome = rig.run(stage=PipelineStage.CONVERT)
+    for _ in range(20):
+        if outcome is not RunResultOutcome.RETRY_SCHEDULED:
+            break
+        outcome = rig.run(stage=PipelineStage.CONVERT)
+    assert outcome is RunResultOutcome.DEAD_LETTERED
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] == "failed"
+    assert "retries exhausted" in str(version["error"])
 
 
 def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:

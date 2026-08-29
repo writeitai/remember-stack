@@ -481,6 +481,13 @@ class ConvertHandler:
             work=work, version_id=source.version_id, representation_id=representation_id
         )
 
+    def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
+        """A convert whose retries exhausted must not leave the version in-flight."""
+        self._catalog.mark_version_failed(
+            version_id=_payload_uuid(work=work, field="version_id"),
+            error=f"convert retries exhausted: {error}",
+        )
+
     def _structure_follow_up(
         self, *, work: ClaimedWork, version_id: UUID, representation_id: UUID
     ) -> HandlerOutcome:
