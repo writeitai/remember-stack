@@ -78,6 +78,9 @@ The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
 | `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | Deterministic input ceiling before any provider call (default `50000000`) |
 | `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` (default) or `page`; word-level scores are retained in the provider-response interchange asset |
 | `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | Keep the sanitized raw OCR response as an interchange asset (default `true`) |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | Metered price per 1000 processed pages recorded in the cost ledger (default `1`) |
+
+Every output-affecting `mistral_ocr` option is folded into the converter version, so changing the model or an option re-converts affected documents as new representations instead of replaying old ones.
 
 ### Live-graph resources
 
