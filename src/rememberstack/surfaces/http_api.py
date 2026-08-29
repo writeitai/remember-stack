@@ -795,10 +795,17 @@ class _IngestBodyLimit:
 
     async def __call__(self, scope: dict, receive: object, send: object) -> None:
         """Reject oversized or length-less ingest requests; pass the rest."""
+        path = str(scope.get("path", ""))
+        root_path = str(scope.get("root_path", ""))
+        if root_path and path.startswith(root_path):
+            # a mounted or root_path-prefixed app still routes /ingest; the
+            # guard must see the same route FastAPI will, or a prefixed
+            # deployment would buffer unbounded bodies past it
+            path = path[len(root_path) :]
         if (
             scope.get("type") != "http"
             or scope.get("method") != "POST"
-            or scope.get("path") != "/ingest"
+            or path != "/ingest"
         ):
             await self._app(scope, receive, send)  # type: ignore[operator]
             return

@@ -927,3 +927,33 @@ def test_other_routes_ignore_the_ingest_body_cap(capped_ingest_app: TestClient) 
     # the fake engine object has no resolve, so reaching it past the guard
     # yields a 500 — the proof the middleware neither 411s nor 413s the route
     assert response.status_code == 500
+
+
+def test_body_cap_holds_when_the_app_is_mounted_under_a_prefix() -> None:
+    """A prefixed deployment must not slip oversized bodies past the guard."""
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    inner = build_api(
+        engine=cast("QueryEngine", object()),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=_OpenBoundary(),
+        readiness=_OpenBoundary(),
+        ingest=_Ingest(),
+        ingest_body_max_bytes=64,
+    )
+    outer = TestClient(
+        Starlette(routes=[Mount("/api", app=inner)]), raise_server_exceptions=False
+    )
+    refused = outer.post(
+        "/api/ingest",
+        params={"filename": "big.bin", "mime": "application/octet-stream"},
+        content=b"x" * 65,
+    )
+    assert refused.status_code == 413
+    accepted = outer.post(
+        "/api/ingest",
+        params={"filename": "note.md", "mime": "text/markdown"},
+        content=b"small note",
+    )
+    assert accepted.status_code == 200
