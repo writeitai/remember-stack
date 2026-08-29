@@ -10,8 +10,8 @@ supplies `REMEMBERSTACK_MISTRAL_OCR_API_KEY`.
 
 The document travels as an inline base64 data URL: one deterministic request
 path, no provider-side file object to upload, sign, and clean up. The billable
-call is reported as `ConversionResult.usage`, which the convert worker meters
-into the cost ledger (D67).
+call is reported as a `ConversionResult.usage_events` entry, which the
+convert worker meters into the cost ledger (D67).
 """
 
 import base64
@@ -34,6 +34,7 @@ from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
 from rememberstack.model import DerivedAsset
 from rememberstack.model import ImageRegionLocator
@@ -160,7 +161,9 @@ class MistralOcrConverter:
                 f"mistral ocr normalization failed after a billed call: {err}",
                 usage=usage,
             ) from err
-        return result.model_copy(update={"usage": usage})
+        return result.model_copy(
+            update={"usage_events": (ConverterUsageEvent(call_key="ocr", usage=usage),)}
+        )
 
     def _process(self, *, content: bytes, mime: str) -> dict[str, Any]:
         """One `/v1/ocr` call; 4xx is the input's fault, the rest retries."""

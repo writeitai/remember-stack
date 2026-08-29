@@ -289,10 +289,11 @@ def test_version_fingerprints_every_output_affecting_setting() -> None:
 def test_usage_meters_pages_at_the_configured_price() -> None:
     """The billable call reports cost from pages_processed, not tokens."""
     result = _convert()
-    assert result.usage is not None
-    assert result.usage.model_name == "mistral-ocr-2508"
-    assert result.usage.cost_usd == Decimal("0.002")
-    assert result.usage.tokens_in == 0
+    (event,) = result.usage_events
+    assert event.call_key == "ocr"
+    assert event.usage.model_name == "mistral-ocr-2508"
+    assert event.usage.cost_usd == Decimal("0.002")
+    assert event.usage.tokens_in == 0
 
 
 def test_blank_api_key_refuses_composition(monkeypatch: pytest.MonkeyPatch) -> None:
