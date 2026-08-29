@@ -41,6 +41,7 @@ from rememberstack.model import ManifestComponent
 from rememberstack.model import NormalizedRegion
 from rememberstack.model import PageDimensions
 from rememberstack.model import PageLocator
+from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import SourceLocator
 from rememberstack.model import SourceMapEntry
@@ -145,16 +146,21 @@ class MistralOcrConverter:
         started_ns = time.monotonic_ns()
         raw = self._process(content=content, mime=mime)
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
-        result = _normalize(
-            raw=raw, settings=self._settings, source_is_image=mime.startswith("image/")
-        )
-        return result.model_copy(
-            update={
-                "usage": _usage(
-                    raw=raw, settings=self._settings, latency_ms=int(latency_ms)
-                )
-            }
-        )
+        usage = _usage(raw=raw, settings=self._settings, latency_ms=int(latency_ms))
+        try:
+            result = _normalize(
+                raw=raw,
+                settings=self._settings,
+                source_is_image=mime.startswith("image/"),
+            )
+        except Exception as err:
+            # the 200 was billed: carry the usage on the failure so every
+            # attempt's spend reaches the ledger even when normalization breaks
+            raise ProviderCallError(
+                f"mistral ocr normalization failed after a billed call: {err}",
+                usage=usage,
+            ) from err
+        return result.model_copy(update={"usage": usage})
 
     def _process(self, *, content: bytes, mime: str) -> dict[str, Any]:
         """One `/v1/ocr` call; 4xx is the input's fault, the rest retries."""
@@ -193,6 +199,15 @@ class MistralOcrConverter:
         decoded = response.json()
         if not isinstance(decoded, dict):
             raise MistralOcrProviderError("mistral ocr returned a non-object JSON body")
+        pages = decoded.get("pages")
+        if (
+            not isinstance(pages, list)
+            or not pages
+            or not all(isinstance(page, dict) for page in pages)
+        ):
+            raise MistralOcrProviderError(
+                "mistral ocr returned no usable pages for the document"
+            )
         return decoded
 
 
@@ -242,7 +257,11 @@ def _normalize(
             )
 
         page_assets = _image_assets(
-            page=page, number=number, source_is_image=source_is_image, warnings=warnings
+            page=page,
+            number=number,
+            source_is_image=source_is_image,
+            retain_images=settings.include_images,
+            warnings=warnings,
         )
         assets.extend(asset for asset, _ in page_assets)
         link_map = {identifier: asset.name for asset, identifier in page_assets}
@@ -466,18 +485,31 @@ def _region(*, page: dict[str, Any], item: dict[str, Any]) -> NormalizedRegion |
 
 
 def _image_assets(
-    *, page: dict[str, Any], number: int, source_is_image: bool, warnings: list[str]
+    *,
+    page: dict[str, Any],
+    number: int,
+    source_is_image: bool,
+    retain_images: bool,
+    warnings: list[str],
 ) -> list[tuple[DerivedAsset, str]]:
     """Embedded images become located, captioned `media/` assets.
 
     Returns each asset with the provider's raw identifier so the caller can
     rewrite markdown links from the identifier to the stored asset path.
+    Figures that cannot be stored — retention disabled, or the provider sent
+    no bytes — become disclosed gaps, never silent omissions.
     """
     assets: list[tuple[DerivedAsset, str]] = []
     for position, image in enumerate(page.get("images") or []):
         if not isinstance(image, dict):
             continue
         identifier = str(image.get("id") or f"img-{position}")
+        if not retain_images:
+            warnings.append(
+                f"page {number} image {identifier!r} not retained "
+                "(include_images disabled)"
+            )
+            continue
         encoded = image.get("image_base64") or ""
         if encoded.startswith("data:"):
             encoded = encoded.split(",", 1)[-1]
