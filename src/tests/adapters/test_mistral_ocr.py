@@ -1,0 +1,267 @@
+"""The Mistral OCR route: normalization fidelity and typed failure proofs.
+
+The fixture mirrors the live `/v1/ocr` response shape (word-level confidence,
+layout blocks with pixel bboxes, embedded images, headers/footers, page
+dimensions) captured against `mistral-ocr-latest` on 2026-08-28.
+"""
+
+import base64
+import json
+
+import httpx
+import pytest
+
+from rememberstack.adapters.converters import build_conversion_routes
+from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
+from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderError
+from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
+from rememberstack.model import ConversionError
+from rememberstack.model import ConversionResult
+
+_PNG_BYTES = b"\x89PNG-fake-payload"
+
+_RAW_RESPONSE: dict[str, object] = {
+    "model": "mistral-ocr-2508",
+    "usage_info": {"pages_processed": 2, "doc_size_bytes": 1234},
+    "document_annotation": None,
+    "pages": [
+        {
+            "index": 0,
+            "markdown": "# Title\n\nBody paragraph one.",
+            "header": "Running head",
+            "footer": "Page 1 of 2",
+            "dimensions": {"dpi": 87, "height": 1000, "width": 800},
+            "confidence_scores": {
+                "average_page_confidence_score": 0.98,
+                "minimum_page_confidence_score": 0.91,
+                "word_confidence_scores": [
+                    {"text": "Title", "confidence": 0.99, "start_index": 2}
+                ],
+            },
+            "blocks": [
+                {
+                    "type": "title",
+                    "content": "# Title",
+                    "top_left_x": 100,
+                    "top_left_y": 50,
+                    "bottom_right_x": 700,
+                    "bottom_right_y": 90,
+                    "confidence_scores": None,
+                },
+                {
+                    "type": "text",
+                    "content": "not present in the markdown",
+                    "top_left_x": 0,
+                    "top_left_y": 0,
+                    "bottom_right_x": 10,
+                    "bottom_right_y": 10,
+                    "confidence_scores": None,
+                },
+            ],
+            "images": [
+                {
+                    "id": "img-0.png",
+                    "top_left_x": 200,
+                    "top_left_y": 400,
+                    "bottom_right_x": 600,
+                    "bottom_right_y": 800,
+                    "image_base64": base64.b64encode(_PNG_BYTES).decode(),
+                    "image_annotation": "A bar chart",
+                }
+            ],
+            "tables": [],
+            "hyperlinks": ["https://example.org"],
+        },
+        {
+            "index": 1,
+            "markdown": "Second page text.",
+            "header": None,
+            "footer": None,
+            "dimensions": {"dpi": 87, "height": 1000, "width": 800},
+            "confidence_scores": {"average_page_confidence_score": 0.95},
+            "blocks": [],
+            "images": [],
+            "tables": [],
+            "hyperlinks": [],
+        },
+    ],
+}
+
+
+def _converter(
+    handler: httpx.MockTransport | None = None, **overrides: object
+) -> MistralOcrConverter:
+    """One converter over a mock transport — no network, no env key."""
+    settings = MistralOcrSettings(api_key="test-key", **overrides)  # type: ignore[arg-type]
+    converter = MistralOcrConverter(settings=settings)
+    if handler is not None:
+        converter._client = httpx.Client(  # noqa: SLF001 - test seam
+            base_url=settings.base_url, transport=handler
+        )
+    return converter
+
+
+def _ok_transport() -> httpx.MockTransport:
+    """Serve the canned raw response for any /v1/ocr POST."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/ocr"
+        body = json.loads(request.content)
+        assert body["confidence_scores_granularity"] == "word"
+        assert body["extract_header"] is True
+        assert body["document"]["type"] == "document_url"
+        return httpx.Response(200, json=_RAW_RESPONSE)
+
+    return httpx.MockTransport(handle)
+
+
+def _convert() -> ConversionResult:
+    return _converter(_ok_transport()).convert(
+        content=b"%PDF-fake", mime="application/pdf"
+    )
+
+
+def test_document_md_orders_header_body_footer_per_page() -> None:
+    """Headers and footers exist as testimony, in reading order, per page."""
+    result = _convert()
+    assert result.document_md.startswith("Running head\n\n# Title")
+    assert "Page 1 of 2" in result.document_md
+    assert result.document_md.rstrip().endswith("Second page text.")
+
+
+def test_labeling_is_total_and_carries_page_confidence() -> None:
+    """Every character is labeled; ranges disclose the page-average score."""
+    result = _convert()
+    ranges = result.manifest.derivation_ranges
+    assert ranges[0].start == 0
+    assert ranges[-1].end == len(result.document_md)
+    assert all(
+        following.start == labeled.end
+        for labeled, following in zip(ranges, ranges[1:], strict=False)
+    )
+    kinds = [labeled.derivation_kind for labeled in ranges]
+    assert kinds == ["page_header", "ocr", "page_footer", "ocr"]
+    assert [labeled.confidence for labeled in ranges] == [0.98, 0.98, 0.98, 0.95]
+
+
+def test_layout_blocks_become_region_grain_source_map_entries() -> None:
+    """Anchored blocks map to typed regions with normalized bboxes."""
+    result = _convert()
+    assert result.source_map is not None
+    titled = [entry for entry in result.source_map if entry.region_kind == "title"]
+    (entry,) = titled
+    (locator,) = entry.locators
+    assert locator.kind == "page"
+    assert locator.page == 1
+    assert locator.precision == "region"
+    assert locator.bbox is not None
+    assert locator.bbox.x == 100 / 800
+    assert locator.bbox.h == (90 - 50) / 1000
+    assert result.document_md[entry.start : entry.end] == "# Title"
+
+
+def test_unanchored_block_is_a_disclosed_gap_not_a_silent_drop() -> None:
+    """A block the markdown cannot anchor becomes a warning and coverage gap."""
+    result = _convert()
+    assert any("could not be anchored" in warning for warning in result.warnings)
+    assert result.manifest.coverage.complete is False
+    assert result.manifest.coverage.gaps == result.warnings
+
+
+def test_embedded_images_become_located_captioned_assets() -> None:
+    """Image bytes leave the response and land as first-class located assets."""
+    result = _convert()
+    images = [
+        asset for asset in result.derived_assets if asset.kind == "embedded_image"
+    ]
+    (asset,) = images
+    assert asset.name == "pages/p0001/img-0.png"
+    assert asset.media_type == "image/png"
+    assert asset.content == _PNG_BYTES
+    assert asset.description == "A bar chart"
+    (locator,) = asset.locators
+    assert locator.kind == "page"
+    assert locator.bbox is not None
+
+
+def test_interchange_asset_keeps_the_response_without_image_payloads() -> None:
+    """The raw response survives as interchange, image bytes stripped."""
+    result = _convert()
+    interchange = [
+        asset for asset in result.derived_assets if asset.kind == "provider_response"
+    ]
+    (asset,) = interchange
+    decoded = json.loads(asset.content)
+    assert decoded["model"] == "mistral-ocr-2508"
+    page = decoded["pages"][0]
+    assert "image_base64" not in page["images"][0]
+    assert page["confidence_scores"]["word_confidence_scores"]
+
+
+def test_manifest_records_provider_execution_and_page_geometry() -> None:
+    """The self-account names the provider model and per-page raster geometry."""
+    result = _convert()
+    (component,) = result.manifest.components
+    assert component.name == "mistral-ocr"
+    assert component.version == "mistral-ocr-2508"
+    assert component.execution == "provider:mistral"
+    assert [dims.page for dims in result.manifest.page_dimensions] == [1, 2]
+    assert result.manifest.page_dimensions[0].width == 800
+
+
+def test_oversized_document_fails_deterministically_before_any_call() -> None:
+    """The configured byte ceiling is a typed input failure, not a retry loop."""
+    converter = _converter(max_document_bytes=4)
+    with pytest.raises(ConversionError):
+        converter.convert(content=b"12345", mime="application/pdf")
+
+
+def test_4xx_is_a_conversion_error_and_5xx_stays_retryable() -> None:
+    """Input faults dead-letter; provider faults propagate for retry."""
+
+    def rejecting(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": "bad document"})
+
+    with pytest.raises(ConversionError):
+        _converter(httpx.MockTransport(rejecting)).convert(
+            content=b"x", mime="application/pdf"
+        )
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="bad gateway")
+
+    with pytest.raises(MistralOcrProviderError):
+        _converter(httpx.MockTransport(failing)).convert(
+            content=b"x", mime="application/pdf"
+        )
+
+
+def test_image_mime_travels_as_image_url_document() -> None:
+    """Standalone scans route through the provider's image document type."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["document"]["type"] == "image_url"
+        return httpx.Response(200, json={"model": "m", "pages": []})
+
+    result = _converter(httpx.MockTransport(handle)).convert(
+        content=b"png-bytes", mime="image/png"
+    )
+    assert result.document_md == ""
+    assert result.manifest.derivation_ranges == ()
+
+
+def test_registry_builds_the_route_only_with_a_configured_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Routing to mistral_ocr without a key refuses composition at startup."""
+    monkeypatch.delenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", raising=False)
+    with pytest.raises(Exception, match="api_key"):
+        build_conversion_routes(route_names={"application/pdf": "mistral_ocr"})
+
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "test-key")
+    routes = build_conversion_routes(
+        route_names={"application/pdf": "mistral_ocr", "image/png": "mistral_ocr"}
+    )
+    assert routes["application/pdf"].name == "mistral_ocr"
+    assert routes["application/pdf"] is routes["image/png"]
