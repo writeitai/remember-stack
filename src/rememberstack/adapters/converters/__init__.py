@@ -51,8 +51,17 @@ def _markitdown() -> Converter:
     return MarkitdownConverter()
 
 
+def _mistral_ocr() -> Converter:
+    """The Mistral OCR route (BYO key); building it without a configured
+    `REMEMBERSTACK_MISTRAL_OCR_API_KEY` refuses composition at startup."""
+    from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
+
+    return MistralOcrConverter()
+
+
 _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "passthrough": _passthrough,
     "markitdown": _markitdown,
+    "mistral_ocr": _mistral_ocr,
 }
 """Every converter-adapter name a route table may bind (D38)."""
