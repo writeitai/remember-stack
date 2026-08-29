@@ -1,5 +1,6 @@
 """WP-5.7 client-wheel contracts: typed SDK, remote MCP, and CLI."""
 
+from collections.abc import Iterator
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -862,3 +863,67 @@ def _ingested(*, deployment_id: UUID) -> IngestedVersion:
         content_hash="a" * 64,
         created=True,
     )
+
+
+@pytest.fixture()
+def capped_ingest_app() -> TestClient:
+    """The HTTP surface with a small ingest body ceiling configured."""
+    app = build_api(
+        engine=cast("QueryEngine", object()),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=_OpenBoundary(),
+        readiness=_OpenBoundary(),
+        ingest=_Ingest(),
+        ingest_body_max_bytes=64,
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_ingest_over_the_body_cap_is_refused_before_buffering(
+    capped_ingest_app: TestClient,
+) -> None:
+    """A declared length over the cap is a 413, matching the managed envelope."""
+    response = capped_ingest_app.post(
+        "/ingest",
+        params={"filename": "big.bin", "mime": "application/octet-stream"},
+        content=b"x" * 65,
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"] == "body_too_large"
+
+
+def test_ingest_without_content_length_requires_a_declared_length(
+    capped_ingest_app: TestClient,
+) -> None:
+    """Chunked ingest cannot bypass the cap: no declared length is a 411."""
+
+    def stream() -> "Iterator[bytes]":
+        yield b"note"
+
+    response = capped_ingest_app.post(
+        "/ingest",
+        params={"filename": "note.md", "mime": "text/markdown"},
+        content=stream(),
+    )
+    assert response.status_code == 411
+    assert response.json()["detail"] == "length_required"
+
+
+def test_ingest_under_the_body_cap_passes_through(
+    capped_ingest_app: TestClient,
+) -> None:
+    """A body within the ceiling reaches E0 unchanged."""
+    response = capped_ingest_app.post(
+        "/ingest",
+        params={"filename": "note.md", "mime": "text/markdown"},
+        content=b"small note",
+    )
+    assert response.status_code == 200
+
+
+def test_other_routes_ignore_the_ingest_body_cap(capped_ingest_app: TestClient) -> None:
+    """The guard scopes to POST /ingest; nothing else changes behavior."""
+    response = capped_ingest_app.get("/resolve", params={"name": "x" * 200})
+    # the fake engine object has no resolve, so reaching it past the guard
+    # yields a 500 — the proof the middleware neither 411s nor 413s the route
+    assert response.status_code == 500
