@@ -6,6 +6,7 @@ currency flip). Proven against real PostgreSQL and a local-FS object store.
 """
 
 from collections.abc import Iterator
+from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -43,6 +44,7 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderCallUsage
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import SectionTreeRecord
 from rememberstack.model import SkeletonStats
@@ -125,6 +127,13 @@ class _FakeScanConverter:
         del content, mime
         return ConversionResult(
             document_md=_SCAN_MARKDOWN,
+            usage=ProviderCallUsage(
+                model_name="fake-ocr-model",
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=Decimal("0.004"),
+                latency_ms=12,
+            ),
             manifest=ConverterManifest(
                 components=(
                     ManifestComponent(
@@ -494,6 +503,17 @@ def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> N
     assert asset["name"] == "pages/page-0001.png"
     assert asset["media_type"] == "image/png"
     assert asset["description"] == "Fake page render"
+
+    ledger_row = rig.row(
+        sql="""
+        SELECT model_name, tier, cost_usd, outcome FROM cost_ledger
+        WHERE call_key = 'convert'
+        """,
+        params={},
+    )
+    assert ledger_row["model_name"] == "fake-ocr-model"
+    assert ledger_row["tier"] == "fake-scan"
+    assert ledger_row["outcome"] == "ok"
     stored = rig.artifact_store.read_bytes(key=ObjectKey(asset["uri"]))
     assert stored == b"fake-png-bytes"
     assert asset["sha256"] == hashlib.sha256(stored).hexdigest()

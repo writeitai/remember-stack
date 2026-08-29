@@ -316,7 +316,6 @@ class ConvertHandler:
         already produced for the version is re-chained as-is — the converter
         is never re-called on a retried or replayed attempt.
         """
-        del meter
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
         )
@@ -355,6 +354,10 @@ class ConvertHandler:
                 version_id=source.version_id, error=str(err)
             )
             raise NonRetryableHandlerError(str(err)) from err
+        if result.usage is not None:
+            # a provider-backed route made a billable call: it enters the
+            # ledger under this attempt like any model-seat call (D67)
+            meter.record(call_key="convert", tier=converter.name, usage=result.usage)
         blocks = blockize(document_md=result.document_md)
 
         representation_id = uuid4()

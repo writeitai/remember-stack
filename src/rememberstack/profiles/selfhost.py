@@ -149,6 +149,14 @@ class SelfHostSettings(BaseSettings):
             )
         return self
 
+    @field_validator("conversion_routes", mode="before")
+    @classmethod
+    def _blank_routes_are_stock(cls, value: object) -> object:
+        """Compose interpolates unset CONVERSION_ROUTES as empty; use stock."""
+        if isinstance(value, str) and not value.strip():
+            return dict(STOCK_CONVERSION_ROUTE_NAMES)
+        return value
+
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
     def _blank_bind_is_unset(cls, value: object) -> object:

@@ -18,6 +18,7 @@ from pydantic import Field
 from pydantic import model_validator
 
 from rememberstack.model.documents import NonEmptyString
+from rememberstack.model.model_provider import ProviderCallUsage
 
 AssetName = Annotated[
     str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
@@ -42,6 +43,9 @@ class ConversionResult(BaseModel):
     source_map: tuple["SourceMapEntry", ...] | None = None
     derived_assets: tuple["DerivedAsset", ...] = ()
     warnings: tuple[str, ...] = ()
+    usage: ProviderCallUsage | None = None
+    """Provider-reported accounting when the route made a billable call —
+    the convert worker meters it into the cost ledger. None for local routes."""
 
 
 class ConverterManifest(BaseModel):
