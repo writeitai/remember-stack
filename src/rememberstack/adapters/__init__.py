@@ -18,6 +18,8 @@ if TYPE_CHECKING:
         MARKITDOWN_CONVERTER_VERSION,
     )
     from rememberstack.adapters.converters.markitdown import MarkitdownConverter
+    from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
+    from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 
 __all__ = (
     "BoundedPostgresReadPool",
@@ -27,6 +29,8 @@ __all__ = (
     "CodexWriterAdapterSettings",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",
+    "MistralOcrConverter",
+    "MistralOcrSettings",
     "build_conversion_routes",
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
@@ -51,4 +55,12 @@ def __getattr__(name: str) -> object:
         from rememberstack.adapters.converters import build_conversion_routes
 
         return build_conversion_routes
+    if name == "MistralOcrConverter":
+        from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
+
+        return MistralOcrConverter
+    if name == "MistralOcrSettings":
+        from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
+
+        return MistralOcrSettings
     raise AttributeError(name)

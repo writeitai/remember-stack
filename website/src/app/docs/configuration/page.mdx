@@ -67,7 +67,20 @@ Replace every local-only secret before any non-isolated use.
 
 | Variable | Purpose |
 | --- | --- |
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown"}`. Shipped adapter names: `passthrough`, `markitdown`. Setting the variable replaces the whole table (defaults shown are the stock table); a MIME type without a route dead-letters on convert, and an unknown adapter name refuses startup |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); a MIME type without a route dead-letters on convert, and an unknown adapter name refuses startup |
+
+The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | Mistral API key. Required when any route names `mistral_ocr`; composition refuses to start without it |
+| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | OCR model (default `mistral-ocr-latest`). Pin a dated model for reproducible representations — the manifest records whatever model identifier the provider echoes |
+| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | Deterministic input ceiling before any provider call (default `50000000`) |
+| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` (default) or `page`; word-level scores are retained in the provider-response interchange asset |
+| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | Keep the sanitized raw OCR response as an interchange asset (default `true`) |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | Metered price per 1000 processed pages recorded in the cost ledger (default `1`) |
+
+Every output-affecting `mistral_ocr` option is folded into the converter version, so changing the model or an option re-converts affected documents as new representations instead of replaying old ones.
 
 ### Live-graph resources
 
