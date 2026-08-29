@@ -177,7 +177,9 @@ class DocumentCatalog:
         """Record a permanent conversion failure on the version's own status.
 
         A dead-lettered convert must not leave the document looking in-flight
-        forever; a version that already reached ``ready`` is never demoted.
+        forever; a version that already reached ``ready`` is never demoted,
+        and the first recorded cause is never overwritten by a later, more
+        generic finalizer message.
         """
         with self._engine.begin() as connection:
             connection.execute(
@@ -841,7 +843,7 @@ _MARK_VERSION_READY = text(
 _MARK_VERSION_FAILED = text(
     """
     UPDATE document_versions
-    SET status = 'failed', error = :error
+    SET status = 'failed', error = COALESCE(error, :error)
     WHERE version_id = :version_id AND status <> 'ready'
     """
 )

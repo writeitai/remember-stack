@@ -6,6 +6,8 @@ currency flip). Proven against real PostgreSQL and a local-FS object store.
 """
 
 from collections.abc import Iterator
+from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 from uuid import UUID
@@ -27,17 +29,28 @@ from rememberstack.core import blockize
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import ClaimedWork
+from rememberstack.model import ConversionCoverage
+from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterManifest
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DerivationRange
+from rememberstack.model import DerivedAsset
 from rememberstack.model import DocumentUpload
+from rememberstack.model import ManifestComponent
 from rememberstack.model import ObjectKey
+from rememberstack.model import PageDimensions
+from rememberstack.model import PageLocator
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderCallUsage
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import SectionTreeRecord
 from rememberstack.model import SkeletonStats
 from rememberstack.model import SnappedSection
+from rememberstack.model import SourceMapEntry
 from rememberstack.model import StructureRouteTag
 from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import DeploymentBootstrapper
@@ -101,6 +114,146 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
     )
 
 
+_SCAN_MARKDOWN = "# Scan\n\nHello from page one.\n"
+
+
+class _FakeScanConverter:
+    """A stand-in media route: full D65 envelope from deterministic fake OCR."""
+
+    name = "fake-scan"
+    version = "fake-scan-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Emit Markdown plus source map, one page image, and a total manifest."""
+        del content, mime
+        return ConversionResult(
+            document_md=_SCAN_MARKDOWN,
+            usage_events=(
+                ConverterUsageEvent(
+                    call_key="ocr",
+                    usage=ProviderCallUsage(
+                        model_name="fake-ocr-model",
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=Decimal("0.004"),
+                        latency_ms=12,
+                    ),
+                ),
+            ),
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="fake-ocr", version="1", execution="library-local"
+                    ),
+                ),
+                coverage=ConversionCoverage(policy="all-pages", complete=True),
+                derivation_ranges=(
+                    DerivationRange(
+                        start=0,
+                        end=len(_SCAN_MARKDOWN),
+                        derivation_kind="ocr",
+                        evidence_mode="source_expression",
+                        confidence=0.98,
+                    ),
+                ),
+                page_dimensions=(
+                    PageDimensions(page=1, width=720, height=1018, dpi=87),
+                ),
+            ),
+            source_map=(
+                SourceMapEntry(
+                    start=0,
+                    end=len(_SCAN_MARKDOWN),
+                    locators=(PageLocator(page=1, precision="page"),),
+                    region_kind="title",
+                ),
+            ),
+            derived_assets=(
+                DerivedAsset(
+                    name="pages/page-0001.png",
+                    kind="page_image",
+                    media_type="image/png",
+                    content=b"fake-png-bytes",
+                    locators=(PageLocator(page=1, precision="page"),),
+                    description="Fake page render",
+                ),
+            ),
+        )
+
+
+class _UnlabeledConverter:
+    """A buggy route: non-empty Markdown with no derivation labeling (§5)."""
+
+    name = "unlabeled"
+    version = "unlabeled-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Return text while omitting the total labeling the contract requires."""
+        del content, mime
+        return ConversionResult(
+            document_md="unlabeled text\n",
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="unlabeled", version="1", execution="library-local"
+                    ),
+                ),
+                coverage=ConversionCoverage(policy="none", complete=True),
+                derivation_ranges=(),
+            ),
+        )
+
+
+class _InvalidEnvelopeConverter:
+    """A buggy route whose envelope models refuse to construct."""
+
+    name = "invalid-envelope"
+    version = "invalid-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Raise pydantic ValidationError from inside envelope construction."""
+        del content, mime
+        return ConversionResult(
+            document_md="text\n",
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="bad", version="1", execution="library-local"
+                    ),
+                ),
+                coverage=ConversionCoverage(policy="p", complete=True),
+                derivation_ranges=(
+                    DerivationRange(
+                        start=0,
+                        end=5,
+                        derivation_kind="ocr",
+                        evidence_mode="source_expression",
+                    ),
+                ),
+            ),
+            derived_assets=(
+                DerivedAsset(
+                    name="../escape.png",
+                    kind="page_image",
+                    media_type="image/png",
+                    content=b"x",
+                ),
+            ),
+        )
+
+
+class _TransientlyFailingConverter:
+    """A provider route whose backend never recovers within the attempt limit."""
+
+    name = "always-transient"
+    version = "transient-1"
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        """Raise a plain (retryable) provider failure on every attempt."""
+        del content, mime
+        raise RuntimeError("provider unavailable")
+
+
 class _E0Rig:
     """One composed E0 chain: ingestor, worker, stores, and the spine handles."""
 
@@ -126,6 +279,10 @@ class _E0Rig:
                 "text/markdown": MarkdownPassthroughConverter(),
                 "text/plain": MarkdownPassthroughConverter(),
                 "text/html": MarkitdownConverter(),
+                "application/x-fake-scan": _FakeScanConverter(),
+                "application/x-unlabeled": _UnlabeledConverter(),
+                "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
+                "application/x-transient": _TransientlyFailingConverter(),
             }
         )
         registry = HandlerRegistry()
@@ -314,6 +471,130 @@ def test_html_document_converts_through_markitdown(rig: _E0Rig) -> None:
     ).decode("utf-8")
     assert "# Atlas kickoff" in markdown
     assert "Notes body." in markdown
+
+
+def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> None:
+    """A full D65 envelope lands as sidecars: source_map.json, media/, manifest."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="scan.fake",
+            mime="application/x-fake-scan",
+            content=b"raw-scan-bytes",
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+
+    representation = rig.row(
+        sql="""
+        SELECT * FROM document_representations
+        WHERE version_id = :version_id AND route = 'fake-scan'
+        """,
+        params={"version_id": ingested.version_id},
+    )
+    manifest = json.loads(
+        rig.artifact_store.read_bytes(
+            key=ObjectKey(str(representation["conversion_uri"]))
+        )
+    )
+    assert manifest["route"] == "fake-scan"
+    assert manifest["components"] == [
+        {"name": "fake-ocr", "version": "1", "execution": "library-local"}
+    ]
+    assert manifest["coverage"] == {"policy": "all-pages", "complete": True, "gaps": []}
+    (labeled,) = manifest["derivation_ranges"]
+    assert labeled["derivation_kind"] == "ocr"
+    assert labeled["end"] == len(_SCAN_MARKDOWN)
+    assert labeled["confidence"] == 0.98
+    assert manifest["page_dimensions"] == [
+        {"page": 1, "width": 720.0, "height": 1018.0, "dpi": 87.0, "unit": "px"}
+    ]
+
+    assert manifest["source_map"]["entry_count"] == 1
+    source_map = json.loads(
+        rig.artifact_store.read_bytes(key=ObjectKey(manifest["source_map"]["uri"]))
+    )
+    (entry,) = source_map["entries"]
+    assert entry["locators"] == [{"kind": "page", "page": 1, "precision": "page"}]
+    assert entry["region_kind"] == "title"
+
+    (asset,) = manifest["derived_assets"]
+    assert asset["name"] == "pages/page-0001.png"
+    assert asset["media_type"] == "image/png"
+    assert asset["description"] == "Fake page render"
+
+    ledger_row = rig.row(
+        sql="""
+        SELECT model_name, tier, cost_usd, outcome FROM cost_ledger
+        WHERE call_key = 'convert:ocr'
+        """,
+        params={},
+    )
+    assert ledger_row["model_name"] == "fake-ocr-model"
+    assert ledger_row["tier"] == "fake-scan"
+    assert ledger_row["outcome"] == "ok"
+    stored = rig.artifact_store.read_bytes(key=ObjectKey(asset["uri"]))
+    assert stored == b"fake-png-bytes"
+    assert asset["sha256"] == hashlib.sha256(stored).hexdigest()
+
+
+def test_unlabeled_converter_output_dead_letters(rig: _E0Rig) -> None:
+    """Total labeling (§5) is enforced at the seam: a silent route is a bug."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="silent.fake", mime="application/x-unlabeled", content=b"raw-bytes"
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] == "failed"
+    assert "labeled" in str(version["error"])
+
+
+def test_invalid_envelope_models_dead_letter_as_converter_bug(rig: _E0Rig) -> None:
+    """Envelope ValidationError is deterministic — dead-letter, never retry."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="broken.fake",
+            mime="application/x-invalid-envelope",
+            content=b"raw-bytes",
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] == "failed"
+    assert "invalid envelope" in str(version["error"])
+
+
+def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
+    """When retryable convert attempts run out, the version stops claiming
+    in-flight work and records the terminal failure (never stuck converting)."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="flaky.fake", mime="application/x-transient", content=b"raw-bytes"
+        ),
+    )
+    outcome = rig.run(stage=PipelineStage.CONVERT)
+    for _ in range(20):
+        if outcome is not RunResultOutcome.RETRY_SCHEDULED:
+            break
+        outcome = rig.run(stage=PipelineStage.CONVERT)
+    assert outcome is RunResultOutcome.DEAD_LETTERED
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] == "failed"
+    assert "convert terminated" in str(version["error"])
 
 
 def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:

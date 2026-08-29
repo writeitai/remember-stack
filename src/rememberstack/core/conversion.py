@@ -8,15 +8,33 @@ version bump, never a silent difference.
 
 from collections.abc import Mapping
 from typing import Final
+from typing import Literal
 from typing import Protocol
 from typing import runtime_checkable
 
+from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterManifest
+from rememberstack.model import DerivationRange
+from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
 
-PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.07"
-"""Pins the passthrough route's behavior (strict UTF-8 decode, no rewriting)."""
+PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.08"
+"""Pins the passthrough route's behavior: strict UTF-8 decode, no rewriting,
+D65 envelope emission (manifest + total labeling). A contract change here
+must bump this so replay never reuses artifacts from the old shape."""
+
+STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = {
+    "text/markdown": "passthrough",
+    "text/plain": "passthrough",
+}
+"""The stock self-host MIME → converter-name table (the settings default).
+
+The CLI/SDK guess ``.txt`` as ``text/plain`` and MCP ``text`` ingest defaults
+to the same. Routing only ``text/markdown`` dead-letters those converts
+(UMC #228 / RememberStack #301).
+"""
 
 
 @runtime_checkable
@@ -69,19 +87,53 @@ class MarkdownPassthroughConverter:
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Decode the bytes as UTF-8 text; undecodable input is a typed failure."""
         try:
-            return ConversionResult(document_md=content.decode("utf-8"))
+            document_md = content.decode("utf-8")
         except UnicodeDecodeError as err:
             raise ConversionError(
                 f"input declared {mime!r} is not valid UTF-8 text"
             ) from err
+        return ConversionResult(
+            document_md=document_md,
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="passthrough",
+                        version=PASSTHROUGH_CONVERTER_VERSION,
+                        execution="library-local",
+                    ),
+                ),
+                coverage=ConversionCoverage(policy="identity-full-text", complete=True),
+                derivation_ranges=entire_document_labeling(
+                    document_md=document_md,
+                    derivation_kind="passthrough",
+                    evidence_mode="source_expression",
+                ),
+            ),
+        )
+
+
+def entire_document_labeling(
+    *,
+    document_md: str,
+    derivation_kind: str,
+    evidence_mode: Literal[
+        "source_expression", "model_observation", "model_interpretation"
+    ],
+) -> tuple[DerivationRange, ...]:
+    """Label the whole output as one range — labeling is total, even for text (§5)."""
+    if not document_md:
+        return ()
+    return (
+        DerivationRange(
+            start=0,
+            end=len(document_md),
+            derivation_kind=derivation_kind,
+            evidence_mode=evidence_mode,
+        ),
+    )
 
 
 def stock_passthrough_routes() -> dict[str, Converter]:
-    """Stock self-host MIME table: UTF-8 text is identity, not MarkItDown.
-
-    The CLI/SDK guess ``.txt`` as ``text/plain`` and MCP ``text`` ingest
-    defaults to the same. Routing only ``text/markdown`` dead-letters those
-    converts (UMC #228 / RememberStack #301).
-    """
+    """Materialize ``STOCK_CONVERSION_ROUTE_NAMES`` (all passthrough) as a table."""
     passthrough = MarkdownPassthroughConverter()
-    return {"text/markdown": passthrough, "text/plain": passthrough}
+    return {mime: passthrough for mime in STOCK_CONVERSION_ROUTE_NAMES}

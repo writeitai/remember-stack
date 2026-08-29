@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from uuid import UUID
+from uuid import uuid4
 
 from pydantic import ValidationError
 import pytest
@@ -42,13 +43,21 @@ def test_selfhost_assured_operations_share_the_live_graph_authority() -> None:
     assert "graph=graph_queries" in source
 
 
-def test_selfhost_convert_uses_stock_passthrough_including_plain_text() -> None:
-    """Stock convert must route text/plain (CLI .txt) as well as text/markdown."""
+def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> None:
+    """The route table is deployment config (D38); its default is the stock table."""
+    from rememberstack.adapters.converters import build_conversion_routes
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
     from rememberstack.profiles import selfhost as selfhost_mod
+    from rememberstack.profiles.selfhost import SelfHostSettings
 
+    settings = SelfHostSettings(deployment_id=uuid4())
+    assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
+    routes = build_conversion_routes(route_names=settings.conversion_routes)
+    assert routes["text/plain"].name == "passthrough"
+    assert routes["text/markdown"] is routes["text/plain"]
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
-    assert "stock_passthrough_routes" in source
-    assert '{"text/markdown": MarkdownPassthroughConverter()}' not in source
+    assert "build_conversion_routes" in source
+    assert "stock_passthrough_routes()" not in source
 
 
 def test_selfhost_composes_every_implemented_continuous_route() -> None:
@@ -292,3 +301,23 @@ def test_model_bindings_report_reasoning_effort(
     bindings = _model_bindings()
 
     assert bindings["openrouter_reasoning_effort"] == reported
+
+
+def test_blank_routes_env_falls_back_to_the_stock_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose interpolates an unset routes variable as empty — startup must
+    use the stock table, not fail JSON-decoding inside the settings source."""
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
+    from rememberstack.profiles.selfhost import SelfHostSettings
+
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", "")
+    settings = SelfHostSettings(deployment_id=uuid4())
+    assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/html": "markitdown"}'
+    )
+    assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
+        "text/html": "markitdown"
+    }

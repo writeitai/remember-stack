@@ -25,6 +25,7 @@ from uuid import uuid4
 from uuid import uuid5
 
 from pydantic import Field
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -48,6 +49,7 @@ from rememberstack.core import storage_class_for
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
+from rememberstack.model import ConversionResult
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -69,6 +71,7 @@ from rememberstack.model import SkeletonCheckOutcome
 from rememberstack.model import SkeletonCheckRecord
 from rememberstack.model import SkeletonCheckResponse
 from rememberstack.model import SnappedSection
+from rememberstack.model import SourceLocator
 from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
@@ -82,7 +85,7 @@ from rememberstack.workers.e0_summary import SectionSummarizer
 from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
 
-E0_CONVERT_VERSION: Final = "e0-convert-2026.07"
+E0_CONVERT_VERSION: Final = "e0-convert-2026.08"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
 E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07f:d79-wave2"
@@ -314,7 +317,6 @@ class ConvertHandler:
         already produced for the version is re-chained as-is — the converter
         is never re-called on a retried or replayed attempt.
         """
-        del meter
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
         )
@@ -340,6 +342,22 @@ class ConvertHandler:
         content = self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
         try:
             result = converter.convert(content=content, mime=source.mime)
+            for event in result.usage_events:
+                # billed before coherence: the spend is real even if the
+                # envelope is later rejected, so it enters the ledger first
+                meter.record(
+                    call_key=f"convert:{event.call_key}",
+                    tier=converter.name,
+                    usage=event.usage,
+                )
+            _require_coherent_envelope(result=result)
+        except ValidationError as err:
+            # a converter that cannot build its own envelope models is a
+            # deterministic converter bug, exactly like an incoherent envelope
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=f"invalid envelope: {err}"
+            )
+            raise NonRetryableHandlerError(str(err)) from err
         except ConversionError as err:
             self._catalog.mark_version_failed(
                 version_id=source.version_id, error=str(err)
@@ -361,15 +379,66 @@ class ConvertHandler:
                 ],
             }
         )
+        source_map_bytes: bytes | None = None
+        if result.source_map is not None:
+            source_map_bytes = _json_bytes(
+                payload={
+                    "entries": [
+                        entry.model_dump(mode="json", exclude_none=True)
+                        for entry in result.source_map
+                    ]
+                }
+            )
+        asset_payloads: dict[str, bytes] = {}
+        asset_inventory: list[dict[str, object]] = []
+        for asset in result.derived_assets:
+            asset_uri = f"{base}/media/{asset.name}"
+            asset_payloads[asset_uri] = asset.content
+            asset_inventory.append(
+                {
+                    "name": asset.name,
+                    "kind": asset.kind,
+                    "media_type": asset.media_type,
+                    "description": asset.description,
+                    "uri": asset_uri,
+                    "sha256": hashlib.sha256(asset.content).hexdigest(),
+                    "locators": [
+                        locator.model_dump(mode="json", exclude_none=True)
+                        for locator in asset.locators
+                    ],
+                }
+            )
         manifest_bytes = _json_bytes(
             payload={
                 "route": converter.name,
                 "converter": {"name": converter.name, "version": converter.version},
                 "blockizer_version": BLOCKIZER_VERSION,
-                "execution": "library-local",
+                "components": [
+                    component.model_dump(mode="json")
+                    for component in result.manifest.components
+                ],
+                "coverage": result.manifest.coverage.model_dump(mode="json"),
+                "derivation_ranges": [
+                    labeled.model_dump(mode="json", exclude_none=True)
+                    for labeled in result.manifest.derivation_ranges
+                ],
+                "tracks": [
+                    track.model_dump(mode="json", exclude_none=True)
+                    for track in result.manifest.tracks
+                ],
+                "page_dimensions": [
+                    dims.model_dump(mode="json", exclude_none=True)
+                    for dims in result.manifest.page_dimensions
+                ],
                 "markdown_sha256": markdown_hash,
-                "source_map": None,
-                "derived_assets": [],
+                "source_map": None
+                if source_map_bytes is None or result.source_map is None
+                else {
+                    "uri": f"{base}/source_map.json",
+                    "sha256": hashlib.sha256(source_map_bytes).hexdigest(),
+                    "entry_count": len(result.source_map),
+                },
+                "derived_assets": asset_inventory,
                 "warnings": list(result.warnings),
             }
         )
@@ -389,7 +458,10 @@ class ConvertHandler:
             f"{base}/blocks.json": blocks_bytes,
             f"{base}/conversion.json": manifest_bytes,
             f"{base}/meta.json": meta_bytes,
+            **asset_payloads,
         }
+        if source_map_bytes is not None:
+            artifacts[f"{base}/source_map.json"] = source_map_bytes
         for uri, payload_bytes in artifacts.items():
             self._artifact_store.write_bytes(key=ObjectKey(uri), content=payload_bytes)
 
@@ -412,6 +484,13 @@ class ConvertHandler:
         )
         return self._structure_follow_up(
             work=work, version_id=source.version_id, representation_id=representation_id
+        )
+
+    def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
+        """A convert whose retries exhausted must not leave the version in-flight."""
+        self._catalog.mark_version_failed(
+            version_id=_payload_uuid(work=work, field="version_id"),
+            error=f"convert terminated: {error}",
         )
 
     def _structure_follow_up(
@@ -1460,3 +1539,55 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
 def _json_bytes(*, payload: dict[str, object]) -> bytes:
     """Serialize one artifact JSON document deterministically."""
     return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+
+
+def _require_resolvable_tracks(
+    *, locators: tuple[SourceLocator, ...], track_ids: set[str]
+) -> None:
+    """A locator naming a track the manifest never defined is unresolvable."""
+    for locator in locators:
+        track = getattr(locator, "track", None)
+        if track is not None and track not in track_ids:
+            raise ConversionError(
+                f"locator references undefined timeline track {track!r}"
+            )
+
+
+def _require_coherent_envelope(*, result: ConversionResult) -> None:
+    """Reject a converter envelope that does not fit its own text (D65/§5).
+
+    Deterministic for the given bytes and converter version, so a violation is
+    a converter bug: it dead-letters exactly like any other ConversionError.
+    """
+    length = len(result.document_md)
+    ranges = result.manifest.derivation_ranges
+    if not ranges:
+        if length:
+            raise ConversionError(
+                "derivation labeling is total (§5): a non-empty document.md "
+                "must be fully labeled"
+            )
+    else:
+        contiguous = ranges[0].start == 0 and ranges[-1].end == length
+        if contiguous:
+            contiguous = all(
+                following.start == labeled.end
+                for labeled, following in zip(ranges, ranges[1:], strict=False)
+            )
+        if not contiguous:
+            raise ConversionError(
+                "derivation ranges must cover document.md exactly, "
+                "contiguously from 0 to its length"
+            )
+    track_ids = {track.id for track in result.manifest.tracks}
+    for entry in result.source_map or ():
+        if entry.end > length:
+            raise ConversionError(
+                "source map entry extends past the end of document.md"
+            )
+        _require_resolvable_tracks(locators=entry.locators, track_ids=track_ids)
+    for asset in result.derived_assets:
+        _require_resolvable_tracks(locators=asset.locators, track_ids=track_ids)
+    names = [asset.name for asset in result.derived_assets]
+    if len(names) != len(set(names)):
+        raise ConversionError("derived asset names must be unique")

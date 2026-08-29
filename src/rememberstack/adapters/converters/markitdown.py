@@ -7,11 +7,17 @@ from markitdown import MarkItDown
 from markitdown import StreamInfo
 from markitdown._exceptions import MarkItDownException
 
+from rememberstack.core import entire_document_labeling
+from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterManifest
+from rememberstack.model import ManifestComponent
 
-MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.1"
-"""Pins the markitdown library generation this route was validated against."""
+MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.2"
+"""Pins this route's generation: the markitdown 0.1.x library line plus D65
+envelope emission. Bumped whenever library or output contract changes so
+replay never reuses artifacts from an older shape."""
 
 
 class MarkitdownConverter:
@@ -39,4 +45,24 @@ class MarkitdownConverter:
             )
         except MarkItDownException as err:
             raise ConversionError(f"markitdown could not convert {mime!r}") from err
-        return ConversionResult(document_md=result.text_content)
+        document_md = result.text_content
+        return ConversionResult(
+            document_md=document_md,
+            manifest=ConverterManifest(
+                components=(
+                    ManifestComponent(
+                        name="markitdown",
+                        version=MARKITDOWN_CONVERTER_VERSION,
+                        execution="library-local",
+                    ),
+                ),
+                coverage=ConversionCoverage(
+                    policy="markitdown-full-stream", complete=True
+                ),
+                derivation_ranges=entire_document_labeling(
+                    document_md=document_md,
+                    derivation_kind="markitdown",
+                    evidence_mode="source_expression",
+                ),
+            ),
+        )

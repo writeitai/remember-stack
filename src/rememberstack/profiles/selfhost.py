@@ -7,6 +7,7 @@ from functools import partial
 import json
 from pathlib import Path
 import sys
+from typing import Annotated
 from typing import Self
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -20,6 +21,7 @@ from pydantic import field_validator
 from pydantic import model_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
+from pydantic_settings import NoDecode
 from pydantic_settings import SettingsConfigDict
 import sqlalchemy
 from sqlalchemy import text
@@ -33,6 +35,7 @@ from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
+from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import EmbeddingRequest
@@ -104,6 +107,14 @@ class SelfHostSettings(BaseSettings):
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
+    conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
+        default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
+    )
+    """The D38 MIME → converter-adapter-name table; setting the env replaces it.
+
+    Decoding is explicit (NoDecode) so Compose's empty-string interpolation of
+    an unset variable falls back to the stock table instead of failing JSON
+    parsing inside the settings source."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -143,6 +154,17 @@ class SelfHostSettings(BaseSettings):
                 "retrieval_max_concurrency must not exceed retrieval_pool_size"
             )
         return self
+
+    @field_validator("conversion_routes", mode="before")
+    @classmethod
+    def _parse_routes(cls, value: object) -> object:
+        """Decode the routes env: blank means stock, else strict JSON object."""
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text:
+            return dict(STOCK_CONVERSION_ROUTE_NAMES)
+        return json.loads(text)
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
@@ -857,11 +879,11 @@ class SelfHostProfile:
 
     def _handler(self, *, stage: PipelineStage) -> StageHandler:
         """Compose exactly one implemented stage handler for one worker process."""
+        from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams
         from rememberstack.core import ConversionRouter
-        from rememberstack.core import stock_passthrough_routes
         from rememberstack.model import ClusterConfig
         from rememberstack.model import ResolverConfig
         from rememberstack.spine import CascadeResolver
@@ -930,7 +952,11 @@ class SelfHostProfile:
                 catalog=documents,
                 raw_store=self._raw_store,
                 artifact_store=self._artifact_store,
-                router=ConversionRouter(routes=stock_passthrough_routes()),
+                router=ConversionRouter(
+                    routes=build_conversion_routes(
+                        route_names=self._settings.conversion_routes
+                    )
+                ),
             )
         if stage is PipelineStage.STRUCTURE:
             return StructureHandler(

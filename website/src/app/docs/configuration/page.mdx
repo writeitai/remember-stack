@@ -63,6 +63,12 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 
 Replace every local-only secret before any non-isolated use.
 
+### Conversion routes
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown"}`. Shipped adapter names: `passthrough`, `markitdown`. Setting the variable replaces the whole table (defaults shown are the stock table); a MIME type without a route dead-letters on convert, and an unknown adapter name refuses startup |
+
 ### Live-graph resources
 
 | Variable | Purpose |
@@ -163,7 +169,7 @@ What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/comp
 | Piece | Config posture |
 | --- | --- |
 | Markdown smoke | Default Compose conversion route |
-| HTML/PDF/media | Register converter routes on the deployment (engine supports; smoke profile does not auto-route) |
+| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (the smoke profile does not auto-route beyond text) |
 | Watched directory | Connector extra + connector management API/CLI; credentials stay deployment-side |
 | Lineage identity | `source_kind` + `source_ref` together on ingest; `versioning_mode=snapshot|living` |
 
