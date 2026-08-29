@@ -301,3 +301,23 @@ def test_model_bindings_report_reasoning_effort(
     bindings = _model_bindings()
 
     assert bindings["openrouter_reasoning_effort"] == reported
+
+
+def test_blank_routes_env_falls_back_to_the_stock_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose interpolates an unset routes variable as empty — startup must
+    use the stock table, not fail JSON-decoding inside the settings source."""
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
+    from rememberstack.profiles.selfhost import SelfHostSettings
+
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", "")
+    settings = SelfHostSettings(deployment_id=uuid4())
+    assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/html": "markitdown"}'
+    )
+    assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
+        "text/html": "markitdown"
+    }

@@ -83,6 +83,7 @@ from rememberstack.model.conversion import ConversionCoverage
 from rememberstack.model.conversion import ConversionError
 from rememberstack.model.conversion import ConversionResult
 from rememberstack.model.conversion import ConverterManifest
+from rememberstack.model.conversion import ConverterUsageEvent
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import DerivedAsset
 from rememberstack.model.conversion import ImageRegionLocator
@@ -404,6 +405,7 @@ __all__ = (
     "ConversionError",
     "ConversionResult",
     "ConverterManifest",
+    "ConverterUsageEvent",
     "DerivationRange",
     "DerivedAsset",
     "ImageRegionLocator",

@@ -7,6 +7,7 @@ from functools import partial
 import json
 from pathlib import Path
 import sys
+from typing import Annotated
 from typing import Self
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -20,6 +21,7 @@ from pydantic import field_validator
 from pydantic import model_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
+from pydantic_settings import NoDecode
 from pydantic_settings import SettingsConfigDict
 import sqlalchemy
 from sqlalchemy import text
@@ -105,10 +107,14 @@ class SelfHostSettings(BaseSettings):
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
-    conversion_routes: dict[str, str] = Field(
+    conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
-    """The D38 MIME → converter-adapter-name table; setting the env replaces it."""
+    """The D38 MIME → converter-adapter-name table; setting the env replaces it.
+
+    Decoding is explicit (NoDecode) so Compose's empty-string interpolation of
+    an unset variable falls back to the stock table instead of failing JSON
+    parsing inside the settings source."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -151,11 +157,14 @@ class SelfHostSettings(BaseSettings):
 
     @field_validator("conversion_routes", mode="before")
     @classmethod
-    def _blank_routes_are_stock(cls, value: object) -> object:
-        """Compose interpolates unset CONVERSION_ROUTES as empty; use stock."""
-        if isinstance(value, str) and not value.strip():
+    def _parse_routes(cls, value: object) -> object:
+        """Decode the routes env: blank means stock, else strict JSON object."""
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text:
             return dict(STOCK_CONVERSION_ROUTE_NAMES)
-        return value
+        return json.loads(text)
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod

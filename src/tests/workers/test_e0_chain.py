@@ -32,6 +32,7 @@ from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DerivationRange
 from rememberstack.model import DerivedAsset
@@ -127,12 +128,17 @@ class _FakeScanConverter:
         del content, mime
         return ConversionResult(
             document_md=_SCAN_MARKDOWN,
-            usage=ProviderCallUsage(
-                model_name="fake-ocr-model",
-                tokens_in=0,
-                tokens_out=0,
-                cost_usd=Decimal("0.004"),
-                latency_ms=12,
+            usage_events=(
+                ConverterUsageEvent(
+                    call_key="ocr",
+                    usage=ProviderCallUsage(
+                        model_name="fake-ocr-model",
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=Decimal("0.004"),
+                        latency_ms=12,
+                    ),
+                ),
             ),
             manifest=ConverterManifest(
                 components=(
@@ -520,7 +526,7 @@ def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> N
     ledger_row = rig.row(
         sql="""
         SELECT model_name, tier, cost_usd, outcome FROM cost_ledger
-        WHERE call_key = 'convert'
+        WHERE call_key = 'convert:ocr'
         """,
         params={},
     )
@@ -588,7 +594,7 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
         params={"version_id": ingested.version_id},
     )
     assert version["status"] == "failed"
-    assert "retries exhausted" in str(version["error"])
+    assert "convert terminated" in str(version["error"])
 
 
 def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:

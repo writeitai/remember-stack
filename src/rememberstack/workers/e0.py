@@ -71,6 +71,7 @@ from rememberstack.model import SkeletonCheckOutcome
 from rememberstack.model import SkeletonCheckRecord
 from rememberstack.model import SkeletonCheckResponse
 from rememberstack.model import SnappedSection
+from rememberstack.model import SourceLocator
 from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
@@ -341,6 +342,14 @@ class ConvertHandler:
         content = self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
         try:
             result = converter.convert(content=content, mime=source.mime)
+            for event in result.usage_events:
+                # billed before coherence: the spend is real even if the
+                # envelope is later rejected, so it enters the ledger first
+                meter.record(
+                    call_key=f"convert:{event.call_key}",
+                    tier=converter.name,
+                    usage=event.usage,
+                )
             _require_coherent_envelope(result=result)
         except ValidationError as err:
             # a converter that cannot build its own envelope models is a
@@ -354,10 +363,6 @@ class ConvertHandler:
                 version_id=source.version_id, error=str(err)
             )
             raise NonRetryableHandlerError(str(err)) from err
-        if result.usage is not None:
-            # a provider-backed route made a billable call: it enters the
-            # ledger under this attempt like any model-seat call (D67)
-            meter.record(call_key="convert", tier=converter.name, usage=result.usage)
         blocks = blockize(document_md=result.document_md)
 
         representation_id = uuid4()
@@ -485,7 +490,7 @@ class ConvertHandler:
         """A convert whose retries exhausted must not leave the version in-flight."""
         self._catalog.mark_version_failed(
             version_id=_payload_uuid(work=work, field="version_id"),
-            error=f"convert retries exhausted: {error}",
+            error=f"convert terminated: {error}",
         )
 
     def _structure_follow_up(
@@ -1536,6 +1541,18 @@ def _json_bytes(*, payload: dict[str, object]) -> bytes:
     return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
 
 
+def _require_resolvable_tracks(
+    *, locators: tuple[SourceLocator, ...], track_ids: set[str]
+) -> None:
+    """A locator naming a track the manifest never defined is unresolvable."""
+    for locator in locators:
+        track = getattr(locator, "track", None)
+        if track is not None and track not in track_ids:
+            raise ConversionError(
+                f"locator references undefined timeline track {track!r}"
+            )
+
+
 def _require_coherent_envelope(*, result: ConversionResult) -> None:
     """Reject a converter envelope that does not fit its own text (D65/§5).
 
@@ -1562,11 +1579,15 @@ def _require_coherent_envelope(*, result: ConversionResult) -> None:
                 "derivation ranges must cover document.md exactly, "
                 "contiguously from 0 to its length"
             )
+    track_ids = {track.id for track in result.manifest.tracks}
     for entry in result.source_map or ():
         if entry.end > length:
             raise ConversionError(
                 "source map entry extends past the end of document.md"
             )
+        _require_resolvable_tracks(locators=entry.locators, track_ids=track_ids)
+    for asset in result.derived_assets:
+        _require_resolvable_tracks(locators=asset.locators, track_ids=track_ids)
     names = [asset.name for asset in result.derived_assets]
     if len(names) != len(set(names)):
         raise ConversionError("derived asset names must be unique")

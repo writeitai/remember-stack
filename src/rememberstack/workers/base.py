@@ -122,7 +122,6 @@ class HandlerOutcome(BaseModel):
 
 
 @runtime_checkable
-@runtime_checkable
 class TerminalFailureFinalizer(Protocol):
     """Optional handler capability: finalize domain state on exhausted retries.
 
@@ -137,6 +136,7 @@ class TerminalFailureFinalizer(Protocol):
         ...
 
 
+@runtime_checkable
 class StageHandler(Protocol):
     """One stage's transformation over one claimed unit of work."""
 
@@ -292,6 +292,9 @@ class Worker:
                 error=traceback.format_exc(),
                 retryable=False,
             )
+            self._finalize_terminal_failure(
+                handler=handler, claimed=claimed, exception=exception
+            )
             self._export_exception(
                 event=_worker_event(
                     deployment_id=claimed.deployment_id,
@@ -325,19 +328,10 @@ class Worker:
                 if retry_at is not None
                 else RunResultOutcome.DEAD_LETTERED
             )
-            if result_outcome is RunResultOutcome.DEAD_LETTERED and isinstance(
-                handler, TerminalFailureFinalizer
-            ):
-                try:
-                    handler.finalize_terminal_failure(
-                        work=claimed, error=str(exception)
-                    )
-                except Exception:  # noqa: BLE001 — finalization must not mask DLQ
-                    _logger.exception(
-                        "terminal-failure finalizer failed in stage %s for %s",
-                        claimed.stage,
-                        claimed.processing_id,
-                    )
+            if result_outcome is RunResultOutcome.DEAD_LETTERED:
+                self._finalize_terminal_failure(
+                    handler=handler, claimed=claimed, exception=exception
+                )
             if retry_at is not None and self._queue is not None:
                 self._queue.announce(
                     processing_id=claimed.processing_id,
@@ -403,6 +397,21 @@ class Worker:
         return RunResult(
             processing_id=claimed.processing_id, outcome=RunResultOutcome.SUCCEEDED
         )
+
+    def _finalize_terminal_failure(
+        self, *, handler: StageHandler, claimed: ClaimedWork, exception: Exception
+    ) -> None:
+        """Every terminal failure lets the handler make domain state truthful."""
+        if not isinstance(handler, TerminalFailureFinalizer):
+            return
+        try:
+            handler.finalize_terminal_failure(work=claimed, error=str(exception))
+        except Exception:  # noqa: BLE001 — finalization must not mask the DLQ
+            _logger.exception(
+                "terminal-failure finalizer failed in stage %s for %s",
+                claimed.stage,
+                claimed.processing_id,
+            )
 
     @staticmethod
     def _record_failed_provider_usage(

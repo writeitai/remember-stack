@@ -43,9 +43,21 @@ class ConversionResult(BaseModel):
     source_map: tuple["SourceMapEntry", ...] | None = None
     derived_assets: tuple["DerivedAsset", ...] = ()
     warnings: tuple[str, ...] = ()
-    usage: ProviderCallUsage | None = None
-    """Provider-reported accounting when the route made a billable call —
-    the convert worker meters it into the cost ledger. None for local routes."""
+    usage_events: tuple["ConverterUsageEvent", ...] = ()
+    """Provider-reported accounting, one event per billable call the route
+    made — the convert worker meters each into the cost ledger under a
+    deterministic key. Empty for local routes."""
+
+
+class ConverterUsageEvent(BaseModel):
+    """One billable provider call a route made while converting."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    call_key: NonEmptyString
+    """Deterministic suffix distinguishing this call within the conversion
+    (e.g. ``ocr``, ``asr``, ``vlm-page-3``)."""
+    usage: ProviderCallUsage
 
 
 class ConverterManifest(BaseModel):
@@ -74,6 +86,14 @@ class ConverterManifest(BaseModel):
     identifier a route emits must be defined here, with the selected track
     marked, so time locators are interpretable (media_design §2/§4). Empty
     for sources without a timeline."""
+
+    @model_validator(mode="after")
+    def track_ids_are_unique(self) -> Self:
+        """A track table with duplicate ids cannot resolve locator references."""
+        identifiers = [track.id for track in self.tracks]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("timeline track ids must be unique")
+        return self
 
     @model_validator(mode="after")
     def ranges_ascend_without_overlap(self) -> Self:
@@ -342,6 +362,7 @@ class UnknownConverterError(Exception):
 
 ConversionResult.model_rebuild()
 ConverterManifest.model_rebuild()
+ConversionResult.model_rebuild()
 SourceMapEntry.model_rebuild()
 TimelineTrack.model_rebuild()
 DerivedAsset.model_rebuild()
