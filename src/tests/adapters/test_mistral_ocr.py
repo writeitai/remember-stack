@@ -6,6 +6,7 @@ dimensions) captured against `mistral-ocr-latest` on 2026-08-28.
 """
 
 import base64
+from decimal import Decimal
 import json
 
 import httpx
@@ -27,7 +28,7 @@ _RAW_RESPONSE: dict[str, object] = {
     "pages": [
         {
             "index": 0,
-            "markdown": "# Title\n\nBody paragraph one.",
+            "markdown": "# Title\n\nBody paragraph one.\n\n![img-0.png](img-0.png)",
             "header": "Running head",
             "footer": "Page 1 of 2",
             "dimensions": {"dpi": 87, "height": 1000, "width": 800},
@@ -265,3 +266,129 @@ def test_registry_builds_the_route_only_with_a_configured_key(
     )
     assert routes["application/pdf"].name == "mistral_ocr"
     assert routes["application/pdf"] is routes["image/png"]
+
+
+def test_markdown_image_links_point_at_the_stored_asset_paths() -> None:
+    """Relative provider links are rewritten so figures resolve under media/."""
+    result = _convert()
+    assert "](media/pages/p0001/img-0.png)" in result.document_md
+    assert "](img-0.png)" not in result.document_md
+
+
+def test_version_fingerprints_every_output_affecting_setting() -> None:
+    """A model or option change is a new converter version — never a replay."""
+    base = _converter()
+    changed_model = _converter(model="mistral-ocr-2508")
+    changed_option = _converter(confidence_granularity="page")
+    assert base.version.startswith("mistral-ocr-2026.08:")
+    assert base.version != changed_model.version
+    assert base.version != changed_option.version
+    assert base.version == _converter().version
+
+
+def test_usage_meters_pages_at_the_configured_price() -> None:
+    """The billable call reports cost from pages_processed, not tokens."""
+    result = _convert()
+    assert result.usage is not None
+    assert result.usage.model_name == "mistral-ocr-2508"
+    assert result.usage.cost_usd == Decimal("0.002")
+    assert result.usage.tokens_in == 0
+
+
+def test_blank_api_key_refuses_composition(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A present-but-blank key is a startup error, never an empty Bearer."""
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "   ")
+    with pytest.raises(Exception, match="must not be blank"):
+        build_conversion_routes(route_names={"application/pdf": "mistral_ocr"})
+
+
+def test_repeated_block_text_anchors_each_occurrence_separately() -> None:
+    """Identical form labels map to their own regions via cursor anchoring."""
+    raw = {
+        "model": "m",
+        "pages": [
+            {
+                "index": 0,
+                "markdown": "Total: 5\n\nTotal: 5",
+                "dimensions": {"dpi": 87, "height": 100, "width": 100},
+                "blocks": [
+                    {
+                        "type": "text",
+                        "content": "Total: 5",
+                        "top_left_x": 0,
+                        "top_left_y": 0,
+                        "bottom_right_x": 50,
+                        "bottom_right_y": 10,
+                    },
+                    {
+                        "type": "text",
+                        "content": "Total: 5",
+                        "top_left_x": 0,
+                        "top_left_y": 50,
+                        "bottom_right_x": 50,
+                        "bottom_right_y": 60,
+                    },
+                ],
+                "images": [],
+            }
+        ],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=raw)
+
+    result = _converter(httpx.MockTransport(handle)).convert(
+        content=b"x", mime="application/pdf"
+    )
+    assert result.source_map is not None
+    blocks = [e for e in result.source_map if e.region_kind == "text"]
+    assert len(blocks) == 2
+    assert blocks[0].start != blocks[1].start
+    first, second = blocks[0].locators[0], blocks[1].locators[0]
+    assert first.kind == "page" and second.kind == "page"
+    assert first.bbox is not None and second.bbox is not None
+    assert first.bbox.y != second.bbox.y
+
+
+def test_image_inputs_get_image_region_locators() -> None:
+    """A standalone scan has no pages: locators use the image coordinate space."""
+    raw = {
+        "model": "m",
+        "pages": [
+            {
+                "index": 0,
+                "markdown": "Sign text",
+                "dimensions": {"dpi": 72, "height": 200, "width": 100},
+                "blocks": [
+                    {
+                        "type": "text",
+                        "content": "Sign text",
+                        "top_left_x": 10,
+                        "top_left_y": 20,
+                        "bottom_right_x": 90,
+                        "bottom_right_y": 40,
+                    }
+                ],
+                "images": [],
+            }
+        ],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["document"]["type"] == "image_url"
+        return httpx.Response(200, json=raw)
+
+    result = _converter(httpx.MockTransport(handle)).convert(
+        content=b"png", mime="image/png"
+    )
+    assert result.source_map is not None
+    kinds = {locator.kind for entry in result.source_map for locator in entry.locators}
+    assert kinds == {"image_region"}
+    whole = [
+        locator
+        for entry in result.source_map
+        for locator in entry.locators
+        if locator.precision == "image"
+    ]
+    assert whole and whole[0].region.w == 1.0

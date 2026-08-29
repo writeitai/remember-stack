@@ -9,18 +9,23 @@ route is inert until a deployment binds it in its conversion-route table and
 supplies `REMEMBERSTACK_MISTRAL_OCR_API_KEY`.
 
 The document travels as an inline base64 data URL: one deterministic request
-path, no provider-side file object to upload, sign, and clean up.
+path, no provider-side file object to upload, sign, and clean up. The billable
+call is reported as `ConversionResult.usage`, which the convert worker meters
+into the cost ledger (D67).
 """
 
 import base64
+from decimal import Decimal
 import json
 import re
+import time
 from typing import Any
 from typing import Final
 from typing import Literal
 
 import httpx
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -31,18 +36,23 @@ from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import DerivationRange
 from rememberstack.model import DerivedAsset
+from rememberstack.model import ImageRegionLocator
 from rememberstack.model import ManifestComponent
 from rememberstack.model import NormalizedRegion
 from rememberstack.model import PageDimensions
 from rememberstack.model import PageLocator
+from rememberstack.model import ProviderCallUsage
+from rememberstack.model import SourceLocator
 from rememberstack.model import SourceMapEntry
 
 MISTRAL_OCR_CONVERTER_VERSION: Final = "mistral-ocr-2026.08"
-"""Pins this route's normalization behavior; the provider model that actually
-read the document is recorded separately in the manifest's component graph."""
+"""Pins this route's normalization behavior. The full converter version is
+this pin plus a fingerprint of every output-affecting setting, so a model or
+option change always creates new representations instead of replaying."""
 
 _INTERCHANGE_ASSET_NAME: Final = "provider/mistral_ocr_response.json"
 _UNSAFE_ASSET_CHARS: Final = re.compile(r"[^A-Za-z0-9._-]")
+_WHOLE_IMAGE: Final = NormalizedRegion(x=0.0, y=0.0, w=1.0, h=1.0)
 
 
 class MistralOcrSettings(BaseSettings):
@@ -67,6 +77,27 @@ class MistralOcrSettings(BaseSettings):
     keep_provider_response: bool = True
     """Retain the sanitized raw response (image payloads stripped) as a
     `provider_response` interchange asset next to the first-class artifacts."""
+    price_usd_per_1000_pages: Decimal = Field(default=Decimal("1"), ge=0)
+    """The metered list price per thousand processed pages (D67 accounting)."""
+
+    @field_validator("api_key")
+    @classmethod
+    def _key_must_not_be_blank(cls, value: SecretStr) -> SecretStr:
+        """A present-but-blank key must refuse composition, not send empty auth."""
+        if not value.get_secret_value().strip():
+            raise ValueError("REMEMBERSTACK_MISTRAL_OCR_API_KEY must not be blank")
+        return value
+
+    def version_fingerprint(self) -> str:
+        """Every output-affecting option, folded into the converter version."""
+        return (
+            f"{self.model}"
+            f":tbl-{self.table_format}"
+            f":hf-{int(self.extract_headers_and_footers)}"
+            f":conf-{self.confidence_granularity}"
+            f":img-{int(self.include_images)}"
+            f":keep-{int(self.keep_provider_response)}"
+        )
 
 
 class MistralOcrProviderError(Exception):
@@ -83,14 +114,12 @@ class MistralOcrConverter:
     def __init__(self, *, settings: MistralOcrSettings | None = None) -> None:
         """Bind one HTTP client to the configured endpoint and key."""
         self._settings = (
-            settings
-            if settings is not None
-            else MistralOcrSettings.model_validate({})
+            settings if settings is not None else MistralOcrSettings.model_validate({})
         )
         self._client = httpx.Client(
             base_url=self._settings.base_url,
             headers={
-                "Authorization": (f"Bearer {self._settings.api_key.get_secret_value()}")
+                "Authorization": f"Bearer {self._settings.api_key.get_secret_value()}"
             },
             timeout=self._settings.timeout_s,
         )
@@ -102,8 +131,9 @@ class MistralOcrConverter:
 
     @property
     def version(self) -> str:
-        """The pinned normalization version (D38); model identity is separate."""
-        return MISTRAL_OCR_CONVERTER_VERSION
+        """Normalization pin plus the settings fingerprint (D38): any model or
+        option change creates new representations instead of replaying old ones."""
+        return f"{MISTRAL_OCR_CONVERTER_VERSION}:{self._settings.version_fingerprint()}"
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """OCR one document via `/v1/ocr` and normalize the full response."""
@@ -112,8 +142,19 @@ class MistralOcrConverter:
                 f"document of {len(content)} bytes exceeds the configured "
                 f"mistral_ocr ceiling of {self._settings.max_document_bytes}"
             )
+        started_ns = time.monotonic_ns()
         raw = self._process(content=content, mime=mime)
-        return _normalize(raw=raw, settings=self._settings)
+        latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
+        result = _normalize(
+            raw=raw, settings=self._settings, source_is_image=mime.startswith("image/")
+        )
+        return result.model_copy(
+            update={
+                "usage": _usage(
+                    raw=raw, settings=self._settings, latency_ms=int(latency_ms)
+                )
+            }
+        )
 
     def _process(self, *, content: bytes, mime: str) -> dict[str, Any]:
         """One `/v1/ocr` call; 4xx is the input's fault, the rest retries."""
@@ -155,8 +196,27 @@ class MistralOcrConverter:
         return decoded
 
 
+def _usage(
+    *, raw: dict[str, Any], settings: MistralOcrSettings, latency_ms: int
+) -> ProviderCallUsage:
+    """The billable call as the cost ledger records it (pages, not tokens)."""
+    info = raw.get("usage_info")
+    if isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
+        pages = info["pages_processed"]
+    else:
+        pages = len(raw.get("pages") or [])
+    cost = settings.price_usd_per_1000_pages * Decimal(pages) / Decimal(1000)
+    return ProviderCallUsage(
+        model_name=str(raw.get("model") or settings.model),
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=cost,
+        latency_ms=max(0, latency_ms),
+    )
+
+
 def _normalize(
-    *, raw: dict[str, Any], settings: MistralOcrSettings
+    *, raw: dict[str, Any], settings: MistralOcrSettings, source_is_image: bool
 ) -> ConversionResult:
     """Fold one raw OCR response into the D65 envelope, disclosing every gap."""
     document_parts: list[str] = []
@@ -181,8 +241,17 @@ def _normalize(
                 )
             )
 
+        page_assets = _image_assets(
+            page=page, number=number, source_is_image=source_is_image, warnings=warnings
+        )
+        assets.extend(asset for asset, _ in page_assets)
+        link_map = {identifier: asset.name for asset, identifier in page_assets}
+        body = _rewrite_asset_links(
+            markdown=page.get("markdown") or "", link_map=link_map
+        )
+
         confidence = _page_confidence(page=page)
-        segments = _page_segments(page=page, last=position == len(pages) - 1)
+        segments = _page_segments(page=page, body=body, last=position == len(pages) - 1)
         if not segments:
             warnings.append(f"page {number} produced no text")
         page_start = offset
@@ -207,18 +276,24 @@ def _normalize(
                 SourceMapEntry(
                     start=page_start,
                     end=offset,
-                    locators=(PageLocator(page=number, precision="page"),),
+                    locators=(
+                        _whole_source_locator(
+                            number=number, source_is_image=source_is_image
+                        ),
+                    ),
                 )
             )
         source_map.extend(
             _block_entries(
                 page=page,
+                body=body,
+                link_map=link_map,
                 number=number,
                 markdown_start=markdown_start,
+                source_is_image=source_is_image,
                 warnings=warnings,
             )
         )
-        assets.extend(_image_assets(page=page, number=number, warnings=warnings))
 
     if settings.keep_provider_response:
         assets.append(_interchange_asset(raw=raw))
@@ -250,15 +325,29 @@ def _normalize(
     )
 
 
-def _page_segments(*, page: dict[str, Any], last: bool) -> list[tuple[str, str]]:
+def _rewrite_asset_links(*, markdown: str, link_map: dict[str, str]) -> str:
+    """Point the provider's relative image links at the stored asset paths.
+
+    Mistral markdown references embedded images by their bare id
+    (``![…](img-0.jpeg)``); the bytes land under ``media/<asset name>``, so
+    the reading must link there or every figure renders broken.
+    """
+    for identifier, asset_name in link_map.items():
+        markdown = markdown.replace(f"]({identifier})", f"](media/{asset_name})")
+    return markdown
+
+
+def _page_segments(
+    *, page: dict[str, Any], body: str, last: bool
+) -> list[tuple[str, str]]:
     """Order one page's testimony: header, body, footer — each its own label."""
     segments: list[tuple[str, str]] = []
     header = (page.get("header") or "").strip()
     if header:
         segments.append((header + "\n\n", "page_header"))
-    body = (page.get("markdown") or "").rstrip()
-    if body:
-        segments.append((body + "\n", "ocr"))
+    stripped = body.rstrip()
+    if stripped:
+        segments.append((stripped + "\n", "ocr"))
     footer = (page.get("footer") or "").strip()
     if footer:
         segments.append(("\n" + footer + "\n", "page_footer"))
@@ -279,31 +368,70 @@ def _page_confidence(*, page: dict[str, Any]) -> float | None:
     return min(1.0, max(0.0, float(value)))
 
 
+def _whole_source_locator(*, number: int, source_is_image: bool) -> SourceLocator:
+    """The page-grain locator: a page for PDFs, the whole image for scans."""
+    if source_is_image:
+        return ImageRegionLocator(region=_WHOLE_IMAGE, precision="image")
+    return PageLocator(page=number, precision="page")
+
+
+def _region_locator(
+    *, number: int, region: NormalizedRegion | None, source_is_image: bool
+) -> SourceLocator:
+    """A region-grain locator honest about its precision and coordinate space."""
+    if source_is_image:
+        if region is None:
+            return ImageRegionLocator(region=_WHOLE_IMAGE, precision="image")
+        return ImageRegionLocator(region=region, precision="region")
+    if region is None:
+        return PageLocator(page=number, precision="page")
+    return PageLocator(page=number, bbox=region, precision="region")
+
+
 def _block_entries(
-    *, page: dict[str, Any], number: int, markdown_start: int, warnings: list[str]
+    *,
+    page: dict[str, Any],
+    body: str,
+    link_map: dict[str, str],
+    number: int,
+    markdown_start: int,
+    source_is_image: bool,
+    warnings: list[str],
 ) -> list[SourceMapEntry]:
-    """Typed layout regions become region-grain source-map entries."""
+    """Typed layout regions become region-grain source-map entries.
+
+    Anchoring walks the body with a cursor in block (reading) order so
+    repeated text — form labels, repeated headings — maps each occurrence to
+    its own region instead of piling every bbox onto the first match.
+    """
     entries: list[SourceMapEntry] = []
     unanchored = 0
-    body = page.get("markdown") or ""
+    cursor = 0
     for block in page.get("blocks") or []:
         if not isinstance(block, dict):
             continue
-        content = block.get("content") or ""
-        found = body.find(content) if content else -1
+        content = _rewrite_asset_links(
+            markdown=str(block.get("content") or ""), link_map=link_map
+        )
+        if not content:
+            unanchored += 1
+            continue
+        found = body.find(content, cursor)
+        if found < 0:
+            found = body.find(content)
         if found < 0:
             unanchored += 1
             continue
-        region = _region(page=page, block=block)
+        if found >= cursor:
+            cursor = found + len(content)
+        region = _region(page=page, item=block)
         entries.append(
             SourceMapEntry(
                 start=markdown_start + found,
                 end=markdown_start + found + len(content),
                 locators=(
-                    PageLocator(
-                        page=number,
-                        bbox=region,
-                        precision="region" if region else "page",
+                    _region_locator(
+                        number=number, region=region, source_is_image=source_is_image
                     ),
                 ),
                 region_kind=str(block.get("type") or "text"),
@@ -317,12 +445,12 @@ def _block_entries(
     return entries
 
 
-def _region(*, page: dict[str, Any], block: dict[str, Any]) -> NormalizedRegion | None:
+def _region(*, page: dict[str, Any], item: dict[str, Any]) -> NormalizedRegion | None:
     """Pixel bbox → normalized unit-square region; degrade to None honestly."""
     dims = page.get("dimensions") or {}
     width, height = dims.get("width"), dims.get("height")
     coords = tuple(
-        block.get(key)
+        item.get(key)
         for key in ("top_left_x", "top_left_y", "bottom_right_x", "bottom_right_y")
     )
     if not width or not height or any(c is None for c in coords):
@@ -338,10 +466,14 @@ def _region(*, page: dict[str, Any], block: dict[str, Any]) -> NormalizedRegion 
 
 
 def _image_assets(
-    *, page: dict[str, Any], number: int, warnings: list[str]
-) -> list[DerivedAsset]:
-    """Embedded images become located, captioned `media/` assets."""
-    assets: list[DerivedAsset] = []
+    *, page: dict[str, Any], number: int, source_is_image: bool, warnings: list[str]
+) -> list[tuple[DerivedAsset, str]]:
+    """Embedded images become located, captioned `media/` assets.
+
+    Returns each asset with the provider's raw identifier so the caller can
+    rewrite markdown links from the identifier to the stored asset path.
+    """
+    assets: list[tuple[DerivedAsset, str]] = []
     for position, image in enumerate(page.get("images") or []):
         if not isinstance(image, dict):
             continue
@@ -356,22 +488,25 @@ def _image_assets(
         if not decoded:
             warnings.append(f"page {number} image {identifier!r} had no bytes")
             continue
-        region = _region(page=page, block=image)
+        region = _region(page=page, item=image)
         annotation = image.get("image_annotation")
         assets.append(
-            DerivedAsset(
-                name=f"pages/p{number:04d}/{_safe_asset_segment(identifier)}",
-                kind="embedded_image",
-                media_type=_image_media_type(identifier=identifier),
-                content=decoded,
-                locators=(
-                    PageLocator(
-                        page=number,
-                        bbox=region,
-                        precision="region" if region else "page",
+            (
+                DerivedAsset(
+                    name=f"pages/p{number:04d}/{_safe_asset_segment(identifier)}",
+                    kind="embedded_image",
+                    media_type=_image_media_type(identifier=identifier),
+                    content=decoded,
+                    locators=(
+                        _region_locator(
+                            number=number,
+                            region=region,
+                            source_is_image=source_is_image,
+                        ),
                     ),
+                    description=str(annotation) if annotation else None,
                 ),
-                description=str(annotation) if annotation else None,
+                identifier,
             )
         )
     return assets
