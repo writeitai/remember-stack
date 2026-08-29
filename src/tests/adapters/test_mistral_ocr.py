@@ -18,6 +18,7 @@ from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderErro
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ProviderCallError
 
 _PNG_BYTES = b"\x89PNG-fake-payload"
 
@@ -237,19 +238,18 @@ def test_4xx_is_a_conversion_error_and_5xx_stays_retryable() -> None:
         )
 
 
-def test_image_mime_travels_as_image_url_document() -> None:
-    """Standalone scans route through the provider's image document type."""
+def test_a_200_without_usable_pages_is_a_provider_failure() -> None:
+    """An empty or malformed page set must never become a ready empty document."""
 
     def handle(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["document"]["type"] == "image_url"
         return httpx.Response(200, json={"model": "m", "pages": []})
 
-    result = _converter(httpx.MockTransport(handle)).convert(
-        content=b"png-bytes", mime="image/png"
-    )
-    assert result.document_md == ""
-    assert result.manifest.derivation_ranges == ()
+    with pytest.raises(MistralOcrProviderError, match="no usable pages"):
+        _converter(httpx.MockTransport(handle)).convert(
+            content=b"png-bytes", mime="image/png"
+        )
 
 
 def test_registry_builds_the_route_only_with_a_configured_key(
@@ -392,3 +392,39 @@ def test_image_inputs_get_image_region_locators() -> None:
         if locator.precision == "image"
     ]
     assert whole and whole[0].region.w == 1.0
+
+
+def test_normalization_failure_after_a_billed_call_carries_usage() -> None:
+    """The 200 was paid for: the failure must hand its usage to the meter."""
+    broken = json.loads(json.dumps(_RAW_RESPONSE))
+    broken["pages"][0]["images"][0]["id"] = None
+    broken["pages"][0]["images"][0]["top_left_x"] = "not-a-number"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=broken)
+
+    with pytest.raises(ProviderCallError) as excinfo:
+        _converter(httpx.MockTransport(handle)).convert(
+            content=b"x", mime="application/pdf"
+        )
+    assert excinfo.value.usage is not None
+    assert excinfo.value.usage.cost_usd == Decimal("0.002")
+
+
+def test_disabled_image_retention_is_a_disclosed_gap() -> None:
+    """include_images=false discloses every unretained figure, never silence."""
+    result = _converter(_ok_transport_lenient(), include_images=False).convert(
+        content=b"%PDF", mime="application/pdf"
+    )
+    assert not any(a.kind == "embedded_image" for a in result.derived_assets)
+    assert any("not retained" in warning for warning in result.warnings)
+    assert result.manifest.coverage.complete is False
+
+
+def _ok_transport_lenient() -> httpx.MockTransport:
+    """Serve the canned response without asserting request option shape."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_RAW_RESPONSE)
+
+    return httpx.MockTransport(handle)
