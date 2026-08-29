@@ -4,6 +4,7 @@ src/tests/adapters/test_control_plane_spend_lease.py
 src/tests/adapters/test_hashed_bearer_auth.py
 src/tests/adapters/test_postgres_p1.py
 src/tests/adapters/test_minio_store.py
+src/tests/adapters/test_mistral_ocr.py
 src/tests/adapters/test_openrouter.py
 src/tests/adapters/test_selfhost_forget.py
 src/tests/adapters/test_selfhost_git.py
