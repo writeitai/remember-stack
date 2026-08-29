@@ -14,6 +14,7 @@ itself never touches adapters.
 
 from datetime import datetime
 from datetime import timedelta
+import json
 from typing import Annotated
 from typing import Any
 from typing import Final
@@ -295,6 +296,7 @@ def build_api(
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     graph: GraphQueryPort | None = None,
+    ingest_body_max_bytes: int | None = None,
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -304,6 +306,11 @@ def build_api(
     on one perimeter credential; and `spend_lease` holds estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
+
+    `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
+    are buffered (413 over the cap; 411 when no Content-Length is declared).
+    None — the self-host default — imposes no limit: caps are deployment
+    policy, never an engine default (D61).
     """
     if surface is not None and surface.deployment_id != deployment_id:
         raise ValueError(
@@ -416,7 +423,14 @@ def build_api(
     if open_query is not None:
         _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
-        _mount_ingest(app=app, ingest=ingest, deployment_id=deployment_id)
+        _mount_ingest(
+            app=app,
+            ingest=ingest,
+            deployment_id=deployment_id,
+            max_body_bytes=ingest_body_max_bytes,
+        )
+        if ingest_body_max_bytes is not None:
+            app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
     if connectors is not None:
         _mount_connectors(app=app, connectors=connectors, deployment_id=deployment_id)
     if pipeline_readiness is not None:
@@ -764,7 +778,73 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
             ) from error
 
 
-def _mount_ingest(*, app: FastAPI, ingest: IngestPort, deployment_id: UUID) -> None:
+class _IngestBodyLimit:
+    """ASGI guard: refuse over-cap `POST /ingest` bodies before buffering.
+
+    The Content-Length declaration is trustworthy because the ASGI server
+    enforces HTTP framing (a body larger than its declared length is a
+    protocol error), so the guard needs no streaming byte counter — it
+    requires a declared length (411 without one) and refuses any declared
+    length over the cap (413) before FastAPI reads the body into memory.
+    """
+
+    def __init__(self, app: object, *, max_bytes: int) -> None:
+        """Wrap the inner ASGI app with one configured byte ceiling."""
+        self._app = app
+        self._max_bytes = max_bytes
+
+    async def __call__(self, scope: dict, receive: object, send: object) -> None:
+        """Reject oversized or length-less ingest requests; pass the rest."""
+        path = str(scope.get("path", ""))
+        root_path = str(scope.get("root_path", ""))
+        if root_path and path.startswith(root_path):
+            # a mounted or root_path-prefixed app still routes /ingest; the
+            # guard must see the same route FastAPI will, or a prefixed
+            # deployment would buffer unbounded bodies past it
+            path = path[len(root_path) :]
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") != "POST"
+            or path != "/ingest"
+        ):
+            await self._app(scope, receive, send)  # type: ignore[operator]
+            return
+        declared: int | None = None
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = None
+                break
+        if declared is None:
+            await _send_json_error(send=send, status=411, detail="length_required")
+            return
+        if declared > self._max_bytes:
+            await _send_json_error(send=send, status=413, detail="body_too_large")
+            return
+        await self._app(scope, receive, send)  # type: ignore[operator]
+
+
+async def _send_json_error(*, send: object, status: int, detail: str) -> None:
+    """Emit one small JSON error response from ASGI middleware."""
+    body = json.dumps({"detail": detail}).encode("utf-8")
+    await send(  # type: ignore[operator]
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})  # type: ignore[operator]
+
+
+def _mount_ingest(
+    *, app: FastAPI, ingest: IngestPort, deployment_id: UUID, max_body_bytes: int | None
+) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
     @app.post("/ingest", response_model=IngestedVersion)
@@ -780,6 +860,10 @@ def _mount_ingest(*, app: FastAPI, ingest: IngestPort, deployment_id: UUID) -> N
         source_version_ref: str | None = None,
     ) -> IngestedVersion:
         """Push one file through E0, optionally as a stable lineage version."""
+        if max_body_bytes is not None and len(content) > max_body_bytes:
+            # the ASGI guard already refused honest requests; this backstop
+            # holds if a server ever passes an unframed oversized body through
+            raise HTTPException(status_code=413, detail="body_too_large")
         if (source_kind is None) != (source_ref is None):
             raise HTTPException(
                 status_code=422,

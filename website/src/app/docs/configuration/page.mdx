@@ -63,6 +63,12 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 
 Replace every local-only secret before any non-isolated use.
 
+### Ingest admission
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | Optional `POST /ingest` request-body ceiling in bytes, enforced before the body is buffered (`413 body_too_large`; requests without a `Content-Length` get `411`). Unset (default) = no engine-imposed limit — a managed host publishes and sets its own bound |
+
 ### Conversion routes
 
 | Variable | Purpose |

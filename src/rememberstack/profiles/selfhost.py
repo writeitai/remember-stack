@@ -107,6 +107,11 @@ class SelfHostSettings(BaseSettings):
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
+    ingest_body_max_bytes: int | None = Field(default=None, gt=0)
+    """Optional `POST /ingest` byte ceiling. None (the default) imposes no
+    limit — caps are deployment policy, never an engine default (D61); a
+    managed host sets its published bound here so it is enforced where the
+    body is actually received."""
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
@@ -154,6 +159,14 @@ class SelfHostSettings(BaseSettings):
                 "retrieval_max_concurrency must not exceed retrieval_pool_size"
             )
         return self
+
+    @field_validator("ingest_body_max_bytes", mode="before")
+    @classmethod
+    def _blank_body_max_is_unset(cls, value: object) -> object:
+        """Treat empty INGEST_BODY_MAX_BYTES env as omitted (no cap)."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("conversion_routes", mode="before")
     @classmethod
@@ -741,6 +754,7 @@ class SelfHostProfile:
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
+            ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
