@@ -57,6 +57,7 @@ EXPECTED_ENUMS: Final = (
     "golden_hardness",
     "golden_label",
     "grounding_audit_status",
+    "ingest_principal_kind",
     "knowledge_artifact_status",
     "knowledge_evidence_role",
     "knowledge_layer",
@@ -333,7 +334,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 73,
-    "f": 121,
+    "f": 122,
     "n": 539,
     "p": 70,
     "u": 35,
