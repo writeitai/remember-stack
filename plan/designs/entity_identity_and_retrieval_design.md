@@ -605,8 +605,9 @@ conservatism as it is two different people.
 D21's promiscuous-signal concern (`info@company.com`, placeholders) is
 carried by the mechanisms that *decide* identity — T3 profile evidence, T4,
 and `resolution_exclusions` cannot-link edges — not by ranking candidates
-down before anything examines them. T0's role is unchanged: exact T0 always
-lists candidates and never accepts a referent.
+down before anything examines them. T0's role is unchanged by D103: outside
+D102's document-local exception, exact T0 lists candidates globally and never
+accepts a referent on its own.
 
 This does not weaken D102's document-local replay. Replay's safety boundary
 was never global name rarity — it is the binding's conflict rows — so

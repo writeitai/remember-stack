@@ -1458,11 +1458,12 @@ def test_generic_alias_overflow_keeps_the_resembling_referent(
 def test_identical_canonical_names_break_the_tie_by_age_not_by_uuid(
     database_engine: Engine,
 ) -> None:
-    """When every ranking signal ties, the OLDEST entity wins — not the luckiest.
+    """When score and similarity tie, the OLDEST entity wins — not the luckiest.
 
     Three entities share one alias AND one canonical name, so trigram score
-    and canonical-name similarity are identical for all of them. The only
-    thing left is `created_at` before `entity_id`. The oldest row is given
+    and canonical-name similarity are identical for all of them. Their
+    timestamps deliberately differ, so `created_at` decides before
+    `entity_id` ever gets a say. The oldest row is given
     the LARGEST id, so a ranking that fell through to the UUID would put it
     last; ranking by age puts it first.
     """

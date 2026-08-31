@@ -4729,11 +4729,12 @@ relevance order, so the flag could and did influence authoritative D100
 verdicts. Removing it is therefore a behaviour change, argued on the merits
 above, not a no-op cleanup.
 
-**Consequences.** Candidate order no longer depends on row identity where
-it previously collapsed to a random UUID once every candidate matched
-through the same lemma. `entities.created_at` sits ahead of `entity_id`, so
-even an exact tie on canonical-name similarity resolves to "oldest first"
-rather than to a UUID — the same convention T0 already uses. Two ordering
+**Consequences.** Candidate order no longer collapses to a random UUID the
+moment every candidate matches through the same lemma. `entities.created_at`
+sits ahead of `entity_id`, so a tie on canonical-name similarity resolves to
+"oldest first" — the same convention T0 already uses. Row identity remains
+the FINAL key and still decides when timestamps also tie, which is routine
+for rows written in one transaction, since `now()` is transaction-stable. Two ordering
 proofs passed 12–15 consecutive runs with freshly minted UUIDs.
 
 **It is not free.** `similarity(entities.normalized_name, :lemma)` is

@@ -14,8 +14,10 @@ instructions: |
   1. Continuous health metrics are computed over the live registry (not only golden-set
      evals): cluster-size distribution (black-hole watch), singleton rate, unresolved-mention
      rate, and merge-proposal acceptance rate.
-  2. Alias-growth anomalies are tracked (the generic-identifier guard's signal: an alias
-     suddenly linking many entities is surfaced for re-evaluation, D21).
+  2. Alias-growth anomalies are tracked as an OBSERVABILITY signal: an alias suddenly
+     linking many entities is surfaced for human attention. D103 removed the automatic
+     down-weighting this once fed, so surfacing it must not demote the lemma in blocking
+     or otherwise change resolution; it is a metric, not a control input.
   3. The metrics are recorded over time (queryable trend, not a log line) so resolver-version
      bumps are comparable.
 

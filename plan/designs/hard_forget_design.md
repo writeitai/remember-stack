@@ -179,9 +179,11 @@ table or deletion-specific scheduler is added.
    with their names/aliases/profile text cleared. The content-free forget row, IDs, hashes, currency
    transition facts, and aggregate counts may remain. Entity-resolution audit payloads associated
    with any entity resolved from the lineage are content-cleared while their IDs and structural
-   edges remain. The generic-identifier cache, planner audit transcripts, and legacy eval/golden
+   edges remain. Planner audit transcripts and legacy eval/golden
    fixtures have no reliable lineage provenance, so a rare forget conservatively clears those
    deployment-wide rather than guessing; they are derived/control/test data and can be rebuilt.
+   (The generic-identifier cache was also cleared this way until D103 removed it; there is no
+   longer such a table to clear.)
    Clear the derived embedding columns on surviving claim/fact/entity rows when
    their input text changed or was scrubbed. These changes commit in the same
    PostgreSQL transaction; there is no separate P1 compaction or acknowledgement.

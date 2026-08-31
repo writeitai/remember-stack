@@ -18,8 +18,12 @@ instructions: |
   3. Clustering is connected-components-to-gather with a component-size guard, then HAC
      distance-cut inside blobs — never bare transitive closure; incremental assignment
      re-clusters only the local neighborhood.
-  4. A generic-identifier guard exists (an alias that suddenly links many entities is
-     down-weighted and re-evaluated).
+  4. No blocking-stage demotion for shared names (D103, which removed the D21
+     generic-identifier guard): there is no `generic_identifier_guard` table, nothing
+     writes such a cache, and fuzzy blocking ranks candidates by match score, then
+     canonical-name resemblance, then age, then entity id — a lemma is never demoted
+     for linking several entities. The promiscuous-signal concern is carried by T3
+     profile evidence, T4, and `resolution_exclusions` cannot-link edges.
 
   Source precedence: the design docs under plan/designs/ are the binding statement of the
   current system; the decision log is its indexed record — read cited decisions together

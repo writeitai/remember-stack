@@ -919,7 +919,7 @@ CREATE TABLE merge_events (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   survivor_id     uuid NOT NULL,               -- the entity that absorbed the other
   absorbed_id     uuid NOT NULL,               -- the entity redirected into survivor (keeps its id, status=merged)
-  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — general merge-audit metadata: enumerate merges by the lemma that caused them when one is later called into question (D21; the automatic guard re-evaluation was removed by D102)
+  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — general merge-audit metadata: enumerate merges by the lemma that caused them when one is later called into question (D21; the automatic guard re-evaluation was removed by D103)
   evidence        jsonb,                       -- why the merge fired (scores, reviewer note)
   blast_radius    integer,                     -- combined mention_count+degree at merge time (registries §6) — never auto-merge above threshold
   pre_merge_membership_snapshot jsonb NOT NULL,-- which mentions belonged to which entity BEFORE the merge — replay to un-merge (D21)
