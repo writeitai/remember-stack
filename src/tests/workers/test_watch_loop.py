@@ -104,6 +104,7 @@ class _WatchRig:
                 catalog=catalog,
                 raw_store=raw_store,
                 admission=ForgetCatalog(engine=engine),
+                routable_mimes=frozenset({"text/markdown"}),
             ),
             settings=SyncSettings(debounce_quiet_seconds=0.0),
         )

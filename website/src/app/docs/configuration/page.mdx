@@ -73,7 +73,7 @@ Replace every local-only secret before any non-isolated use.
 
 | Variable | Purpose |
 | --- | --- |
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); a MIME type without a route dead-letters on convert, and an unknown adapter name refuses startup |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); a MIME type without a route is refused at ingest on every path — HTTP, MCP, and connector sync — naming the accepted set (HTTP renders it as 415 `unsupported_media_type`), and an unknown adapter name refuses startup |
 
 The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
 
@@ -188,7 +188,7 @@ What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/comp
 | Piece | Config posture |
 | --- | --- |
 | Markdown smoke | Default Compose conversion route |
-| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (the smoke profile does not auto-route beyond text) |
+| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (stock routes are `text/markdown` and `text/plain`; anything else is refused at ingest until you register a converter) |
 | Watched directory | Connector extra + connector management API/CLI; credentials stay deployment-side |
 | Lineage identity | `source_kind` + `source_ref` together on ingest; `versioning_mode=snapshot|living` |
 

@@ -741,7 +741,11 @@ class MemoryClient:
                     elif path.startswith("/query/"):
                         detail = "deployment API returned a malformed structured error"
                     else:
-                        detail = str(public_detail)
+                        code, detail = _structured_refusal(
+                            detail=public_detail,
+                            status_code=response.status_code,
+                            path=path,
+                        )
                 else:
                     detail = str(public_detail)
             elif isinstance(body, dict) and "detail" in body:
@@ -805,6 +809,58 @@ def _structured_query_error(
     if _QUERY_ERROR_HTTP_STATUS.get(code) != status_code:
         return None
     return code, message
+
+
+_REFUSAL_CONTRACT: Final[dict[str, tuple[int, str]]] = {
+    "unsupported_media_type": (415, "/ingest")
+}
+"""Non-query structured refusals this client trusts: code -> (status, path).
+
+A code is honoured only at the status *and* on the endpoint the deployment API
+binds it to, the same discipline `_structured_query_error` applies. Trusting a
+code on status alone would let any endpoint returning 415 claim to be an ingest
+routing refusal; trusting it unconditionally would let a server relabel any
+failure. Widening this table is a contract change, not a convenience.
+"""
+
+
+def _structured_refusal(
+    *, detail: dict[object, object], status_code: int, path: str
+) -> tuple[str | None, str]:
+    """Preserve a recognised `{"code", "message", ...}` refusal, else stringify.
+
+    The deployment API renders structured refusals as a detail object with a
+    stable `code`, a human `message`, and sometimes extra actionable fields
+    (D104's `mime` and `supported_mimes`). Flattening that with `str()` yielded
+    a Python dict repr and dropped the code, so a consumer had to parse a dict
+    literal to learn what happened — and the MCP mapper could only report a
+    generic engine error where a local composition reports a typed one.
+
+    Only codes in `_REFUSAL_CONTRACT`, at their bound status and on their bound
+    endpoint, are honoured. Everything else falls back to the previous
+    stringification, so an unrecognised envelope still surfaces rather than
+    being silently trusted.
+    """
+    code = detail.get("code")
+    message = detail.get("message")
+    if not isinstance(code, str) or not isinstance(message, str) or not message:
+        return None, str(detail)
+    bound = _REFUSAL_CONTRACT.get(code)
+    if bound is None or bound != (status_code, path):
+        return None, str(detail)
+    extras = [
+        f"{key}={_join_scalar(value)}"
+        for key, value in sorted(detail.items(), key=lambda item: str(item[0]))
+        if isinstance(key, str) and key not in {"code", "message"}
+    ]
+    return code, "; ".join([message, *extras]) if extras else message
+
+
+def _join_scalar(value: object) -> str:
+    """Render one extra detail field as compact readable text."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value)
+    return str(value)
 
 
 def _validated_list(

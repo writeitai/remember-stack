@@ -70,6 +70,7 @@ def test_guard_runs_before_upload_and_observed_raw_writes(observed: bool) -> Non
         catalog=cast(DocumentCatalog, object()),
         raw_store=store,
         admission=DenyingAdmission(),
+        routable_mimes=frozenset({"text/markdown"}),
     )
     upload = DocumentUpload(
         filename="forgotten.md", mime="text/markdown", content=b"forgotten"
@@ -109,6 +110,7 @@ def test_observed_ingest_rejects_non_utc_time_before_raw_write(
         catalog=cast(DocumentCatalog, object()),
         raw_store=store,
         admission=AllowingAdmission(),
+        routable_mimes=frozenset({"text/markdown"}),
     )
 
     with pytest.raises(ValidationError, match="timezone-aware UTC"):

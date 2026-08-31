@@ -232,6 +232,7 @@ class _ApiRig:
             catalog=document_catalog,
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset({"text/markdown"}),
         )
         generation = chunker_version(params=_PARAMS)
         registry = HandlerRegistry()
