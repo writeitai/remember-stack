@@ -35,7 +35,7 @@ Read this page top-to-bottom for the map. Stage detail and lifecycle rules live 
 | **E1 chunk** | Blocks from Markdown | Retrieval chunks + optional context prefixes | No (deterministic) |
 | **E1 embed** | Chunk text (policy-controlled) | P1 vectors / FTS rows | Embedder only |
 | **E2 claims** | Chunks + structure | Immutable claims + grounding | Yes (extraction) |
-| **E3 normalize** | Claims | Entity mentions → canonical entities; candidate facts | Resolution cascade (mostly non-LLM; T4 gated) |
+| **E3 normalize** | Claims | Entity mentions → canonical entities; candidate facts | Resolution cascade (mostly non-LLM; one binary T4 call for the residue) |
 | **E3 adjudicate** | Candidate facts + evidence | Relations/observations, supersession, contradictions | Cascade + ledgers |
 | **P1 / graph / P3** | Spine | Search indexes, live PostgreSQL graph, corpus FS | No completion on query; P3 build only |
 

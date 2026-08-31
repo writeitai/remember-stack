@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v16"
-DEFAULT_PROTOCOL_KEY: Final = "full-v16"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-identity-uncertainty-v16"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v17"
+DEFAULT_PROTOCOL_KEY: Final = "full-v17"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-binary-t4-v17"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -56,7 +56,7 @@ EXPECTED_PIPELINE_STAGES: Final = (
 )
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "convert": "e0-convert-2026.07",
+        "convert": "e0-convert-2026.08",
         "structure": "e0-structure-2026.07f:d79-wave2",
         "chunk": (
             "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
@@ -69,7 +69,8 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
-            "e3-normalize-2026.08c:temp0-1:claim-fanout-1:bare-noun-1:no-types-1"
+            "e3-normalize-2026.08d:temp0-1:claim-fanout-1:bare-noun-1:"
+            "no-types-1:binary-t4-1"
         ),
         "adjudicate_observations": (
             "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"
@@ -195,8 +196,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V16 = LoCoMoProtocol(
-    key="full-v16",
+_FULL_V17 = LoCoMoProtocol(
+    key="full-v17",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -218,7 +219,7 @@ _FULL_V16 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V16.key: _FULL_V16}
+    {_FULL_V17.key: _FULL_V17}
 )
 
 

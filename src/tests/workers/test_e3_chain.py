@@ -65,6 +65,7 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.t4_test_doubles import match_first_t4_candidate
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("90000000-0000-0000-0000-000000000001")
@@ -189,18 +190,23 @@ class _E3Rig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.provider = FakeModelProvider(
-            generate_payloads={
-                "ContextPrefix": {"prefix": "Sits in the staffing note."},
-                "SelectionResponse": _SELECTION_PAYLOAD,
-                "ClaimifyResponse": _CLAIMIFY_PAYLOAD,
-                "NormalizationResponse": _NORMALIZATION_PAYLOAD,
-                "FactLabelResponse": {"label": "Alice Novak works for Acme."},
-                "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
-                "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
-                "AdjudicationVerdict": {"verdict": "same", "confidence": 0.9},
-            }
-        )
+        payloads: dict[str, dict[str, object]] = {
+            "ContextPrefix": {"prefix": "Sits in the staffing note."},
+            "SelectionResponse": _SELECTION_PAYLOAD,
+            "ClaimifyResponse": _CLAIMIFY_PAYLOAD,
+            "NormalizationResponse": _NORMALIZATION_PAYLOAD,
+            "FactLabelResponse": {"label": "Alice Novak works for Acme."},
+            "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
+            "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
+        }
+
+        def route(prompt: str, type_name: str) -> dict[str, object]:
+            """Serve canned chain payloads and a dynamic T4 candidate id."""
+            if type_name == "T4Selection":
+                return match_first_t4_candidate(prompt, type_name)
+            return payloads[type_name]
+
+        self.provider = FakeModelProvider(generate_router=route)
         document_catalog = DocumentCatalog(engine=engine)
         chunk_catalog = ChunkCatalog(engine=engine)
         claim_catalog = ClaimCatalog(engine=engine)
@@ -233,7 +239,6 @@ class _E3Rig:
                 config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                 embedding_model="qwen/qwen3-embedding-8b",
                 small_model="openai/gpt-5.6-luna",
-                frontier_model="openai/gpt-5.6-sol",
             ),
             facts=FactCatalog(engine=engine),
             observation_adjudicator=ObservationAdjudicator(

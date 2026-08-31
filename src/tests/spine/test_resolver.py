@@ -33,6 +33,8 @@ from rememberstack.spine import seed_resolver_version
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
+from tests.t4_test_doubles import match_first_t4_candidate as _match_first_router
+from tests.t4_test_doubles import t4_candidates as _t4_candidates
 from tests.workers.e3_test_doubles import _handler
 from tests.workers.e3_test_doubles import _payload
 from tests.workers.e3_test_doubles import RecordingFacts
@@ -44,16 +46,21 @@ _ALWAYS_ESCALATE = ResolutionThresholds(t3_accept=1.0, t3_reject=-1.0)
 """Bands that route every blocked candidate through T4 (deterministic tests)."""
 
 
+def _new_entity_router(_prompt: str, type_name: str) -> dict[str, object]:
+    """Select a new entity from one T4 call."""
+    if type_name != "T4Selection":
+        raise AssertionError(f"unexpected generate call: {type_name}")
+    return {"decision": "new", "candidate_id": None, "confidence": 0.9}
+
+
 def _first_token_router(prompt: str, type_name: str) -> dict[str, object]:
     """A deterministic T4 stand-in: match iff the unaccented first tokens of
     MENTION and CANDIDATE agree (enough to grade the synthetic golden set)."""
-    if type_name != "AdjudicationVerdict":
+    if type_name != "T4Selection":
         raise AssertionError(f"unexpected generate call: {type_name}")
     import unicodedata
 
-    def first_token(marker: str) -> str:
-        line = next(line for line in prompt.splitlines() if line.startswith(marker))
-        surface = line.split("'")[1]
+    def first_token(surface: str) -> str:
         folded = unicodedata.normalize("NFKD", surface)
         stripped = "".join(c for c in folded if not unicodedata.combining(c))
         return stripped.lower().split()[0]
@@ -63,15 +70,16 @@ def _first_token_router(prompt: str, type_name: str) -> dict[str, object]:
         for line in prompt.splitlines()
         if line.startswith("MENTION:")
     )
-    candidate = next(
-        line.split("'")[1]
-        for line in prompt.splitlines()
-        if line.startswith("CANDIDATE:")
+    candidate = _t4_candidates(prompt)[0]
+    candidate_name = str(candidate["canonical_name"])
+    is_same = mention != candidate_name and first_token(mention) == first_token(
+        candidate_name
     )
-    is_same = mention != candidate and first_token("MENTION:") == first_token(
-        "CANDIDATE:"
-    )
-    return {"verdict": "same" if is_same else "different", "confidence": 0.9}
+    return {
+        "decision": "match" if is_same else "new",
+        "candidate_id": candidate["candidate_id"] if is_same else None,
+        "confidence": 0.9,
+    }
 
 
 @pytest.fixture(scope="module")
@@ -130,7 +138,6 @@ def _resolver(
         config=config,
         embedding_model="qwen/qwen3-embedding-8b",
         small_model="openai/gpt-5.6-luna",
-        frontier_model="openai/gpt-5.6-sol",
     )
 
 
@@ -205,9 +212,7 @@ def test_cascade_mints_then_exact_and_fuzzy_candidates_reach_t4(
     database_engine: Engine,
 ) -> None:
     """T0/T1/T2 only generate candidates; T4 records both accepted paths."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "same", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_match_first_router)
     resolver = _resolver(engine=database_engine, provider=provider)
 
     minted = resolver.resolve(
@@ -258,9 +263,7 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
     database_engine: Engine,
 ) -> None:
     """D95: father and son may share a name without T0 or clustering glue."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "different", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_new_entity_router)
     resolver = _resolver(engine=database_engine, provider=provider)
 
     father = resolver.resolve(
@@ -309,7 +312,7 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
     assert decision["method"] == "T4_small"
     assert decision["features"]["blocking_tier"] == "T0"
     assert {exclusion[0], exclusion[1]} == {father.entity_id, son.entity_id}
-    assert exclusion[2] == f"t4-no-match:{RESOLVER_VERSION}"
+    assert exclusion[2] == f"t4-new:{RESOLVER_VERSION}"
     assert exclusion[3] == "auto"
     assert exclusion[4:] == (
         "supported_different",
@@ -358,77 +361,68 @@ def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
     del jan
 
 
-def test_insufficient_evidence_mints_provisional_without_exclusion(
+def test_compatible_thin_evidence_matches_instead_of_minting_fragment(
     database_engine: Engine,
 ) -> None:
-    """D99: thin evidence remains repairable instead of becoming a false edge."""
-    provider = FakeModelProvider(
-        generate_payload={
-            "verdict": "insufficient_evidence",
-            "confidence": 0.9,
-            "rationale": "No profile evidence distinguishes the referent.",
-        }
-    )
+    """D100: compatible ambiguity reuses the existing identity."""
+    provider = FakeModelProvider(generate_router=_match_first_router)
     resolver = _resolver(engine=database_engine, provider=provider)
-    resolver.resolve(
+    first = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Caroline"),
         claim=_claim(claim_text="Caroline joined the conversation."),
     )
 
-    fragment = resolver.resolve(
+    repeat = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
         reference=EntityRef(name="Caroline"),
         claim=_claim(claim_text="Caroline discussed a different session."),
     )
 
-    assert fragment.created
+    assert repeat.entity_id == first.entity_id
+    assert not repeat.created
     with database_engine.connect() as connection:
         features = connection.execute(
             text(
                 "SELECT features FROM resolution_decisions"
                 " WHERE entity_id = :entity ORDER BY decided_at DESC LIMIT 1"
             ),
-            {"entity": fragment.entity_id},
+            {"entity": repeat.entity_id},
         ).scalar_one()
         exclusion_count = connection.execute(
             text("SELECT count(*) FROM resolution_exclusions")
         ).scalar_one()
-    assert features["identity_authority"] == "provisional"
+    assert features["identity_authority"] == "authoritative"
     assert features["search_complete"] is True
     assert features["adjudicated_count"] == 1
-    assert features["candidate_adjudications"][0]["verdict"] == (
-        "insufficient_evidence"
-    )
+    assert features["t4_selection"]["decision"] == "match"
     assert exclusion_count == 0
 
 
-def test_truncated_candidate_prefix_cannot_authorize_novelty(
+def test_truncated_candidate_snapshot_still_makes_one_binary_decision(
     database_engine: Engine,
 ) -> None:
-    """A checked prefix of supported differences still mints provisionally."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "different", "confidence": 0.9}
-    )
-    for statement in ("Lives in Bristol.", "Lives in Leeds."):
+    """D100 records incomplete search without a third authority state."""
+    provider = FakeModelProvider(generate_router=_new_entity_router)
+    seeded = [
         _seed_profiled_entity(
             engine=database_engine,
             provider=provider,
             name="John Smith",
             statement=statement,
         )
+        for statement in ("Lives in Bristol.", "Lives in Leeds.")
+    ]
     resolver = CascadeResolver(
         engine=database_engine,
         model_provider=provider,
         config=ResolverConfig(
             resolver_version=RESOLVER_VERSION,
             blocking_limit=1,
-            t4_max_candidates=1,
             thresholds=_ALWAYS_ESCALATE,
         ),
         embedding_model="qwen/qwen3-embedding-8b",
         small_model="openai/gpt-5.6-luna",
-        frontier_model="openai/gpt-5.6-sol",
     )
 
     fragment = resolver.resolve(
@@ -445,10 +439,26 @@ def test_truncated_candidate_prefix_cannot_authorize_novelty(
             ),
             {"entity": fragment.entity_id},
         ).scalar_one()
-    assert features["identity_authority"] == "provisional"
+        exclusions = connection.execute(
+            text("SELECT entity_id_low, entity_id_high FROM resolution_exclusions")
+        ).all()
+    assert features["identity_authority"] == "authoritative"
     assert features["search_complete"] is False
     assert features["candidate_count"] == 1
     assert features["adjudicated_count"] == 1
+    assert features["t4_selection"]["decision"] == "new"
+    assert len(provider.generated_prompts) == 1
+    prompted_id = UUID(
+        str(_t4_candidates(provider.generated_prompts[0])[0]["candidate_id"])
+    )
+    assert prompted_id in seeded
+    assert [tuple(row) for row in exclusions] == [
+        tuple(
+            sorted(
+                (fragment.entity_id, prompted_id), key=lambda entity_id: entity_id.int
+            )
+        )
+    ]
 
 
 def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) -> None:
@@ -457,7 +467,7 @@ def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) 
 
     def inspect_lock(_prompt: str, type_name: str) -> dict[str, object]:
         nonlocal lock_was_free
-        assert type_name == "AdjudicationVerdict"
+        assert type_name == "T4Selection"
         with database_engine.begin() as connection:
             lock_was_free = bool(
                 connection.execute(
@@ -465,7 +475,7 @@ def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) 
                     {"key": f"{_DEPLOYMENT_ID}:lemma:caroline"},
                 ).scalar_one()
             )
-        return {"verdict": "same", "confidence": 0.9}
+        return _match_first_router(_prompt, type_name)
 
     provider = FakeModelProvider(generate_router=inspect_lock)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -484,6 +494,33 @@ def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) 
     assert lock_was_free is True
 
 
+def test_t4_rejects_candidate_id_outside_snapshot(database_engine: Engine) -> None:
+    """A model cannot redirect a mention to an entity it was not shown."""
+
+    def select_unknown(_prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "T4Selection"
+        return {"decision": "match", "candidate_id": str(uuid4()), "confidence": 0.9}
+
+    provider = FakeModelProvider(generate_router=select_unknown)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined."),
+    )
+
+    with pytest.raises(ValueError, match="outside the supplied snapshot"):
+        resolver.resolve(
+            deployment_id=_DEPLOYMENT_ID,
+            reference=EntityRef(name="Caroline"),
+            claim=_claim(claim_text="Caroline returned."),
+        )
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(text("SELECT count(*) FROM mentions")).scalar_one() == 1
+        )
+
+
 def test_changed_candidate_snapshot_discards_stale_t4_result(
     database_engine: Engine,
 ) -> None:
@@ -493,7 +530,7 @@ def test_changed_candidate_snapshot_discards_stale_t4_result(
 
     def mutate_candidates(_prompt: str, type_name: str) -> dict[str, object]:
         nonlocal provider_calls
-        assert type_name == "AdjudicationVerdict"
+        assert type_name == "T4Selection"
         provider_calls += 1
         if provider_calls == 1:
             with database_engine.begin() as connection:
@@ -518,7 +555,7 @@ def test_changed_candidate_snapshot_discards_stale_t4_result(
                         "entity": inserted_candidate,
                     },
                 )
-        return {"verdict": "same", "confidence": 0.9}
+        return _match_first_router(_prompt, type_name)
 
     provider = FakeModelProvider(generate_router=mutate_candidates)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -559,7 +596,7 @@ def test_repeated_candidate_changes_exhaust_without_stale_commit(
 
     def keep_mutating(_prompt: str, type_name: str) -> dict[str, object]:
         nonlocal provider_calls
-        assert type_name == "AdjudicationVerdict"
+        assert type_name == "T4Selection"
         provider_calls += 1
         entity_id = uuid4()
         with database_engine.begin() as connection:
@@ -580,7 +617,7 @@ def test_repeated_candidate_changes_exhaust_without_stale_commit(
                 ),
                 {"alias": uuid4(), "deployment": _DEPLOYMENT_ID, "entity": entity_id},
             )
-        return {"verdict": "same", "confidence": 0.9}
+        return _match_first_router(_prompt, type_name)
 
     provider = FakeModelProvider(generate_router=keep_mutating)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -609,13 +646,14 @@ def test_repeated_candidate_changes_exhaust_without_stale_commit(
     assert decision_count == 1
 
 
-def test_low_confidence_small_verdict_escalates_to_frontier(
+def test_low_confidence_selection_is_audited_without_frontier_routing(
     database_engine: Engine,
 ) -> None:
-    """The T4 ladder: a small-model verdict below the floor re-asks frontier."""
+    """D100 confidence is audit evidence and never adds a second model call."""
 
     def low_confidence_router(prompt: str, type_name: str) -> dict[str, object]:
-        return {"verdict": "same", "confidence": 0.5}  # below the 0.75 floor
+        result = _match_first_router(prompt, type_name)
+        return {**result, "confidence": 0.5}
 
     provider = FakeModelProvider(generate_router=low_confidence_router)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -630,7 +668,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
         reference=EntityRef(name="Acme Corp"),
         claim=_claim(),
     )
-    assert len(provider.generated_prompts) == calls_before + 2  # small + frontier
+    assert len(provider.generated_prompts) == calls_before + 1
     with database_engine.connect() as connection:
         method = connection.execute(
             text(
@@ -638,7 +676,7 @@ def test_low_confidence_small_verdict_escalates_to_frontier(
                 " WHERE NOT is_new_entity ORDER BY decided_at DESC LIMIT 1"
             )
         ).scalar_one()
-    assert method == "T4_frontier"
+    assert method == "T4_small"
 
 
 def test_resolution_suite_records_curves_and_blocks_on_regression(
@@ -732,7 +770,7 @@ def test_resolution_suite_records_curves_and_blocks_on_regression(
 
     def false_merge_router(prompt: str, type_name: str) -> dict[str, object]:
         """Regress T4 to match everything, including same-name non-matches."""
-        return {"verdict": "same", "confidence": 0.9}
+        return _match_first_router(prompt, type_name)
 
     broken = _resolver(
         engine=database_engine,
@@ -910,9 +948,7 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     database_engine: Engine,
 ) -> None:
     """WP-I.4: profile text drives T3 and precedes the T4 identity question."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "same", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_match_first_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     minted = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -950,11 +986,13 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
         "ENTITY: KB Banc\nCLAIM CONTEXT: KB Banc is a bank serving Prague."
     )
     prompt = provider.generated_prompts[-1]
-    assert "CANDIDATE PROFILE: KB Bank is a bank licensed by CNB" in prompt
-    assert "CANDIDATE FACTS:\n- KB Bank is a bank licensed by CNB" in prompt
-    assert prompt.index("CANDIDATE FACTS:") < prompt.index(
-        "Choose exactly one identity verdict:"
-    )
+    candidate = _t4_candidates(prompt)[0]
+    assert candidate["aliases"] == ["KB Bank"]
+    assert candidate["profile_description"] == "KB Bank is a bank licensed by CNB"
+    assert candidate["salient_facts"] == ["KB Bank is a bank licensed by CNB"]
+    assert candidate["t3_gate"] == "scored"
+    assert "Prefer an existing compatible candidate." in prompt
+    assert "Missing overlap and different topics" in prompt
 
     with database_engine.begin() as connection:
         connection.execute(
@@ -971,18 +1009,18 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
         claim=_claim(claim_text="KB Banque is based in Prague."),
     )
     stale_prompt = provider.generated_prompts[-1]
+    stale_candidate = _t4_candidates(stale_prompt)[0]
     assert len(provider.embedded_texts) == embedded_before
-    assert "CANDIDATE PROFILE: (none)" in stale_prompt
-    assert "CANDIDATE FACTS:\n- KB Bank is based in Prague" in stale_prompt
+    assert stale_candidate["profile_description"] is None
+    assert stale_candidate["salient_facts"] == ["KB Bank is based in Prague"]
+    assert stale_candidate["t3_gate"] == "profile_stale"
 
 
 def test_sole_exact_candidate_with_current_profile_can_t3_accept(
     database_engine: Engine,
 ) -> None:
     """A known James takes the cheap profile path, never an exact-name verdict."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "different", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_new_entity_router)
     resolver = _resolver(
         engine=database_engine,
         provider=provider,
@@ -1019,9 +1057,7 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
     database_engine: Engine,
 ) -> None:
     """Several same-name profiles stay ambiguous; cosine only orders T4."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "same", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_match_first_router)
     first = _seed_profiled_entity(
         engine=database_engine,
         provider=provider,
@@ -1049,21 +1085,28 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
 
     assert resolved.entity_id in {first, second}
     assert len(provider.generated_prompts) == prompts_before + 1
+    prompted = _t4_candidates(provider.generated_prompts[-1])
+    assert {UUID(str(item["candidate_id"])) for item in prompted} == {first, second}
+    assert all("aliases" in item for item in prompted)
+    assert all("profile_description" in item for item in prompted)
+    assert all("salient_facts" in item for item in prompted)
+    assert all("t3_score" in item and "t3_gate" in item for item in prompted)
     with database_engine.connect() as connection:
-        method = connection.execute(
+        method, features = connection.execute(
             text(
-                "SELECT method FROM resolution_decisions"
+                "SELECT method, features FROM resolution_decisions"
                 " ORDER BY decided_at DESC LIMIT 1"
             )
-        ).scalar_one()
+        ).one()
     assert method == "T4_small"
+    assert [item["entity_id"] for item in features["candidates"]] == [
+        item["candidate_id"] for item in prompted
+    ]
 
 
 def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) -> None:
     """T0 counts entity ids, not source/canonical alias rows."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "same", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_match_first_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     entity = resolver.resolve(
         deployment_id=_DEPLOYMENT_ID,
@@ -1094,15 +1137,15 @@ def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) 
 
     assert replay.entity_id == entity.entity_id
     assert len(provider.generated_prompts) == prompts_before + 1
+    aliases = _t4_candidates(provider.generated_prompts[-1])[0]["aliases"]
+    assert set(aliases) == {"App", "Application"}
 
 
 def test_source_and_canonical_aliases_on_mint_and_replay(
     database_engine: Engine,
 ) -> None:
     """WP-I.1: claim surface App and canonical Application share one id."""
-    provider = FakeModelProvider(
-        generate_payload={"verdict": "same", "confidence": 0.9}
-    )
+    provider = FakeModelProvider(generate_router=_match_first_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     claim = _claim(claim_text="We opened the App to file the report.")
     minted = resolver.resolve(
@@ -1340,12 +1383,14 @@ def _normalize_through_shipped_resolver(
     *, database_engine: Engine, payload: dict[str, object], claim_text: str
 ) -> CascadeResolver:
     """E3 handler plus the production cascade; returns the resolver used."""
-    provider = FakeModelProvider(
-        generate_payloads={
-            "NormalizationResponse": _payload(payload),
-            "AdjudicationVerdict": {"verdict": "same", "confidence": 0.9},
-        }
-    )
+
+    def route(prompt: str, type_name: str) -> dict[str, object]:
+        """Serve normalization and dynamically select a T4 candidate."""
+        if type_name == "NormalizationResponse":
+            return _payload(payload)
+        return _match_first_router(prompt, type_name)
+
+    provider = FakeModelProvider(generate_router=route)
     resolver = _resolver(engine=database_engine, provider=provider)
     facts = RecordingFacts(predicates={"related_to": None})
     handler: NormalizeRelationsHandler = _handler(
