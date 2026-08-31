@@ -133,6 +133,31 @@ overprecise.
 The trade is accepted: that shape is already degenerate, and this key is
 precisely what keeps the correct referent inside the truncated prefix.
 
+### What `created_at` does and does not mean
+
+It is a deterministic ordering key, not a claim about correctness. Its limits
+are worth stating so nobody later reads more into it:
+
+- **Rows written in one transaction tie.** PostgreSQL's `now()` is
+  transaction-stable, so a bulk import gives every entity the same timestamp
+  and ranking falls through to `entity_id`. The final key is therefore not
+  decorative — in bulk-loaded deployments it decides routinely.
+- **Backfills rank by backfill time**, not by when the entity was really
+  first seen, unless the original timestamps are carried across.
+- **Restore/replay is stable only if `created_at` is preserved**; a restore
+  that re-mints rows re-orders them.
+- **Merge/unmerge preserves priority** while the original rows and timestamps
+  survive, and changes it when an entity is re-minted.
+- **"Oldest first" is an incumbency preference.** It says the row has been
+  around longer, not that it is the more likely referent.
+
+None of this argues for another mechanism. It argues for reading the key as
+what it is: a stable, explainable ordering that beats a random UUID, chosen
+because it matches what `_T0_CANDIDATES` and the clusterer already do. If
+ordering quality above the score/similarity keys ever turns out to matter,
+that should be driven by a measured D22 result, not by adding a signal on
+intuition — which is the mistake the guard itself made.
+
 ## What replaces it
 
 Nothing at the blocking stage, deliberately. D21's real concern is served

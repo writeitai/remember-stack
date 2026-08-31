@@ -573,8 +573,10 @@ raise threshold + repartition above component size T) → **HAC distance-cut ins
 Write-path incremental = max-both assignment + **nDR n=1** (re-cluster only the 1-hop neighborhood;
 order-independent; n=2 only when a hub is touched). Reversibility state lives **only in Postgres**:
 `resolution_decisions` (append-only, `superseded_by`), `merge_events` (append-only, pre-merge
-membership snapshot), `merged_into` redirect chain, optional negative/exclusion edges. A
-generic-identifier guard (Senzing) down-weights + re-evaluates an alias that suddenly links many.
+membership snapshot), `merged_into` redirect chain, optional negative/exclusion edges. ~~A
+generic-identifier guard (Senzing) down-weights + re-evaluates an alias that suddenly links many.~~
+**Superseded by D102** (the guard, its table, and its ranking input are removed; the
+promiscuous-signal concern moves to T3/T4 and `resolution_exclusions`).
 P2 rebuild (D7) re-points edges on merge/un-merge for free.
 
 **Context.** No OSS system (Splink/dedupe/Zingg/Graphiti) ships un-merge — building it in Postgres
@@ -4571,8 +4573,10 @@ and the `is_downweighted` blocking input are **removed** (migration
 `p9_22_0043`). Fuzzy blocking now ranks by match score, then by how closely
 the entity's own canonical name resembles the query, then by age, then by
 `entity_id` — the same age-then-id convention `_T0_CANDIDATES` and the
-clusterer already use, so a full tie is resolved oldest-first rather than by
-row identity. This generation is stamped `resolver-2026.08f`; D22 curves
+clusterer already use. Canonical-similarity ties are ordered by row creation
+time, with `entity_id` as the final deterministic tiebreak; rows written in
+one transaction share `now()`, so that last key still decides more often than
+"oldest first" suggests. This generation is stamped `resolver-2026.08f`; D22 curves
 measured under `08e` are not comparable:
 
 ```sql

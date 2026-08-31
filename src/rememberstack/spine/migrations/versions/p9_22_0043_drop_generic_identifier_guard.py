@@ -66,15 +66,20 @@ depends_on: str | Sequence[str] | None = None
 _DROP_TABLE = "DROP TABLE IF EXISTS generic_identifier_guard"
 
 
-# IF NOT EXISTS / ON CONFLICT, matching the DROP ... IF EXISTS of the sibling
-# revision. A downgrade that hard-fails because the table happens to already
-# be there is brittle: an operator who intervened by hand, or a run
-# interrupted between the two statements below, would be left unable to
-# downgrade at all. The upsert also mirrors what the old writer itself did
-# (`ON CONFLICT (deployment_id, normalized_lemma) DO UPDATE`), so re-running
-# the downgrade converges on the same rows instead of erroring.
+# Plain CREATE, deliberately. An earlier revision of this file used
+# IF NOT EXISTS plus an ON CONFLICT upsert; that was wrong twice over.
+# PostgreSQL DDL here is transactional, so a run interrupted between the two
+# statements below rolls back BOTH -- the partial state it claimed to guard
+# against cannot occur. And the upsert only rewrites rows that collide, so
+# any pre-existing row with no surviving alias group would have been left
+# behind, quietly producing something that is not the reconstruction it
+# advertises.
+#
+# If this table exists when the downgrade runs, the database disagrees with
+# its own revision stamp. That is a real inconsistency and the migration
+# should stop, not paper over it.
 _RECREATE_TABLE = """
-CREATE TABLE IF NOT EXISTS generic_identifier_guard (
+CREATE TABLE generic_identifier_guard (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   normalized_lemma text NOT NULL,
   distinct_entity_count integer NOT NULL,
@@ -109,11 +114,6 @@ SELECT deployment_id, normalized_lemma, COUNT(DISTINCT entity_id),
        COUNT(DISTINCT entity_id) >= 2, 'promiscuous-lemma', now()
 FROM aliases
 GROUP BY deployment_id, normalized_lemma
-ON CONFLICT (deployment_id, normalized_lemma) DO UPDATE SET
-    distinct_entity_count = EXCLUDED.distinct_entity_count,
-    is_downweighted = EXCLUDED.is_downweighted,
-    reason = EXCLUDED.reason,
-    evaluated_at = EXCLUDED.evaluated_at
 """
 
 

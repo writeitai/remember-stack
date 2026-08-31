@@ -515,8 +515,10 @@ they co-occur.
 
 A lemma that points at several entities is **not** demoted (D102). Blocking
 ranks by match score, then by how closely the entity's own canonical name
-resembles the query, then by `created_at`, then by `entity_id` — so a
-complete tie resolves oldest-first, never by row identity. Sharing a name costs a candidate
+resembles the query, then by `created_at`, then by `entity_id`.
+Canonical-similarity ties order by row creation time, with `entity_id` as the
+final deterministic tiebreak — rows created in one transaction share `now()`,
+so the id key still decides those. Sharing a name costs a candidate
 nothing, because sharing a name is the ordinary case the cascade exists to
 adjudicate — under D95 the resolver itself mints a second row for one real
 person pending adjudication, so a shared lemma is as often our own
