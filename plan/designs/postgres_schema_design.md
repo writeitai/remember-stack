@@ -214,6 +214,9 @@ CREATE TYPE review_item_kind       AS ENUM ('merge_cluster','split_cluster','typ
 CREATE TYPE review_status          AS ENUM ('pending','accepted','rejected','deferred','auto_resolved');
 -- Covers all review_item_kinds (D24), not just merges: pick_a/pick_b/both_stand for contradictions,
 -- downweight/keep_signal for generic_identifier, retype for type_conflict.
+-- INERT since D103 (as T4_frontier is inert since D100): the generic_identifier review kind and
+-- its downweight/keep_signal verdicts describe the removed guard. The enum values are retained
+-- for historical rows and are never produced now; nothing routes a generic_identifier review.
 CREATE TYPE review_verdict         AS ENUM ('merge','not_merge','split','retype','downweight','keep_signal','pick_a','pick_b','both_stand','uncertain','restore_support','invalidate_fact');
 -- restore_support / invalidate_fact are the two terminal verdicts of the support_withdrawn kind
 -- (D54): restore = old claim regains currency ('review_restored' event) + the case is planted as
@@ -795,22 +798,12 @@ CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normal
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
 
--- ─────────────────────────────────────────────────────────────────────────
--- generic_identifier_guard — the Senzing "promiscuous signal" guard (D21/registries §6).
--- Keyed by the normalized string (not a single alias row): the property "links to MANY distinct
--- entities ⇒ generic not identifying" is about the string across the registry.
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE generic_identifier_guard (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  normalized_lemma text NOT NULL,              -- the suspect surface string
-  distinct_entity_count integer NOT NULL,      -- how many distinct entities it currently links — the tell
-  is_downweighted boolean NOT NULL DEFAULT true, -- stop trusting it as a blocking/match signal
-  reason          text,                        -- 'role-address' | 'placeholder' | 'common-name' | ...
-  evaluated_at    timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, normalized_lemma)
-);
-COMMENT ON TABLE generic_identifier_guard IS
-  'Surfaces that link too many entities to be identifying (D21). Down-weighted so they stop driving merges; the merges they already caused are re-evaluated — enumerated via merge_events.trigger_lemmas (below).';
+-- generic_identifier_guard was REMOVED by D103 (migration p9_22_0043). It flagged any lemma
+-- linking >= 2 entities and that flag outranked match score in T1/T2 blocking, so a near-exact
+-- hit on a shared name lost to a barely-matching unshared one. It also counted entity rows
+-- rather than people: D95 has the resolver mint a second row for one real person pending
+-- adjudication, which the guard read as proof the name was generic. The promiscuous-signal
+-- concern now sits with T3/T4 and resolution_exclusions.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolution_exclusions — negative/"these are NOT the same" edges (D21).
@@ -916,16 +909,17 @@ CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE supers
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- merge_events — append-only reversibility record (D21). Snapshots pre-merge membership so
--- un-merge replays it. trigger_lemmas makes the generic-identifier-guard re-evaluation queryable
--- (registries §6: "the merges a downweighted signal caused are re-evaluated"). Not huge ⇒ real
--- composite FKs, no partition.
+-- un-merge replays it. trigger_lemmas records which lemmas drove a merge, so merges can be
+-- enumerated by trigger when one is later called into question (D103 removed the automatic
+-- down-weighting that used to drive that re-evaluation). Not huge ⇒ real composite FKs, no
+-- partition.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE merge_events (
   merge_id        uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
   survivor_id     uuid NOT NULL,               -- the entity that absorbed the other
   absorbed_id     uuid NOT NULL,               -- the entity redirected into survivor (keeps its id, status=merged)
-  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — enumerated for guard re-evaluation (D21, registries §6)
+  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — general merge-audit metadata: enumerate merges by the lemma that caused them when one is later called into question (D21; the automatic guard re-evaluation was removed by D103)
   evidence        jsonb,                       -- why the merge fired (scores, reviewer note)
   blast_radius    integer,                     -- combined mention_count+degree at merge time (registries §6) — never auto-merge above threshold
   pre_merge_membership_snapshot jsonb NOT NULL,-- which mentions belonged to which entity BEFORE the merge — replay to un-merge (D21)
@@ -936,10 +930,10 @@ CREATE TABLE merge_events (
   FOREIGN KEY (deployment_id, absorbed_id) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE merge_events IS
-  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas lets the generic-identifier guard re-evaluate affected merges; live graph views resolve redirects without a graph rebuild.';
+  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas records which lemma drove each merge so merges can be enumerated by trigger when one is questioned (audit metadata: D103 removed the guard that once re-evaluated them automatically); live graph views resolve redirects without a graph rebuild.';
 CREATE INDEX ix_merge_survivor ON merge_events (survivor_id);
 CREATE INDEX ix_merge_absorbed ON merge_events (absorbed_id);
-CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- guard re-evaluation by lemma
+CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- enumerate merges by triggering lemma (audit; D103 removed automatic guard re-evaluation)
 ```
 
 ---
@@ -967,7 +961,7 @@ set), and the **eval-run history** (per-tier metrics with Wilson confidence inte
 CREATE TABLE review_queue (
   review_id       uuid PRIMARY KEY,             -- merge_cluster: deterministic UUID over deployment + sorted live roots + cluster-config fingerprint (D99)
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | type_conflict | generic_identifier | contradiction
+  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | contradiction (type_conflict inert since D96; generic_identifier inert since D103 — retained for historical rows, never produced)
   candidate       jsonb NOT NULL,              -- the cluster: entity/mention ids + the Splink-style per-feature score waterfall + cluster card
   blast_radius    integer NOT NULL,            -- combined size/connectedness if wrong (registries §6)
   confidence      real NOT NULL,               -- model confidence in the proposal
@@ -2672,7 +2666,7 @@ Labs."*
 | D17 T0–T4 cascade, block-loose/decide-tight | single-column blocking GIN indexes on `entities.normalized_name` and `aliases.normalized_lemma` (D68); `resolution_decisions.method` (CHECK excludes T1/T2); `resolver_versions` |
 | D19 coref in-call | `mentions.canonical_name_form` (no coref model/table) |
 | D20 no external authority | non-goal §15 |
-| D21 clustering, reversibility, generic-id guard | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `generic_identifier_guard`, `superseded_by` |
+| D21 clustering, reversibility (generic-id guard removed by D103) | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `superseded_by` |
 | D22 golden set + eval | `golden_pairs` (+ `expected_blocking_tier`), `golden_claim_labels`, `eval_runs`, `canary_cases` |
 | D23/D94 partition the big tables; btree-only; GIN on registry targets | §12's eight parents (6 monthly RANGE via `pg_partman`, 2 static HASH-64); claims are non-partitioned for one global current-testimony BM25/HNSW corpus; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm` |
 | D24 cluster review queue | `review_queue` (band boundaries in `resolver_versions.tier_config`) |

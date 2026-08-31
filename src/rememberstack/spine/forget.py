@@ -1290,15 +1290,6 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
         """
     ),
-    # Generic-identifier guards are derived from source lemmas but carry no
-    # lineage provenance. Rebuilding this small cache is safer than retaining
-    # an unprovable surface form after an irreversible forget.
-    text(
-        """
-        DELETE FROM generic_identifier_guard
-        WHERE deployment_id = :deployment_id
-        """
-    ),
     text(
         """
         UPDATE merge_events
@@ -1607,9 +1598,6 @@ _VERIFY_POSTGRES_SCRUB = text(
         UNION ALL
         SELECT 1 FROM aliases
         WHERE deployment_id = :deployment_id AND entity_id = ANY(:entity_ids)
-        UNION ALL
-        SELECT 1 FROM generic_identifier_guard
-        WHERE deployment_id = :deployment_id
         UNION ALL
         SELECT 1 FROM merge_events
         WHERE deployment_id = :deployment_id

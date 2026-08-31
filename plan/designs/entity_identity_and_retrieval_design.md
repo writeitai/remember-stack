@@ -589,14 +589,31 @@ claim as `provenance=source` in addition to `llm_canonical`. `App` and
 `Application` can be one id. Do not alias `game` onto FIFA 23 because
 they co-occur.
 
-### 4.5 Promiscuous lemmas
+### 4.5 Shared lemmas
 
-The resolver **populates** `generic_identifier_guard` when a lemma
-points at too many distinct entities (D21; starting threshold measured
-on the golden set). Guarded lemmas are down-weighted in T1/T2 blocking.
-They do not authorize a global T0 verdict. D102 replay may still accept a
-guarded exact lemma after the same-document T4 anchor because the binding's
-conflict rows, not global name rarity, are its safety boundary.
+A lemma that points at several entities is **not** demoted (D103). Blocking
+ranks by match score, then by how closely the entity's own canonical name
+resembles the query, then by `created_at`, then by `entity_id`.
+Canonical-similarity ties order by row creation time, with `entity_id` as the
+final deterministic tiebreak — rows created in one transaction share `now()`,
+so the id key still decides those. Sharing a name costs a candidate
+nothing, because sharing a name is the ordinary case the cascade exists to
+adjudicate — under D95 the resolver itself mints a second row for one real
+person pending adjudication, so a shared lemma is as often our own
+conservatism as it is two different people.
+
+D21's promiscuous-signal concern (`info@company.com`, placeholders) is
+carried by the mechanisms that *decide* identity — T3 profile evidence, T4,
+and `resolution_exclusions` cannot-link edges — not by ranking candidates
+down before anything examines them. T0's role is unchanged by D103: outside
+D102's document-local exception, exact T0 lists candidates globally and never
+accepts a referent on its own.
+
+This does not weaken D102's document-local replay. Replay's safety boundary
+was never global name rarity — it is the binding's conflict rows — so
+removing the rarity signal leaves that boundary exactly where it was. What
+changes is only that there is no longer such a thing as a "guarded" exact
+lemma to make an exception for.
 
 ---
 
@@ -769,7 +786,6 @@ Minimum rows:
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
-| `generic_identifier_guard` | written by resolve/cluster, not only deleted by forget |
 | normal version/lineage delete | clear every binding for the affected `doc_id` under the existing deletion admission barrier; a surviving or reingested version earns a new anchor rather than reusing deleted evidence |
 | `GraphQueries.neighborhood` | empty predicates = all `RELATES` (keep) |
 | `judge_pair` | lemma equality is not automatic match |
@@ -883,7 +899,7 @@ generations are abandoned, not dual-run. Sequencing:
 - One captured deadline reaches P1 readiness, fact/profile nomination, graph,
   and authority confirmation; a saturated retrieval slot returns a typed
   boundary before that deadline, and no unguarded checkout occurs.
-- Guard: a lemma linking many entities is down-weighted.
+- A lemma linking many entities is ranked on merit, never demoted (D103).
 - Forget: exclusive entity still fully purged; **shared** survivor
   profile no longer contains the forgotten document’s distinctive
   phrase (D74).

@@ -255,15 +255,6 @@ def test_resolution_exclusion_is_a_clustering_cannot_link(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO generic_identifier_guard (deployment_id,"
-                " normalized_lemma, distinct_entity_count, is_downweighted, reason)"
-                " VALUES (:deployment, 'robert klein', 2, true, 'common-name'),"
-                " (:deployment, 'r klein', 2, true, 'common-name')"
-            ),
-            {"deployment": _DEPLOYMENT_ID},
-        )
-        connection.execute(
-            text(
                 "INSERT INTO resolution_exclusions (deployment_id, entity_id_low,"
                 " entity_id_high, reason, created_by, basis, is_effective,"
                 " source_decision_id, source_resolver_version) VALUES"

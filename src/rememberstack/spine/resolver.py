@@ -57,8 +57,13 @@ class ResolutionContendedError(RuntimeError):
     """Candidate authority changed through every bounded resolver attempt."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.08f"
+RESOLVER_VERSION: Final = "resolver-2026.08g"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
+08g removes the generic-identifier guard and re-ranks fuzzy blocking by score,
+then canonical-name resemblance, then age (D103). Blocking order decides which
+candidates survive `blocking_limit` and which one T4 is told to prefer, so this
+can change authoritative verdicts and must not share a generation with 08f --
+D22 curves measured under either are not comparable.
 08f adds D102's exact same-document T0 replay after one validated T4 match.
 08e makes T4 one joint, binary, match-biased simple-model selection (D100).
 08d preserves D99 uncertainty and revalidates around unlocked provider calls.
@@ -997,17 +1002,6 @@ class CascadeResolver:
                 lemma=normalized_lemma(surface=source_text),
                 provenance="source",
             )
-        self.refresh_generic_identifier_guard(
-            connection=connection, deployment_id=deployment_id, lemma=lemma
-        )
-        if source_text is not None:
-            source_lemma = normalized_lemma(surface=source_text)
-            if source_lemma != lemma:
-                self.refresh_generic_identifier_guard(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    lemma=source_lemma,
-                )
         connection.execute(
             _INSERT_DECISION,
             {
@@ -1056,24 +1050,6 @@ class CascadeResolver:
                 "lemma": lemma,
                 "provenance": provenance,
             },
-        )
-
-    def refresh_generic_identifier_guard(
-        self,
-        *,
-        connection: Connection,
-        deployment_id: UUID,
-        lemma: str,
-        distinct_floor: int = 2,
-    ) -> None:
-        """Recount how many entities share ``lemma`` and upsert the guard row.
-
-        Down-weighted when the lemma points at ``distinct_floor`` or more
-        ids. Called from resolve so I.5 can trust the table for T1/T2.
-        """
-        connection.execute(
-            _UPSERT_GENERIC_GUARD,
-            {"deployment_id": deployment_id, "lemma": lemma, "floor": distinct_floor},
         )
 
     def _embed(
@@ -1310,45 +1286,33 @@ _T1_T2_BLOCK = text(
     WITH t1 AS (
         SELECT DISTINCT ON (aliases.entity_id)
                aliases.entity_id,
-               similarity(aliases.normalized_lemma, :lemma) AS score,
-               coalesce(guard.is_downweighted, false) AS is_downweighted
+               similarity(aliases.normalized_lemma, :lemma) AS score
         FROM aliases
-        LEFT JOIN generic_identifier_guard AS guard
-          ON guard.deployment_id = aliases.deployment_id
-         AND guard.normalized_lemma = aliases.normalized_lemma
         WHERE aliases.deployment_id = :deployment_id
           AND similarity(aliases.normalized_lemma, :lemma) >= :floor
-        ORDER BY aliases.entity_id, is_downweighted, score DESC
+        ORDER BY aliases.entity_id, score DESC
     ),
     t2 AS (
-        SELECT DISTINCT ON (aliases.entity_id)
-               aliases.entity_id,
-               coalesce(guard.is_downweighted, false) AS is_downweighted
+        SELECT DISTINCT aliases.entity_id
         FROM aliases
-        LEFT JOIN generic_identifier_guard AS guard
-          ON guard.deployment_id = aliases.deployment_id
-         AND guard.normalized_lemma = aliases.normalized_lemma
         WHERE aliases.deployment_id = :deployment_id
           AND daitch_mokotoff(aliases.normalized_lemma)
               && daitch_mokotoff(:lemma)
-        ORDER BY aliases.entity_id, is_downweighted
     )
     SELECT entities.entity_id, entities.canonical_name,
            coalesce(t1.score, 0.0) AS trigram_score,
            CASE WHEN t1.entity_id IS NOT NULL THEN 'T1' ELSE 'T2' END
-               AS blocking_tier,
-           CASE
-             WHEN t1.entity_id IS NOT NULL AND NOT t1.is_downweighted THEN false
-             WHEN t2.entity_id IS NOT NULL AND NOT t2.is_downweighted THEN false
-             ELSE true
-           END AS is_downweighted
+               AS blocking_tier
     FROM entities
     LEFT JOIN t1 ON t1.entity_id = entities.entity_id
     LEFT JOIN t2 ON t2.entity_id = entities.entity_id
     WHERE entities.deployment_id = :deployment_id
       AND entities.status = 'active'
       AND (t1.entity_id IS NOT NULL OR t2.entity_id IS NOT NULL)
-    ORDER BY is_downweighted, coalesce(t1.score, 0.0) DESC, entities.entity_id
+    ORDER BY coalesce(t1.score, 0.0) DESC,
+             similarity(entities.normalized_name, :lemma) DESC,
+             entities.created_at,
+             entities.entity_id
     LIMIT :limit
     """
 )
@@ -1389,25 +1353,6 @@ _UPSERT_ALIAS = text(
     )
     ON CONFLICT (deployment_id, entity_id, normalized_lemma, provenance)
     DO UPDATE SET last_seen = now(), alias_text = EXCLUDED.alias_text
-    """
-)
-
-_UPSERT_GENERIC_GUARD = text(
-    """
-    INSERT INTO generic_identifier_guard (
-        deployment_id, normalized_lemma, distinct_entity_count,
-        is_downweighted, reason, evaluated_at
-    )
-    SELECT :deployment_id, :lemma, COUNT(DISTINCT entity_id),
-           COUNT(DISTINCT entity_id) >= :floor, 'promiscuous-lemma', now()
-    FROM aliases
-    WHERE deployment_id = :deployment_id AND normalized_lemma = :lemma
-    ON CONFLICT (deployment_id, normalized_lemma)
-    DO UPDATE SET
-        distinct_entity_count = EXCLUDED.distinct_entity_count,
-        is_downweighted = EXCLUDED.is_downweighted,
-        reason = EXCLUDED.reason,
-        evaluated_at = EXCLUDED.evaluated_at
     """
 )
 

@@ -573,8 +573,10 @@ raise threshold + repartition above component size T) → **HAC distance-cut ins
 Write-path incremental = max-both assignment + **nDR n=1** (re-cluster only the 1-hop neighborhood;
 order-independent; n=2 only when a hub is touched). Reversibility state lives **only in Postgres**:
 `resolution_decisions` (append-only, `superseded_by`), `merge_events` (append-only, pre-merge
-membership snapshot), `merged_into` redirect chain, optional negative/exclusion edges. A
-generic-identifier guard (Senzing) down-weights + re-evaluates an alias that suddenly links many.
+membership snapshot), `merged_into` redirect chain, optional negative/exclusion edges. ~~A
+generic-identifier guard (Senzing) down-weights + re-evaluates an alias that suddenly links many.~~
+**Superseded by D103** (the guard, its table, and its ranking input are removed; the
+promiscuous-signal concern moves to T3/T4 and `resolution_exclusions`).
 P2 rebuild (D7) re-points edges on merge/un-merge for free.
 
 **Context.** No OSS system (Splink/dedupe/Zingg/Graphiti) ships un-merge — building it in Postgres
@@ -4111,8 +4113,10 @@ banks” is fact/profile **text** retrieval. Facets, if ever added, are
 derived from observations — they are not a return of `entities.type`.
 
 Bare head nouns are not entities. Source surfaces become aliases.
-`generic_identifier_guard` is populated in resolve. D86 is **vacated**
-(nothing typed to reject). Unknown predicates still follow D5.
+~~`generic_identifier_guard` is populated in resolve.~~ **Superseded by
+D103**: the guard, its writer, and its table are removed; nothing is
+populated in resolve. D86 is **vacated** (nothing typed to reject).
+Unknown predicates still follow D5.
 
 **Context.** Required classes and first-mint type forked SAP, glued
 homonyms’ D18 gates, and implied a Company twin of a person. Optional
@@ -4680,3 +4684,112 @@ same-document T4 match and refines D22's same-name-negative gate as described
 above. Preserves D20 registry self-containment, D99 snapshot/revalidation and
 recovery, D100 binary T4, D55 document lineage, D74 forget, and D97/D98
 retrieval behavior. File attribution remains outside D102.
+
+## D103. No blocking-stage demotion for shared names (removes the generic-identifier guard)
+
+**Decision.** The `generic_identifier_guard` table, its per-resolve writer,
+and the `is_downweighted` blocking input are **removed** (migration
+`p9_22_0043`). Fuzzy blocking now ranks by match score, then by how closely
+the entity's own canonical name resembles the query, then by age, then by
+`entity_id` — the same age-then-id convention `_T0_CANDIDATES` and the
+clusterer already use. Canonical-similarity ties are ordered by row creation
+time, with `entity_id` as the final deterministic tiebreak; rows written in
+one transaction share `now()`, so that last key still decides more often than
+"oldest first" suggests. This generation is stamped `resolver-2026.08f`; D22 curves
+measured under `08e` are not comparable:
+
+```sql
+ORDER BY coalesce(t1.score, 0.0) DESC,
+         similarity(entities.normalized_name, :lemma) DESC,
+         entities.created_at,
+         entities.entity_id
+```
+
+A name shared by several entities is a normal, adjudicable signal, not a
+weaker one. D21's promiscuous-signal concern is served by the mechanisms
+that decide identity — T3 profile evidence, T4 (D100), `resolution_exclusions`
+cannot-link edges, and D95's rule that T0 never auto-merges — not by
+demoting candidates before anything looks at them.
+
+**Why.** As built, `is_downweighted` was the **primary** blocking sort key,
+ahead of score: a 0.95 trigram hit on a shared name ranked below a 0.31 hit
+on an unshared one and could be truncated out by `blocking_limit`. The floor
+was 2, while D21 said "suddenly links **many**". Worse, the counter counted
+**entity rows, not people** — D95 has the resolver deliberately mint a second
+row for one real person pending adjudication, and the guard read its own
+conservatism as proof the name was generic. Both the "one person recorded
+twice" and "two unrelated people" cases were flagged, and flagging demoted
+exactly the candidates T3/T4 needed. The flag was never *adjudication evidence*: it
+lived only in `ORDER BY`, never on `ResolutionCandidate`, never in decision
+features, never seen by T3 or T4. That is a claim about what T3/T4 were
+shown, **not** a claim that it changed nothing — it did. Blocking order
+decides which candidates survive truncation to `blocking_limit`, and T4's
+prompt tells the model to prefer the first candidate in the supplied
+relevance order, so the flag could and did influence authoritative D100
+verdicts. Removing it is therefore a behaviour change, argued on the merits
+above, not a no-op cleanup.
+
+**Consequences.** Candidate order no longer collapses to a random UUID the
+moment every candidate matches through the same lemma. `entities.created_at`
+sits ahead of `entity_id`, so a tie on canonical-name similarity resolves to
+"oldest first" — the same convention T0 already uses. Row identity remains
+the FINAL key and still decides when timestamps also tie, which is routine
+for rows written in one transaction, since `now()` is transaction-stable. Two ordering
+proofs passed 12–15 consecutive runs with freshly minted UUIDs.
+
+**It is not free.** `similarity(entities.normalized_name, :lemma)` is
+computed over the filtered candidate set and the GIN trigram index does not
+serve an `ORDER BY`. On a deliberately pathological shape — 100,000 active
+entities all sharing one fuzzy alias — three independent runs measured
+**+3.3%, +12.5% and +31%** warm-median (e.g. 455 ms → 512 ms). The direction
+is consistent and the magnitude is not: it is CPU and sort work on an
+already-degenerate query, so it moves with machine and cache state. Treat
+"a real but modest regression concentrated in the overflow case" as the
+claim, not any single figure. No new scan node appears. This is accepted because that shape is already a degenerate case, and
+because the key is what rescues the correct referent from truncation (see
+the overflow canary in `test_resolver.py`).
+
+**Operator action.** The generation bump to `resolver-2026.08f` is not
+cosmetic. D22 acceptance curves live on the `resolver_versions` row keyed by
+version, so `08f` starts with no recorded curves: a fresh evaluation run must
+be recorded under it before its numbers gate anything, and `08e` curves must
+not be carried across. Decisions already stamped `08e` stay as they are —
+that is the provenance working, not a migration gap. The new row is seeded
+lazily on first resolve; thresholds are unchanged, so no
+`ResolverVersionConflictError` can arise from the bump itself.
+
+A `COUNT(DISTINCT entity_id)` per resolve is gone, as is a table of
+per-deployment surface strings with no lineage provenance that hard-forget
+had to blanket-delete. One function is genuinely lost: overflowing fuzzy
+blocks no longer truncate promiscuous-string matches first.
+`_CandidateSnapshot.search_complete` still reports truncation honestly, so
+an incomplete candidate set is visible to the decision rather than hidden.
+Downgrade recreates the table **and rebuilds it** from the surviving
+aliases with the old `COUNT(DISTINCT entity_id)` and floor of 2. Recreating
+it empty would have restored *compatibility* but not *behaviour*: the old
+reader used `coalesce(is_downweighted, false)`, so old code runs fine
+against an empty table, but every previously flagged lemma would silently
+become unflagged and the old writer only refreshes a lemma when that lemma
+is touched again.
+
+The migration is **not** a single-table lock. `generic_identifier_guard`
+carries an FK to `deployments`, so dropping it takes AccessExclusiveLock on
+`deployments` too (measured), and that lock blocks readers as well as
+writers on the tenancy root nearly every query joins. There is no scan and
+nothing to rewrite, so it is brief — a short global stall, not a free
+operation. Apply it as you would any other DDL against `deployments`.
+
+**Rejected.** Raising the floor (moves a threshold without fixing what it
+gates: the signal still outranks score once it fires, and still counts
+entity rows rather than people); demoting the flag to a
+tiebreak *after* score (preserves the truncation benefit and is the first
+thing to reach for if role addresses prove a real problem, but retains a
+hot-path write and a table for an unmeasured benefit); keeping the table
+unread; fixing only the sort order while keeping the flag.
+
+**Analysis.** `plan/analysis/generic_identifier_guard_removal.md`.
+
+**Amends.** Removes the generic-identifier guard clause from **D21**; the
+rest of D21 (connected-components-to-gather, HAC distance-cut, nDR
+incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
+is unchanged. Does not change D95, D99, or D100.

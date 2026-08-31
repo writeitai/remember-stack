@@ -835,11 +835,14 @@ No OSS ER system (Splink, dedupe, Zingg, Graphiti) ships un-merge, so building i
 ours to do. Live graph views resolve redirect chains from the same PostgreSQL transaction, so
 merge/un-merge visibility needs no secondary rebuild.
 
-**Distrust promiscuous signals (the "generic-identifier guard").** Some signals look identifying
-but aren't — `info@company.com`, a placeholder, a very common name. If one alias suddenly links
-to *many* distinct entities, that's a tell it is **generic, not identifying**: down-weight it
-(stop trusting it as a match signal) and re-evaluate the merges it caused. (Senzing pioneered
-this.)
+**Distrust promiscuous signals — but decide, never demote (D103).** Some signals look
+identifying but aren't — `info@company.com`, a placeholder, a very common name. Senzing's
+insight is that a string linking to *many* distinct entities has shown it is **generic, not
+identifying**. We do not act on that at the blocking stage. A shipped guard that down-weighted
+such lemmas ranked them **ahead of match score**, and its counter counted entity rows rather
+than people — so the second row D95 deliberately mints for one real person read as proof the
+name was generic. The concern is now carried by the mechanisms that adjudicate identity: T3
+profile evidence, T4, and the cannot-link edges below.
 
 **Blast-radius rule.** A merge's *blast radius* is how much it would affect if wrong — roughly the
 combined size/connectedness of the two entities (their mention counts + graph degree). Never

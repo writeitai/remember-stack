@@ -817,13 +817,6 @@ def _seed_resolution_residuals(*, connection: Connection) -> None:
     """Plant source-bearing ER audit material linked to the target lineage."""
     connection.execute(
         text(
-            "INSERT INTO generic_identifier_guard (deployment_id, normalized_lemma,"
-            " distinct_entity_count, reason) VALUES (:d, lower(:token), 2, :token)"
-        ),
-        {"d": _DEPLOYMENT_ID, "token": _TOKEN},
-    )
-    connection.execute(
-        text(
             "INSERT INTO merge_events (merge_id, deployment_id, survivor_id,"
             " absorbed_id, trigger_lemmas, evidence,"
             " pre_merge_membership_snapshot) VALUES"
@@ -1230,10 +1223,6 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             {"d": _DEPLOYMENT_ID, "entity": _CONTROL_ENTITY_ID},
         ).scalar_one()
         assert _count(connection, "aliases", "entity_id", _EXCLUSIVE_ENTITY_ID) == 0
-        assert (
-            _deployment_rows(connection=connection, table="generic_identifier_guard")
-            == 0
-        )
         merge_audit = connection.execute(
             text(
                 "SELECT trigger_lemmas, evidence, pre_merge_membership_snapshot"
