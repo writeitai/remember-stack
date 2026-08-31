@@ -1,5 +1,13 @@
 # Entity identity and retrieval — design (binding)
 
+> **Binding D102 amendment (2026-08-31).** T0 remains candidate-only across
+> the registry, but gains one narrow verdict: after a D102-contract T4
+> `match`, later occurrences of the exact normalized canonical name in that
+> same `doc_id` may replay the matched active entity without T3/T4. The anchor
+> is a bounded derived PostgreSQL binding over append-only decisions; no fuzzy
+> acceptance or source-attribution dependency is introduced. Section 3.1.2 and the
+> implementation contracts contain the complete boundary.
+
 > **Binding D100 amendment (2026-08-31).** T4 is one joint call on the
 > configured simple model over every candidate in the bounded snapshot. It
 > returns one candidate id or `new`, preferring a compatible existing entity
@@ -23,16 +31,17 @@
 > P2 rebuild. The D95–D97 identity, profile, and retrieval behavior is otherwise
 > unchanged.
 
-**Status:** accepted as operator-directed 2026-08-26 and amended through D100
+**Status:** accepted as operator-directed 2026-08-26 and amended through D102
 on 2026-08-31. Dual implementation review still applies before code lands;
 this document is the *how*, not a phased MVP.
 **Date:** 2026-08-26
-**Decision log:** D95, D96, D97, D99, D100
+**Decision log:** D95, D96, D97, D99, D100, D102
 **Analysis:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
 [`d99_proposal_convergence_lock_convoy.md`](../analysis/d99_proposal_convergence_lock_convoy.md),
-[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md)
+[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md),
+[`document_local_t0_anchor.md`](../analysis/document_local_t0_anchor.md)
 **D99 review:**
 [`Claude Opus — identity uncertainty`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md),
 [`Claude Opus — proposal coalescing`](../../design/reviews/REVIEW_claude_opus_d99_proposal_coalescing_2026-08-28.md)
@@ -84,9 +93,10 @@ query planner.
 
 ## 2. Decisions this design implements
 
-**D95/D100 — Identity is the referent; ambiguous residue favors reuse.** One `entity_id` per real-world
-thing. A name generates **candidates**. **T0 never auto-merges** (exact
-lemma only lists ids). T3 may accept a repeat when a profile exists;
+**D95/D100/D102 — Identity is the referent; ambiguous residue favors reuse.** One `entity_id` per real-world
+thing. A name generates **candidates**. Globally, T0 never auto-merges
+(exact lemma only lists ids); D102 permits only a same-document replay after
+T4 match. T3 may accept a repeat when a profile exists;
 T4 when the profile is empty, fights, or several candidates exist. The
 same spelling may be two ids. Profile is T3/T4 evidence, never the
 lookup key. Relatedness is a relation. No common-name list. Exact-lemma
@@ -126,15 +136,16 @@ the id.
 Keep T0–T4, block-loose / decide-tight, registry-self-contained (D20).
 Change what T0 *means*.
 
-### 3.1 T0 — candidate list, never a merge
+### 3.1 T0 — global candidates plus one document-local replay
 
 Exact match on `aliases.normalized_lemma` **lists** matching active
 **entity ids** (0, 1, or many). Count **distinct `entity_id`s**, not
 alias rows: two provenances (`source` and `llm_canonical`) on the same
 id are still one candidate.
 
-**T0 never auto-accepts.** Same cleaned spelling is a clue, not a
-verdict. No common-name census. No “distinctive lemma” shortcut.
+**Globally, T0 never auto-accepts.** Same cleaned spelling is a clue, not a
+verdict. No common-name census. No “distinctive lemma” shortcut. D102 adds only
+the document-local replay in §3.1.2 after T4 has already decided the identity.
 
 - **0 candidates after an untruncated block** → **mint an authoritative
   cascade outcome**. This says the configured blocking pass surfaced no
@@ -150,12 +161,14 @@ snapshot in deterministic T3-relevance order. Limits remain strict and
 completeness remains audit evidence; neither creates a third decision outcome.
 
 A thousand mentions of the same James are **not** a thousand T4 calls.
-Repeats are T3 once a profile exists.
+After one document-local T4 match, exact repeats use §3.1.2; outside that
+document, repeats may use T3 once a profile exists.
 
 ### 3.1.1 Who actually decides (T3 cheap, T4 residue)
 
 | Situation | Verdict | Why |
 |---|---|---|
+| One qualifying exact document-local anchor (§3.1.2) | **T0 replay, no provider** | T4 already matched this canonical name inside this document |
 | No candidates after an **untruncated** block | Authoritative cascade mint | No LLM; the configured blocking pass surfaced no candidate, without claiming perfect blocking recall |
 | One candidate, **profile exists**, mention+claim embedding sits on that profile (T3 accept band; starting threshold from D22, not a folklore constant) | **Accept, no T4** | Repeat “James” after we know him |
 | One candidate, **empty profile**, or profile **fights** the claim, or **several** exact candidates | **T4** | Father/son, second employee, first clash, thin identity |
@@ -176,13 +189,73 @@ person are embeddings, not judges).
 **Not the default, not WP-I.5:** an operator flag that turns exact-lemma
 auto-accept back on. A large store has **more** `Jan`s, not fewer
 (birthday paradox). Enabling the old exact-hit *because* the corpus is
-large is backwards. The cheap path for repeats is T3+profile, not
-resurrecting T0-as-verdict. The idea of keeping exact-hit as a
+large is backwards. Outside D102's T4-backed document anchor, the cheap path
+for repeats is T3+profile, not global T0-as-verdict. The idea of keeping exact-hit as a
 **manual, default-off** switch is recorded as an unchosen proposal
 ([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md));
 its adoption trigger is a closed unique namespace (SKUs, employee
 numbers), **not** entity count. Identifier-shaped T0 (email, LEI,
 ORCID) is a different future path, not name-lemma auto-merge.
+
+### 3.1.2 Document-local T0 anchor after T4 match (D102)
+
+The anchor key is `(deployment_id, doc_id, normalized canonical name)`. It uses
+the existing document lineage, not a process-local cache and not a new file-
+attribution identity. A new document never inherits the anchor; later versions
+of the same catalog document may.
+
+Every D102 resolver decision stamps `document-t0-v1` with `doc_id` and the
+canonical lemma in its existing JSON features and transactionally upserts one
+derived `document_entity_bindings` row keyed by `(deployment_id, doc_id,
+canonical_lemma, entity_id)`. The contract, not the resolver generation
+string, defines compatibility, so an unrelated future generation bump does
+not vacate bindings.
+
+Only a `T4_small` **match** records `anchor_decision_id` plus its
+`anchor_decided_at` partition coordinate on that entity's row. T0 mints and
+replays, T3 matches, and T4 `new` create membership rows but do not authorize
+one. The source pair must still identify a current (`superseded_by IS NULL`),
+non-new T4 match and the entity must remain active.
+
+The primary-key prefix makes the lemma-locked lookup bounded to this document
+and canonical lemma. Replay is allowed only when exactly one active binding
+row exists and that row has a valid anchor source. A prior T4 `new`, human
+re-decision, or other decision for a second same-name entity creates another
+row and therefore a durable conflict. Supersession never erases a membership
+row: retaining a known split can only disable the optimization, not cause a
+false replay. Merged/retired entities do not count while inactive; unmerge
+reactivates their conservative conflict.
+
+A replay requires equality under the resolver's existing
+`normalized_lemma(reference.name)` function. T1 trigram reachability, T2
+phonetic reachability, source-surface equality, and model similarity cannot
+authorize it. The resolver writes a normal immutable mention plus an
+append-only T0 decision whose features include the document id, lemma, anchor
+contract, and source T4 decision id. It does not call the embedding or
+generation provider.
+
+On an anchor hit, the resolver records the T0 decision and binding immediately
+in its first lemma-locked transaction. On the provider path, binding state is
+part of the optimistic snapshot and is reloaded under the same lock before
+commit. A T4 match or conflict row that lands during another call therefore
+invalidates that stale call; the bounded retry may use T0 or the ordinary
+cascade. Provider calls remain outside transactions.
+
+`deployments.document_binding_generation` gates the shortcut. New empty
+deployments bootstrap `document-t0-v1`; migration leaves existing deployments
+unset, so they safely retain the ordinary cascade. Setup builds bindings in
+bounded keyset pages, verifies them, and sets the generation only after completion.
+For pre-D102 rows it conservatively expands the resolved entity's canonical
+aliases within each document; extra rows merely disable replay. Clearing the
+generation disables the shortcut during repair. Rebuild from D102 decision
+features restores exact rows and anchor source coordinates. D74 hard forget
+deletes every binding for the document and verifies zero residual rows.
+
+This deliberately prefers source-local consistency over distinguishing two
+same-named people in one document after the first anchor. A wrong first T4
+match may also be replayed. Those are measured error-policy costs, not evidence
+for enabling T1/T2. A future extractor-supplied source-local entity id can
+replace name equality for that case without expanding D102.
 
 ### 3.2 Same lemma, two ids—or one selected candidate
 
@@ -444,7 +517,12 @@ deleting per-tier diagnostics. A passing run must measure both positive
 and negative labels and at least one same-lemma/T0 negative canary,
 identified from the normalized surfaces rather than the optional expected-tier
 annotation; any false merge of that canary blocks the run independently of
-the global precision floor, so easy positives cannot dilute the D95 failure. A
+the global precision floor, so easy positives cannot dilute the D95 failure.
+D102 refines the canary scope: the hard gate covers same-lemma people in
+different documents and same-document people whose two binding rows already
+record the split. The explicitly accepted case of a second, not-yet-recorded
+same-name referent appearing after an anchor is reported as a separate D102
+diagnostic, not a contradictory zero-false-merge gate. A
 same-lemma golden pair may exercise T3 only when both stored contexts
 provide distinguishing evidence; an empty-evidence pair skips unsafe
 name-only cosine and reaches T4. Activating D95 T0 requires a recorded
@@ -516,8 +594,9 @@ they co-occur.
 The resolver **populates** `generic_identifier_guard` when a lemma
 points at too many distinct entities (D21; starting threshold measured
 on the golden set). Guarded lemmas are down-weighted in T1/T2 blocking.
-They do not change T0's role: exact T0 always lists candidates and never
-accepts a referent.
+They do not authorize a global T0 verdict. D102 replay may still accept a
+guarded exact lemma after the same-document T4 anchor because the binding's
+conflict rows, not global name rarity, are its safety boundary.
 
 ---
 
@@ -654,7 +733,9 @@ Minimum rows:
 | “we installed SAP” / “SAP announced…” | one id |
 | SAP SE vs S/4HANA, both named | two ids + relation |
 | Java language vs Java island | two ids |
-| Father and son, same name, different lives | two ids + kinship relation if claimed |
+| Father and son, same name, different documents | two ids + kinship relation if claimed; hard global-T0 canary |
+| Father and son, same document, both binding rows recorded before replay | two ids; hard known-conflict canary |
+| Second same-name person first appears after a document anchor | D102 risk diagnostic; report false-replay rate, not a release gate |
 | One person moved city | one id; profile updates |
 | Two employees, same name, different sites, extra evidence | two ids |
 | “Someone works for me” (I am a person) | one id for me; relation allowed |
@@ -671,11 +752,15 @@ Minimum rows:
 | Site | Contract |
 |---|---|
 | `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
-| `CascadeResolver.resolve` | snapshot candidates + completeness under the lemma lock; decide outside the transaction; re-lock/revalidate before writing; bounded contention retry |
+| `CascadeResolver.resolve` | load bounded document-binding state plus global candidates under the lemma lock; commit an anchor hit in that transaction; otherwise decide outside it and re-lock/revalidate before writing; bounded contention retry |
 | candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; order the bounded set by T3 relevance before T4 |
 | `T4Selection` | exactly `match(candidate_id)` or `new`, plus confidence/rationale used only for audit; selected ids must belong to the supplied snapshot |
 | `_T4_PROMPT` | one joint configured-simple-model call with the bounded incoming claim and every candidate's deduplicated aliases (starting cap: 20), current profile description, salient facts, and T3 score/gate; explicit match bias |
-| resolution decision features | candidate completeness/order, every T3 score/gate, selected candidate or `new`, rationale/model, and one bounded T3 outcome reason; no current provisional authority |
+| document-local binding | primary key `(deployment_id, doc_id, canonical_lemma, entity_id)`; every decision upserts membership; only T4 match stores source decision id + partition timestamp; one active row with a current source authorizes, zero/conflict fails to the global cascade |
+| optimistic snapshot | include binding identity/source/conflict state along with candidates and completeness; revalidate both under the existing lemma lock before provider-path commit |
+| resolution decision features | every D102 decision stamps `document-t0-v1`, `doc_id`, and canonical lemma; T4 also retains candidate completeness/order, every T3 score/gate, selected candidate or `new`, rationale/model, and one bounded T3 outcome reason; no current provisional authority |
+| document-local T0 decision | normal mention plus method `T0`, `is_new_entity=false`, and the source T4 confidence; document contract/coordinate and source T4 decision id; no T1/T2, embedding, or generation call |
+| review/re-decision and unmerge restore | use the same binding writer for the decision's document/canonical lemma/entity; a human split creates its conflict row before commit; merge status filtering and unmerge reactivation remain fail-closed |
 | resolution decision method | keep `T4_small` for the configured simple-model seat; `resolver_version` and features distinguish D99 pairwise rows from D100 joint rows; retain `T4_frontier` only for historical readability |
 | `resolution_exclusions` | a T4 `new` may write supported-different rows only for candidates supplied to that joint decision; historical D99 and human rows retain their existing basis/effectiveness rules |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
@@ -685,6 +770,7 @@ Minimum rows:
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
 | `generic_identifier_guard` | written by resolve/cluster, not only deleted by forget |
+| normal version/lineage delete | clear every binding for the affected `doc_id` under the existing deletion admission barrier; a surviving or reingested version earns a new anchor rather than reusing deleted evidence |
 | `GraphQueries.neighborhood` | empty predicates = all `RELATES` (keep) |
 | `judge_pair` | lemma equality is not automatic match |
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
@@ -721,6 +807,9 @@ generations are abandoned, not dual-run. Sequencing:
 | Alternative | Why it lost |
 |---|---|
 | Keep T0 exact as verdict | Homonyms impossible |
+| Document-local exact replay from any prior tier | A mint or weak T3 result has not paid for the requested source-local T4 judgment |
+| Derive bindings by joining partitioned mentions and decisions on every occurrence | Either entity-side or document-side history is unbounded and would run while the lemma lock is held |
+| Document-local T1/T2 acceptance | Fuzzy/phonetic reachability is not identity and would replay possessive or nearby-name errors |
 | Keep D99 tri-state T4 and provisional mint | Honest uncertainty still creates another served identity and makes the next resolution harder |
 | Keep pairwise small→frontier T4 | Up to three isolated calls cannot compare the candidate set jointly; confidence routing adds a model seat without adding evidence |
 | Binary T4 with a neutral prompt | A forced but unspecified tie becomes model or candidate-order noise |
@@ -744,9 +833,22 @@ generations are abandoned, not dual-run. Sequencing:
 
 ## 11. Test battery (acceptance; numbers are starting points)
 
-- T0 never auto-merges: second `Jan` with empty profile goes to T4, not
-  T0 accept. Repeat `James` with a profile can T3-accept without T4.
-  T4 sees both candidates jointly when several exist.
+- Globally T0 never auto-merges: second `Jan` in another document with empty
+  profile goes to T4, not T0 accept. In one document, the first exact repeat
+  reaches T4; after its match, later exact repeats use document-local T0 with
+  no provider call.
+- Same exact name in another document, and similar/phonetic/possessive names in
+  the anchored document, do not use document-local T0. T4 `new`, invalid source,
+  inactive entity, unset binding generation, and a second active binding row
+  fail to the ordinary cascade.
+- A T4 anchor or conflict row committed during an unlocked peer call changes
+  the revalidated snapshot; the peer retries rather than committing stale T4.
+- D74 removes document bindings; clearing readiness disables replay; rebuild
+  restores D102 rows and conservatively over-blocks ambiguous historical rows.
+- Human re-decision/unmerge restore writes binding membership before it can
+  expose a split; normal version or lineage deletion clears the document's
+  bindings so reingest cannot reuse deleted evidence.
+- T4 sees both candidates jointly when several exist.
 - Compatible same-name evidence with different topics selects an existing
   candidate. Explicit father/son and same-name-colleague evidence selects
   `new`.
