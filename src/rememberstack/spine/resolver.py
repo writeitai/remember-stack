@@ -58,7 +58,7 @@ class ResolutionContendedError(RuntimeError):
 RESOLVER_VERSION: Final = "resolver-2026.08f"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
 08f removes the generic-identifier guard and re-ranks fuzzy blocking by score,
-then canonical-name resemblance, then age (D102). Blocking order decides which
+then canonical-name resemblance, then age (D103). Blocking order decides which
 candidates survive `blocking_limit` and which one T4 is told to prefer, so this
 can change authoritative verdicts and must not share a generation with 08e --
 D22 curves measured under either are not comparable.

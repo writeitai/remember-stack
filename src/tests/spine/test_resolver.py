@@ -1381,7 +1381,7 @@ def _seed_entity_with_alias(
 def test_generic_alias_overflow_keeps_the_resembling_referent(
     database_engine: Engine,
 ) -> None:
-    """The D102 overflow canary: what removing the guard actually costs.
+    """The D103 overflow canary: what removing the guard actually costs.
 
     More candidates than `blocking_limit` all match through ONE genuinely
     generic alias, so they tie on trigram score and the block must truncate.

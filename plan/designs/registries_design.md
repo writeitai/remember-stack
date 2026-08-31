@@ -1,5 +1,11 @@
 # Registries Design — Entity Resolution, Ontology, Governance
 
+> **Binding D102 amendment (2026-08-31).** T0 remains candidate-only globally.
+> One current `T4_small` match may establish a derived exact-name binding inside
+> the same catalog document; later exact canonical-name occurrences replay it
+> as auditable T0 decisions without T3/T4. No T1/T2 verdict or
+> source-attribution dependency is added. Section 3 contains the boundary.
+
 > **Binding D98 amendment (2026-08-27).** Registry merges and predicate changes
 > flow into the live PostgreSQL graph through normalized views after commit.
 > There is no `PROJECT_GRAPH_CYPHER`, Ladybug projection, or P2 rebuild. Scope
@@ -29,7 +35,7 @@ analysis (`plan/analysis/entity_registry.md`) into binding design. Formalizes ob
 decisions **D15–D24** (and D4/D5). Numbers here are starting points to be measured on the
 golden set (D22) / a corpus slice — not committed constants.
 
-> **Amended 2026-08-26/28/31 (D95–D96, D99–D100).** Identity, T0-as-verdict, and **entity types**
+> **Amended 2026-08-26/28/31 (D95–D96, D99–D100, D102).** Identity, T0-as-verdict, and **entity types**
 > (including first-mint `entities.type` and domain/range) are superseded by
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
 > This file remains current for blocking, clustering, review, **predicate** packs,
@@ -194,12 +200,12 @@ attempt ledger.
 
 One canonical cascade. Names block loosely; only profile-bearing T3 or
 evidence-bearing T4 may accept a candidate. **Registry-self-contained — no
-3rd-party external-authority tier** (D20). D95 amends the original T0 rule:
-an exact lemma lists distinct active entity ids and never decides identity.
+3rd-party external-authority tier** (D20). D95 makes an exact lemma a candidate
+list globally; D102 permits only the T4-backed document-local replay below.
 
 | Tier | Mechanism | Role | Where |
 |---|---|---|---|
-| **T0** | exact match on the canonical name form (LLM-emitted, §5) | **candidate generation, NOT a decision** | Postgres |
+| **T0** | exact match on the canonical name form (LLM-emitted, §5) | candidate generation globally; exact replay only after a same-document T4 match (D102) | Postgres |
 | **T1** | fuzzy blocking — `pg_trgm` GIN, recall-first low floor | **candidate generation, NOT a decision** | Postgres |
 | **T2** | phonetic — Daitch-Mokotoff (`fuzzystrmatch`), **not Soundex** | candidate generation | Postgres |
 | **T3** | embedding similarity, residue only | decision (mid band) | PostgreSQL P1 (D94) |
@@ -222,6 +228,23 @@ an exact lemma lists distinct active entity ids and never decides identity.
   outcome reason.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
+- D102's narrow replay key is `(deployment_id, doc_id, normalized canonical
+  name)`. Every D102 decision records that `document-t0-v1` coordinate in
+  features and upserts a derived `document_entity_bindings` membership row.
+  Only T4 match stores a source decision id plus partition time. Exactly one
+  active row with a still-current T4 source authorizes replay; a prior T4
+  `new`, human re-decision, or other membership for a second exact entity
+  remains a conservative conflict. `deployments.document_binding_generation`
+  gates projection completeness and survives unrelated resolver-generation
+  bumps. An anchor hit commits in its first lemma-locked transaction; provider
+  paths revalidate binding/conflict state with the candidate snapshot. Exact
+  T0 writes a normal mention and decision with its source T4 decision id. T1/T2
+  never accept, and a different document never inherits the binding.
+- Human re-decision and unmerge restoration use the same transactional binding
+  writer before exposing changed membership. Merge status filters inactive
+  rows. Normal deletion of a version or lineage clears the entire document
+  binding prefix; hard forget additionally residual-verifies it. Setup and
+  repair clear deployment generation readiness before rebuilding.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
   arrive with referents already grounded — no dedicated coref model. Likewise, each mention's
   canonical/nominative name form is LLM-emitted at extraction (§5), feeding T0.
@@ -812,7 +835,7 @@ No OSS ER system (Splink, dedupe, Zingg, Graphiti) ships un-merge, so building i
 ours to do. Live graph views resolve redirect chains from the same PostgreSQL transaction, so
 merge/un-merge visibility needs no secondary rebuild.
 
-**Distrust promiscuous signals — but decide, never demote (D102).** Some signals look
+**Distrust promiscuous signals — but decide, never demote (D103).** Some signals look
 identifying but aren't — `info@company.com`, a placeholder, a very common name. Senzing's
 insight is that a string linking to *many* distinct entities has shown it is **generic, not
 identifying**. We do not act on that at the blocking stage. A shipped guard that down-weighted

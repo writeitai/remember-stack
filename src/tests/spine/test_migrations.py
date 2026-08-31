@@ -132,7 +132,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # by revision rather than by count, so a new INSERT anywhere else fails
     # here even if another one is removed: D79's structural migration performs
     # the one required legacy-generation backfill, and p9_22_0043's DOWNGRADE
-    # rebuilds a derived cache from the aliases already present (D102). Both
+    # rebuilds a derived cache from the aliases already present (D103). Both
     # derive from existing rows; neither seeds a deployment.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")

@@ -1,5 +1,12 @@
 # Postgres Schema Design — the Plane-E Spine
 
+> **Binding D102 amendment (2026-08-31).** Exact same-document T0 replay uses
+> the bounded derived `document_entity_bindings` table below. Every D102
+> decision writes its document/canonical-lemma coordinate transactionally;
+> only T4 match stores a source decision and partition timestamp. Deployment
+> generation readiness, source validation, conservative conflicts, rebuild,
+> and hard-forget lifecycle are part of the schema contract.
+
 > **Binding D98 amendment (2026-08-27).** PostgreSQL 19 is also the live graph
 > execution host. SQL/PGQ property graphs are catalog metadata over normalized
 > `memory_v1` views; bounded recursive functions perform variable/shortest
@@ -207,7 +214,7 @@ CREATE TYPE review_item_kind       AS ENUM ('merge_cluster','split_cluster','typ
 CREATE TYPE review_status          AS ENUM ('pending','accepted','rejected','deferred','auto_resolved');
 -- Covers all review_item_kinds (D24), not just merges: pick_a/pick_b/both_stand for contradictions,
 -- downweight/keep_signal for generic_identifier, retype for type_conflict.
--- INERT since D102 (as T4_frontier is inert since D100): the generic_identifier review kind and
+-- INERT since D103 (as T4_frontier is inert since D100): the generic_identifier review kind and
 -- its downweight/keep_signal verdicts describe the removed guard. The enum values are retained
 -- for historical rows and are never produced now; nothing routes a generic_identifier review.
 CREATE TYPE review_verdict         AS ENUM ('merge','not_merge','split','retype','downweight','keep_signal','pick_a','pick_b','both_stand','uncertain','restore_support','invalidate_fact');
@@ -316,12 +323,13 @@ CREATE TABLE deployments (
   artifacts_bucket text NOT NULL,              -- gs:// artifacts bucket (markdown/pageindex, mount-readable) — D37
   corpusfs_bucket text NOT NULL,               -- gs:// P3 corpus-filesystem bucket (snapshots + latest) — D40
   knowledge_repo_uri text,                     -- plane-K git remote (git is truth for K; PG holds provenance only) — D1
+  document_binding_generation text,            -- NULL disables D102 replay; document-t0-v1 only after binding build/verification
   status          deployment_status NOT NULL DEFAULT 'active',
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE deployments IS
-  'Identity root for the independent deployment served by this Postgres instance/schema (D16/D68). Entity spaces, registries, graphs and buckets are never shared across deployments; deployment_id is constant here and participates in every scoped FK as defense in depth.';
+  'Identity root for the independent deployment served by this Postgres instance/schema (D16/D68). Entity spaces, registries, graphs and buckets are never shared across deployments; deployment_id is constant here and participates in every scoped FK as defense in depth. document_binding_generation is NULL while D102 bindings are unavailable/rebuilding and document-t0-v1 only after verified completeness.';
 
 -- D94 current-only P1 control state. This is not a search-row mirror or a
 -- generation history: exactly one row describes each target/channel now served.
@@ -790,7 +798,7 @@ CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normal
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
 
--- generic_identifier_guard was REMOVED by D102 (migration p9_22_0043). It flagged any lemma
+-- generic_identifier_guard was REMOVED by D103 (migration p9_22_0043). It flagged any lemma
 -- linking >= 2 entities and that flag outranked match score in T1/T2 blocking, so a near-exact
 -- hit on a shared name lost to a barely-matching unshared one. It also counted entity rows
 -- rather than people: D95 has the resolver mint a second row for one real person pending
@@ -894,7 +902,7 @@ CREATE TABLE resolution_decisions (
   CHECK (method NOT IN ('T1','T2'))            -- T1/T2 are candidate generation, never a verdict (D17)
 ) PARTITION BY RANGE (decided_at);
 COMMENT ON TABLE resolution_decisions IS
-  'Append-only resolution verdicts (D17/D21/D99/D100). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; current T4 features keep candidate completeness/order, bounded T3 evidence, binary selection, model and rationale while historical D99 shapes remain readable.';
+  'Append-only resolution verdicts (D17/D21/D99/D100/D102). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; current features include the document-t0-v1 doc/canonical-lemma coordinate; T4 also keeps candidate completeness/order, bounded T3 evidence, binary selection, model and rationale while historical D99 shapes remain readable.';
 CREATE INDEX ix_resdec_mention ON resolution_decisions (mention_id);
 CREATE INDEX ix_resdec_entity  ON resolution_decisions (deployment_id, entity_id);
 CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE superseded_by IS NULL;
@@ -902,7 +910,7 @@ CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE supers
 -- ─────────────────────────────────────────────────────────────────────────
 -- merge_events — append-only reversibility record (D21). Snapshots pre-merge membership so
 -- un-merge replays it. trigger_lemmas records which lemmas drove a merge, so merges can be
--- enumerated by trigger when one is later called into question (D102 removed the automatic
+-- enumerated by trigger when one is later called into question (D103 removed the automatic
 -- down-weighting that used to drive that re-evaluation). Not huge ⇒ real composite FKs, no
 -- partition.
 -- ─────────────────────────────────────────────────────────────────────────
@@ -922,10 +930,10 @@ CREATE TABLE merge_events (
   FOREIGN KEY (deployment_id, absorbed_id) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE merge_events IS
-  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas records which lemma drove each merge so merges can be enumerated by trigger when one is questioned (audit metadata: D102 removed the guard that once re-evaluated them automatically); live graph views resolve redirects without a graph rebuild.';
+  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas records which lemma drove each merge so merges can be enumerated by trigger when one is questioned (audit metadata: D103 removed the guard that once re-evaluated them automatically); live graph views resolve redirects without a graph rebuild.';
 CREATE INDEX ix_merge_survivor ON merge_events (survivor_id);
 CREATE INDEX ix_merge_absorbed ON merge_events (absorbed_id);
-CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- enumerate merges by triggering lemma (audit; D102 removed automatic guard re-evaluation)
+CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- enumerate merges by triggering lemma (audit; D103 removed automatic guard re-evaluation)
 ```
 
 ---
@@ -953,7 +961,7 @@ set), and the **eval-run history** (per-tier metrics with Wilson confidence inte
 CREATE TABLE review_queue (
   review_id       uuid PRIMARY KEY,             -- merge_cluster: deterministic UUID over deployment + sorted live roots + cluster-config fingerprint (D99)
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | contradiction (type_conflict inert since D96; generic_identifier inert since D102 — retained for historical rows, never produced)
+  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | contradiction (type_conflict inert since D96; generic_identifier inert since D103 — retained for historical rows, never produced)
   candidate       jsonb NOT NULL,              -- the cluster: entity/mention ids + the Splink-style per-feature score waterfall + cluster card
   blast_radius    integer NOT NULL,            -- combined size/connectedness if wrong (registries §6)
   confidence      real NOT NULL,               -- model confidence in the proposal
@@ -1108,6 +1116,29 @@ COMMENT ON TABLE documents IS
   'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. A forget soft-tombstones the lineage.';
 CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at IS NULL;
 CREATE INDEX ix_documents_entity   ON documents (document_entity_id) WHERE document_entity_id IS NOT NULL;
+
+-- D102 bounded same-document exact-name projection. Append-only decisions
+-- remain authority: replay validates the source pair against the exact monthly
+-- resolution_decisions partition. Membership rows are conservative and are
+-- not removed merely because a decision is superseded. HASH(doc_id) makes one
+-- exact-document lookup and delete prune to one child at target scale; the
+-- migration creates all 64 remainder partitions.
+CREATE TABLE document_entity_bindings (
+  deployment_id   uuid NOT NULL,
+  doc_id           uuid NOT NULL,
+  canonical_lemma  text NOT NULL CHECK (canonical_lemma <> ''),
+  entity_id        uuid NOT NULL,
+  anchor_decision_id uuid,                      -- LOGICAL FK → resolution_decisions
+  anchor_decided_at timestamptz,                -- source partition key; paired with anchor_decision_id
+  PRIMARY KEY (deployment_id, doc_id, canonical_lemma, entity_id),
+  FOREIGN KEY (deployment_id, doc_id)
+    REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, entity_id)
+    REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE,
+  CHECK ((anchor_decision_id IS NULL) = (anchor_decided_at IS NULL))
+) PARTITION BY HASH (doc_id);
+COMMENT ON TABLE document_entity_bindings IS
+  'D102 bounded derived membership for exact T0 replay inside one document. Every resolver decision upserts membership; only T4 match stores its source decision id plus decided_at partition coordinate. Exactly one active row with a still-current source may authorize replay. Extra rows fail closed. Normal delete and D74 delete by document; setup rebuilds before deployments.document_binding_generation becomes document-t0-v1.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- document_versions — semantically append-only observed snapshots of a lineage (D55).
@@ -2381,7 +2412,7 @@ CREATE UNIQUE INDEX uq_assured_operation_active
 ## 12. Partitioning & partition pruning (D23)
 
 Exactly **eight** append-only E-plane tables are partitioned for scale. Six use monthly RANGE
-children managed by `pg_partman`; two evidence joins use 64 static HASH children created by the
+children managed by `pg_partman`; three lookup/evidence families use 64 static HASH children created by the
 schema migration. Monthly RANGE caps btree size, makes detaching an old hot month a partition
 operation, and aligns with projection archival (p2 §8). HASH partitioning puts every evidence row
 for one fact in one child and makes the evidence-once primary key enforceable. This estate is
@@ -2396,15 +2427,24 @@ documented revision to the monthly cadence or the measured HASH starting count o
 | `chunk_claims` | monthly RANGE (`created_at`) | (`chunk_id`, `claim_id`, `created_at`) | `pg_partman` | logical |
 | `claim_extraction_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `testimony_currency_events` | monthly RANGE (`occurred_at`) | (`event_id`, `occurred_at`) | `pg_partman` | logical |
+| `document_entity_bindings` | HASH (`doc_id`) | (`deployment_id`, `doc_id`, `canonical_lemma`, `entity_id`) | 64 static migration-created children | real document/entity; logical source decision |
 | `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`) | 64 static migration-created children | logical |
 | `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`) | 64 static migration-created children | logical |
 
-`pg_partman` creates and maintains only the six monthly RANGE families. It does not manage either
-HASH family; migrations create all remainders `0..63` before inserts can reach those parents.
+`pg_partman` creates and maintains only the six monthly RANGE families. It does not manage the
+three HASH families; migrations create all remainders `0..63` before inserts can reach those parents.
 `entities` and `aliases` are deliberately **not** partitioned (≤10⁷, the blocking targets whose
 single-column GIN trigram/phonetic indexes span the deployment, D23/D68). `relations`,
 `observations`, and their adjudication tables are not partitioned: distinct facts and their
 decision transcripts are far smaller than assertion-grain evidence.
+
+`document_entity_bindings` is at most one row per distinct
+document/canonical-lemma/entity membership: no more than mentions and expected
+to be roughly aliases-order (starting planning bound ≤10⁷, to be checked from
+operations). It is nevertheless hash-partitioned now because millions of
+documents make a single text-bearing primary-key tree avoidable. Every hot
+lookup, normal delete, and D74 purge supplies exact `doc_id`, pruning to one of
+64 children; the primary-key prefix then bounds work to one document/name.
 
 **Partition pruning on ID lookups.** Hot queries over the remaining partitioned
 families often select by id/parent (`mention_id → resolution_decisions`,
@@ -2427,7 +2467,7 @@ is). This is the D23 contract. The `claim_id` reverse lookup still fans across h
 it is the cold path. `observation_evidence` applies the same policy to `observation_id`.
 
 **Partition-key consequences in the DDL:** a partitioned table's PRIMARY KEY/UNIQUE must include the
-partition key, so all six RANGE parents include their time key and the two HASH parents include
+partition key, so all six RANGE parents include their time key and the three HASH parents include
 their fact identifier. The application treats each UUIDv7 alone as row identity (globally unique by
 construction); the wider RANGE keys are the Postgres mechanical requirement. The evidence joins'
 pair keys are also the intended evidence-once identity.
@@ -2458,6 +2498,11 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
    crossref targets resolve sanely). The worker then clears the affected `document_sections`
    (cascade) and sets dependent `document_crossrefs.to_doc_id = NULL, resolved = false` while
    **retaining `raw_citation`** so the link can be re-resolved if the target is re-ingested.
+   Both a single-version delete and a lineage delete also delete every
+   `document_entity_bindings` row for that `doc_id` under the deletion admission
+   barrier. The table is document-scoped rather than version-scoped, so clearing
+   the whole prefix is the safe rule: a surviving or reingested version earns a
+   new T4 anchor and cannot reuse a judgment grounded in deleted evidence.
 4. **`chunks`** (logical FK): rows are **retained** (they are the occurrence record, D56/F4) but
    their P1 rows are deleted by the lifecycle transaction/repair path and are
    immediately ineligible through the authority join. The auditor ignores rows
@@ -2505,7 +2550,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   content-free guards, sections, cross-reference citation text, representation metadata, and assets;
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
-  audit rationales/features, and source-exclusive relation/observation evidence;
+  audit rationales/features, every `document_entity_bindings` row for the lineage, and
+  source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
 - K refresh/compile/plan payloads and transcript URIs tied to the affected evidence (the object
@@ -2544,8 +2590,10 @@ Labs."*
    `anchor_ok`/`window_membership_ok` true (the CHECK); mentions of "Alice Novak", "Acme", "Beacon
    Labs" → `mentions` with `canonical_name_form`.
 4. **Resolution** (T0–T4) writes `resolution_decisions` (method ∈ {T0,T3,T4_*,human}) linking each
-   mention to an `entities` row via the `aliases` blocking indexes; "Beacon Labs" is new
-   (`is_new_entity`).
+   mention to an `entities` row via the `aliases` blocking indexes and transactionally upserts
+   its D102 `document_entity_bindings` membership. A T4 match stores the exact source decision
+   pair; a later sole active same-document/name binding may replay as T0. "Beacon Labs" is new
+   (`is_new_entity`) and its membership is not an anchor.
 5. **E3 normalize**: `c4` → `(alice, founded, beacon_labs)` — new `relations` row (the
    governed predicate is valid; endpoint classes are not a write gate), one `relation_evidence(supports)` row keyed
    `(relation_id, claim_id)` (a re-link is an `ON CONFLICT` no-op). `c3` triggers **supersession** on `(alice, works_for, acme)`: the
@@ -2618,7 +2666,7 @@ Labs."*
 | D17 T0–T4 cascade, block-loose/decide-tight | single-column blocking GIN indexes on `entities.normalized_name` and `aliases.normalized_lemma` (D68); `resolution_decisions.method` (CHECK excludes T1/T2); `resolver_versions` |
 | D19 coref in-call | `mentions.canonical_name_form` (no coref model/table) |
 | D20 no external authority | non-goal §15 |
-| D21 clustering, reversibility (generic-id guard removed by D102) | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `superseded_by` |
+| D21 clustering, reversibility (generic-id guard removed by D103) | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `superseded_by` |
 | D22 golden set + eval | `golden_pairs` (+ `expected_blocking_tier`), `golden_claim_labels`, `eval_runs`, `canary_cases` |
 | D23/D94 partition the big tables; btree-only; GIN on registry targets | §12's eight parents (6 monthly RANGE via `pg_partman`, 2 static HASH-64); claims are non-partitioned for one global current-testimony BM25/HNSW corpus; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm` |
 | D24 cluster review queue | `review_queue` (band boundaries in `resolver_versions.tier_config`) |

@@ -1,6 +1,6 @@
 # Why the generic-identifier guard was removed
 
-**Status:** analysis (non-binding). Supports D102.
+**Status:** analysis (non-binding). Supports D103.
 **Date:** 2026-08-31.
 **Code inspected:** engine `main` at `41b28780` (v0.9.0), `src/rememberstack/spine/resolver.py`.
 

@@ -1,11 +1,12 @@
-# Sequencing — entity identity and retrieval (D95–D100)
+# Sequencing — entity identity and retrieval (D95–D103)
 
 **Status:** sequencing only (not design). Binding how:
 [`entity_identity_and_retrieval_design.md`](../designs/entity_identity_and_retrieval_design.md).
 **Why:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
-[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md).
+[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md), and
+[`document_local_t0_anchor.md`](../analysis/document_local_t0_anchor.md).
 **Plan reviews:**
 r1
 [`Codex`](../../design/reviews/REVIEW_codex-sol_entity_identity_retrieval_plan_2026-08-26.md) /
@@ -43,7 +44,8 @@ It also **does not** drop the r1 correctness findings: eval/`judge_pair`
 before T0-as-candidates is activated, profile/T3 safety before that
 activation (or T3 still glues on name-only vectors), rewrite every type
 consumer in the type-cut WP. A static common-name list is **not**
-required: T0 never auto-merges.
+required: T0 never auto-merges globally; D102 later adds only the T4-backed
+same-document replay.
 
 ## Order rationale
 
@@ -71,15 +73,16 @@ drain because “reviewers mentioned it” — operator waived BC.
 
 | WP | Goal | Reads | Depends | Deliverable | Acceptance |
 |---|---|---|---|---|---|
-| WP-I.1 | Bare-noun refusal; **source surface + canonical name** on the extract payload (design §4.2); idempotent source + `llm_canonical` aliases; ~~guard **writer** exists (used in I.5 for T1/T2 downweight, not T0 auto-merge)~~ (removed by D102) | design §3.1, §4.2–4.5 | — | E3 prompt + `EntityRef` surface field; alias upsert | `game` not minted; `FIFA 23` may mint; claim text `App` records source alias `App` and canonical `Application` |
+| WP-I.1 | Bare-noun refusal; **source surface + canonical name** on the extract payload (design §4.2); idempotent source + `llm_canonical` aliases; ~~guard **writer** exists (used in I.5 for T1/T2 downweight, not T0 auto-merge)~~ (removed by D103) | design §3.1, §4.2–4.5 | — | E3 prompt + `EntityRef` surface field; alias upsert | `game` not minted; `FIFA 23` may mint; claim text `App` records source alias `App` and canonical `Application` |
 | WP-I.2 | **Hard type cut (same PR, migration first).** Drop `entities.type` (NOT NULL, FK, column) and stop writing `mentions.emitted_type`; drop `predicate_signatures` / D86 type path; name-only type on `EntityRef` (surface remains); bump `E3_NORMALIZER_VERSION`. Rewrite **every** type consumer in this PR: live graph element views/property-graph DDL; P3 Tier-1 path `entities/<type>/<id>` → `entities/<entity_id>` (`e0_files_design.md`, `workers/p3.py`); P1 entity search SQL (`adapters/postgres_p1.py` / `ports/p1_index.py`); `memory_v1.entities_current` (`p9_01_0022`); `GraphNode` / envelope; `query_engine` `resolve(type?)` and `predicate_absence`; `http_api.py` / `sdk.py`; `assured_operations.py`; `deployment_bootstrap.py` / `core_manifest.py` type seed unused; `eval/resolution.py` type strata; catalog/migration tests. Re-ensure the live graph and rebuild P3. Abandon old normalize generation. | design §4–5, §9; D96, D98 | WP-I.1 | Alembic + listed files | mint succeeds with no type; `works_for(Alice, Me)` persists; live graph/P3/P1/`memory_v1` have no type; `resolve` has no type argument; unknown predicates still D5; migration test pins new revision |
 | WP-I.3 | **`judge_pair` no longer auto-true on lemma equality;** golden schema not keyed by `entity_type`; rename `resolver_versions.thresholds_by_type` and its model/provenance shape to one global `thresholds` set; **one global P/R curve plus per-tier diagnostics** (do not delete the deciding tier); require both label classes and a zero-false-merge same-lemma/T0 canary; land design §8 fixtures (same-name non-match, empty-profile John) | design §3.4, §8; D22 | WP-I.2 | migration + `eval/resolution.py` + fixtures | same-lemma non-match is a visible T0 **and** T3/T4 error when those tiers regress; no-negative and diluted-T0-false-merge suites fail; suite does not crash without types |
 | WP-I.4 | **New** profile refresher (compose onto observation-flush or `ProfileRefresherHandler`); T4 prompt profile + salient observations; T3 embeds name+profile (not name-only); debounce on evidence change; **D74:** forget of document A on a **shared** entity invalidates/rebuilds profile (forgotten distinctive phrase gone from summary, salient inputs, vector, search); empty profile is fail-safe | design §3.3; D74 | WP-I.2 | worker + `_T4_PROMPT` + T3 upsert + forget tests | “is a bank” / “lives in Prague” appear in T4; two same-name vectors differ once profiles differ; shared-survivor forget test green |
-| WP-I.5 | **T0 = candidate list only** (never auto-merge), after a **recorded passing I.3+I.4 eval run**. Hits = **distinct active `entity_id`s**. T3 may accept one candidate when profile exists (design §3.1.1). T4 when empty profile / conflict / several candidates. Same lemma may mint; `resolution_exclusions` on T4 no-match; ~~populate `generic_identifier_guard` when a lemma spans ≥2 **entities**~~ (removed by D102: it outranked match score and counted entity rows, not people) | design §3.1–3.2; D95 | WP-I.1, WP-I.3, WP-I.4 | `resolver.py` T0/T3/T4/mint/exclusions | father/son → two ids (T4); empty-profile second `Jan` → T4 not T0 merge; repeat profiled `James` → T3 accept without T4; SAP shorthand → one id via T3/T4 not T0; two provenances on one id still **one** candidate |
+| WP-I.5 | **T0 = candidate list only** (never auto-merge), after a **recorded passing I.3+I.4 eval run**. Hits = **distinct active `entity_id`s**. T3 may accept one candidate when profile exists (design §3.1.1). T4 when empty profile / conflict / several candidates. Same lemma may mint; `resolution_exclusions` on T4 no-match; ~~populate `generic_identifier_guard` when a lemma spans ≥2 **entities**~~ (removed by D103: it outranked match score and counted entity rows, not people) | design §3.1–3.2; D95 | WP-I.1, WP-I.3, WP-I.4 | `resolver.py` T0/T3/T4/mint/exclusions | father/son → two ids (T4); empty-profile second `Jan` → T4 not T0 merge; repeat profiled `James` → T3 accept without T4; SAP shorthand → one id via T3/T4 not T0; two provenances on one id still **one** candidate |
 | WP-I.6 | D97 default path: `resolve` → lookup observations+relations → `neighborhood` empty predicates → ID-constrained fact-text search (`assured_operations.py`, `operation_executor.py`, `query_engine.py`); optional dynamic predicate (any stored name, including `other:`); no type filter | design §7; D97, D98 | WP-I.2, WP-I.5 | those files + recipes | hop returns `other:*` neighbors; observations via lookup not graph nodes; no new query-path LLM; “list banks” matches observation/profile text; ambiguity / unavailable live graph / caps are explicit |
 | WP-I.7 | Same-PR website pages for each user-visible WP above (D66) | D66 | with the WP it documents | `website/src/app/docs/**` | docs describe shipped behavior only |
 | WP-I.8 | **D99 uncertainty/convergence correction.** Tri-state T4; exclusions only from supported `different`; candidate/T4 completeness and provisional-mint evidence; bounded T3 outcome reasons; snapshot/unlocked-provider/locked-revalidation resolver; current-profile nomination into idempotent neighborhood convergence; benchmark `Unknown` guard after identity-only reads | design §3.1–3.3.3, §7, §9, §11; D99 | WP-I.5, WP-I.6 | resolver/model tests; convergence production composition and proposal dedupe; benchmark loop guard; same-PR website/project-status update if public behavior changes | insufficient/truncated decisions write no false cannot-link or authoritative novelty; stale provider decisions cannot commit; touched current profiles reach convergence; father/son stays split; T3 reasons aggregate; ambiguous lookup cannot terminate `Unknown` without a content read |
 | WP-I.9 | **D100 binary match-biased T4 cut.** Replace pairwise tri-state small→frontier calls with one configured-simple-model call over the complete bounded candidate snapshot; output one supplied candidate id or `new`; include aliases, current profile descriptions, salient facts, and T3 scores/gates; remove current provisional mint and confidence routing; roll resolver/prompt/output-schema/component and LoCoMo protocol generations while retaining D99 locking, diagnostics, convergence, and historical audit readability | design §3.1–3.3, §8–§11; D100 | WP-I.8 | resolver/model tests; Full-v17 benchmark protocol and diagnostics; same-PR shipped docs/project-status update where behavior is public | one T4 call per residue; compatible topic-diverse repeats match; father/son and same-name colleagues split on positive evidence; selected id belongs to supplied candidates; `new` excludes only supplied candidates; incomplete search remains audit-only; old D99 rows decode; no frontier/provisional current path |
+| WP-I.10 | **D102 exact document-local T0 replay.** Add the bounded hash-partitioned `document_entity_bindings` projection and deployment-generation gate; stamp `document-t0-v1` coordinates on all decisions and upsert membership transactionally; only T4 match stores a partition-addressable source; include binding/conflict state in provider-path snapshot revalidation; record later exact replays as auditable T0; wire review/unmerge writers, setup rebuild, ordinary delete, and D74 deletion; expose readiness to Full-v18; no T1/T2 verdict or attribution dependency; roll resolver/normalizer and protocol generations | design §3.1.2, §3.4, §8–§11; schema design; D102 | WP-I.9 | migration + resolver/review/setup/delete/forget/readiness code; focused lifecycle/contention/provider-call tests; protocol/component roll | first exact repeat pays T4, later sole-active-binding exact repeats make no provider call; other documents and fuzzy/phonetic/possessive names use global cascade; T4-new/invalid-source/inactive/unready/conflicting state fails closed; stale in-flight T4 cannot commit over a new binding; rebuild/delete/forget verification and refined D22 gates pass |
 
 **Parallelism:** I.3 and I.4 may be **developed** in parallel after I.2;
 both must **merge before** I.5. I.6 implementation can start against
@@ -93,16 +96,19 @@ runs before app code that omits `type`. One release. No dual writer.
 resolver curve **and** per-tier diagnostics; T0 false-merge on common
 names is a failing test if I.5 regresses; I.5 does not merge without a
 passing post-I.4 eval record. I.8 additionally requires the D99 deterministic
-gates. I.9 requires the D100 binary-selection fixtures and one-call accounting
-before another paid identity rerun; the existing uncalibrated cluster cut
-remains review-only.
+gates. I.9 requires the D100 binary-selection fixtures and one-call accounting.
+I.10 retains that hard gate for cross-document homonyms and recorded
+same-document conflicts, while reporting the accepted unseen-second-person
+risk separately. It requires document-boundary and contention fixtures before another paid
+identity rerun; the existing uncalibrated cluster cut remains review-only.
 
 **Non-goals:** reintroducing hats; expand/contract typed columns;
 mixed-generation E3 drain; LoCoMo-only prompts; `mention_id` on
 evidence; a `bank` type; keeping `resolve(type?)`; shipping
-`t0_exact_accept` (or any exact-lemma auto-merge flag) in WP-I.5 —
+global `t0_exact_accept` (or any corpus-wide exact-lemma auto-merge flag) in
+WP-I.5 —
 that idea is an unchosen proposal
 ([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md)),
 and “enable it after a large corpus” is a rejected trigger.
-File/source-attribution changes are a separate contract and are not a WP-I.9
+File/source-attribution changes are a separate contract and are not a WP-I.10
 dependency or deliverable.
