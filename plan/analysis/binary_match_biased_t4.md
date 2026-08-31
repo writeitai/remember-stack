@@ -73,8 +73,8 @@ model.
 T4 receives the incoming canonical name and claim plus every candidate in the
 bounded resolver snapshot. Each candidate carries its canonical name, source
 aliases, current profile description, current salient facts, and T3 score or
-gate. The prompt is bounded by the existing candidate and profile-fact limits;
-“all relevant information” does not mean an unbounded fact dump.
+gate. Candidate, distinct-alias, and profile-fact limits bound the prompt; “all
+relevant information” does not mean an unbounded registry-history dump.
 
 The output is exactly one of:
 
