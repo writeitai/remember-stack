@@ -207,6 +207,9 @@ CREATE TYPE review_item_kind       AS ENUM ('merge_cluster','split_cluster','typ
 CREATE TYPE review_status          AS ENUM ('pending','accepted','rejected','deferred','auto_resolved');
 -- Covers all review_item_kinds (D24), not just merges: pick_a/pick_b/both_stand for contradictions,
 -- downweight/keep_signal for generic_identifier, retype for type_conflict.
+-- INERT since D102 (as T4_frontier is inert since D100): the generic_identifier review kind and
+-- its downweight/keep_signal verdicts describe the removed guard. The enum values are retained
+-- for historical rows and are never produced now; nothing routes a generic_identifier review.
 CREATE TYPE review_verdict         AS ENUM ('merge','not_merge','split','retype','downweight','keep_signal','pick_a','pick_b','both_stand','uncertain','restore_support','invalidate_fact');
 -- restore_support / invalidate_fact are the two terminal verdicts of the support_withdrawn kind
 -- (D54): restore = old claim regains currency ('review_restored' event) + the case is planted as

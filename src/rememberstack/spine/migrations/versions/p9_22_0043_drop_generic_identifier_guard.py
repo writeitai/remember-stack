@@ -40,20 +40,29 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# One statement, one transaction. Dropping a table takes AccessExclusiveLock
-# on that table alone; nothing references it by foreign key, so no other
-# relation is locked and no scan runs. The table is small by construction
-# (one row per distinct normalized lemma) and, as of the revision that
-# accompanies this one, is written by nothing.
+# One statement, one transaction, and no scan. The table is small by
+# construction (one row per distinct normalized lemma) and, as of the
+# revision that accompanies this one, is written by nothing.
+#
+# It is NOT a single-table lock, which is worth stating because the obvious
+# assumption is wrong. `generic_identifier_guard.deployment_id` REFERENCES
+# `deployments`, and dropping the table must drop that constraint, so
+# PostgreSQL takes AccessExclusiveLock on `deployments` as well -- measured:
+#
+#   public.deployments                    AccessExclusiveLock
+#   public.generic_identifier_guard       AccessExclusiveLock
+#   public.generic_identifier_guard_pkey  AccessExclusiveLock
+#   (plus the table's TOAST relation and its index)
+#
+# `deployments` is the tenancy root that nearly every query joins, and
+# AccessExclusiveLock blocks readers as well as writers. The saving grace is
+# duration, not scope: there is no scan and nothing to rewrite, so the lock
+# is held only for the catalog updates in this one short transaction. Treat
+# it as a brief global stall, not as a free operation, and apply it the way
+# any other DDL against `deployments` would be applied.
 _DROP_TABLE = "DROP TABLE IF EXISTS generic_identifier_guard"
 
 
-# Recreated empty on downgrade, which is behaviourally exact rather than
-# merely convenient: the resolver that read this table wrapped every lookup
-# in coalesce(guard.is_downweighted, false), so "no row" and "not
-# downweighted" were already the same state. An empty table therefore
-# restores the older code to its no-lemma-flagged behaviour, and the older
-# code repopulates it on the next resolve.
 _RECREATE_TABLE = """
 CREATE TABLE generic_identifier_guard (
   deployment_id   uuid NOT NULL REFERENCES deployments,
@@ -68,12 +77,44 @@ COMMENT ON TABLE generic_identifier_guard IS
   'Surfaces that link too many entities to be identifying (D21). Down-weighted so they stop driving merges; the merges they already caused are re-evaluated — enumerated via merge_events.trigger_lemmas (below).';
 """
 
+# Recreating the table EMPTY would not restore prior behaviour, only prior
+# compatibility. The old reader used coalesce(is_downweighted, false), so
+# old code runs fine against an empty table -- but every previously flagged
+# lemma silently becomes unflagged, and the first fuzzy resolution after a
+# rollback would rank differently than it did before the upgrade. The old
+# writer only refreshes a lemma when that lemma is touched again, so the
+# gap persists for anything not re-ingested.
+#
+# So the downgrade rebuilds the cache from the aliases that are still there,
+# using the same COUNT(DISTINCT entity_id) and the same floor of 2 the old
+# writer used. This is a reconstruction of a derived cache from existing
+# rows, not seed DML; `evaluated_at` is honestly stamped now() because that
+# is when the reconstruction happened.
+_REBUILD_TABLE = """
+INSERT INTO generic_identifier_guard (
+    deployment_id, normalized_lemma, distinct_entity_count,
+    is_downweighted, reason, evaluated_at
+)
+SELECT deployment_id, normalized_lemma, COUNT(DISTINCT entity_id),
+       COUNT(DISTINCT entity_id) >= 2, 'promiscuous-lemma', now()
+FROM aliases
+GROUP BY deployment_id, normalized_lemma
+"""
+
 
 def upgrade() -> None:
     """Remove the promiscuous-lemma cache and its inverted ranking input."""
+    # Fail fast rather than queue. An AccessExclusiveLock REQUEST on
+    # `deployments` blocks every later query behind it while it waits, so an
+    # unbounded wait behind one long read would stall the tenancy root far
+    # longer than this migration itself ever does. Timing out and retrying in
+    # a quieter moment is strictly safer than blocking the queue.
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute(_DROP_TABLE)
 
 
 def downgrade() -> None:
-    """Restore the empty cache; an empty guard flags nothing, as before."""
+    """Recreate the cache and rebuild it from the surviving aliases."""
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute(_RECREATE_TABLE)
+    op.execute(_REBUILD_TABLE)

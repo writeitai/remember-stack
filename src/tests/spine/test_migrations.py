@@ -128,9 +128,21 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     migration_source = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(_VERSIONS.glob("p*_*.py"))
     ).lower()
-    # D79's structural migration performs the one required legacy-generation
-    # backfill; no deployment/bootstrap seed DML belongs in this chain.
-    assert migration_source.count("insert into") == 1
+    # No deployment/bootstrap seed DML belongs in this chain. Pin the writes
+    # by revision rather than by count, so a new INSERT anywhere else fails
+    # here even if another one is removed: D79's structural migration performs
+    # the one required legacy-generation backfill, and p9_22_0043's DOWNGRADE
+    # rebuilds a derived cache from the aliases already present (D102). Both
+    # derive from existing rows; neither seeds a deployment.
+    revisions_that_insert = sorted(
+        path.name
+        for path in _VERSIONS.glob("p*_*.py")
+        if "insert into" in path.read_text(encoding="utf-8").lower()
+    )
+    assert revisions_that_insert == [
+        "p1_04_0019_d79_structure_generations.py",
+        "p9_22_0043_drop_generic_identifier_guard.py",
+    ]
     assert "bootstrap_deployment" not in migration_source
 
 

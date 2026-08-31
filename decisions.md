@@ -4102,8 +4102,10 @@ banks” is fact/profile **text** retrieval. Facets, if ever added, are
 derived from observations — they are not a return of `entities.type`.
 
 Bare head nouns are not entities. Source surfaces become aliases.
-`generic_identifier_guard` is populated in resolve. D86 is **vacated**
-(nothing typed to reject). Unknown predicates still follow D5.
+~~`generic_identifier_guard` is populated in resolve.~~ **Superseded by
+D102**: the guard, its writer, and its table are removed; nothing is
+populated in resolve. D86 is **vacated** (nothing typed to reject).
+Unknown predicates still follow D5.
 
 **Context.** Required classes and first-mint type forked SAP, glued
 homonyms’ D18 gates, and implied a Company twin of a person. Optional
@@ -4589,21 +4591,53 @@ was 2, while D21 said "suddenly links **many**". Worse, the counter counted
 row for one real person pending adjudication, and the guard read its own
 conservatism as proof the name was generic. Both the "one person recorded
 twice" and "two unrelated people" cases were flagged, and flagging demoted
-exactly the candidates T3/T4 needed. The flag also reached no decision: it
+exactly the candidates T3/T4 needed. The flag was never *adjudication evidence*: it
 lived only in `ORDER BY`, never on `ResolutionCandidate`, never in decision
-features, never seen by T3 or T4.
+features, never seen by T3 or T4. That is a claim about what T3/T4 were
+shown, **not** a claim that it changed nothing — it did. Blocking order
+decides which candidates survive truncation to `blocking_limit`, and T4's
+prompt tells the model to prefer the first candidate in the supplied
+relevance order, so the flag could and did influence authoritative D100
+verdicts. Removing it is therefore a behaviour change, argued on the merits
+above, not a no-op cleanup.
 
-**Consequences.** Candidate order is deterministic where it previously
-collapsed to a random UUID once every candidate matched through the same
-lemma (the rewritten proof passed 15/15 runs with fresh UUIDs). A
-`COUNT(DISTINCT entity_id)` per resolve is gone, as is a table of
+**Consequences.** Candidate order no longer depends on row identity where
+it previously collapsed to a random UUID once every candidate matched
+through the same lemma. `entities.created_at` sits ahead of `entity_id`, so
+even an exact tie on canonical-name similarity resolves to "oldest first"
+rather than to a UUID — the same convention T0 already uses. Two ordering
+proofs passed 12–15 consecutive runs with freshly minted UUIDs.
+
+**It is not free.** `similarity(entities.normalized_name, :lemma)` is
+computed over the filtered candidate set and the GIN trigram index does not
+serve an `ORDER BY`. Measured on a deliberately pathological shape — 100,000
+active entities all sharing one fuzzy alias — the ranking query went from a
+455 ms to a 512 ms warm median, **+12.5%**; an independent reviewer measured
++31% on the same shape. No new scan node appears; the cost is CPU and sort
+work. This is accepted because that shape is already a degenerate case, and
+because the key is what rescues the correct referent from truncation (see
+the overflow canary in `test_resolver.py`).
+
+A `COUNT(DISTINCT entity_id)` per resolve is gone, as is a table of
 per-deployment surface strings with no lineage provenance that hard-forget
 had to blanket-delete. One function is genuinely lost: overflowing fuzzy
 blocks no longer truncate promiscuous-string matches first.
-`_CandidateSnapshot.search_complete` still reports truncation honestly.
-Downgrade recreates the table empty, which is behaviourally exact — the old
-reader wrapped every lookup in `coalesce(is_downweighted, false)`, so "no
-row" and "not flagged" were already the same state.
+`_CandidateSnapshot.search_complete` still reports truncation honestly, so
+an incomplete candidate set is visible to the decision rather than hidden.
+Downgrade recreates the table **and rebuilds it** from the surviving
+aliases with the old `COUNT(DISTINCT entity_id)` and floor of 2. Recreating
+it empty would have restored *compatibility* but not *behaviour*: the old
+reader used `coalesce(is_downweighted, false)`, so old code runs fine
+against an empty table, but every previously flagged lemma would silently
+become unflagged and the old writer only refreshes a lemma when that lemma
+is touched again.
+
+The migration is **not** a single-table lock. `generic_identifier_guard`
+carries an FK to `deployments`, so dropping it takes AccessExclusiveLock on
+`deployments` too (measured), and that lock blocks readers as well as
+writers on the tenancy root nearly every query joins. There is no scan and
+nothing to rewrite, so it is brief — a short global stall, not a free
+operation. Apply it as you would any other DDL against `deployments`.
 
 **Rejected.** Raising the floor (moves a threshold without fixing what it
 gates, and the signal still reaches no decision); demoting the flag to a

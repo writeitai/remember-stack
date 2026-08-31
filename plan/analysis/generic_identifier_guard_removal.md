@@ -56,10 +56,20 @@ code rather than inferred:
    represented by its best *unflagged* alias rather than its best alias,
    understating its score.
 
-3. **It reached no decision.** The flag existed only in those `ORDER BY`
-   clauses. It was not on `ResolutionCandidate`, not in the recorded
-   decision features, and never seen by T3 or T4. Its entire influence was
-   candidate ordering and `LIMIT` survival.
+3. **It was never adjudication evidence — but it was not inert.** The flag
+   existed only in those `ORDER BY` clauses. It was not on
+   `ResolutionCandidate`, not in the recorded decision features, and never
+   seen by T3 or T4. It is tempting to conclude from that it "reached no
+   decision", and that conclusion is wrong. `_T1_T2_BLOCK` read it on every
+   fuzzy resolution, and candidate ordering is decision-relevant twice over:
+   the bounded prefix is truncated at `blocking_limit`
+   (`resolver.py:432`), and T4's prompt instructs the model to prefer the
+   first candidate in the supplied relevance order (`resolver.py:89`). An
+   omitted candidate cannot be rescued by T3, T4, or an exclusion edge.
+   The accurate statement is that the flag influenced *which candidates were
+   adjudicated and in what order*, while never being *shown to* the
+   adjudicator as evidence — so its effect was invisible in the decision
+   record it helped produce.
 
 ## Why the counter was measuring the wrong thing
 
@@ -95,14 +105,27 @@ Replacing the flag with a real signal fixes both problems at once:
 ```sql
 ORDER BY coalesce(t1.score, 0.0) DESC,
          similarity(entities.normalized_name, :lemma) DESC,
+         entities.created_at,
          entities.entity_id
 ```
 
 The new middle key asks how close the entity's *own canonical name* is to
 the query. When two candidates matched through the same alias and tie on
-score, the one whose identity actually resembles the mention wins, and the
-result no longer depends on row identity. Measured: the rewritten ordering
-proof passed 15/15 consecutive runs with freshly minted UUIDs each time.
+score, the one whose identity actually resembles the mention wins.
+`created_at` follows it so that an exact tie on similarity resolves to
+"oldest first" — the convention `_T0_CANDIDATES` already uses — instead of
+falling through to a UUID. Measured: the two ordering proofs passed 12–15
+consecutive runs with freshly minted UUIDs each time.
+
+**This costs measurable time.** `similarity()` is computed over the filtered
+candidate set, and the `ix_entities_name_trgm` GIN index does not serve an
+`ORDER BY`. On a deliberately pathological shape — 100,000 active entities
+all sharing one fuzzy alias — the warm median went from 455 ms to 512 ms,
+**+12.5%**, with no new scan node; the extra cost is CPU and sort work. An
+independent reviewer measured +31% on the same shape, so treat the magnitude
+as machine-dependent and the direction as settled. The trade is accepted:
+that shape is already degenerate, and this key is precisely what keeps the
+correct referent inside the truncated prefix.
 
 ## What replaces it
 
@@ -123,29 +146,53 @@ candidate from consideration, whereas all four of the above make a
 *decision* about it. The guard was doing the former while D21 argued for
 the latter.
 
+That argument has a real limit, and it should be stated rather than papered
+over: **none of these four can rescue a candidate that blocking never
+returned.** They adjudicate the bounded prefix; they do not widen it. So
+"T3/T4 replace the guard" is true for candidates that reach adjudication and
+false for candidates truncated before it. The claim this analysis actually
+supports is narrower — that demoting *every* shared name to protect against
+a rare generic one was the wrong trade, not that truncation has ceased to
+matter. What keeps that honest in practice is `search_complete`, which tells
+the decision its candidate set was incomplete, and the overflow canary
+below, which pins the behaviour under exactly that pressure.
+
 ## What we gave up, honestly
 
 One real function is lost. When a fuzzy block overflowed `blocking_limit`,
 the flag caused candidates matched only by a promiscuous string to be
-truncated first, which is a sensible truncation priority. That is now
-handled by score ordering alone, which is weaker for the genuine
-role-address case (`info@company.com` matched exactly will tie on score).
+truncated first, which is a sensible truncation priority.
 
-This is accepted because the case is narrow (it needs both a genuinely
-generic string *and* an overflowing candidate list), because
-`_CandidateSnapshot.search_complete` already reports truncation honestly
-rather than pretending recall was complete, and because the cost it removes
-— an inverted primary sort key on every fuzzy resolution — applied far more
-often. If measurement later shows role addresses are a real problem, the
-right shape is a low-priority tiebreak *after* score, or an eligibility rule
-that stops such strings becoming aliases in the first place, not a primary
-sort key with a floor of two.
+It is worth being precise about which case that actually was, because the
+obvious example is wrong. An `info@company.com` matched **exactly** never
+reached the guard at all — it takes T0, which the guard never touched. The
+lost case is narrower: a *near* match on a generic string, where more than
+`blocking_limit` entities share it, so the block must truncate and the
+promiscuous matches are no longer pushed to the back of the queue.
+
+`test_generic_alias_overflow_keeps_the_resembling_referent` is the canary
+for exactly this shape — thirteen entities answering to one generic alias,
+queried with a near variant. It pins the two properties that make the loss
+tolerable: `search_complete` is `False`, so the resolver does not pretend it
+saw everything, and the entity whose own canonical name resembles the query
+still ranks first and survives the cut. Under the guard, every one of those
+candidates was flagged, so the ten survivors were selected by random UUID.
+
+This is accepted because the case needs both a genuinely generic string
+*and* an overflowing candidate list, because truncation stays visible to the
+decision, and because the cost removed — an inverted primary sort key on
+every fuzzy resolution — applied far more often. If measurement later shows
+role addresses are a real problem, the right shape is a low-priority
+tiebreak *after* score, or an eligibility rule that stops such strings
+becoming aliases at all, not a primary sort key with a floor of two.
 
 ## Cost removed
 
 `refresh_generic_identifier_guard` ran a `COUNT(DISTINCT entity_id)` on
 `aliases` on every resolve (twice when the source lemma differed from the
-canonical one), writing a value nothing read. The table also retained
+canonical one). That value *was* read back by `_T1_T2_BLOCK` on later fuzzy
+resolutions — the write was not dead code — but with the ranking input gone
+there is no remaining consumer, so the write goes with it. The table also retained
 per-deployment surface strings with no lineage provenance, which hard-forget
 had to blanket-delete precisely because it could not prove what any row came
 from. Dropping the table removes both.

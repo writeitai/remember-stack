@@ -1143,6 +1143,7 @@ _T1_T2_BLOCK = text(
       AND (t1.entity_id IS NOT NULL OR t2.entity_id IS NOT NULL)
     ORDER BY coalesce(t1.score, 0.0) DESC,
              similarity(entities.normalized_name, :lemma) DESC,
+             entities.created_at,
              entities.entity_id
     LIMIT :limit
     """

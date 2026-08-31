@@ -11,6 +11,7 @@ from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
@@ -1270,8 +1271,8 @@ def test_shared_lemma_stays_a_usable_blocking_signal(database_engine: Engine) ->
 
     Blocking orders by how well the string matched, then by how close the
     entity's own canonical name is to the query. Nothing demotes a name for
-    being common, so ten unrelated Jan Nováks all stay reachable and the
-    order is decided by resemblance rather than by row identity.
+    being common, so a shared name stays a usable signal and the order is
+    decided by resemblance rather than by row identity.
     """
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
@@ -1327,6 +1328,96 @@ def test_shared_lemma_stays_a_usable_blocking_signal(database_engine: Engine) ->
     assert not near_variant.created
     assert near_variant.entity_id == first.entity_id
     assert 1 <= len(provider.generated_prompts) - prompts_before <= 2
+
+
+def _seed_entity_with_alias(
+    *, connection: Connection, canonical_name: str, alias_text: str
+) -> UUID:
+    """Insert one active entity whose alias differs from its canonical name."""
+    entity_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+            " normalized_name) VALUES (:entity, :deployment, :name, :lemma)"
+        ),
+        {
+            "entity": entity_id,
+            "deployment": _DEPLOYMENT_ID,
+            "name": canonical_name,
+            "lemma": normalized_lemma(surface=canonical_name),
+        },
+    )
+    connection.execute(
+        text(
+            "INSERT INTO aliases (alias_id, deployment_id, entity_id, alias_text,"
+            " normalized_lemma, provenance) VALUES"
+            " (:alias, :deployment, :entity, :text, :lemma, 'source')"
+        ),
+        {
+            "alias": uuid4(),
+            "deployment": _DEPLOYMENT_ID,
+            "entity": entity_id,
+            "text": alias_text,
+            "lemma": normalized_lemma(surface=alias_text),
+        },
+    )
+    return entity_id
+
+
+def test_generic_alias_overflow_keeps_the_resembling_referent(
+    database_engine: Engine,
+) -> None:
+    """The D102 overflow canary: what removing the guard actually costs.
+
+    More candidates than `blocking_limit` all match through ONE genuinely
+    generic alias, so they tie on trigram score and the block must truncate.
+    Two properties have to hold. The resolver must not pretend it saw
+    everything (`search_complete` is False, so an authoritative D100 verdict
+    is taken knowing the candidate set was incomplete). And the entity the
+    query actually resembles must survive the cut — under the removed guard
+    every one of these candidates was flagged, which left the survivors to
+    be picked by a random UUID.
+    """
+    resolver = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_new_entity_router),
+    )
+    shared_alias = "Klein"  # the promiscuous surface every candidate answers to
+    with database_engine.begin() as connection:
+        crowd = [
+            _seed_entity_with_alias(
+                connection=connection,
+                canonical_name=f"Klein {suffix}",
+                alias_text=shared_alias,
+            )
+            for suffix in ("Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta")
+        ]
+        # The referent resembles the query, but only answers to the generic
+        # alias — so nothing but the canonical-name key can rescue it, and it
+        # is seeded LAST so created_at cannot be what saves it either.
+        referent = _seed_entity_with_alias(
+            connection=connection, canonical_name="Kleinn", alias_text=shared_alias
+        )
+        crowd.extend(
+            _seed_entity_with_alias(
+                connection=connection,
+                canonical_name=f"Klein {suffix}",
+                alias_text=shared_alias,
+            )
+            for suffix in ("Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu")
+        )
+    assert len(crowd) == 12  # strictly more than blocking_limit
+
+    query_lemma = normalized_lemma(surface="Kleinn")
+    with database_engine.connect() as connection:
+        snapshot = resolver._blocked_snapshot(  # noqa: SLF001 - pins SQL ordering
+            connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=query_lemma
+        )
+
+    assert not snapshot.search_complete  # truncation is reported, never hidden
+    assert len(snapshot.candidates) == 10  # the bounded prefix, not all 13
+    assert snapshot.candidates[0].entity_id == referent
+    assert snapshot.candidates[0].canonical_name == "Kleinn"
 
 
 def test_ungrounded_surface_does_not_write_source_alias(
