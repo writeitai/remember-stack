@@ -4497,3 +4497,54 @@ Amends D95's T4 residue while preserving T0 candidate-only and conservative
 T3. Preserves D99's completeness audit, lock/revalidation, diagnostics,
 convergence and recovery contracts; D20 registry self-containment; D21/D24
 reversibility/review; D97 retrieval; and D98 live graph behavior.
+
+## D101. Ingest attribution is a typed principal at version grain
+
+**Decision (2026-08-31).** The engine records **who created** a document
+version as a typed principal: `ingest_principals(kind ∈ user |
+api_credential | service, external_ref)` referenced by
+`document_versions.ingested_by_principal_id`. Attribution is
+**creation-scoped and immutable** — only a newly created version records a
+principal, so D55's identical-bytes no-op can never let a later submitter
+rewrite it. The pair travels in `X-Ingest-Principal-*` **headers, never the
+query string**, because `external_ref` is erasable PII and a URL is copied
+into access logs, proxies and traces. It is accepted **only** when the
+composing profile sets `trusted_principal_source`; the deployment-wide
+bearer identifies a deployment, not a caller, so otherwise the engine
+returns 403 rather than record a forgeable claim. Deleting a principal
+nulls attribution (`ON DELETE SET NULL`) and never destroys the version.
+`IngestedVersion` is unchanged and the `ingested_by` keyword is omitted
+when absent, so old clients and old `IngestPort` implementations keep
+working. Migration `p9_21_0042` is phased (nullable column → FK `NOT
+VALID` → index `CONCURRENTLY` → `VALIDATE`) so a populated
+`document_versions` is never scanned under a write-blocking lock.
+
+**Why.** D50 makes content-level authorization and per-user scoping
+library non-goals; that is about **authorization**. Attribution is a
+provenance fact, changes no read path, and is the one thing only the
+ingesting caller knows. A credential is not the person who minted it, so
+the kind is stored and never inferred — wrong attribution is the failure
+this decision exists to prevent.
+
+**Consequences.** Erasure here is **row deletion, not a D74-grade
+forget**: there is no portable manifest, barrier, residual verification or
+restore replay for principals, so this must not be offered as an erasure
+guarantee until the follow-up person-grain forget target lands. Within a
+trusted perimeter the principal remains caller-asserted; deriving it would
+need a per-caller perimeter the engine does not have. Operators must apply
+the migration and start the new runtime **before** any client forwards
+attribution — an older engine accepts the upload, creates an unattributed
+version, and D55 then prevents a retry from repairing it.
+
+**Rejected.** No principal; an opaque string without a kind; inferring a
+person from a credential; the principal in the query string; accepting
+attribution from any caller; adding the principal id to `IngestedVersion`
+(breaks `extra="forbid"` clients and cannot be truthful on the no-op); and
+a full participant/assertion model now (needs a resolver contract and an
+assertion-grain forget target first).
+
+**Design.** `plan/designs/ingest_principal_design.md`.
+
+**Amends.** Extends D50's scope statement to distinguish attribution from
+authorization. Does not change D55 versioning, D74 forget, D95/D99/D100
+identity, or any retrieval contract.
