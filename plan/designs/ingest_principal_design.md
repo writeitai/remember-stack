@@ -37,7 +37,10 @@ three are different referents. A credential is a machine identity that a
 person once minted; **reporting it as that person is false attribution**,
 so the kind is stored and never inferred away. `external_ref` is opaque to
 the engine: it is the caller's stable id, and the engine attaches no
-meaning to its shape.
+meaning to its shape beyond requiring **printable ASCII** — the header
+transport cannot carry anything else, so the constraint turns an encoding
+crash into an explicit 422. Callers use opaque ids, so it costs nothing
+real.
 
 ### 2.2 Attribution is creation-scoped and immutable
 
@@ -50,11 +53,14 @@ co-uploader list and no re-attribution path.
 
 ### 2.3 Trusted perimeters only
 
-Attribution is accepted only when the composing profile declares
+Attribution is honoured only when the composing profile declares
 `trusted_principal_source=True`. The deployment-wide bearer identifies a
-*deployment*, not a caller, so without that declaration any client could
-assert it was a person; the engine returns **403** rather than record a
-forgeable claim. Default is off, so the self-host posture is unchanged.
+*deployment*, not a caller, so elsewhere any client could assert it was a
+person. Untrusted attribution is **ignored, not rejected**: nothing forged
+is recorded either way, so refusing buys no safety while adding a failure
+mode where a merely misconfigured deployment rejects real documents.
+**Metadata must never break ingest.** Default is off, so the self-host
+posture is unchanged.
 
 This bounds the trust rather than eliminating it: within a trusted
 perimeter the caller is still asserting the principal. Deriving identity

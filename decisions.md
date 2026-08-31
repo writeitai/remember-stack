@@ -4508,10 +4508,14 @@ api_credential | service, external_ref)` referenced by
 principal, so D55's identical-bytes no-op can never let a later submitter
 rewrite it. The pair travels in `X-Ingest-Principal-*` **headers, never the
 query string**, because `external_ref` is erasable PII and a URL is copied
-into access logs, proxies and traces. It is accepted **only** when the
+into access logs, proxies and traces. It is honoured **only** when the
 composing profile sets `trusted_principal_source`; the deployment-wide
-bearer identifies a deployment, not a caller, so otherwise the engine
-returns 403 rather than record a forgeable claim. Deleting a principal
+bearer identifies a deployment, not a caller. Untrusted attribution is
+**ignored, not rejected** — nothing forged is recorded either way, so a
+refusal would buy no safety while letting a metadata concern fail a real
+upload. `external_ref` is constrained to printable ASCII because the
+header transport cannot carry more, making that an explicit 422 rather
+than an encoding crash. Deleting a principal
 nulls attribution (`ON DELETE SET NULL`) and never destroys the version.
 `IngestedVersion` is unchanged and the `ingested_by` keyword is omitted
 when absent, so old clients and old `IngestPort` implementations keep

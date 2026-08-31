@@ -893,11 +893,12 @@ def _mount_ingest(
         logs, proxies and traces, where a later principal deletion cannot
         reach it.
 
-        The pair is accepted only when the composing profile declares its
+        The pair is honoured only when the composing profile declares its
         perimeter trusted (``trusted_principal_source``). The deployment-wide
-        bearer identifies a deployment, not a caller, so without that
-        declaration any client could assert it was a person — the engine
-        refuses rather than record a forgeable claim.
+        bearer identifies a deployment, not a caller, so elsewhere any client
+        could assert it was a person. Untrusted attribution is **ignored, not
+        rejected**: nothing forged is recorded either way, and refusing would
+        let a metadata concern fail an otherwise valid ingest.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
@@ -916,10 +917,13 @@ def _mount_ingest(
                     " supplied together"
                 ),
             )
-        if principal_kind is not None and not trusted_principal_source:
-            raise HTTPException(
-                status_code=403, detail="ingest_attribution_not_trusted"
-            )
+        if not trusted_principal_source:
+            # Untrusted perimeter: DROP the claim, never fail the upload.
+            # Refusing would let a metadata concern break the core function —
+            # a misconfigured deployment would reject real documents. Ignoring
+            # is equally safe against forgery (nothing is recorded either way)
+            # and strictly better for correctness.
+            principal_kind, principal_ref = None, None
         ingested_by = (
             None
             if principal_kind is None or principal_ref is None

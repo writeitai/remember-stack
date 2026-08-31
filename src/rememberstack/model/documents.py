@@ -42,7 +42,14 @@ class IngestPrincipal(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: IngestPrincipalKind
-    external_ref: NonEmptyString = Field(max_length=255)
+    external_ref: Annotated[
+        str,
+        # Printable ASCII only: the reference travels in an HTTP header, and a
+        # header cannot carry non-ASCII. Constraining it makes that an explicit
+        # 422 instead of an encoding crash at the transport. Callers use opaque
+        # ids (``user:{uuid}``), so this costs nothing real.
+        Field(min_length=1, max_length=255, pattern=r"^[\x20-\x7e]+$"),
+    ]
 
 
 class DocumentUpload(BaseModel):

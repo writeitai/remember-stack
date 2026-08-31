@@ -188,18 +188,22 @@ def test_credential_principal_is_not_a_user() -> None:
     assert ingest.last_principal.external_ref == "dpcred:tok-1"
 
 
-def test_untrusted_perimeter_refuses_asserted_attribution() -> None:
-    """Without a declared trusted perimeter, a client cannot claim to be anyone.
+def test_untrusted_perimeter_ignores_attribution_without_failing_ingest() -> None:
+    """An untrusted claim is dropped, and the document is still ingested.
 
     The deployment bearer identifies a deployment, not a caller, so believing
     `X-Ingest-Principal-*` there would let any client record itself as a user.
+    Refusing instead would be worse than ignoring: nothing forged is recorded
+    either way, but a refusal would let a metadata concern reject a real
+    document from a merely misconfigured deployment.
     """
     ingest = _RecordingIngest()
     response = _post(
         _client(ingest, trusted=False), **_attribution("user", "user:impostor")
     )
-    assert response.status_code == 403
-    assert ingest.calls == 0
+    assert response.status_code == 200
+    assert ingest.calls == 1
+    assert ingest.last_principal is None
 
 
 def test_untrusted_perimeter_still_accepts_unattributed_ingest() -> None:
@@ -275,6 +279,17 @@ def test_empty_external_ref_is_refused() -> None:
     """An empty reference identifies nobody and must not be stored."""
     with pytest.raises(ValidationError):
         IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="")
+
+
+def test_non_ascii_reference_is_a_clear_rejection_not_a_crash() -> None:
+    """The header transport cannot carry non-ASCII, so the contract says so.
+
+    Without the constraint this surfaced as a UnicodeEncodeError at the
+    transport — a metadata field crashing an upload. Callers use opaque ids,
+    so the restriction costs nothing real.
+    """
+    with pytest.raises(ValidationError):
+        IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="user:Novák")
 
 
 # --------------------------------------------------------------------------
