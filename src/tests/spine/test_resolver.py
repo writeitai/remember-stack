@@ -1138,6 +1138,7 @@ def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) 
     assert replay.entity_id == entity.entity_id
     assert len(provider.generated_prompts) == prompts_before + 1
     aliases = _t4_candidates(provider.generated_prompts[-1])[0]["aliases"]
+    assert isinstance(aliases, list)
     assert set(aliases) == {"App", "Application"}
 
 
