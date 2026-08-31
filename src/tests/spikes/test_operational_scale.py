@@ -524,7 +524,7 @@ def _schema_shape(
         inventory.range_parents == expected_range
         and inventory.hash_parents == expected_hash
         and inventory.hash_child_counts
-        == {"observation_evidence": 64, "relation_evidence": 64}
+        == {parent: 64 for parent in EXPECTED_HASH_PARENTS}
         and registry_kinds == {"aliases": "r", "entities": "r"}
         and "gin_trgm_ops" in blocking["ix_entities_name_trgm"]
         and "gin_trgm_ops" in blocking["ix_aliases_lemma_trgm"]
