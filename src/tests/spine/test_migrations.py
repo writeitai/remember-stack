@@ -122,6 +122,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_20_0041",
         "p9_21_0042",
         "p9_22_0043",
+        "p9_23_0044",
     )
     assert len(script.get_heads()) == 1
 
@@ -131,9 +132,10 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # No deployment/bootstrap seed DML belongs in this chain. Pin the writes
     # by revision rather than by count, so a new INSERT anywhere else fails
     # here even if another one is removed: D79's structural migration performs
-    # the one required legacy-generation backfill, and p9_22_0043's DOWNGRADE
-    # rebuilds a derived cache from the aliases already present (D103). Both
-    # derive from existing rows; neither seeds a deployment.
+    # the required legacy-generation backfill, D102's is a derived-projection
+    # trigger, and p9_23_0044's DOWNGRADE rebuilds a derived cache from the
+    # aliases already present (D103). All derive from existing rows; none
+    # seeds a deployment.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
@@ -141,7 +143,8 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     }
     assert inserts_per_revision == {
         "p1_04_0019_d79_structure_generations.py": 1,
-        "p9_22_0043_drop_generic_identifier_guard.py": 1,
+        "p9_22_0043_document_entity_bindings.py": 1,
+        "p9_23_0044_drop_generic_identifier_guard.py": 1,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -632,10 +635,11 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     fresh_inventory = _inventory(database_url=database_url)
     assert fresh_inventory.server_version.startswith("PostgreSQL 1")
     assert fresh_inventory.hash_child_counts == {
+        "document_entity_bindings": 64,
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 69
+    assert len(fresh_inventory.tables) == 70
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -657,7 +661,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_22_0043"
+    assert head_before_noop == head_after_noop == "p9_23_0044"
     assert _inventory(database_url=database_url) == restored_inventory
 
 

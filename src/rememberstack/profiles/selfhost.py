@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from functools import partial
 import json
+import logging
 from pathlib import Path
 import sys
 from typing import Annotated
@@ -55,6 +56,8 @@ from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -606,6 +609,21 @@ class SelfHostProfile:
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
             )
         )
+        from rememberstack.spine.document_bindings import (  # noqa: PLC0415
+            DocumentBindingRebuilder,
+        )
+        from rememberstack.spine.document_bindings import (  # noqa: PLC0415
+            DocumentBindingRebuildError,
+        )
+
+        try:
+            DocumentBindingRebuilder(engine=self._engine).rebuild_if_needed(
+                deployment_id=self._settings.deployment_id
+            )
+        except DocumentBindingRebuildError:
+            _logger.exception(
+                "document binding rebuild failed; exact document-local T0 remains disabled"
+            )
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
         from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
@@ -803,8 +821,18 @@ class SelfHostProfile:
         @app.get("/deployment", response_model=DeploymentBuildInfo)
         def deployment_build_info() -> DeploymentBuildInfo:
             """Report which code and model bindings are serving, before any work."""
+            with self._engine.connect() as connection:
+                document_binding_generation = connection.execute(
+                    text(
+                        "SELECT document_binding_generation FROM deployments"
+                        " WHERE deployment_id = :deployment_id"
+                    ),
+                    {"deployment_id": self._settings.deployment_id},
+                ).scalar_one()
             return DeploymentBuildInfo(
-                build_revision=_build_revision(), model_bindings=_model_bindings()
+                build_revision=_build_revision(),
+                model_bindings=_model_bindings(),
+                document_binding_generation=document_binding_generation,
             )
 
         @app.get("/healthz", include_in_schema=False)

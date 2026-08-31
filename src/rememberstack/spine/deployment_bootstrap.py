@@ -15,6 +15,7 @@ from rememberstack.model import CoreManifestConflictError
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBootstrapResult
 from rememberstack.model import DeploymentConflictError
+from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
 
 _LOCK_DEPLOYMENT_BOOTSTRAP = "LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE"
 
@@ -44,7 +45,8 @@ INSERT INTO deployments (
     raw_bucket,
     artifacts_bucket,
     corpusfs_bucket,
-    knowledge_repo_uri
+    knowledge_repo_uri,
+    document_binding_generation
 ) VALUES (
     :deployment_id,
     :slug,
@@ -54,7 +56,8 @@ INSERT INTO deployments (
     :raw_bucket,
     :artifacts_bucket,
     :corpusfs_bucket,
-    :knowledge_repo_uri
+    :knowledge_repo_uri,
+    :document_binding_generation
 )
 """
 
@@ -207,7 +210,11 @@ def _create_or_compare_deployment(
     )
     if not rows:
         connection.execute(
-            statement=text(_INSERT_DEPLOYMENT), parameters=dict(expected)
+            statement=text(_INSERT_DEPLOYMENT),
+            parameters={
+                **dict(expected),
+                "document_binding_generation": DOCUMENT_BINDING_GENERATION,
+            },
         )
         return True
     if len(rows) != 1 or dict(rows[0]) != expected:

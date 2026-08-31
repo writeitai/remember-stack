@@ -105,6 +105,13 @@ class PipelineReadinessReport(BaseModel):
     capabilities: dict[
         Literal["pipeline", "p1", "live_graph", "p3"], CapabilityReadiness
     ]
+    document_binding_generation: str | None = Field(
+        default=None,
+        description=(
+            "Current bounded document-entity projection generation. NULL means "
+            "document-local exact T0 replay is disabled."
+        ),
+    )
     model_bindings: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -144,6 +151,10 @@ class DeploymentBuildInfo(BaseModel):
     model_bindings: dict[str, str] = Field(
         default_factory=dict,
         description="Current non-secret provider model identities.",
+    )
+    document_binding_generation: str | None = Field(
+        default=None,
+        description="Current document-local entity binding projection generation.",
     )
 
 

@@ -125,10 +125,15 @@ with no evidence has no T3 vector and reaches T4 instead. T4 receives every
 candidate in the bounded snapshot with aliases, current profile description,
 salient statements, and its T3 score or gate.
 
-At write time, an exact name is only a T0 candidate signal. It never silently
-accepts or merges an entity. One candidate with a current profile may be
-accepted by T3. Empty or conflicting evidence, and every multiple-candidate
-case, reaches one binary, match-biased T4 call on the configured simple model.
+At write time, an exact name is normally only a T0 candidate signal. It never
+silently accepts or merges an entity across documents. There is one bounded
+exception: after T4 has matched that exact canonical name to one entity in a
+document, later exact repeats in the same document may replay that match at T0.
+The replay is disabled if the binding is absent, ambiguous, stale, or not built
+at the current `document-t0-v1` generation; fuzzy T1/T2 candidates never gain
+this authority. One candidate with a current profile may otherwise be accepted
+by T3. Empty or conflicting evidence, and every multiple-candidate case,
+reaches one binary, match-biased T4 call on the configured simple model.
 It selects one supplied candidate id or `new`. Compatible evidence favors the
 existing entity; missing overlap and different topics are not evidence of a
 different referent. `new` requires positive distinction from every supplied
@@ -146,7 +151,7 @@ neighborhood for bounded convergence. Automatic merging remains off until its
 profile-space threshold is calibrated; equivalent open review proposals are
 deduplicated, and every accepted merge remains a reversible redirect.
 
-Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve. There is no exact-name auto-accept switch in the shipped cascade.
+Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve. There is no deployment-wide exact-name auto-accept switch in the shipped cascade.
 
 ## Document identity (write path)
 

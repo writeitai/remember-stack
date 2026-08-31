@@ -1,4 +1,4 @@
-"""The full ER cascade (D17/D20/D95/D100): block → T3/binary T4 → mint.
+"""The full ER cascade (D17/D20/D95/D100/D102): block → T3/binary T4 → mint.
 
 Block-loose / decide-tight: T0 (exact), T1 (trigram), and T2
 (Daitch-Mokotoff phonetic) only GENERATE candidates. Decisions are T3
@@ -7,7 +7,8 @@ records a mint only when no candidate exists. A near-miss is escalated, never
 auto-rejected. Every verdict lands append-only in
 `resolution_decisions` with its tier, scores, and the resolver version whose
 thresholds were in force. Registry-self-contained: no external authority
-tier (D20).
+tier (D20). D102's sole narrow exception replays a validated T4 match for an
+exact canonical lemma inside the same document lineage.
 """
 
 from collections.abc import Sequence
@@ -39,6 +40,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
 from rememberstack.spine.entity_eligibility import surface_appears_in_claim
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.profile_refresher import load_entity_profile_evidence_many
@@ -55,13 +57,14 @@ class ResolutionContendedError(RuntimeError):
     """Candidate authority changed through every bounded resolver attempt."""
 
 
-RESOLVER_VERSION: Final = "resolver-2026.08f"
+RESOLVER_VERSION: Final = "resolver-2026.08g"
 """The cascade generation whose thresholds stamp every decision (D17/D22).
-08f removes the generic-identifier guard and re-ranks fuzzy blocking by score,
+08g removes the generic-identifier guard and re-ranks fuzzy blocking by score,
 then canonical-name resemblance, then age (D103). Blocking order decides which
 candidates survive `blocking_limit` and which one T4 is told to prefer, so this
-can change authoritative verdicts and must not share a generation with 08e --
+can change authoritative verdicts and must not share a generation with 08f --
 D22 curves measured under either are not comparable.
+08f adds D102's exact same-document T0 replay after one validated T4 match.
 08e makes T4 one joint, binary, match-biased simple-model selection (D100).
 08d preserves D99 uncertainty and revalidates around unlocked provider calls.
 08c makes exact T0 candidate-only and records T4 non-match exclusions. 08b
@@ -113,6 +116,39 @@ class _CandidateSnapshot:
     def candidates(self) -> tuple[ResolutionCandidate, ...]:
         """Expose the public candidate values in their deterministic order."""
         return tuple(state.candidate for state in self.states)
+
+
+@dataclass(frozen=True)
+class _DocumentBindingState:
+    """One active entity membership and its possibly valid T4 anchor."""
+
+    entity_id: UUID
+    anchor_decision_id: UUID | None
+    anchor_confidence: float | None
+    anchor_valid: bool
+
+
+@dataclass(frozen=True)
+class _DocumentBindingSnapshot:
+    """Bounded D102 authority included in optimistic revalidation."""
+
+    generation: str | None
+    states: tuple[_DocumentBindingState, ...]
+
+    @property
+    def replay(self) -> _DocumentBindingState | None:
+        """Return the sole valid anchor, failing closed on any conflict row."""
+        if len(self.states) != 1 or not self.states[0].anchor_valid:
+            return None
+        return self.states[0]
+
+
+@dataclass(frozen=True)
+class _ResolutionSnapshot:
+    """All mutable database authority checked around provider calls."""
+
+    candidates: _CandidateSnapshot
+    document_binding: _DocumentBindingSnapshot
 
 
 @dataclass(frozen=True)
@@ -180,14 +216,43 @@ class CascadeResolver:
                 connection.execute(
                     _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
                 )
-                snapshot = self._candidate_snapshot(
+                binding = self._document_binding_snapshot(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=claim.doc_id,
+                    lemma=lemma,
+                )
+                replay = binding.replay
+                if replay is not None:
+                    assert replay.anchor_decision_id is not None
+                    assert replay.anchor_confidence is not None
+                    return self._record(
+                        connection=connection,
+                        decision_id=uuid4(),
+                        deployment_id=deployment_id,
+                        reference=reference,
+                        claim=claim,
+                        lemma=lemma,
+                        entity_id=replay.entity_id,
+                        method="T0",
+                        confidence=replay.anchor_confidence,
+                        features={
+                            "identity_authority": "document_local_t4_replay",
+                            "source_t4_decision_id": str(replay.anchor_decision_id),
+                        },
+                        created=False,
+                    )
+                candidates = self._candidate_snapshot(
                     connection=connection, deployment_id=deployment_id, lemma=lemma
+                )
+                snapshot = _ResolutionSnapshot(
+                    candidates=candidates, document_binding=binding
                 )
             outcome = self._decide(
                 deployment_id=deployment_id,
                 reference=reference,
                 claim=claim,
-                snapshot=snapshot,
+                snapshot=snapshot.candidates,
                 meter=meter,
                 call_key=f"{call_key}:optimistic:{attempt}",
             )
@@ -195,8 +260,16 @@ class CascadeResolver:
                 connection.execute(
                     _LOCK_LEMMA, {"key": f"{deployment_id}:lemma:{lemma}"}
                 )
-                current = self._candidate_snapshot(
-                    connection=connection, deployment_id=deployment_id, lemma=lemma
+                current = _ResolutionSnapshot(
+                    candidates=self._candidate_snapshot(
+                        connection=connection, deployment_id=deployment_id, lemma=lemma
+                    ),
+                    document_binding=self._document_binding_snapshot(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        doc_id=claim.doc_id,
+                        lemma=lemma,
+                    ),
                 )
                 if current != snapshot:
                     continue
@@ -231,7 +304,7 @@ class CascadeResolver:
                     reference=reference,
                     claim=claim,
                     lemma=lemma,
-                    considered=snapshot.candidates,
+                    considered=snapshot.candidates.candidates,
                     different_entity_ids=outcome.different_entity_ids,
                     adjudication=outcome.last_adjudication,
                     decision_features=outcome.decision_features,
@@ -239,6 +312,42 @@ class CascadeResolver:
         raise ResolutionContendedError(
             f"identity candidates for {lemma!r} changed during "
             f"{RESOLUTION_MAX_ATTEMPTS} resolver attempts"
+        )
+
+    def _document_binding_snapshot(
+        self, *, connection: Connection, deployment_id: UUID, doc_id: UUID, lemma: str
+    ) -> _DocumentBindingSnapshot:
+        """Load at most two active memberships and validate an anchor source."""
+        rows = tuple(
+            connection.execute(
+                _DOCUMENT_BINDING_ROWS,
+                {
+                    "deployment_id": deployment_id,
+                    "doc_id": doc_id,
+                    "lemma": lemma,
+                    "contract": DOCUMENT_BINDING_GENERATION,
+                },
+            ).mappings()
+        )
+        generation = rows[0]["document_binding_generation"]
+        if generation != DOCUMENT_BINDING_GENERATION:
+            return _DocumentBindingSnapshot(generation=generation, states=())
+        return _DocumentBindingSnapshot(
+            generation=generation,
+            states=tuple(
+                _DocumentBindingState(
+                    entity_id=row["entity_id"],
+                    anchor_decision_id=row["anchor_decision_id"],
+                    anchor_confidence=(
+                        None
+                        if row["anchor_confidence"] is None
+                        else float(row["anchor_confidence"])
+                    ),
+                    anchor_valid=bool(row["anchor_valid"]),
+                )
+                for row in rows
+                if row["entity_id"] is not None
+            ),
         )
 
     def _ensure_registered(self, *, deployment_id: UUID) -> None:
@@ -903,7 +1012,14 @@ class CascadeResolver:
                 "method": method,
                 "confidence": confidence,
                 "is_new_entity": created,
-                "features": features,
+                "features": {
+                    **features,
+                    "document_t0": {
+                        "contract": DOCUMENT_BINDING_GENERATION,
+                        "doc_id": str(claim.doc_id),
+                        "canonical_lemma": lemma,
+                    },
+                },
                 "resolver_version": self._config.resolver_version,
             },
         )
@@ -1069,6 +1185,53 @@ def _vector_literal(vector: tuple[float, ...]) -> str:
 
 
 _LOCK_LEMMA = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+
+_DOCUMENT_BINDING_ROWS = text(
+    """
+    WITH deployment AS MATERIALIZED (
+      SELECT document_binding_generation
+      FROM deployments
+      WHERE deployment_id = :deployment_id
+    ), binding_rows AS MATERIALIZED (
+      SELECT binding.entity_id,
+           binding.anchor_decision_id,
+           source.confidence AS anchor_confidence,
+           coalesce(
+             source.decision_id IS NOT NULL
+             AND source.superseded_by IS NULL
+             AND source.method = 'T4_small'
+             AND NOT source.is_new_entity
+             AND source.entity_id = binding.entity_id
+             AND source.features -> 'document_t0' ->> 'contract' = :contract
+             AND source.features -> 'document_t0' ->> 'doc_id' = CAST(:doc_id AS text)
+             AND source.features -> 'document_t0' ->> 'canonical_lemma' = :lemma,
+             false
+           ) AS anchor_valid
+      FROM document_entity_bindings binding
+      JOIN deployment
+        ON deployment.document_binding_generation = :contract
+      JOIN entities entity
+        ON entity.deployment_id = binding.deployment_id
+       AND entity.entity_id = binding.entity_id
+       AND entity.status = 'active'
+      LEFT JOIN resolution_decisions source
+        ON source.deployment_id = binding.deployment_id
+       AND source.decision_id = binding.anchor_decision_id
+       AND source.decided_at = binding.anchor_decided_at
+      WHERE binding.deployment_id = :deployment_id
+        AND binding.doc_id = :doc_id
+        AND binding.canonical_lemma = :lemma
+      ORDER BY binding.entity_id
+      LIMIT 2
+    )
+    SELECT deployment.document_binding_generation,
+           binding_rows.entity_id, binding_rows.anchor_decision_id,
+           binding_rows.anchor_confidence, binding_rows.anchor_valid
+    FROM deployment
+    LEFT JOIN binding_rows ON true
+    ORDER BY binding_rows.entity_id
+    """
+)
 
 _PAIR_REACHABLE = text(
     """

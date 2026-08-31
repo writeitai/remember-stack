@@ -64,6 +64,7 @@ from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
 from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
+from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
@@ -204,6 +205,7 @@ def prepare_run(
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
         "api_timeout_seconds": API_TIMEOUT_SECONDS,
         "knowledge_mode": "not_composed",
+        "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
         "answer_agent_model": selected_protocol.answer_agent_model,
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
@@ -278,6 +280,8 @@ def _readiness_matches_protocol(
         and {version.version_id for version in readiness.versions} == version_ids
         and versions_ready
         and capabilities_ready
+        and readiness.document_binding_generation
+        == EXPECTED_DOCUMENT_BINDING_GENERATION
         and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
         and repository_revision
         and readiness.build_revision == repository_revision
@@ -405,6 +409,10 @@ def ingest_sample(
             when=_INGEST_STAGE,
         )
         _require_current_ingest_bindings(model_bindings=build.model_bindings)
+        if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
+            raise ExecutionGuardError(
+                "deployment document binding generation differs from RS-LoCoMo-Full-v18"
+            )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
             client=client,
@@ -562,7 +570,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v17 pipeline, live graph, and fresh P3 projection"
+            " RS-LoCoMo-Full-v18 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1169,7 +1177,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v17")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v18")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1179,7 +1187,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v17")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v18")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1210,6 +1218,7 @@ def _validate_run(
         "answer_reader_retry_budget": configuration.answer_reader_retry_budget,
         "api_timeout_seconds": configuration.api_timeout_seconds,
         "knowledge_mode": configuration.knowledge_mode,
+        "document_binding_generation": configuration.document_binding_generation,
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "answer_word_cap": configuration.answer_word_cap,
@@ -1436,7 +1445,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v17: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v18: "
             + ", ".join(mismatches)
         )
 

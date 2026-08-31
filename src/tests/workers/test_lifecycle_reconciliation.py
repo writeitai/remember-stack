@@ -720,6 +720,13 @@ def test_split_into_four_survives_the_original_deletion(rig: _LifecycleRig) -> N
         d=original.doc_id,
     )
     assert audit == 1  # the removal is a recorded event, not an erasure
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
+            d=original.doc_id,
+        )
+        == 0
+    )
 
 
 def test_delete_version_repoints_and_scopes_the_cascade(rig: _LifecycleRig) -> None:
@@ -750,6 +757,13 @@ def test_delete_version_repoints_and_scopes_the_cascade(rig: _LifecycleRig) -> N
             v=second.version_id,
         )
         is not None
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
+            d=first.doc_id,
+        )
+        == 0
     )
 
 

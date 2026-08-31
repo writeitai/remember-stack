@@ -716,6 +716,18 @@ def _seed_evidence(*, connection: Connection) -> None:
         entity_id=_SHARED_ENTITY_ID,
         surface="Shared",
     )
+    for doc_id, entity_id in (
+        (_TARGET_DOC_ID, _EXCLUSIVE_ENTITY_ID),
+        (_CONTROL_DOC_ID, _SHARED_ENTITY_ID),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_entity_bindings ("
+                " deployment_id, doc_id, canonical_lemma, entity_id)"
+                " VALUES (:deployment, :doc, 'shared', :entity)"
+            ),
+            {"deployment": _DEPLOYMENT_ID, "doc": doc_id, "entity": entity_id},
+        )
     _seed_facts(connection=connection)
     _seed_resolution_residuals(connection=connection)
 
@@ -1153,6 +1165,14 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert _count(connection, "chunk_search", "chunk_id", _CONTROL_CHUNK_ID) == 1
         assert _count(connection, "claims", "doc_id", _TARGET_DOC_ID) == 0
         assert _count(connection, "mentions", "doc_id", _TARGET_DOC_ID) == 0
+        assert (
+            _count(connection, "document_entity_bindings", "doc_id", _TARGET_DOC_ID)
+            == 0
+        )
+        assert (
+            _count(connection, "document_entity_bindings", "doc_id", _CONTROL_DOC_ID)
+            == 1
+        )
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
         assert (
             _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)

@@ -1,6 +1,6 @@
 """Drop the generic-identifier guard; a shared name is not a weaker name.
 
-revision: p9_22_0043
+revision: p9_23_0044
 
 The guard recorded, per normalized string, how many distinct entities it
 linked, and flagged the string once that count reached two. Blocking then
@@ -37,8 +37,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "p9_22_0043"
-down_revision: str | None = "p9_21_0042"
+revision: str = "p9_23_0044"
+down_revision: str | None = "p9_22_0043"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

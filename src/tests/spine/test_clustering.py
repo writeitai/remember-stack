@@ -343,23 +343,70 @@ def test_merge_is_reversible_by_snapshot_replay(
     clusterer = _clusterer(engine=database_engine, index=index, distance_cut=_CUT)
     robert = _arrive(engine=database_engine, index=index, name="Robert Klein")
     variant = _arrive(engine=database_engine, index=index, name="R. Klein")
-    # a live mention decision on the variant BEFORE the merge (replay proof):
-    mention = uuid4()
-    first_decision = uuid4()
+    # Give both entities a live mention before clustering. This makes the proof
+    # independent of which one the deterministic merge elects as survivor.
+    doc_id = uuid4()
+    mention_by_entity = {robert: uuid4(), variant: uuid4()}
+    decision_by_entity = {robert: uuid4(), variant: uuid4()}
+    surface_by_entity = {robert: "Robert Klein", variant: "R. Klein"}
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO resolution_decisions (decision_id, deployment_id,"
-                " mention_id, entity_id, method, confidence, resolver_version)"
-                " VALUES (:i, :d, :m, :e, 'T0', 1.0, 'test')"
+                "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                " source_ref) VALUES (:doc, :deployment, 'upload', :source)"
             ),
-            {"i": first_decision, "d": _DEPLOYMENT_ID, "m": mention, "e": variant},
+            {
+                "doc": doc_id,
+                "deployment": _DEPLOYMENT_ID,
+                "source": f"unmerge-{doc_id}",
+            },
         )
+        for entity_id, mention_id in mention_by_entity.items():
+            surface = surface_by_entity[entity_id]
+            connection.execute(
+                text(
+                    "INSERT INTO mentions (mention_id, deployment_id, surface_form,"
+                    " normalized_lemma, canonical_name_form, doc_id)"
+                    " VALUES (:mention, :deployment, :surface, :lemma,"
+                    " :surface, :doc)"
+                ),
+                {
+                    "mention": mention_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "surface": surface,
+                    "lemma": normalized_lemma(surface=surface),
+                    "doc": doc_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO resolution_decisions (decision_id, deployment_id,"
+                    " mention_id, entity_id, method, confidence, resolver_version)"
+                    " VALUES (:decision, :deployment, :mention, :entity,"
+                    " 'T0', 1.0, 'test')"
+                ),
+                {
+                    "decision": decision_by_entity[entity_id],
+                    "deployment": _DEPLOYMENT_ID,
+                    "mention": mention_id,
+                    "entity": entity_id,
+                },
+            )
     report = clusterer.recluster_neighborhood(
         deployment_id=_DEPLOYMENT_ID, surface="R. Klein"
     )
     (merge_id,) = report.merged
-    # post-merge, a newer decision re-points the mention at the survivor:
+    with database_engine.connect() as connection:
+        survivor, absorbed = connection.execute(
+            text(
+                "SELECT survivor_id, absorbed_id FROM merge_events"
+                " WHERE merge_id = :merge"
+            ),
+            {"merge": merge_id},
+        ).one()
+
+    # Post-merge, a newer decision re-points the absorbed mention at the survivor.
+    absorbed_mention = mention_by_entity[absorbed]
     supersessor = uuid4()
     with database_engine.begin() as connection:
         connection.execute(
@@ -368,20 +415,21 @@ def test_merge_is_reversible_by_snapshot_replay(
                 " mention_id, entity_id, method, confidence, resolver_version)"
                 " VALUES (:i, :d, :m, :e, 'T0', 1.0, 'test')"
             ),
-            {"i": supersessor, "d": _DEPLOYMENT_ID, "m": mention, "e": robert},
+            {
+                "i": supersessor,
+                "d": _DEPLOYMENT_ID,
+                "m": absorbed_mention,
+                "e": survivor,
+            },
         )
         connection.execute(
             text(
                 "UPDATE resolution_decisions SET superseded_by = :s"
                 " WHERE decision_id = :i"
             ),
-            {"s": supersessor, "i": first_decision},
+            {"s": supersessor, "i": decision_by_entity[absorbed]},
         )
 
-    with database_engine.connect() as connection:
-        absorbed = connection.execute(
-            text("SELECT entity_id FROM entities WHERE status = 'merged'")
-        ).scalar_one()
     assert absorbed in (robert, variant)
 
     reversal = clusterer.unmerge(deployment_id=_DEPLOYMENT_ID, merge_id=merge_id)
@@ -414,11 +462,22 @@ def test_merge_is_reversible_by_snapshot_replay(
                 "SELECT entity_id FROM resolution_decisions"
                 " WHERE mention_id = :m AND superseded_by IS NULL"
             ),
-            {"m": mention},
+            {"m": absorbed_mention},
         ).scalar_one()
-    restored = {robert, variant} - {live_entity}
-    assert live_entity in (robert, variant)
-    assert len(restored) == 1
+        binding_entity = connection.execute(
+            text(
+                "SELECT entity_id FROM document_entity_bindings"
+                " WHERE deployment_id = :deployment AND doc_id = :doc"
+                " AND canonical_lemma = :lemma"
+            ),
+            {
+                "deployment": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "lemma": normalized_lemma(surface=surface_by_entity[absorbed]),
+            },
+        ).scalar_one()
+    assert live_entity == absorbed
+    assert binding_entity == live_entity
 
     with pytest.raises(UnmergeError):
         clusterer.unmerge(deployment_id=_DEPLOYMENT_ID, merge_id=merge_id)
