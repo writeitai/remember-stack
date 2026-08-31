@@ -41,6 +41,7 @@ src/tests/eval/test_s55_selfhost_restore.py
 src/tests/model/test_component_version.py
 src/tests/model/test_deployment.py
 src/tests/model/test_forget.py
+src/tests/model/test_resolution.py
 src/tests/packaging/test_client_wheel.py
 src/tests/packaging/test_release_contract.py
 src/tests/spine/test_catalog_lanes.py

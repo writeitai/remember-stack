@@ -4415,8 +4415,8 @@ exactly one T4 call on the configured simple model. T4 sees the incoming
 canonical name and claim plus every candidate in the bounded resolver snapshot
 in deterministic T3-relevance order. Each candidate includes canonical name,
 source aliases, current profile description, current salient facts, and its T3
-score or gate. The existing candidate and profile-fact limits bound the prompt;
-the resolver never dumps an unbounded entity history.
+score or gate. Candidate, distinct-alias, and profile-fact limits bound the
+prompt; the resolver never dumps an unbounded entity history.
 
 T4 returns exactly one existing `candidate_id` or `new`, with a rationale. It
 has no `insufficient_evidence` result, confidence-routing branch, or frontier

@@ -320,11 +320,10 @@ from rememberstack.model.relations import ObservationAssertion
 from rememberstack.model.relations import ObservationCandidate
 from rememberstack.model.relations import RelationCandidate
 from rememberstack.model.relations import ResolvedEntity
-from rememberstack.model.resolution import AdjudicationVerdict
-from rememberstack.model.resolution import IdentityVerdict
 from rememberstack.model.resolution import ResolutionCandidate
 from rememberstack.model.resolution import ResolutionThresholds
 from rememberstack.model.resolution import ResolverConfig
+from rememberstack.model.resolution import T4Selection
 from rememberstack.model.retrieval_spikes import RETRIEVAL_SPIKE_NAMES
 from rememberstack.model.retrieval_spikes import RetrievalSpikeMeasurement
 from rememberstack.model.retrieval_spikes import RetrievalSpikeName
@@ -355,8 +354,6 @@ __all__ = (
     "BackfillSeedResult",
     "BudgetParked",
     "AddedContext",
-    "AdjudicationVerdict",
-    "IdentityVerdict",
     "AggregateBucket",
     "AggregateReport",
     "AsOfTemporalScope",
@@ -550,6 +547,7 @@ __all__ = (
     "ResolutionThresholds",
     "ResolvedEntity",
     "ResolverConfig",
+    "T4Selection",
     "RETRIEVAL_SPIKE_NAMES",
     "RetrievalSpikeMeasurement",
     "RetrievalSpikeName",

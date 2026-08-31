@@ -121,17 +121,20 @@ An entity profile is orientation, not identity or a type. It is a disposable
 projection of current supported observations and relations. Write-time T3
 compares the mention name plus its claim context with the candidate name plus
 profile and salient facts; it never compares two name-only vectors. An entity
-with no evidence has no T3 vector and reaches gated T4 instead. T4 receives the
-candidate profile and the current salient statements explicitly.
+with no evidence has no T3 vector and reaches T4 instead. T4 receives every
+candidate in the bounded snapshot with aliases, current profile description,
+salient statements, and its T3 score or gate.
 
 At write time, an exact name is only a T0 candidate signal. It never silently
 accepts or merges an entity. One candidate with a current profile may be
 accepted by T3. Empty or conflicting evidence, and every multiple-candidate
-case, reaches tri-state T4: `same`, positively supported `different`, or
-`insufficient_evidence`. Only `different` creates a durable cannot-link. If
-evidence is insufficient or the bounded candidate pass is truncated, ingestion
-may mint an active provisional fragment; its decision is explicit and later
-profile evidence can repair it instead of being blocked by a false exclusion.
+case, reaches one binary, match-biased T4 call on the configured simple model.
+It selects one supplied candidate id or `new`. Compatible evidence favors the
+existing entity; missing overlap and different topics are not evidence of a
+different referent. `new` requires positive distinction from every supplied
+candidate. Confidence remains in the audit but never routes to a frontier
+model, and candidate truncation remains visible without creating a third
+decision state.
 
 Profile refreshes are evidence-change debounced. If evidence is withdrawn, the
 cached summary and vector rebuild or clear. Hard-forgetting one source of a

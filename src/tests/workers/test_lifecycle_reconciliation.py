@@ -89,6 +89,7 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.t4_test_doubles import match_first_t4_candidate
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("e5000000-0000-0000-0000-000000000001")
@@ -171,8 +172,8 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
         return {"outcome": "coexist", "confidence": 0.9}
     if type_name == "ObservationVerdict":
         return {"outcome": "new", "confidence": 0.9}
-    if type_name == "AdjudicationVerdict":
-        return {"verdict": "same", "confidence": 0.9}
+    if type_name == "T4Selection":
+        return match_first_t4_candidate(prompt, type_name)
     raise AssertionError(f"unexpected response type {type_name}")
 
 
@@ -312,7 +313,6 @@ class _LifecycleRig:
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model="qwen/qwen3-embedding-8b",
                     small_model="openai/gpt-5.6-luna",
-                    frontier_model="openai/gpt-5.6-sol",
                 ),
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,

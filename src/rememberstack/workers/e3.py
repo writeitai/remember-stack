@@ -73,10 +73,11 @@ def _run_profile_refresh(*, action: Callable[[], object], call_key: str) -> None
 
 
 E3_NORMALIZER_VERSION: Final = (
-    "e3-normalize-2026.08c:temp0-1:claim-fanout-1:bare-noun-1:no-types-1"
+    "e3-normalize-2026.08d:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1"
 )
 """The normalize sub-worker's component version (D12 idempotency member).
 
+08d: D100 one-call binary, match-biased T4 identity resolution.
 08c: D96 type cut — no registry types, no D86 gate, no D18 signatures.
 08b: WP-I.1 bare-head-noun refusal + source-surface names.
 08a: D86 unknown-entity-type gate; claim-fanout-1: D88 per-claim ledger grain.

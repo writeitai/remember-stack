@@ -1019,7 +1019,6 @@ class SelfHostProfile:
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model=p1_settings.embedding_model,
                     small_model=observation_settings.small_model,
-                    frontier_model=observation_settings.frontier_model,
                 ),
                 facts=facts,
                 observation_adjudicator=ObservationAdjudicator(

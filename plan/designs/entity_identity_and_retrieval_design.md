@@ -674,7 +674,7 @@ Minimum rows:
 | `CascadeResolver.resolve` | snapshot candidates + completeness under the lemma lock; decide outside the transaction; re-lock/revalidate before writing; bounded contention retry |
 | candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; order the bounded set by T3 relevance before T4 |
 | `T4Selection` | exactly `match(candidate_id)` or `new`, plus confidence/rationale used only for audit; selected ids must belong to the supplied snapshot |
-| `_T4_PROMPT` | one joint configured-simple-model call with the bounded incoming claim and every candidate's aliases, current profile description, salient facts, and T3 score/gate; explicit match bias |
+| `_T4_PROMPT` | one joint configured-simple-model call with the bounded incoming claim and every candidate's deduplicated aliases (starting cap: 20), current profile description, salient facts, and T3 score/gate; explicit match bias |
 | resolution decision features | candidate completeness/order, every T3 score/gate, selected candidate or `new`, rationale/model, and one bounded T3 outcome reason; no current provisional authority |
 | resolution decision method | keep `T4_small` for the configured simple-model seat; `resolver_version` and features distinguish D99 pairwise rows from D100 joint rows; retain `T4_frontier` only for historical readability |
 | `resolution_exclusions` | a T4 `new` may write supported-different rows only for candidates supplied to that joint decision; historical D99 and human rows retain their existing basis/effectiveness rules |

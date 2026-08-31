@@ -148,18 +148,19 @@ Write-time cascade tiers:
 | T1 | Trigram / fuzzy candidate generation |
 | T2 | Phonetic candidate generation |
 | T3 | A sole candidate: mention name + claim context against an evidence-backed profile vector; empty/stale profiles cannot accept |
-| T4 | Tri-state LLM adjudication (`same` / supported `different` / `insufficient_evidence`) for empty/conflicting or multiple candidates, with candidate profile + current salient facts |
+| T4 | One binary, match-biased simple-model call for empty/conflicting or multiple candidates; it sees every candidate in the bounded snapshot with aliases, current profile description, salient facts, and T3 score/gate, then selects one supplied id or `new` |
 
 **Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
-Write-time T0 never accepts an exact name by itself. A supported T4 `different`
-may mint a second active entity with the same normalized lemma and stores that
-pair as a clustering exclusion. Insufficient evidence, an unchecked candidate,
-or a truncated candidate prefix may mint only a provisional, merge-eligible
-fragment and never creates an exclusion. Lemmas that span multiple entity ids are
-marked promiscuous and rank below unguarded fuzzy/phonetic matches without
-being dropped from the candidate set. The shipped cascade has no exact-name
-auto-accept flag.
+Write-time T0 never accepts an exact name by itself. T4 prefers a compatible
+existing entity: missing overlap and different topics do not establish a new
+referent. `new` requires positive distinction from every supplied candidate;
+it may mint a second active entity with the same normalized lemma and stores
+exclusions only for those supplied candidates. Candidate truncation remains
+visible in the audit but does not create a third decision state. Lemmas that
+span multiple entity ids are marked promiscuous and rank below unguarded
+fuzzy/phonetic matches without being dropped from the candidate set. The
+shipped cascade has no exact-name auto-accept flag.
 
 After supported open-ended observations or relations change, a deterministic refresher
 rebuilds the entity’s short summary and `entity-profile-v2` vector. Unchanged

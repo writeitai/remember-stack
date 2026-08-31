@@ -78,6 +78,7 @@ from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
+from tests.t4_test_doubles import match_first_t4_candidate
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a0000000-0000-0000-0000-000000000001")
@@ -139,8 +140,15 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "FactLabelResponse": {"label": "Alice Novak works for Acme."},
     "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
     "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
-    "AdjudicationVerdict": {"verdict": "same", "confidence": 0.9},
 }
+
+
+def _provider_response(prompt: str, type_name: str) -> dict[str, object]:
+    """Serve canned chain payloads and a dynamic valid T4 selection."""
+    if type_name == "T4Selection":
+        return match_first_t4_candidate(prompt, type_name)
+    return _PAYLOADS[type_name]
+
 
 _TABLES = (
     "chunks",
@@ -210,7 +218,7 @@ class _ApiRig:
             engine=engine, embedding_model=P1Settings().embedding_model
         )
         self.p1.configure_channels(deployment_id=_DEPLOYMENT_ID)
-        self.provider = FakeModelProvider(generate_payloads=_PAYLOADS)
+        self.provider = FakeModelProvider(generate_router=_provider_response)
         document_catalog = DocumentCatalog(engine=engine)
         chunk_catalog = ChunkCatalog(engine=engine)
         claim_catalog = ClaimCatalog(engine=engine)
@@ -293,7 +301,6 @@ class _ApiRig:
                     config=ResolverConfig(resolver_version=RESOLVER_VERSION),
                     embedding_model="qwen/qwen3-embedding-8b",
                     small_model="openai/gpt-5.6-luna",
-                    frontier_model="openai/gpt-5.6-sol",
                 ),
                 facts=facts,
                 observation_adjudicator=obs_adjudicator,

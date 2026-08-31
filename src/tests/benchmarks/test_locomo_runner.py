@@ -127,7 +127,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
 
 
 def test_unknown_after_identity_only_forces_one_content_read() -> None:
-    """V16 mechanically rejects Unknown after identity-only metadata."""
+    """V17 mechanically rejects Unknown after identity-only metadata."""
     calls = 0
 
     def decide(prompt: str, type_name: str) -> dict[str, object]:
@@ -1046,7 +1046,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v16", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v17", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1865,8 +1865,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v16","protocol_fingerprint":'
-        '"7633214d5728e893667c76b6a5455d24e91ae902b5c289a3ebf16a696b192fb2",'
+        '{"protocol_name":"RS-LoCoMo-Full-v17","protocol_fingerprint":'
+        '"adc93908a57512682369a0e62f6650f468335ac5fbcbb72d02cd9a15b609b8b6",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2085,7 +2085,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v16"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v17"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2188,7 +2188,7 @@ def _tool() -> ToolDescriptor:
 
 
 def _identity_tool() -> ToolDescriptor:
-    """Return the identity-only assured operation used by v16 guard proofs."""
+    """Return the identity-only assured operation used by v17 guard proofs."""
     return ToolDescriptor(
         name="resolve_entity",
         description="Resolve one entity name",
