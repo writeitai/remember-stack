@@ -128,9 +128,16 @@ What remains — enum, table, nullable column, FK — is small and atomic: it
 commits whole or rolls back whole.
 
 The FK is added **`NOT VALID`**. A validated `ADD CONSTRAINT` sequentially
-scans `document_versions` while holding `ShareRowExclusiveLock`, which
-blocks writers for the duration (measured: a concurrent `UPDATE` timed
-out). `NOT VALID` is a catalog-only change, and nothing is skipped by it:
+scans `document_versions` while holding `ShareRowExclusiveLock`, so the
+write outage grows with the table (measured: a concurrent `UPDATE` timed
+out). `NOT VALID` is **scan-free** (`seq_scan=0`), removing that
+table-size dependence.
+
+Be precise about what it is not: `NOT VALID` is **not lock-free**.
+PostgreSQL 19 still takes `ShareRowExclusiveLock` for the DDL, held until
+this atomic transaction commits, and a concurrent writer waits on it. The
+property gained is *bounded and brief* rather than *proportional to row
+count*. Nothing is skipped by it either:
 it forgoes checking only *pre-existing* rows, and the column is added by
 this same migration, so every existing row is `NULL` and cannot violate
 anything. The constraint is fully enforced for every subsequent insert and
