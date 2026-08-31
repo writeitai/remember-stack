@@ -4,6 +4,13 @@
 
 **Status:** analysis; non-binding evidence for D99 and the D95 amendment
 
+> **Historical note (2026-08-31):** D100 supersedes this analysis's chosen
+> tri-state/provisional-mint policy with one binary, match-biased joint T4 call.
+> The observed false-negative-authority failure, completeness requirement,
+> T3 diagnostics, snapshot/revalidation, and convergence findings remain
+> evidence. Current rationale:
+> [`binary_match_biased_t4.md`](binary_match_biased_t4.md).
+
 **Run examined:** LoCoMo `conv-26`, RememberStack v0.6.0 at
 `ec457a6a3cce0207af0455b9043af53991d29a68`, PostgreSQL 19beta3,
 `RS-LoCoMo-Full-v15`

@@ -482,6 +482,10 @@ distinct candidate ids. T3 (profile embedding) may accept repeats; T4
 handles empty/conflict/many candidates. The same spelling may be two
 `entity_id`s. Profile text is T3/T4 evidence, not the identity key.
 
+**Amended by D100.** The current T4 is one joint, match-biased binary call on
+the configured simple model. It selects a candidate from the bounded snapshot
+or returns `new`; the small→frontier ladder above is historical.
+
 ## D18. Ontology seed core — 8 types + 14 predicates, schema.org-anchored, domain/range not OWL
 
 **Decision.** Seed core: 8 entity types (`Person`, `Organization`, `Place`, `Document` (a root
@@ -2904,7 +2908,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D99 amendment.** The current protocol is `RS-LoCoMo-Full-v16`. It retains
+> **D100 amendment.** The current protocol is `RS-LoCoMo-Full-v17`. It retains
+> v16's 21-tool surface, dataset, models, and budgets while rolling the D100
+> binary match-biased T4 resolver generation.
+>
+> **Historical D99 amendment.** `RS-LoCoMo-Full-v16` retained
 > v15's 21-tool surface, dataset, models, and budgets while rolling the D99
 > resolver/convergence generations. The answer loop mechanically enforces its
 > existing instruction that identity metadata alone cannot justify `Unknown`:
@@ -4004,6 +4012,12 @@ statistics without a duplicated claim-search table.
 
 ## D95. Entity identity is the real-world referent
 
+> **D100 amendment (2026-08-31).** T4 is one bounded, joint, match-biased
+> binary selection call over the candidate set. It returns an existing
+> candidate id or `new`; there is no frontier seat, confidence-routing branch,
+> `insufficient_evidence`, or provisional mint in the current resolver
+> generation. D100 contains the complete amendment.
+>
 > **D99 amendment (2026-08-28).** T4 is tri-state; only supported
 > `different` creates a cannot-link or contributes to authoritative novelty.
 > Insufficient evidence or truncated candidate/adjudication work may mint only
@@ -4021,10 +4035,10 @@ The verdict is T3 or T4:
   accept a repeat of a known person without an LLM — this is the scale
   path, not T0.
 - **T4** when the profile is empty, fights the claim, or several exact
-  candidates exist. D99 makes this tri-state: `same` links, supported
-  `different` contributes to an authoritative new referent only after a
-  complete candidate pass, and insufficient/truncated work may mint only a
-  merge-eligible provisional fragment.
+  candidates exist. D100 gives one configured simple model the bounded
+  candidate set jointly. It selects one existing candidate or `new`, preferring
+  a compatible existing entity unless evidence positively distinguishes a new
+  referent.
 
 A short `profile_summary` (plus salient observations) is evidence for
 T3/T4, never the identity key. Job, city, and employer changes update
@@ -4243,6 +4257,14 @@ query principle remains; only its public Cypher surface is removed.
 
 ## D99. Identity uncertainty is provisional and converges after profile publication
 
+> **D100 amendment (2026-08-31).** D100 supersedes D99's tri-state T4,
+> pairwise small→frontier ladder, provisional mint authority, and
+> insufficient-evidence diagnostics. D99's candidate completeness audit,
+> snapshot/unlocked-provider/locked-revalidation, T3 diagnostics, profile
+> convergence, reversible merge, and nonblocking proposal contracts remain
+> binding. This entry remains the historical rationale and lock/convergence
+> authority for those preserved contracts.
+
 **Decision (2026-08-28).** Amend D95 so T4 returns exactly three evidentiary
 outcomes: `same`, positively supported `different`, and
 `insufficient_evidence`. Only `different` writes an automatic
@@ -4385,3 +4407,93 @@ lemma-lock consequence; D21's incremental clustering lifecycle; D22's per-tier
 diagnostics; D24 proposal idempotency; D78's benchmark-agent `Unknown` guard.
 Preserves D20 registry self-containment, D95's no exact-name auto-merge rule,
 D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
+
+## D100. T4 is one binary, match-biased candidate-selection call
+
+**Decision (2026-08-31).** Amend D95 and D99 so the identity residue reaches
+exactly one T4 call on the configured simple model. T4 sees the incoming
+canonical name and claim plus every candidate in the bounded resolver snapshot
+in deterministic T3-relevance order. Each candidate includes canonical name,
+source aliases, current profile description, current salient facts, and its T3
+score or gate. The existing candidate and profile-fact limits bound the prompt;
+the resolver never dumps an unbounded entity history.
+
+T4 returns exactly one existing `candidate_id` or `new`, with a rationale. It
+has no `insufficient_evidence` result, confidence-routing branch, or frontier
+model. Compatible facts favor `match`; missing overlap and different topics do
+not prove distinct identity. `new` requires positive evidence that the incoming
+referent differs from every supplied candidate. If several candidates remain
+compatible, the prompt selects the first candidate in the deterministic
+relevance order. This is an intentional error-policy change: ambiguity is
+resolved toward reuse, accepting greater false-merge risk to stop uncertainty
+from growing the active registry one entity per mention.
+
+T0–T2 remain bounded candidate generators and T0 does not become an exact-name
+verdict. Conservative T3 remains unchanged: it may accept only one current,
+sufficiently strong candidate. A candidate-free complete block still mints
+without T4. A T4 `new` result creates an ordinary authoritative entity and may
+write supported-different exclusions only for candidates actually supplied to
+the joint decision. Search completeness remains audit evidence rather than a
+third runtime outcome.
+
+The append-only decision records candidate order, completeness, T3 scores and
+gates, selected candidate or `new`, rationale, model, and resolver generation.
+Historical D99 tri-state/provisional feature shapes remain readable and are
+never rewritten. `T4_small` remains the method for the configured simple-model
+seat; `resolver_version` and features distinguish old pairwise rows from the
+current joint call. `T4_frontier` remains a historical enum value. The current
+generation stops writing `identity_authority=provisional`.
+
+D99's normalized-lemma serialization, snapshot → unlocked provider call →
+locked revalidation, bounded contention retry, fixed T3 diagnostics, current-
+profile refresh, bounded convergence nomination, reversible redirects,
+cannot-link retirement, and review guards remain binding. Provider or schema
+failure stays visible and never silently becomes `new` or a candidate match.
+
+The ordinary LoCoMo protocol advances from Full-v16 to Full-v17 because the
+resolver prompt, output schema, provider-call count, and decision behavior
+change. It retains the dataset, models, answer/judge budgets, tool surface,
+content-before-`Unknown` guard, and no-human-review scoring rule. File/source
+attribution is explicitly outside D100; an independent attribution contract
+may later supply additional evidence without changing this binary result.
+
+**Context.** The completed v0.7.3 `conv-26` run drained successfully but
+created 610 active entities, including 313 named Caroline and 268 named
+Melanie. Of 1,005 decisions, T3 accepted none and 581 T4-small decisions minted
+provisional fragments from `insufficient_evidence`; 942 candidate searches
+were incomplete. The small model frequently compared compatible but
+topically different facts one candidate at a time. Profile convergence later
+formed only small semantic components and could not reconstruct the two known
+participants. D99 made uncertainty safe and auditable, but its operational
+choice remained divergent.
+
+**Consequences.** T4 provider spend is at most one generation call per residue
+decision. Prompt size grows from one candidate to the bounded candidate set,
+but the call can compare candidates directly. The registry should fragment far
+less on compatible same-name evidence. False merges become the principal risk;
+father/son and same-name-colleague canaries therefore remain hard D22 release
+gates. Decision history and merge redirects remain reversible. No second
+identity state, unresolved store, frontier seat, or file-attribution dependency
+is introduced.
+
+**Rejected.** Keep D99 unchanged; increase candidate or T4-call limits; retain
+tri-state plus a second unresolved serving path; keep pairwise small→frontier
+adjudication; use a binary but neutrally prompted model; restore exact-name T0
+acceptance; include unbounded fact history; couple this decision to file
+attribution.
+
+**Design.** `plan/designs/entity_identity_and_retrieval_design.md` §3;
+`plan/designs/registries_design.md` §3;
+`plan/designs/postgres_schema_design.md` identity decision schema;
+`plan/designs/locomo_benchmark_design.md` Full-v17 protocol.
+
+**Analysis.** `plan/analysis/binary_match_biased_t4.md`.
+
+**Sequencing.** `plan/plans/entity_identity_and_retrieval.md` WP-I.9.
+
+**Supersedes/amends.** Supersedes D99's tri-state outcome, provisional-mint
+authority, pairwise T4 candidate calls, confidence floor, and frontier seat.
+Amends D95's T4 residue while preserving T0 candidate-only and conservative
+T3. Preserves D99's completeness audit, lock/revalidation, diagnostics,
+convergence and recovery contracts; D20 registry self-containment; D21/D24
+reversibility/review; D97 retrieval; and D98 live graph behavior.

@@ -1,9 +1,11 @@
-# Sequencing — entity identity and retrieval (D95–D97)
+# Sequencing — entity identity and retrieval (D95–D100)
 
 **Status:** sequencing only (not design). Binding how:
 [`entity_identity_and_retrieval_design.md`](../designs/entity_identity_and_retrieval_design.md).
 **Why:**
-[`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md).
+[`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
+[`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
+[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md).
 **Plan reviews:**
 r1
 [`Codex`](../../design/reviews/REVIEW_codex-sol_entity_identity_retrieval_plan_2026-08-26.md) /
@@ -56,7 +58,9 @@ required: T0 never auto-merges.
    still embeds the spelling and re-glues Johns. (Profile is a new
    worker; `REFRESH_PROFILE` is an unused enum.)
 5. **Then** T0 lists candidates only; T3 may accept repeats; T4 on
-   empty/conflict/many; second mint when T4 says different.
+   empty/conflict/many. D100 replaces the delivered D99 tri-state residue with
+   one joint binary call that prefers a compatible existing candidate and
+   mints only when evidence positively supports `new`.
 6. Default retrieval recipes last (or coded in parallel, shipped after
    the type-cut and T0). Neighborhood already walks empty predicates;
    I.6 is recipe/API defaults, not inventing the hop. I.7 is D66 docs.
@@ -75,6 +79,7 @@ drain because “reviewers mentioned it” — operator waived BC.
 | WP-I.6 | D97 default path: `resolve` → lookup observations+relations → `neighborhood` empty predicates → ID-constrained fact-text search (`assured_operations.py`, `operation_executor.py`, `query_engine.py`); optional dynamic predicate (any stored name, including `other:`); no type filter | design §7; D97, D98 | WP-I.2, WP-I.5 | those files + recipes | hop returns `other:*` neighbors; observations via lookup not graph nodes; no new query-path LLM; “list banks” matches observation/profile text; ambiguity / unavailable live graph / caps are explicit |
 | WP-I.7 | Same-PR website pages for each user-visible WP above (D66) | D66 | with the WP it documents | `website/src/app/docs/**` | docs describe shipped behavior only |
 | WP-I.8 | **D99 uncertainty/convergence correction.** Tri-state T4; exclusions only from supported `different`; candidate/T4 completeness and provisional-mint evidence; bounded T3 outcome reasons; snapshot/unlocked-provider/locked-revalidation resolver; current-profile nomination into idempotent neighborhood convergence; benchmark `Unknown` guard after identity-only reads | design §3.1–3.3.3, §7, §9, §11; D99 | WP-I.5, WP-I.6 | resolver/model tests; convergence production composition and proposal dedupe; benchmark loop guard; same-PR website/project-status update if public behavior changes | insufficient/truncated decisions write no false cannot-link or authoritative novelty; stale provider decisions cannot commit; touched current profiles reach convergence; father/son stays split; T3 reasons aggregate; ambiguous lookup cannot terminate `Unknown` without a content read |
+| WP-I.9 | **D100 binary match-biased T4 cut.** Replace pairwise tri-state small→frontier calls with one configured-simple-model call over the complete bounded candidate snapshot; output one supplied candidate id or `new`; include aliases, current profile descriptions, salient facts, and T3 scores/gates; remove current provisional mint and confidence routing; roll resolver/prompt/output-schema/component and LoCoMo protocol generations while retaining D99 locking, diagnostics, convergence, and historical audit readability | design §3.1–3.3, §8–§11; D100 | WP-I.8 | resolver/model tests; Full-v17 benchmark protocol and diagnostics; same-PR shipped docs/project-status update where behavior is public | one T4 call per residue; compatible topic-diverse repeats match; father/son and same-name colleagues split on positive evidence; selected id belongs to supplied candidates; `new` excludes only supplied candidates; incomplete search remains audit-only; old D99 rows decode; no frontier/provisional current path |
 
 **Parallelism:** I.3 and I.4 may be **developed** in parallel after I.2;
 both must **merge before** I.5. I.6 implementation can start against
@@ -88,7 +93,8 @@ runs before app code that omits `type`. One release. No dual writer.
 resolver curve **and** per-tier diagnostics; T0 false-merge on common
 names is a failing test if I.5 regresses; I.5 does not merge without a
 passing post-I.4 eval record. I.8 additionally requires the D99 deterministic
-gates before another paid identity rerun; the existing uncalibrated cluster cut
+gates. I.9 requires the D100 binary-selection fixtures and one-call accounting
+before another paid identity rerun; the existing uncalibrated cluster cut
 remains review-only.
 
 **Non-goals:** reintroducing hats; expand/contract typed columns;
@@ -98,3 +104,5 @@ evidence; a `bank` type; keeping `resolve(type?)`; shipping
 that idea is an unchosen proposal
 ([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md)),
 and “enable it after a large corpus” is a rejected trigger.
+File/source-attribution changes are a separate contract and are not a WP-I.9
+dependency or deliverable.

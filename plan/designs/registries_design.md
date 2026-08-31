@@ -8,7 +8,15 @@
 > community K routing, and community refresh hints are removed. Pre-D98
 > graph-projection/community wording below is superseded.
 
-> **Binding D99 amendment (2026-08-28).** Identity uncertainty is provisional,
+> **Binding D100 amendment (2026-08-31).** T4 is one joint, match-biased
+> binary call over every candidate in the bounded snapshot. It selects one
+> candidate id or `new`; the current generation has no frontier seat,
+> confidence-routing branch, `insufficient_evidence`, or provisional mint.
+> D99's completeness audit, T3 diagnostics, provider revalidation, profile
+> convergence, and recovery behavior remain binding. Section 3 contains the
+> current cascade.
+
+> **Historical D99 amendment (2026-08-28; superseded in part by D100).** Identity uncertainty is provisional,
 > not a durable negative edge. Candidate completeness, tri-state T4,
 > post-profile neighborhood convergence, T3 gate diagnostics, and the resolver's
 > unlocked-provider/locked-revalidation transaction contract are normative in
@@ -21,7 +29,7 @@ analysis (`plan/analysis/entity_registry.md`) into binding design. Formalizes ob
 decisions **D15–D24** (and D4/D5). Numbers here are starting points to be measured on the
 golden set (D22) / a corpus slice — not committed constants.
 
-> **Amended 2026-08-26/28 (D95–D96, D99).** Identity, T0-as-verdict, and **entity types**
+> **Amended 2026-08-26/28/31 (D95–D96, D99–D100).** Identity, T0-as-verdict, and **entity types**
 > (including first-mint `entities.type` and domain/range) are superseded by
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md).
 > This file remains current for blocking, clustering, review, **predicate** packs,
@@ -195,7 +203,7 @@ an exact lemma lists distinct active entity ids and never decides identity.
 | **T1** | fuzzy blocking — `pg_trgm` GIN, recall-first low floor | **candidate generation, NOT a decision** | Postgres |
 | **T2** | phonetic — Daitch-Mokotoff (`fuzzystrmatch`), **not Soundex** | candidate generation | Postgres |
 | **T3** | embedding similarity, residue only | decision (mid band) | PostgreSQL P1 (D94) |
-| **T4** | LLM adjudication (small→frontier); human review for high blast-radius | decision (ambiguous band) | worker |
+| **T4** | one joint binary candidate-selection call on the configured simple model; human review remains separate for merge proposals | decision (ambiguous band) | worker |
 
 - **Thresholds are global, golden-set-measured, and versioned** (`resolver_versions`), stamped
   on every decision. No threshold ships without one global P/R curve plus blocking-stratum and
@@ -205,11 +213,13 @@ an exact lemma lists distinct active entity ids and never decides identity.
   floor. The old JW≥0.92 / cosine≥0.88 are placeholders to overwrite.
 - T0 hits are distinct active entity ids, not alias rows. A sole candidate
   with a current evidence-backed profile may T3-accept. Empty/conflicting
-  evidence or several candidates reaches tri-state T4. Only positively
-  supported `different` creates a durable `resolution_exclusions` cannot-link.
-  `insufficient_evidence` or a truncated candidate/adjudication prefix may mint
-  a merge-eligible provisional fragment but cannot claim exhaustive novelty.
-  Every decision retains candidate completeness and a bounded T3 outcome reason.
+  evidence or several candidates reaches one joint T4 call. T4 receives every
+  candidate in the bounded snapshot in deterministic T3-relevance order and
+  returns `match(candidate_id)` or `new`. Compatible or topically different
+  evidence favors the best existing candidate; `new` requires positive
+  distinction from every supplied candidate. Every decision retains candidate
+  completeness/order, T3 scores/gates, model/rationale, and one bounded T3
+  outcome reason.
 - Blocking (T1/T2) sets a hard recall ceiling, so cheap tiers **escalate near-misses to T4**,
   never auto-reject — textual recall is mediocre and over-rejection is a silent hole.
 - Coreference (D19) is resolved *inside the E2 extraction call* (all languages) so mentions
