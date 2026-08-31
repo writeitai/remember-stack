@@ -121,6 +121,7 @@ schema rollback, not a data-preserving one.
 | Infer `user` from a credential's owner | False attribution — the failure this design exists to prevent |
 | Principal in the query string | Copies erasable PII into logs/proxies/traces |
 | Accept attribution from any caller | The bearer authenticates a deployment, not a caller; the claim would be forgeable |
+| **Refuse** untrusted attribution (403) | Buys no safety over ignoring it — nothing forged is recorded either way — and lets a misconfigured deployment reject real documents |
 | Add the principal id to `IngestedVersion` | Breaks `extra="forbid"` clients and cannot be truthful on the D55 no-op |
 | Full assertion/participant model now | Much larger; needs a resolver contract and an assertion-grain forget target first |
 
@@ -140,9 +141,10 @@ schema rollback, not a data-preserving one.
 ## 5. Verification
 
 DB-free surface proofs: header pairing (both-or-neither), closed-vocabulary
-rejection, credential-is-not-a-user, trusted-perimeter refusal, unattributed
-ingest still served on an untrusted perimeter, reference absent from the
-request URL, legacy port compatibility, receipt shape unchanged.
+rejection, credential-is-not-a-user, untrusted attribution ignored while the
+document is still ingested, non-ASCII reference rejected as a clear 422
+rather than crashing, reference absent from the request URL, legacy port
+compatibility, receipt shape unchanged.
 
 PostgreSQL catalog proofs: record and read back; **no re-attribution on the
 D55 no-op**; deleting a principal keeps the document version.
