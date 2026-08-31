@@ -909,10 +909,30 @@ def _mount_ingest(
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         principal_kind: Annotated[
-            str | None, Header(alias="X-Ingest-Principal-Kind")
+            str | None,
+            Header(
+                alias="X-Ingest-Principal-Kind",
+                # Bound raw so an untrusted deployment can discard the pair
+                # before validating it; the real contract is described here
+                # because request-time validation would let malformed
+                # metadata fail an ingest that should simply ignore it.
+                description=(
+                    "One of: user | api_credential | service. Sent with"
+                    " X-Ingest-Principal-Ref. Ignored unless the deployment"
+                    " declares a trusted principal source; malformed values"
+                    " are 422 only on a trusted deployment."
+                ),
+            ),
         ] = None,
         principal_ref: Annotated[
-            str | None, Header(alias="X-Ingest-Principal-Ref")
+            str | None,
+            Header(
+                alias="X-Ingest-Principal-Ref",
+                description=(
+                    "Opaque caller-stable actor id, 1..255 printable ASCII"
+                    " characters. Sent with X-Ingest-Principal-Kind."
+                ),
+            ),
         ] = None,
     ) -> IngestedVersion:
         """Push one file through E0, optionally as a stable lineage version.

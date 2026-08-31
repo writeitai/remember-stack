@@ -4520,7 +4520,11 @@ nulls attribution (`ON DELETE SET NULL`) and never destroys the version.
 `IngestedVersion` is unchanged and the `ingested_by` keyword is omitted
 when absent, so old clients and old `IngestPort` implementations keep
 working. Migration `p9_21_0042` is a **single atomic transaction** (enum, table,
-nullable column, FK) and adds **no index**: nothing reads by principal, so
+nullable column, `NOT VALID` FK) and adds **no index**. The FK is not
+validated in-migration because a validated `ADD CONSTRAINT` scans the
+table under a write-blocking lock, while `NOT VALID` skips only
+pre-existing rows — which are all `NULL` here, since the column is added
+by the same migration — and still enforces every subsequent write. nothing reads by principal, so
 a partial index would be write cost for a query this slice does not have,
 and the earlier concurrent-build phasing was both unresumable across
 Alembic's autocommit boundary and impossible to pre-build by hand before

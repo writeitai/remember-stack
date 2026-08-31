@@ -125,7 +125,18 @@ is a later slice and can add it concurrently in its own revision, once the
 column exists.
 
 What remains — enum, table, nullable column, FK — is small and atomic: it
-commits whole or rolls back whole, holding no lock for a scan. No separate
+commits whole or rolls back whole.
+
+The FK is added **`NOT VALID`**. A validated `ADD CONSTRAINT` sequentially
+scans `document_versions` while holding `ShareRowExclusiveLock`, which
+blocks writers for the duration (measured: a concurrent `UPDATE` timed
+out). `NOT VALID` is a catalog-only change, and nothing is skipped by it:
+it forgoes checking only *pre-existing* rows, and the column is added by
+this same migration, so every existing row is `NULL` and cannot violate
+anything. The constraint is fully enforced for every subsequent insert and
+update either way. An operator who wants the planner's `convalidated` flag
+can run `VALIDATE CONSTRAINT` online at any time — it takes only
+`ShareUpdateExclusiveLock` and does not block writers. No separate
 lookup index on `ingest_principals` either: the UNIQUE constraint provides
 one, and a duplicate would be a second physical copy of PII.
 

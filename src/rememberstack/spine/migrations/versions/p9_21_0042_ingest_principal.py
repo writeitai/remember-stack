@@ -85,12 +85,33 @@ COMMENT ON COLUMN document_versions.ingested_by_principal_id IS
    version itself.';
 """
 
+# NOT VALID, and deliberately never validated here.
+#
+# A validated ADD CONSTRAINT sequentially scans `document_versions` while
+# holding ShareRowExclusiveLock, which blocks writers for the duration --
+# measured, with a concurrent UPDATE timing out. NOT VALID is a catalog-only
+# change: no scan, no write-blocking lock.
+#
+# Nothing is skipped by doing so. NOT VALID only forgoes checking rows that
+# already exist, and `ingested_by_principal_id` was added by this same
+# migration, so every existing row is NULL by construction and cannot
+# violate anything. The constraint is fully enforced for every subsequent
+# insert and update either way.
+#
+# Splitting VALIDATE into its own transaction would restore the planner's
+# `convalidated` flag, but that needs a second revision or an autocommit
+# block (which already cost us restart safety once). An operator who wants
+# the flag can run it online at any time -- VALIDATE takes only
+# ShareUpdateExclusiveLock and does not block writers:
+#   ALTER TABLE document_versions
+#     VALIDATE CONSTRAINT fk_document_versions_ingest_principal;
 _ADD_FK = """
 ALTER TABLE document_versions
   ADD CONSTRAINT fk_document_versions_ingest_principal
     FOREIGN KEY (deployment_id, ingested_by_principal_id)
     REFERENCES ingest_principals (deployment_id, principal_id)
-    ON DELETE SET NULL (ingested_by_principal_id);
+    ON DELETE SET NULL (ingested_by_principal_id)
+    NOT VALID;
 """
 
 
