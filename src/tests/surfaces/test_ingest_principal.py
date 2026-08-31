@@ -13,8 +13,8 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
-from fastapi import Response
 from fastapi.testclient import TestClient
+from httpx import Response
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
