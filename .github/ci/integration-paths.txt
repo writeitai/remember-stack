@@ -26,11 +26,12 @@ src/tests/spine/test_work_ledger.py
 src/tests/surfaces/test_cost_export.py
 src/tests/surfaces/test_envelope_contract.py
 src/tests/surfaces/test_graph_queries.py
+src/tests/surfaces/test_ingest_principal.py
 src/tests/surfaces/test_open_query_batch_f.py
+src/tests/surfaces/test_operation_registry.py
 src/tests/surfaces/test_ops_cli.py
 src/tests/surfaces/test_query_sandbox_batch_b.py
 src/tests/surfaces/test_query_sandbox_batch_c.py
-src/tests/surfaces/test_operation_registry.py
 src/tests/surfaces/test_retrieval_api.py
 src/tests/surfaces/test_retrieval_batch_b.py
 src/tests/surfaces/test_retrieval_batch_c.py

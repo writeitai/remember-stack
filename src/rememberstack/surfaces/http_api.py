@@ -46,6 +46,8 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
+from rememberstack.model import IngestPrincipal
+from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
@@ -77,7 +79,11 @@ class IngestPort(Protocol):
     """The E0 ingest operations the HTTP surface may expose."""
 
     def ingest(
-        self, *, deployment_id: UUID, upload: DocumentUpload
+        self,
+        *,
+        deployment_id: UUID,
+        upload: DocumentUpload,
+        ingested_by: IngestPrincipal | None = None,
     ) -> IngestedVersion: ...
 
     def ingest_observed(
@@ -91,6 +97,7 @@ class IngestPort(Protocol):
         source_modified_at: datetime | None,
         source_version_ref: str | None,
         sync_cycle_id: UUID | None,
+        ingested_by: IngestPrincipal | None = None,
     ) -> IngestedVersion: ...
 
 
@@ -297,6 +304,7 @@ def build_api(
     pipeline_readiness: PipelineReadinessPort | None = None,
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
+    trusted_principal_source: bool = False,
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -306,6 +314,13 @@ def build_api(
     on one perimeter credential; and `spend_lease` holds estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
+
+    `trusted_principal_source` declares that this deployment's perimeter is
+    reached only by a caller entitled to state who ingested a document (a
+    managed control plane). It is **off by default**: the deployment-wide
+    bearer identifies a deployment, not a caller, so elsewhere an asserted
+    `X-Ingest-Principal-*` pair is **ignored, never rejected** — metadata
+    must not be able to fail an otherwise valid ingest.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -428,6 +443,7 @@ def build_api(
             ingest=ingest,
             deployment_id=deployment_id,
             max_body_bytes=ingest_body_max_bytes,
+            trusted_principal_source=trusted_principal_source,
         )
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
@@ -842,8 +858,42 @@ async def _send_json_error(*, send: object, status: int, detail: str) -> None:
     await send({"type": "http.response.body", "body": body})  # type: ignore[operator]
 
 
+def _parse_ingest_principal(
+    *, kind: str | None, ref: str | None
+) -> IngestPrincipal | None:
+    """Validate a trusted attribution pair, or raise a 422 explaining why.
+
+    Only reached on a trusted perimeter, so a malformed pair here is a real
+    client error worth reporting rather than metadata that should be dropped.
+    """
+    if kind is None and ref is None:
+        return None
+    if kind is None or ref is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be"
+                " supplied together"
+            ),
+        )
+    try:
+        return IngestPrincipal(kind=IngestPrincipalKind(kind), external_ref=ref)
+    except ValueError as error:
+        # ValueError covers the unknown-kind enum miss and the model's
+        # printable-ASCII/length rules. Without this the model error escaped
+        # as a 500 — a metadata field crashing the request.
+        raise HTTPException(
+            status_code=422, detail="invalid_ingest_principal"
+        ) from error
+
+
 def _mount_ingest(
-    *, app: FastAPI, ingest: IngestPort, deployment_id: UUID, max_body_bytes: int | None
+    *,
+    app: FastAPI,
+    ingest: IngestPort,
+    deployment_id: UUID,
+    max_body_bytes: int | None,
+    trusted_principal_source: bool = False,
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
@@ -858,8 +908,47 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        principal_kind: Annotated[
+            str | None,
+            Header(
+                alias="X-Ingest-Principal-Kind",
+                # Bound raw so an untrusted deployment can discard the pair
+                # before validating it; the real contract is described here
+                # because request-time validation would let malformed
+                # metadata fail an ingest that should simply ignore it.
+                description=(
+                    "One of: user | api_credential | service. Sent with"
+                    " X-Ingest-Principal-Ref. Ignored unless the deployment"
+                    " declares a trusted principal source; malformed values"
+                    " are 422 only on a trusted deployment."
+                ),
+            ),
+        ] = None,
+        principal_ref: Annotated[
+            str | None,
+            Header(
+                alias="X-Ingest-Principal-Ref",
+                description=(
+                    "Opaque caller-stable actor id, 1..255 printable ASCII"
+                    " characters. Sent with X-Ingest-Principal-Kind."
+                ),
+            ),
+        ] = None,
     ) -> IngestedVersion:
-        """Push one file through E0, optionally as a stable lineage version."""
+        """Push one file through E0, optionally as a stable lineage version.
+
+        Attribution travels in **headers, never the query string**: the
+        reference is erasable PII and a URL is copied verbatim into access
+        logs, proxies and traces, where a later principal deletion cannot
+        reach it.
+
+        The pair is honoured only when the composing profile declares its
+        perimeter trusted (``trusted_principal_source``). The deployment-wide
+        bearer identifies a deployment, not a caller, so elsewhere any client
+        could assert it was a person. Untrusted attribution is **ignored, not
+        rejected**: nothing forged is recorded either way, and refusing would
+        let a metadata concern fail an otherwise valid ingest.
+        """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
             # holds if a server ever passes an unframed oversized body through
@@ -869,6 +958,16 @@ def _mount_ingest(
                 status_code=422,
                 detail="source_kind and source_ref must be supplied together",
             )
+        # The headers are taken RAW and are not validated at request binding.
+        # An untrusted deployment must discard them without inspection: if
+        # malformed attribution could 422, a metadata concern would still fail
+        # an otherwise valid upload, which is exactly what ignoring is for.
+        if not trusted_principal_source:
+            principal_kind, principal_ref = None, None
+        ingested_by = _parse_ingest_principal(kind=principal_kind, ref=principal_ref)
+        # An old structural IngestPort has no `ingested_by` keyword; passing it
+        # unconditionally would break an unattributed call that used to work.
+        attribution = {} if ingested_by is None else {"ingested_by": ingested_by}
         if source_modified_at is not None and (
             source_modified_at.tzinfo is None
             or source_modified_at.utcoffset() != timedelta(0)
@@ -892,7 +991,9 @@ def _mount_ingest(
                         " source_kind/source_ref"
                     ),
                 )
-            return ingest.ingest(deployment_id=deployment_id, upload=upload)
+            return ingest.ingest(
+                deployment_id=deployment_id, upload=upload, **attribution
+            )
         return ingest.ingest_observed(
             deployment_id=deployment_id,
             source_kind=source_kind,
@@ -902,6 +1003,7 @@ def _mount_ingest(
             source_modified_at=source_modified_at,
             source_version_ref=source_version_ref,
             sync_cycle_id=None,
+            **attribution,
         )
 
 

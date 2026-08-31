@@ -38,6 +38,8 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import SyntheticRootRecord
 from rememberstack.model import UploadRecord
+from rememberstack.model.documents import IngestPrincipal
+from rememberstack.model.documents import IngestPrincipalKind
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -90,6 +92,21 @@ class DocumentCatalog:
             )
             created = latest is None or latest["content_hash"] != record.content_hash
             version_id = uuid4() if created or latest is None else latest["version_id"]
+            principal_id: UUID | None = None
+            if created and record.ingested_by is not None:
+                # Attribution is creation-scoped: only a NEW version records a
+                # principal. Under D55 identical bytes return the existing
+                # version, and re-submission by a different actor must not
+                # rewrite immutable attribution.
+                principal_id = connection.execute(
+                    _UPSERT_PRINCIPAL,
+                    {
+                        "principal_id": uuid4(),
+                        "deployment_id": record.deployment_id,
+                        "kind": record.ingested_by.kind.value,
+                        "external_ref": record.ingested_by.external_ref,
+                    },
+                ).scalar_one()
             if created:
                 connection.execute(
                     _INSERT_VERSION,
@@ -101,6 +118,7 @@ class DocumentCatalog:
                         "source_modified_at": record.source_modified_at,
                         "source_version_ref": record.source_version_ref,
                         "sync_cycle_id": record.sync_cycle_id,
+                        "ingested_by_principal_id": principal_id,
                     },
                 )
             elif record.source_version_ref is not None:
@@ -134,6 +152,31 @@ class DocumentCatalog:
                 content_hash=record.content_hash,
                 created=created,
             )
+
+    def version_principal(
+        self, *, deployment_id: UUID, version_id: UUID
+    ) -> IngestPrincipal | None:
+        """Return who created this version, or None when unattributed.
+
+        Unattributed is the honest answer for versions ingested without a
+        principal (including every row predating attribution) and for a
+        principal that has since been erased — the FK nulls rather than
+        cascading, so erasing a person never destroys the document.
+        """
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    _SELECT_VERSION_PRINCIPAL,
+                    {"deployment_id": deployment_id, "version_id": version_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        return IngestPrincipal(
+            kind=IngestPrincipalKind(row["kind"]), external_ref=row["external_ref"]
+        )
 
     def convert_source(self, *, version_id: UUID) -> ConvertSource:
         """Load what the convert stage needs about one document version."""
@@ -588,14 +631,41 @@ _INSERT_VERSION = text(
     """
     INSERT INTO document_versions (
         version_id, deployment_id, doc_id, content_hash, version_no, status,
-        source_modified_at, source_version_ref, sync_cycle_id
+        source_modified_at, source_version_ref, sync_cycle_id,
+        ingested_by_principal_id
     ) VALUES (
         :version_id, :deployment_id, :doc_id, :content_hash,
         (SELECT coalesce(max(version_no), 0) + 1 FROM document_versions
          WHERE deployment_id = :deployment_id AND doc_id = :doc_id),
         'converting',
-        :source_modified_at, :source_version_ref, :sync_cycle_id
+        :source_modified_at, :source_version_ref, :sync_cycle_id,
+        :ingested_by_principal_id
     )
+    """
+)
+
+_UPSERT_PRINCIPAL = text(
+    """
+    INSERT INTO ingest_principals (
+        principal_id, deployment_id, kind, external_ref
+    ) VALUES (
+        :principal_id, :deployment_id, CAST(:kind AS ingest_principal_kind),
+        :external_ref
+    )
+    ON CONFLICT (deployment_id, kind, external_ref) DO UPDATE
+        SET last_seen_at = now()
+    RETURNING principal_id
+    """
+)
+
+_SELECT_VERSION_PRINCIPAL = text(
+    """
+    SELECT p.principal_id, p.kind::text AS kind, p.external_ref
+    FROM document_versions AS v
+    JOIN ingest_principals AS p
+      ON p.deployment_id = v.deployment_id
+     AND p.principal_id = v.ingested_by_principal_id
+    WHERE v.deployment_id = :deployment_id AND v.version_id = :version_id
     """
 )
 

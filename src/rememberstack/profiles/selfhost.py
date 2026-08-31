@@ -112,6 +112,19 @@ class SelfHostSettings(BaseSettings):
     limit — caps are deployment policy, never an engine default (D61); a
     managed host sets its published bound here so it is enforced where the
     body is actually received."""
+    trusted_principal_source: bool = False
+    """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
+
+    Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
+    class carries the `REMEMBERSTACK_SELFHOST_` prefix).
+
+    Off by default. The perimeter credential authenticates a *deployment*,
+    not a caller, so on an ordinary or public perimeter any client could
+    assert it was a person; attribution there is ignored. Set this **only**
+    when the deployment is reachable solely by a control plane that has
+    already authenticated the actor it names — e.g. a managed data plane
+    behind a private transit gateway. Enabling it on a publicly reachable
+    deployment makes attribution meaningless, not merely permissive."""
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
@@ -755,6 +768,7 @@ class SelfHostProfile:
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
             ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
+            trusted_principal_source=self._settings.trusted_principal_source,
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),

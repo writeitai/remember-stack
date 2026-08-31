@@ -43,8 +43,11 @@ class _CountingIngest:
     def __init__(self) -> None:
         self.calls = 0
 
-    def ingest(self, *, deployment_id: UUID, upload: object) -> IngestedVersion:
-        """Count one anonymous ingest."""
+    def ingest(
+        self, *, deployment_id: UUID, upload: object, ingested_by: object | None = None
+    ) -> IngestedVersion:
+        """Count one ingest, attributed or not."""
+        _ = ingested_by
         self.calls += 1
         return IngestedVersion(
             deployment_id=deployment_id,
