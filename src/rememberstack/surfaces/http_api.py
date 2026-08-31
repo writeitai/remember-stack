@@ -318,8 +318,9 @@ def build_api(
     `trusted_principal_source` declares that this deployment's perimeter is
     reached only by a caller entitled to state who ingested a document (a
     managed control plane). It is **off by default**: the deployment-wide
-    bearer identifies a deployment, not a caller, so an ordinary client
-    asserting `X-Ingest-Principal-*` is refused rather than believed.
+    bearer identifies a deployment, not a caller, so elsewhere an asserted
+    `X-Ingest-Principal-*` pair is **ignored, never rejected** — metadata
+    must not be able to fail an otherwise valid ingest.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -857,6 +858,35 @@ async def _send_json_error(*, send: object, status: int, detail: str) -> None:
     await send({"type": "http.response.body", "body": body})  # type: ignore[operator]
 
 
+def _parse_ingest_principal(
+    *, kind: str | None, ref: str | None
+) -> IngestPrincipal | None:
+    """Validate a trusted attribution pair, or raise a 422 explaining why.
+
+    Only reached on a trusted perimeter, so a malformed pair here is a real
+    client error worth reporting rather than metadata that should be dropped.
+    """
+    if kind is None and ref is None:
+        return None
+    if kind is None or ref is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be"
+                " supplied together"
+            ),
+        )
+    try:
+        return IngestPrincipal(kind=IngestPrincipalKind(kind), external_ref=ref)
+    except ValueError as error:
+        # ValueError covers the unknown-kind enum miss and the model's
+        # printable-ASCII/length rules. Without this the model error escaped
+        # as a 500 — a metadata field crashing the request.
+        raise HTTPException(
+            status_code=422, detail="invalid_ingest_principal"
+        ) from error
+
+
 def _mount_ingest(
     *,
     app: FastAPI,
@@ -879,11 +909,10 @@ def _mount_ingest(
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         principal_kind: Annotated[
-            IngestPrincipalKind | None, Header(alias="X-Ingest-Principal-Kind")
+            str | None, Header(alias="X-Ingest-Principal-Kind")
         ] = None,
         principal_ref: Annotated[
-            str | None,
-            Header(alias="X-Ingest-Principal-Ref", min_length=1, max_length=255),
+            str | None, Header(alias="X-Ingest-Principal-Ref")
         ] = None,
     ) -> IngestedVersion:
         """Push one file through E0, optionally as a stable lineage version.
@@ -909,26 +938,13 @@ def _mount_ingest(
                 status_code=422,
                 detail="source_kind and source_ref must be supplied together",
             )
-        if (principal_kind is None) != (principal_ref is None):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be"
-                    " supplied together"
-                ),
-            )
+        # The headers are taken RAW and are not validated at request binding.
+        # An untrusted deployment must discard them without inspection: if
+        # malformed attribution could 422, a metadata concern would still fail
+        # an otherwise valid upload, which is exactly what ignoring is for.
         if not trusted_principal_source:
-            # Untrusted perimeter: DROP the claim, never fail the upload.
-            # Refusing would let a metadata concern break the core function —
-            # a misconfigured deployment would reject real documents. Ignoring
-            # is equally safe against forgery (nothing is recorded either way)
-            # and strictly better for correctness.
             principal_kind, principal_ref = None, None
-        ingested_by = (
-            None
-            if principal_kind is None or principal_ref is None
-            else IngestPrincipal(kind=principal_kind, external_ref=principal_ref)
-        )
+        ingested_by = _parse_ingest_principal(kind=principal_kind, ref=principal_ref)
         # An old structural IngestPort has no `ingested_by` keyword; passing it
         # unconditionally would break an unattributed call that used to work.
         attribution = {} if ingested_by is None else {"ingested_by": ingested_by}

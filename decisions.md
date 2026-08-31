@@ -4519,9 +4519,13 @@ than an encoding crash. Deleting a principal
 nulls attribution (`ON DELETE SET NULL`) and never destroys the version.
 `IngestedVersion` is unchanged and the `ingested_by` keyword is omitted
 when absent, so old clients and old `IngestPort` implementations keep
-working. Migration `p9_21_0042` is phased (nullable column → FK `NOT
-VALID` → index `CONCURRENTLY` → `VALIDATE`) so a populated
-`document_versions` is never scanned under a write-blocking lock.
+working. Migration `p9_21_0042` is a **single atomic transaction** (enum, table,
+nullable column, FK) and adds **no index**: nothing reads by principal, so
+a partial index would be write cost for a query this slice does not have,
+and the earlier concurrent-build phasing was both unresumable across
+Alembic's autocommit boundary and impossible to pre-build by hand before
+the column existed. The later "documents by principal" operation adds the
+index in its own revision.
 
 **Why.** D50 makes content-level authorization and per-user scoping
 library non-goals; that is about **authorization**. Attribution is a

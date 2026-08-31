@@ -57,23 +57,24 @@ COMMENT ON TABLE ingest_principals IS
 # provides one. A duplicate would double write cost and, worse, keep a second
 # physical copy of erasable PII.
 
-# ONE transaction, deliberately.
+# ONE transaction, and no index.
 #
-# An earlier revision built the index CONCURRENTLY inside an autocommit
-# block. That is gentler on a huge table, but Alembic commits everything
-# before entering the block, so an interruption there left the type, table,
-# column and FK committed with the revision unstamped — and the rerun then
-# died on `type "ingest_principal_kind" already exists`. A migration that
-# cannot be resumed is a worse failure than a lock.
+# An earlier revision built a partial index on ingested_by_principal_id
+# CONCURRENTLY inside an autocommit block. Alembic commits before entering
+# that block, so an interruption stranded committed objects with the
+# revision unstamped and the rerun died on `type … already exists`. The
+# fallback advice -- pre-build it by hand -- was impossible: the column does
+# not exist before this migration runs.
 #
-# Atomicity wins here: this either commits whole or rolls back whole. The
-# index build takes a SHARE lock on `document_versions` for its duration
-# (readers unaffected, writers wait). On a deployment large enough for that
-# to matter, build it by hand first —
-#   CREATE INDEX CONCURRENTLY ix_docversions_principal
-#     ON document_versions (deployment_id, ingested_by_principal_id)
-#     WHERE ingested_by_principal_id IS NOT NULL;
-# — and the IF NOT EXISTS below makes this step a no-op.
+# The real answer is that the index is not needed. Nothing reads by
+# principal: `version_principal()` anchors on the version primary key and
+# joins principals by theirs. A partial index would be pure write cost for
+# a query this slice does not have. The bounded "documents by principal"
+# operation is a later slice; it can add the index in its own revision,
+# concurrently, once the column already exists.
+#
+# What remains is small enough to be one atomic transaction: it commits
+# whole or rolls back whole, with no lock held for a scan.
 _ADD_COLUMN = """
 ALTER TABLE document_versions
   ADD COLUMN ingested_by_principal_id uuid;
@@ -92,12 +93,6 @@ ALTER TABLE document_versions
     ON DELETE SET NULL (ingested_by_principal_id);
 """
 
-_CREATE_INDEX = """
-CREATE INDEX IF NOT EXISTS ix_docversions_principal
-  ON document_versions (deployment_id, ingested_by_principal_id)
-  WHERE ingested_by_principal_id IS NOT NULL;
-"""
-
 
 def upgrade() -> None:
     """Add the principal registry and attribution column in one transaction."""
@@ -105,12 +100,10 @@ def upgrade() -> None:
     op.execute(_CREATE_TABLE)
     op.execute(_ADD_COLUMN)
     op.execute(_ADD_FK)
-    op.execute(_CREATE_INDEX)
 
 
 def downgrade() -> None:
     """Drop attribution; existing versions lose their principal reference."""
-    op.execute("DROP INDEX IF EXISTS ix_docversions_principal")
     op.execute(
         "ALTER TABLE document_versions "
         "DROP CONSTRAINT IF EXISTS fk_document_versions_ingest_principal, "

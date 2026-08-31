@@ -115,6 +115,9 @@ class SelfHostSettings(BaseSettings):
     trusted_principal_source: bool = False
     """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
 
+    Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
+    class carries the `REMEMBERSTACK_SELFHOST_` prefix).
+
     Off by default. The perimeter credential authenticates a *deployment*,
     not a caller, so on an ordinary or public perimeter any client could
     assert it was a person; attribution there is ignored. Set this **only**

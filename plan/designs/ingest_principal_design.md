@@ -54,7 +54,8 @@ co-uploader list and no re-attribution path.
 ### 2.3 Trusted perimeters only
 
 The composing profile surfaces this as `trusted_principal_source`
-(`REMEMBERSTACK_TRUSTED_PRINCIPAL_SOURCE`), default off. Enable it **only**
+(env **`REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE`** — the self-host
+settings class carries the `REMEMBERSTACK_SELFHOST_` prefix), default off. Enable it **only**
 where the deployment is reachable solely by a control plane that has
 already authenticated the actor it names — a managed data plane behind a
 private transit gateway. On a publicly reachable deployment it makes
@@ -108,20 +109,25 @@ the next slice.
 
 ### 2.7 Migration
 
-**One transaction**, deliberately. An earlier revision built the index
-`CONCURRENTLY` in an autocommit block to spare a huge table a write lock —
-but Alembic commits everything before entering that block, so an
-interruption left the type, table, column and FK committed with the
-revision unstamped, and the rerun died on `type … already exists`. A
-migration that cannot be resumed is a worse failure than a lock, so
-atomicity wins: it commits whole or rolls back whole.
+**One transaction, and no index.** An earlier revision built a partial
+index on `ingested_by_principal_id` `CONCURRENTLY` in an autocommit block
+to spare a large table a write lock. Alembic commits before entering that
+block, so an interruption stranded committed objects with the revision
+unstamped and the rerun died on `type … already exists`; the advertised
+fallback (pre-build it by hand) was impossible, because the column does
+not exist until this migration runs.
 
-The index build takes a `SHARE` lock on `document_versions` for its
-duration (readers unaffected, writers wait). A deployment large enough for
-that to matter builds it by hand with `CREATE INDEX CONCURRENTLY` first;
-the migration's `IF NOT EXISTS` then makes that step a no-op. No separate
-lookup index on `ingest_principals`: the UNIQUE constraint provides one,
-and a duplicate would be a second physical copy of PII.
+The resolution is that **the index is not needed**. Nothing reads by
+principal: `version_principal()` anchors on the version primary key and
+joins principals by theirs. The index would be pure write cost for a query
+this slice does not have. The bounded "documents by principal" operation
+is a later slice and can add it concurrently in its own revision, once the
+column exists.
+
+What remains — enum, table, nullable column, FK — is small and atomic: it
+commits whole or rolls back whole, holding no lock for a scan. No separate
+lookup index on `ingest_principals` either: the UNIQUE constraint provides
+one, and a duplicate would be a second physical copy of PII.
 
 `downgrade()` drops attribution and therefore **destroys** it; it is a
 schema rollback, not a data-preserving one.

@@ -282,14 +282,58 @@ def test_empty_external_ref_is_refused() -> None:
 
 
 def test_non_ascii_reference_is_a_clear_rejection_not_a_crash() -> None:
-    """The header transport cannot carry non-ASCII, so the contract says so.
-
-    Without the constraint this surfaced as a UnicodeEncodeError at the
-    transport — a metadata field crashing an upload. Callers use opaque ids,
-    so the restriction costs nothing real.
-    """
+    """The header transport cannot carry non-ASCII, so the contract says so."""
     with pytest.raises(ValidationError):
         IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="user:Novák")
+
+
+def test_non_ascii_header_is_422_over_http_not_500() -> None:
+    """The rejection must happen as an HTTP contract error, not a crash.
+
+    Validating only the model left the ValidationError escaping the handler
+    as a 500 — a metadata field taking down the request it was attached to.
+    """
+    ingest = _RecordingIngest()
+    # Sent as raw bytes: a normal client refuses to encode non-ASCII into a
+    # header at all, so only a byte-level caller can deliver this. Starlette
+    # decodes header bytes as latin-1, which is how it reaches the handler.
+    response = _client(ingest).post(
+        "/ingest",
+        params={"filename": "notes.txt", "mime": "text/plain"},
+        content=b"hello",
+        headers={
+            b"X-Ingest-Principal-Kind": b"user",
+            b"X-Ingest-Principal-Ref": "user:Novák".encode(),
+        },
+    )
+    assert response.status_code == 422
+    assert ingest.calls == 0
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        _attribution("user"),
+        _attribution(ref="user:x"),
+        _attribution("robot", "r1"),
+        {"X-Ingest-Principal-Kind": "user", "X-Ingest-Principal-Ref": ""},
+    ],
+)
+def test_untrusted_perimeter_ignores_even_malformed_attribution(
+    headers: dict[str, str],
+) -> None:
+    """Ignoring must not depend on the metadata being well-formed.
+
+    Validating the pair before the trust check meant a half-pair or an
+    unknown kind still returned 422 on an untrusted deployment — a metadata
+    concern failing a valid upload, which is the thing ignoring exists to
+    prevent.
+    """
+    ingest = _RecordingIngest()
+    response = _post(_client(ingest, trusted=False), **headers)
+    assert response.status_code == 200
+    assert ingest.calls == 1
+    assert ingest.last_principal is None
 
 
 # --------------------------------------------------------------------------
