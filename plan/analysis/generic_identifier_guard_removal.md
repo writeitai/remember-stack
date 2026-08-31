@@ -120,12 +120,18 @@ consecutive runs with freshly minted UUIDs each time.
 **This costs measurable time.** `similarity()` is computed over the filtered
 candidate set, and the `ix_entities_name_trgm` GIN index does not serve an
 `ORDER BY`. On a deliberately pathological shape — 100,000 active entities
-all sharing one fuzzy alias — the warm median went from 455 ms to 512 ms,
-**+12.5%**, with no new scan node; the extra cost is CPU and sort work. An
-independent reviewer measured +31% on the same shape, so treat the magnitude
-as machine-dependent and the direction as settled. The trade is accepted:
-that shape is already degenerate, and this key is precisely what keeps the
-correct referent inside the truncated prefix.
+all sharing one fuzzy alias — three independent runs measured **+3.3%,
++12.5% and +31%** warm-median (e.g. 455 ms → 512 ms), with no new scan node.
+
+The spread is worth taking seriously rather than averaging away: this is CPU
+and sort work layered on a query that is already slow, so it moves with
+machine and cache state. What all three runs agree on is the sign. The
+honest claim is "a real but modest regression, concentrated in exactly the
+overflow case", and any single percentage quoted from one run would be
+overprecise.
+
+The trade is accepted: that shape is already degenerate, and this key is
+precisely what keeps the correct referent inside the truncated prefix.
 
 ## What replaces it
 
@@ -199,10 +205,10 @@ from. Dropping the table removes both.
 
 ## Alternatives considered
 
-- **Raise the floor** (say to 10). Keeps a mechanism whose signal reaches
-  no decision, still counts entity rows rather than people, and still
-  outranks score once it fires. It moves the threshold without fixing what
-  the threshold gates.
+- **Raise the floor** (say to 10). Keeps a mechanism that still counts
+  entity rows rather than people, and still outranks score once it fires —
+  so above the floor the inversion is unchanged. It moves the threshold
+  without fixing what the threshold gates.
 - **Demote to a tiebreak after score.** Preserves the truncation-priority
   benefit and removes the inversion. Rejected for now on leanness grounds:
   it retains a hot-path write and a table for a benefit not yet measured.

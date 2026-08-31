@@ -1331,20 +1331,34 @@ def test_shared_lemma_stays_a_usable_blocking_signal(database_engine: Engine) ->
 
 
 def _seed_entity_with_alias(
-    *, connection: Connection, canonical_name: str, alias_text: str
+    *,
+    connection: Connection,
+    canonical_name: str,
+    alias_text: str,
+    entity_id: UUID | None = None,
+    created_at: str | None = None,
 ) -> UUID:
-    """Insert one active entity whose alias differs from its canonical name."""
-    entity_id = uuid4()
+    """Insert one active entity whose alias differs from its canonical name.
+
+    `entity_id` and `created_at` are injectable so ordering proofs can make
+    the tiebreak keys adversarial instead of leaving them to chance: rows
+    inserted in one transaction otherwise share `now()`, and random UUIDs
+    would let a broken ordering pass some fraction of runs.
+    """
+    entity_id = entity_id if entity_id is not None else uuid4()
     connection.execute(
         text(
             "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
-            " normalized_name) VALUES (:entity, :deployment, :name, :lemma)"
+            " normalized_name, created_at) VALUES"
+            " (:entity, :deployment, :name, :lemma,"
+            "  coalesce(CAST(:created_at AS timestamptz), now()))"
         ),
         {
             "entity": entity_id,
             "deployment": _DEPLOYMENT_ID,
             "name": canonical_name,
             "lemma": normalized_lemma(surface=canonical_name),
+            "created_at": created_at,
         },
     )
     connection.execute(
@@ -1377,36 +1391,57 @@ def test_generic_alias_overflow_keeps_the_resembling_referent(
     query actually resembles must survive the cut — under the removed guard
     every one of these candidates was flagged, which left the survivors to
     be picked by a random UUID.
+
+    Both weaker keys are made ADVERSARIAL so this cannot pass by luck: the
+    referent is given the largest `entity_id` and the newest `created_at`,
+    so if the canonical-name key were removed it would sort dead last of
+    thirteen and be truncated away every single run, not one run in
+    thirteen.
     """
     resolver = _resolver(
         engine=database_engine,
         provider=FakeModelProvider(generate_router=_new_entity_router),
     )
     shared_alias = "Klein"  # the promiscuous surface every candidate answers to
+    crowd_names = (
+        "Alpha",
+        "Beta",
+        "Gamma",
+        "Delta",
+        "Epsilon",
+        "Zeta",
+        "Eta",
+        "Theta",
+        "Iota",
+        "Kappa",
+        "Lambda",
+        "Mu",
+    )
     with database_engine.begin() as connection:
         crowd = [
             _seed_entity_with_alias(
                 connection=connection,
                 canonical_name=f"Klein {suffix}",
                 alias_text=shared_alias,
+                entity_id=UUID(int=index + 1),  # smallest ids
+                created_at=f"2020-01-{index + 1:02d}T00:00:00Z",  # oldest
             )
-            for suffix in ("Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta")
+            for index, suffix in enumerate(crowd_names)
         ]
-        # The referent resembles the query, but only answers to the generic
-        # alias — so nothing but the canonical-name key can rescue it, and it
-        # is seeded LAST so created_at cannot be what saves it either.
+        # The referent resembles the query but answers only to the generic
+        # alias, so nothing except the canonical-name key can rescue it — and
+        # it is deliberately the newest row with the highest id, so neither
+        # weaker key can.
         referent = _seed_entity_with_alias(
-            connection=connection, canonical_name="Kleinn", alias_text=shared_alias
-        )
-        crowd.extend(
-            _seed_entity_with_alias(
-                connection=connection,
-                canonical_name=f"Klein {suffix}",
-                alias_text=shared_alias,
-            )
-            for suffix in ("Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu")
+            connection=connection,
+            canonical_name="Kleinn",
+            alias_text=shared_alias,
+            entity_id=UUID(int=(1 << 128) - 1),
+            created_at="2030-01-01T00:00:00Z",
         )
     assert len(crowd) == 12  # strictly more than blocking_limit
+    assert max(crowd) < referent  # the id key would rank it last
+    assert referent not in crowd
 
     query_lemma = normalized_lemma(surface="Kleinn")
     with database_engine.connect() as connection:
@@ -1418,6 +1453,58 @@ def test_generic_alias_overflow_keeps_the_resembling_referent(
     assert len(snapshot.candidates) == 10  # the bounded prefix, not all 13
     assert snapshot.candidates[0].entity_id == referent
     assert snapshot.candidates[0].canonical_name == "Kleinn"
+
+
+def test_identical_canonical_names_break_the_tie_by_age_not_by_uuid(
+    database_engine: Engine,
+) -> None:
+    """When every ranking signal ties, the OLDEST entity wins — not the luckiest.
+
+    Three entities share one alias AND one canonical name, so trigram score
+    and canonical-name similarity are identical for all of them. The only
+    thing left is `created_at` before `entity_id`. The oldest row is given
+    the LARGEST id, so a ranking that fell through to the UUID would put it
+    last; ranking by age puts it first.
+    """
+    resolver = _resolver(
+        engine=database_engine,
+        provider=FakeModelProvider(generate_router=_new_entity_router),
+    )
+    with database_engine.begin() as connection:
+        oldest = _seed_entity_with_alias(
+            connection=connection,
+            canonical_name="Klein",
+            alias_text="Klein",
+            entity_id=UUID(int=(1 << 128) - 1),  # largest id, oldest row
+            created_at="2020-01-01T00:00:00Z",
+        )
+        middle = _seed_entity_with_alias(
+            connection=connection,
+            canonical_name="Klein",
+            alias_text="Klein",
+            entity_id=UUID(int=2),
+            created_at="2021-01-01T00:00:00Z",
+        )
+        newest = _seed_entity_with_alias(
+            connection=connection,
+            canonical_name="Klein",
+            alias_text="Klein",
+            entity_id=UUID(int=1),  # smallest id, newest row
+            created_at="2022-01-01T00:00:00Z",
+        )
+
+    with database_engine.connect() as connection:
+        ranked = resolver._blocked_candidates(  # noqa: SLF001 - pins SQL ordering
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            lemma=normalized_lemma(surface="Kleinn"),
+        )
+
+    assert tuple(candidate.entity_id for candidate in ranked) == (
+        oldest,
+        middle,
+        newest,
+    )
 
 
 def test_ungrounded_surface_does_not_write_source_alias(

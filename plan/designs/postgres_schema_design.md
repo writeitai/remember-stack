@@ -911,7 +911,7 @@ CREATE TABLE merge_events (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   survivor_id     uuid NOT NULL,               -- the entity that absorbed the other
   absorbed_id     uuid NOT NULL,               -- the entity redirected into survivor (keeps its id, status=merged)
-  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — enumerated for guard re-evaluation (D21, registries §6)
+  trigger_lemmas  text[] NOT NULL DEFAULT '{}',-- the blocking lemma(s) that drove this merge — general merge-audit metadata: enumerate merges by the lemma that caused them when one is later called into question (D21; the automatic guard re-evaluation was removed by D102)
   evidence        jsonb,                       -- why the merge fired (scores, reviewer note)
   blast_radius    integer,                     -- combined mention_count+degree at merge time (registries §6) — never auto-merge above threshold
   pre_merge_membership_snapshot jsonb NOT NULL,-- which mentions belonged to which entity BEFORE the merge — replay to un-merge (D21)
@@ -922,10 +922,10 @@ CREATE TABLE merge_events (
   FOREIGN KEY (deployment_id, absorbed_id) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE merge_events IS
-  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas lets the generic-identifier guard re-evaluate affected merges; live graph views resolve redirects without a graph rebuild.';
+  'Append-only merge log enabling un-merge (D21) — the capability no OSS ER system ships. pre_merge_membership_snapshot is the "before" picture replayed to reverse; trigger_lemmas records which lemma drove each merge so merges can be enumerated by trigger when one is questioned (audit metadata: D102 removed the guard that once re-evaluated them automatically); live graph views resolve redirects without a graph rebuild.';
 CREATE INDEX ix_merge_survivor ON merge_events (survivor_id);
 CREATE INDEX ix_merge_absorbed ON merge_events (absorbed_id);
-CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- guard re-evaluation by lemma
+CREATE INDEX ix_merge_trigger  ON merge_events USING gin (trigger_lemmas); -- enumerate merges by triggering lemma (audit; D102 removed automatic guard re-evaluation)
 ```
 
 ---
@@ -953,7 +953,7 @@ set), and the **eval-run history** (per-tier metrics with Wilson confidence inte
 CREATE TABLE review_queue (
   review_id       uuid PRIMARY KEY,             -- merge_cluster: deterministic UUID over deployment + sorted live roots + cluster-config fingerprint (D99)
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | type_conflict | generic_identifier | contradiction
+  item_kind       review_item_kind NOT NULL,   -- merge_cluster | split_cluster | contradiction (type_conflict inert since D96; generic_identifier inert since D102 — retained for historical rows, never produced)
   candidate       jsonb NOT NULL,              -- the cluster: entity/mention ids + the Splink-style per-feature score waterfall + cluster card
   blast_radius    integer NOT NULL,            -- combined size/connectedness if wrong (registries §6)
   confidence      real NOT NULL,               -- model confidence in the proposal

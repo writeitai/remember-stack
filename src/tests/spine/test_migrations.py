@@ -134,15 +134,15 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # the one required legacy-generation backfill, and p9_22_0043's DOWNGRADE
     # rebuilds a derived cache from the aliases already present (D102). Both
     # derive from existing rows; neither seeds a deployment.
-    revisions_that_insert = sorted(
-        path.name
+    inserts_per_revision = {
+        path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
         if "insert into" in path.read_text(encoding="utf-8").lower()
-    )
-    assert revisions_that_insert == [
-        "p1_04_0019_d79_structure_generations.py",
-        "p9_22_0043_drop_generic_identifier_guard.py",
-    ]
+    }
+    assert inserts_per_revision == {
+        "p1_04_0019_d79_structure_generations.py": 1,
+        "p9_22_0043_drop_generic_identifier_guard.py": 1,
+    }
     assert "bootstrap_deployment" not in migration_source
 
 

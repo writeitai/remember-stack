@@ -15,9 +15,12 @@ proof that the name was generic. Two Jan Nováks -- whether one person
 recorded twice or two unrelated people -- are exactly the case the resolver
 exists to adjudicate, and demoting both made the adjudication harder.
 
-Nor did the flag ever reach a decision: it lived only in ORDER BY clauses,
-never on a candidate, never in decision features, never seen by T3 or T4.
-Its whole effect was ranking, and the ranking it produced was inverted.
+The flag was never adjudication evidence either: it lived only in ORDER BY
+clauses, never on a candidate, never in decision features, never seen by T3
+or T4. That is not the same as harmless. Blocking order decides which
+candidates survive truncation to blocking_limit and which one T4 is told to
+prefer, so an inverted ranking could change an authoritative verdict while
+leaving no trace in the decision record it helped produce.
 
 D21's original intent -- a genuinely promiscuous signal like a role address
 or a shared reception number should not weld strangers together -- is not
@@ -63,8 +66,15 @@ depends_on: str | Sequence[str] | None = None
 _DROP_TABLE = "DROP TABLE IF EXISTS generic_identifier_guard"
 
 
+# IF NOT EXISTS / ON CONFLICT, matching the DROP ... IF EXISTS of the sibling
+# revision. A downgrade that hard-fails because the table happens to already
+# be there is brittle: an operator who intervened by hand, or a run
+# interrupted between the two statements below, would be left unable to
+# downgrade at all. The upsert also mirrors what the old writer itself did
+# (`ON CONFLICT (deployment_id, normalized_lemma) DO UPDATE`), so re-running
+# the downgrade converges on the same rows instead of erroring.
 _RECREATE_TABLE = """
-CREATE TABLE generic_identifier_guard (
+CREATE TABLE IF NOT EXISTS generic_identifier_guard (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   normalized_lemma text NOT NULL,
   distinct_entity_count integer NOT NULL,
@@ -99,6 +109,11 @@ SELECT deployment_id, normalized_lemma, COUNT(DISTINCT entity_id),
        COUNT(DISTINCT entity_id) >= 2, 'promiscuous-lemma', now()
 FROM aliases
 GROUP BY deployment_id, normalized_lemma
+ON CONFLICT (deployment_id, normalized_lemma) DO UPDATE SET
+    distinct_entity_count = EXCLUDED.distinct_entity_count,
+    is_downweighted = EXCLUDED.is_downweighted,
+    reason = EXCLUDED.reason,
+    evaluated_at = EXCLUDED.evaluated_at
 """
 
 

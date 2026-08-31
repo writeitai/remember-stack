@@ -4569,11 +4569,16 @@ identity, or any retrieval contract.
 **Decision.** The `generic_identifier_guard` table, its per-resolve writer,
 and the `is_downweighted` blocking input are **removed** (migration
 `p9_22_0043`). Fuzzy blocking now ranks by match score, then by how closely
-the entity's own canonical name resembles the query, then by `entity_id`:
+the entity's own canonical name resembles the query, then by age, then by
+`entity_id` — the same age-then-id convention `_T0_CANDIDATES` and the
+clusterer already use, so a full tie is resolved oldest-first rather than by
+row identity. This generation is stamped `resolver-2026.08f`; D22 curves
+measured under `08e` are not comparable:
 
 ```sql
 ORDER BY coalesce(t1.score, 0.0) DESC,
          similarity(entities.normalized_name, :lemma) DESC,
+         entities.created_at,
          entities.entity_id
 ```
 
@@ -4610,11 +4615,13 @@ proofs passed 12–15 consecutive runs with freshly minted UUIDs.
 
 **It is not free.** `similarity(entities.normalized_name, :lemma)` is
 computed over the filtered candidate set and the GIN trigram index does not
-serve an `ORDER BY`. Measured on a deliberately pathological shape — 100,000
-active entities all sharing one fuzzy alias — the ranking query went from a
-455 ms to a 512 ms warm median, **+12.5%**; an independent reviewer measured
-+31% on the same shape. No new scan node appears; the cost is CPU and sort
-work. This is accepted because that shape is already a degenerate case, and
+serve an `ORDER BY`. On a deliberately pathological shape — 100,000 active
+entities all sharing one fuzzy alias — three independent runs measured
+**+3.3%, +12.5% and +31%** warm-median (e.g. 455 ms → 512 ms). The direction
+is consistent and the magnitude is not: it is CPU and sort work on an
+already-degenerate query, so it moves with machine and cache state. Treat
+"a real but modest regression concentrated in the overflow case" as the
+claim, not any single figure. No new scan node appears. This is accepted because that shape is already a degenerate case, and
 because the key is what rescues the correct referent from truncation (see
 the overflow canary in `test_resolver.py`).
 
@@ -4640,7 +4647,8 @@ nothing to rewrite, so it is brief — a short global stall, not a free
 operation. Apply it as you would any other DDL against `deployments`.
 
 **Rejected.** Raising the floor (moves a threshold without fixing what it
-gates, and the signal still reaches no decision); demoting the flag to a
+gates: the signal still outranks score once it fires, and still counts
+entity rows rather than people); demoting the flag to a
 tiebreak *after* score (preserves the truncation benefit and is the first
 thing to reach for if role addresses prove a real problem, but retains a
 hot-path write and a table for an unmeasured benefit); keeping the table
