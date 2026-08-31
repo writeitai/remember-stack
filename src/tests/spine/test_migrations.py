@@ -121,15 +121,16 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_19_0040",
         "p9_20_0041",
         "p9_21_0042",
+        "p9_22_0043",
     )
     assert len(script.get_heads()) == 1
 
     migration_source = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(_VERSIONS.glob("p*_*.py"))
     ).lower()
-    # D79's structural migration performs the one required legacy-generation
-    # backfill; no deployment/bootstrap seed DML belongs in this chain.
-    assert migration_source.count("insert into") == 1
+    # D79 performs the required legacy-generation backfill. D102's second
+    # INSERT is a derived-projection trigger, not deployment/bootstrap seed DML.
+    assert migration_source.count("insert into") == 2
     assert "bootstrap_deployment" not in migration_source
 
 
@@ -619,10 +620,11 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     fresh_inventory = _inventory(database_url=database_url)
     assert fresh_inventory.server_version.startswith("PostgreSQL 1")
     assert fresh_inventory.hash_child_counts == {
+        "document_entity_bindings": 64,
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 70
+    assert len(fresh_inventory.tables) == 71
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -644,7 +646,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_21_0042"
+    assert head_before_noop == head_after_noop == "p9_22_0043"
     assert _inventory(database_url=database_url) == restored_inventory
 
 

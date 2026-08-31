@@ -88,6 +88,7 @@ def test_fresh_head_bootstrap_commits_exact_deployment_and_manifest(
                     artifacts_bucket,
                     corpusfs_bucket,
                     knowledge_repo_uri,
+                    document_binding_generation,
                     status,
                     created_at,
                     updated_at
@@ -113,6 +114,7 @@ def test_fresh_head_bootstrap_commits_exact_deployment_and_manifest(
             )
         } == deployment_input.model_dump()
         assert deployment["status"] == "active"
+        assert deployment["document_binding_generation"] == "document-t0-v1"
         assert isinstance(deployment["created_at"], datetime)
         assert deployment["created_at"] == deployment["updated_at"]
         _assert_live_manifest(connection=connection, deployment_id=_DEPLOYMENT_ID)

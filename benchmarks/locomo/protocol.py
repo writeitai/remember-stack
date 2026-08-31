@@ -29,14 +29,15 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v17"
-DEFAULT_PROTOCOL_KEY: Final = "full-v17"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-binary-t4-v17"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v18"
+DEFAULT_PROTOCOL_KEY: Final = "full-v18"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-document-t0-v18"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
+EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
     "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
@@ -69,8 +70,8 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
-            "e3-normalize-2026.08d:temp0-1:claim-fanout-1:bare-noun-1:"
-            "no-types-1:binary-t4-1"
+            "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:"
+            "no-types-1:binary-t4-1:document-t0-1"
         ),
         "adjudicate_observations": (
             "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"
@@ -196,8 +197,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V17 = LoCoMoProtocol(
-    key="full-v17",
+_FULL_V18 = LoCoMoProtocol(
+    key="full-v18",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -219,7 +220,7 @@ _FULL_V17 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V17.key: _FULL_V17}
+    {_FULL_V18.key: _FULL_V18}
 )
 
 

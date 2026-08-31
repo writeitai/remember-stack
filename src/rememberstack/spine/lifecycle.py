@@ -514,6 +514,10 @@ class LifecycleCatalog:
                 _REPOINT_AFTER_VERSION_DELETE,
                 {"doc_id": row["doc_id"], "version_id": version_id},
             )
+            connection.execute(
+                _CLEAR_DOCUMENT_BINDINGS,
+                {"deployment_id": row["deployment_id"], "doc_id": row["doc_id"]},
+            )
         return dict(row)
 
     def delete_lineage(self, *, doc_id: UUID) -> None:
@@ -524,6 +528,7 @@ class LifecycleCatalog:
         """
         with self._engine.begin() as connection:
             connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
+            connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
 
     def cycles_ready_to_finalize(
         self, *, deployment_id: UUID
@@ -1019,6 +1024,17 @@ _TOMBSTONE_LINEAGE_BY_ID = text(
     UPDATE documents SET deleted_at = now()
     WHERE doc_id = :doc_id AND deleted_at IS NULL
     """
+)
+
+_CLEAR_DOCUMENT_BINDINGS = text(
+    """
+    DELETE FROM document_entity_bindings
+    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+    """
+)
+
+_CLEAR_DOCUMENT_BINDINGS_BY_DOC = text(
+    "DELETE FROM document_entity_bindings WHERE doc_id = :doc_id"
 )
 
 _SELECT_READY_CYCLES = text(

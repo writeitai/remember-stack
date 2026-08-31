@@ -1348,6 +1348,12 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        DELETE FROM document_entity_bindings
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
         DELETE FROM resolution_decisions
         WHERE deployment_id = :deployment_id
           AND mention_id = ANY(:mention_ids)
@@ -1569,6 +1575,9 @@ _VERIFY_POSTGRES_SCRUB = text(
         SELECT 1 FROM mentions
         WHERE deployment_id = :deployment_id
           AND (doc_id = :doc_id OR mention_id = ANY(:mention_ids))
+        UNION ALL
+        SELECT 1 FROM document_entity_bindings
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM resolution_decisions
         WHERE deployment_id = :deployment_id AND mention_id = ANY(:mention_ids)

@@ -73,7 +73,8 @@ def _run_profile_refresh(*, action: Callable[[], object], call_key: str) -> None
 
 
 E3_NORMALIZER_VERSION: Final = (
-    "e3-normalize-2026.08d:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1"
+    "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
+    "binary-t4-1:document-t0-1"
 )
 """The normalize sub-worker's component version (D12 idempotency member).
 

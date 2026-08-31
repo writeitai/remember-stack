@@ -32,6 +32,7 @@ from rememberstack.model import UnmergeError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.p1_index import EntityIndexPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
+from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.profile_refresher import current_profile_entity_ids
 from rememberstack.spine.profile_refresher import profile_refresh_targets
@@ -385,6 +386,7 @@ class EntityClusterer:
         if live is None or live["entity_id"] == entity_id:
             return
         restored_id = uuid4()
+        canonical_surface = str(live["canonical_name_form"] or live["surface_form"])
         connection.execute(
             _INSERT_RESTORE_DECISION,
             {
@@ -393,6 +395,14 @@ class EntityClusterer:
                 "mention_id": mention_id,
                 "entity_id": entity_id,
                 "resolver_version": str(live["resolver_version"]),
+                "features": {
+                    "unmerge_replay": True,
+                    "document_t0": {
+                        "contract": DOCUMENT_BINDING_GENERATION,
+                        "doc_id": str(live["doc_id"]),
+                        "canonical_lemma": normalized_lemma(surface=canonical_surface),
+                    },
+                },
             },
         )
         connection.execute(
@@ -1129,12 +1139,16 @@ _LIVE_MERGE_OF = text(
 
 _LIVE_DECISION_FOR_MENTION = text(
     """
-    SELECT decision_id, entity_id, resolver_version
-    FROM resolution_decisions
-    WHERE deployment_id = :deployment_id
-      AND mention_id = :mention_id
-      AND superseded_by IS NULL
-    ORDER BY decided_at DESC
+    SELECT decision.decision_id, decision.entity_id, decision.resolver_version,
+           mention.doc_id, mention.canonical_name_form, mention.surface_form
+    FROM resolution_decisions decision
+    JOIN mentions mention
+      ON mention.deployment_id = decision.deployment_id
+     AND mention.mention_id = decision.mention_id
+    WHERE decision.deployment_id = :deployment_id
+      AND decision.mention_id = :mention_id
+      AND decision.superseded_by IS NULL
+    ORDER BY decision.decided_at DESC
     LIMIT 1
     """
 )
@@ -1146,10 +1160,10 @@ _INSERT_RESTORE_DECISION = text(
         confidence, is_new_entity, features, resolver_version, decided_by
     ) VALUES (
         :decision_id, :deployment_id, :mention_id, :entity_id, 'human',
-        1.0, false, '{"unmerge_replay": true}', :resolver_version, 'human'
+        1.0, false, :features, :resolver_version, 'human'
     )
     """
-)
+).bindparams(bindparam("features", type_=JSON))
 
 _SUPERSEDE_DECISION = text(
     """

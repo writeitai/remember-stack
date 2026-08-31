@@ -30,6 +30,7 @@ from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ResolutionContendedError
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import seed_resolver_version
+from rememberstack.spine.document_bindings import DocumentBindingRebuilder
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
@@ -41,6 +42,7 @@ from tests.workers.e3_test_doubles import RecordingFacts
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b0000000-0000-0000-0000-000000000001")
+_DOC_ID = UUID("b0000000-0000-0000-0000-000000000002")
 
 _ALWAYS_ESCALATE = ResolutionThresholds(t3_accept=1.0, t3_reject=-1.0)
 """Bands that route every blocked candidate through T4 (deterministic tests)."""
@@ -120,6 +122,14 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
             corpusfs_bucket="mem://corpusfs",
         )
     )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref)"
+                " VALUES (:doc_id, :deployment_id, 'test', 'resolver-test')"
+            ),
+            {"doc_id": _DOC_ID, "deployment_id": _DEPLOYMENT_ID},
+        )
 
 
 def _resolver(
@@ -141,17 +151,35 @@ def _resolver(
     )
 
 
-def _claim(*, claim_text: str | None = None) -> ClaimForNormalization:
+def _claim(
+    *, claim_text: str | None = None, doc_id: UUID = _DOC_ID
+) -> ClaimForNormalization:
     """A synthetic claim context for resolutions."""
     return ClaimForNormalization(
         claim_id=uuid4(),
         deployment_id=uuid4(),
-        doc_id=uuid4(),
+        doc_id=doc_id,
         chunk_id=uuid4(),
         claim_text=claim_text or "Karel Dvorzak from sales joined the Atlas project.",
         is_attributed=False,
         extractor_version="e2-test",
     )
+
+
+def _insert_document(*, engine: Engine, doc_id: UUID, source_ref: str) -> None:
+    """Insert one additional real document lineage for cross-document proofs."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref)"
+                " VALUES (:doc_id, :deployment_id, 'test', :source_ref)"
+            ),
+            {
+                "doc_id": doc_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "source_ref": source_ref,
+            },
+        )
 
 
 def _seed_profiled_entity(
@@ -257,6 +285,290 @@ def test_cascade_mints_then_exact_and_fuzzy_candidates_reach_t4(
     assert decisions[1]["features"]["blocking_tier"] == "T0"
     assert decisions[2]["features"]["blocking_tier"] in ("T1", "T2")
     assert all(d["resolver_version"] == RESOLVER_VERSION for d in decisions)
+
+
+def test_exact_same_document_replays_t4_anchor_without_provider(
+    database_engine: Engine,
+) -> None:
+    """One T4 match anchors only the exact canonical lemma in its document."""
+    provider = FakeModelProvider(generate_router=_match_first_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+
+    minted = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined the group."),
+    )
+    anchored = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline planned the trip."),
+    )
+    prompts_after_anchor = len(provider.generated_prompts)
+    embeddings_after_anchor = len(provider.embedded_texts)
+    replayed = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline bought tickets."),
+    )
+
+    assert minted.created
+    assert anchored.entity_id == replayed.entity_id == minted.entity_id
+    assert len(provider.generated_prompts) == prompts_after_anchor == 1
+    assert len(provider.embedded_texts) == embeddings_after_anchor
+    with database_engine.connect() as connection:
+        decisions = tuple(
+            connection.execute(
+                text(
+                    "SELECT decision_id, method::text AS method, features"
+                    " FROM resolution_decisions ORDER BY decided_at, decision_id"
+                )
+            ).mappings()
+        )
+        binding = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, anchor_decision_id FROM document_entity_bindings"
+                    " WHERE deployment_id = :deployment_id AND doc_id = :doc_id"
+                    " AND canonical_lemma = 'caroline'"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID, "doc_id": _DOC_ID},
+            )
+            .mappings()
+            .one()
+        )
+    assert [row["method"] for row in decisions] == ["T0", "T4_small", "T0"]
+    assert decisions[2]["features"]["source_t4_decision_id"] == str(
+        binding["anchor_decision_id"]
+    )
+    assert decisions[2]["features"]["document_t0"] == {
+        "contract": "document-t0-v1",
+        "doc_id": str(_DOC_ID),
+        "canonical_lemma": "caroline",
+    }
+
+
+def test_document_anchor_does_not_enable_cross_document_or_fuzzy_t0(
+    database_engine: Engine,
+) -> None:
+    """D102 does not widen exact T0 to other documents or T1/T2 spellings."""
+    provider = FakeModelProvider(generate_router=_match_first_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    other_doc_id = uuid4()
+    _insert_document(
+        engine=database_engine, doc_id=other_doc_id, source_ref="resolver-other-doc"
+    )
+
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline joined the group."),
+    )
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline planned the trip."),
+    )
+    prompts_after_anchor = len(provider.generated_prompts)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(
+            doc_id=other_doc_id, claim_text="Caroline wrote from another document."
+        ),
+    )
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Carolinne"),
+        claim=_claim(claim_text="Carolinne was a misspelling."),
+    )
+
+    assert len(provider.generated_prompts) == prompts_after_anchor + 2
+
+
+def test_same_document_conflict_disables_t0_replay(database_engine: Engine) -> None:
+    """A T4-new split leaves two durable memberships and fails closed."""
+    new_provider = FakeModelProvider(generate_router=_new_entity_router)
+    new_resolver = _resolver(engine=database_engine, provider=new_provider)
+    first = new_resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Alex"),
+        claim=_claim(claim_text="Alex arrived."),
+    )
+    second = new_resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Alex"),
+        claim=_claim(claim_text="A different Alex arrived."),
+    )
+    assert first.entity_id != second.entity_id
+
+    match_provider = FakeModelProvider(generate_router=_match_first_router)
+    match_resolver = _resolver(engine=database_engine, provider=match_provider)
+    match_resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Alex"),
+        claim=_claim(claim_text="Alex spoke again."),
+    )
+
+    assert len(match_provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM document_entity_bindings"
+                    " WHERE deployment_id = :deployment_id AND doc_id = :doc_id"
+                    " AND canonical_lemma = 'alex'"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID, "doc_id": _DOC_ID},
+            ).scalar_one()
+            == 2
+        )
+
+
+def test_stale_anchor_or_disabled_generation_falls_back_to_cascade(
+    database_engine: Engine,
+) -> None:
+    """A superseded source or unset readiness gate can never authorize T0."""
+    provider = FakeModelProvider(generate_router=_match_first_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Morgan"),
+        claim=_claim(claim_text="Morgan arrived."),
+    )
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Morgan"),
+        claim=_claim(claim_text="Morgan stayed."),
+    )
+    with database_engine.begin() as connection:
+        anchor_id = connection.execute(
+            text(
+                "SELECT anchor_decision_id FROM document_entity_bindings"
+                " WHERE deployment_id = :deployment_id AND doc_id = :doc_id"
+                " AND canonical_lemma = 'morgan'"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "doc_id": _DOC_ID},
+        ).scalar_one()
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET superseded_by = :replacement"
+                " WHERE deployment_id = :deployment_id AND decision_id = :anchor_id"
+            ),
+            {
+                "replacement": uuid4(),
+                "deployment_id": _DEPLOYMENT_ID,
+                "anchor_id": anchor_id,
+            },
+        )
+    prompts_before = len(provider.generated_prompts)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Morgan"),
+        claim=_claim(claim_text="Morgan returned."),
+    )
+    assert len(provider.generated_prompts) == prompts_before + 1
+
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET document_binding_generation = NULL"
+                " WHERE deployment_id = :deployment_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID},
+        )
+    prompts_before = len(provider.generated_prompts)
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Morgan"),
+        claim=_claim(claim_text="Morgan left again."),
+    )
+    assert len(provider.generated_prompts) == prompts_before + 1
+
+
+def test_setup_rebuild_restores_exact_anchors_and_conservative_legacy_aliases(
+    database_engine: Engine,
+) -> None:
+    """Setup pages history, restores D102 exactly, then enables readiness."""
+    provider = FakeModelProvider(generate_router=_match_first_router)
+    resolver = _resolver(engine=database_engine, provider=provider)
+    entity = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline arrived."),
+    )
+    resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline stayed."),
+    )
+    with database_engine.begin() as connection:
+        mint_decision_id = connection.execute(
+            text(
+                "SELECT decision_id FROM resolution_decisions"
+                " WHERE is_new_entity ORDER BY decided_at LIMIT 1"
+            )
+        ).scalar_one()
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions"
+                " SET features = features - 'document_t0'"
+                " WHERE decision_id = :decision_id"
+            ),
+            {"decision_id": mint_decision_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO aliases (alias_id, deployment_id, entity_id, alias_text,"
+                " normalized_lemma, provenance) VALUES"
+                " (:alias_id, :deployment_id, :entity_id, 'Caro', 'caro',"
+                " 'llm_canonical')"
+            ),
+            {
+                "alias_id": uuid4(),
+                "deployment_id": _DEPLOYMENT_ID,
+                "entity_id": entity.entity_id,
+            },
+        )
+        connection.execute(
+            text(
+                "DELETE FROM document_entity_bindings WHERE deployment_id=:deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "UPDATE deployments SET document_binding_generation=NULL"
+                " WHERE deployment_id=:deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+
+    rebuilder = DocumentBindingRebuilder(engine=database_engine)
+    assert rebuilder.rebuild_if_needed(deployment_id=_DEPLOYMENT_ID) is True
+    assert rebuilder.rebuild_if_needed(deployment_id=_DEPLOYMENT_ID) is False
+    with database_engine.connect() as connection:
+        generation = connection.execute(
+            text(
+                "SELECT document_binding_generation FROM deployments"
+                " WHERE deployment_id=:deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+        rows = tuple(
+            connection.execute(
+                text(
+                    "SELECT canonical_lemma, anchor_decision_id"
+                    " FROM document_entity_bindings"
+                    " WHERE deployment_id=:deployment ORDER BY canonical_lemma"
+                ),
+                {"deployment": _DEPLOYMENT_ID},
+            ).mappings()
+        )
+    assert generation == "document-t0-v1"
+    assert [row["canonical_lemma"] for row in rows] == ["caro", "caroline"]
+    assert rows[0]["anchor_decision_id"] is None
+    assert rows[1]["anchor_decision_id"] is not None
 
 
 def test_t4_no_match_mints_same_lemma_and_records_exclusion(
@@ -492,6 +804,53 @@ def test_t4_provider_call_does_not_hold_the_lemma_lock(database_engine: Engine) 
 
     assert second.entity_id == first.entity_id
     assert lock_was_free is True
+
+
+def test_document_anchor_arriving_during_t4_invalidates_stale_snapshot(
+    database_engine: Engine,
+) -> None:
+    """A peer T4 anchor makes the in-flight resolver retry through local T0."""
+    peer_provider = FakeModelProvider(generate_router=_match_first_router)
+    peer_resolver = _resolver(engine=database_engine, provider=peer_provider)
+    outer_calls = 0
+
+    def anchor_during_provider(prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal outer_calls
+        outer_calls += 1
+        if outer_calls == 1:
+            peer_resolver.resolve(
+                deployment_id=_DEPLOYMENT_ID,
+                reference=EntityRef(name="Caroline"),
+                claim=_claim(claim_text="Caroline established the peer anchor."),
+            )
+        return _match_first_router(prompt, type_name)
+
+    outer_provider = FakeModelProvider(generate_router=anchor_during_provider)
+    outer_resolver = _resolver(engine=database_engine, provider=outer_provider)
+    minted = outer_resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline arrived."),
+    )
+    resolved = outer_resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="Caroline"),
+        claim=_claim(claim_text="Caroline triggered concurrent work."),
+    )
+
+    assert resolved.entity_id == minted.entity_id
+    assert outer_calls == 1
+    assert len(peer_provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        methods = tuple(
+            connection.execute(
+                text(
+                    "SELECT method::text FROM resolution_decisions"
+                    " ORDER BY decided_at, decision_id"
+                )
+            ).scalars()
+        )
+    assert methods == ("T0", "T4_small", "T0")
 
 
 def test_t4_rejects_candidate_id_outside_snapshot(database_engine: Engine) -> None:

@@ -164,6 +164,9 @@ class PipelineReadinessCatalog:
                     _P1_READY, {"deployment_id": deployment_id}
                 ).scalar_one()
             )
+            document_binding_generation = connection.execute(
+                _DOCUMENT_BINDING_GENERATION, {"deployment_id": deployment_id}
+            ).scalar_one()
             verify_graph_catalog = (
                 self._graph_catalog_verified_at is None
                 or time.monotonic() - self._graph_catalog_verified_at
@@ -306,6 +309,7 @@ class PipelineReadinessCatalog:
             ready=ready,
             versions=tuple(versions),
             capabilities=capabilities,
+            document_binding_generation=document_binding_generation,
             model_bindings=self._model_bindings,
             build_revision=self._build_revision,
         )
@@ -336,6 +340,14 @@ _P1_READY = text(
         ('chunks', 'bm25'),
         ('claims', 'bm25')
       )
+    """
+)
+
+_DOCUMENT_BINDING_GENERATION = text(
+    """
+    SELECT document_binding_generation
+    FROM deployments
+    WHERE deployment_id = :deployment_id
     """
 )
 
