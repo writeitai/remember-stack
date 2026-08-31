@@ -28,6 +28,7 @@ from rememberstack.model import ReasoningEffort
 from rememberstack.model import RoleClassificationResponse
 from rememberstack.model import SelectionResponse
 from rememberstack.model import SkeletonCheckResponse
+from rememberstack.model import T4Selection
 
 
 class _Answer(BaseModel):
@@ -644,6 +645,7 @@ def test_generation_uses_strict_schema_for_defaulted_response_fields(
         RoleClassificationResponse,
         SelectionResponse,
         ClaimifyResponse,
+        T4Selection,
     ),
 )
 def test_strict_schema_closes_every_nested_object_and_removes_defaults(

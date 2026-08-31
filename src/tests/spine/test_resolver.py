@@ -310,7 +310,7 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
             {"deployment_id": _DEPLOYMENT_ID},
         ).one()
     assert decision["method"] == "T4_small"
-    assert decision["features"]["blocking_tier"] == "T0"
+    assert decision["features"]["candidates"][0]["blocking_tier"] == "T0"
     assert {exclusion[0], exclusion[1]} == {father.entity_id, son.entity_id}
     assert exclusion[2] == f"t4-new:{RESOLVER_VERSION}"
     assert exclusion[3] == "auto"
@@ -1091,6 +1091,13 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
     assert all("profile_description" in item for item in prompted)
     assert all("salient_facts" in item for item in prompted)
     assert all("t3_score" in item and "t3_gate" in item for item in prompted)
+    scores = [item["t3_score"] for item in prompted]
+    assert all(isinstance(score, (int, float)) for score in scores)
+    numeric_scores = [
+        float(score) for score in scores if isinstance(score, (int, float))
+    ]
+    assert len(numeric_scores) == len(scores)
+    assert numeric_scores == sorted(numeric_scores, reverse=True)
     with database_engine.connect() as connection:
         method, features = connection.execute(
             text(
@@ -1102,6 +1109,38 @@ def test_multiple_exact_candidates_require_t4_even_with_accepting_t3_score(
     assert [item["entity_id"] for item in features["candidates"]] == [
         item["candidate_id"] for item in prompted
     ]
+
+
+def test_t4_new_excludes_every_supplied_candidate(database_engine: Engine) -> None:
+    """One joint new decision records the complete supplied positive split."""
+    provider = FakeModelProvider(generate_router=_new_entity_router)
+    existing = {
+        _seed_profiled_entity(
+            engine=database_engine,
+            provider=provider,
+            name="John Smith",
+            statement=statement,
+        )
+        for statement in ("John Smith lives in Bristol.", "John Smith lives in Leeds.")
+    }
+    resolver = _resolver(engine=database_engine, provider=provider)
+
+    created = resolver.resolve(
+        deployment_id=_DEPLOYMENT_ID,
+        reference=EntityRef(name="John Smith"),
+        claim=_claim(claim_text="John Smith is a different colleague in Prague."),
+    )
+
+    assert created.created
+    assert len(provider.generated_prompts) == 1
+    with database_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT entity_id_low, entity_id_high FROM resolution_exclusions")
+        ).all()
+    pairs = {frozenset((row[0], row[1])) for row in rows}
+    assert pairs == {
+        frozenset((created.entity_id, candidate_id)) for candidate_id in existing
+    }
 
 
 def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) -> None:
@@ -1127,6 +1166,23 @@ def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) 
                 "entity": entity.entity_id,
             },
         )
+        connection.execute(
+            text(
+                "INSERT INTO aliases (alias_id, deployment_id, entity_id,"
+                " alias_text, normalized_lemma, provenance) VALUES"
+                " (:alias, :deployment, :entity, :text, :lemma, 'source')"
+            ),
+            [
+                {
+                    "alias": uuid4(),
+                    "deployment": _DEPLOYMENT_ID,
+                    "entity": entity.entity_id,
+                    "text": f"Application alias {index:02d}",
+                    "lemma": f"application alias {index:02d}",
+                }
+                for index in range(25)
+            ],
+        )
     prompts_before = len(provider.generated_prompts)
 
     replay = resolver.resolve(
@@ -1139,7 +1195,8 @@ def test_two_alias_provenances_are_one_exact_candidate(database_engine: Engine) 
     assert len(provider.generated_prompts) == prompts_before + 1
     aliases = _t4_candidates(provider.generated_prompts[-1])[0]["aliases"]
     assert isinstance(aliases, list)
-    assert set(aliases) == {"App", "Application"}
+    assert len(aliases) == 20
+    assert {"App", "Application"} <= set(aliases)
 
 
 def test_source_and_canonical_aliases_on_mint_and_replay(

@@ -65,6 +65,8 @@ provenance from per-type maps to one global set. Generation parameters remain
 part of provenance; T4 stays pinned to temperature=0.0."""
 
 RESOLUTION_MAX_ATTEMPTS: Final = 3
+T4_ALIASES_PER_CANDIDATE: Final = 20
+"""Maximum distinct alias strings included for one T4 candidate."""
 
 _T4_PROMPT: Final = """You adjudicate entity identity for a memory system.
 Make one binary decision from only the bounded evidence supplied.
@@ -293,7 +295,7 @@ class CascadeResolver:
             else None
         )
         score: float | None = None
-        gate = "profile_missing"
+        gate = "profile_missing" if not candidate_facts else "mention_context_missing"
         if has_context_evidence:
             assert candidate_summary is not None
             embedding_texts = (
@@ -438,7 +440,11 @@ class CascadeResolver:
         if entity_ids:
             for alias_row in connection.execute(
                 _CANDIDATE_ALIASES,
-                {"deployment_id": deployment_id, "entity_ids": list(entity_ids)},
+                {
+                    "deployment_id": deployment_id,
+                    "entity_ids": list(entity_ids),
+                    "limit": T4_ALIASES_PER_CANDIDATE,
+                },
             ).mappings():
                 aliases_by_entity[alias_row["entity_id"]].append(
                     alias_row["alias_text"]
@@ -1119,12 +1125,20 @@ _T0_CANDIDATES = text(
 
 _CANDIDATE_ALIASES = text(
     """
+    WITH ranked AS (
+        SELECT entity_id, alias_text,
+               row_number() OVER (
+                   PARTITION BY entity_id ORDER BY min(first_seen), alias_text
+               ) AS position
+        FROM aliases
+        WHERE deployment_id = :deployment_id
+          AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
+        GROUP BY entity_id, alias_text
+    )
     SELECT entity_id, alias_text
-    FROM aliases
-    WHERE deployment_id = :deployment_id
-      AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
-    GROUP BY entity_id, alias_text
-    ORDER BY entity_id, min(first_seen), alias_text
+    FROM ranked
+    WHERE position <= :limit
+    ORDER BY entity_id, position
     """
 )
 
