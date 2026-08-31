@@ -54,6 +54,7 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
 from rememberstack.model import IngestedVersion
+from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectAlreadyExistsError
@@ -167,9 +168,15 @@ class UploadIngestor:
         *,
         deployment_id: UUID,
         upload: DocumentUpload,
+        ingested_by: IngestPrincipal | None = None,
         lane: ProcessingLane = ProcessingLane.STEADY,
     ) -> IngestedVersion:
-        """Ingest one uploaded file and enqueue its convert work."""
+        """Ingest one uploaded file and enqueue its convert work.
+
+        ``ingested_by`` attributes a NEW version to a typed principal. It is
+        creation-scoped: an identical-bytes re-ingest is the D55 no-op and
+        never rewrites the original attribution.
+        """
         content_hash = hashlib.sha256(upload.content).hexdigest()
         self._guard_ingest(
             deployment_id=deployment_id,
@@ -204,6 +211,7 @@ class UploadIngestor:
                 mime=upload.mime,
                 byte_size=len(upload.content),
                 raw_uri=raw_uri,
+                ingested_by=ingested_by,
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
@@ -220,6 +228,7 @@ class UploadIngestor:
         source_modified_at: datetime | None,
         source_version_ref: str | None,
         sync_cycle_id: UUID | None,
+        ingested_by: IngestPrincipal | None = None,
         lane: ProcessingLane = ProcessingLane.STEADY,
     ) -> IngestedVersion:
         """Ingest one WATCHED observation of a lineage (D55).
@@ -256,6 +265,7 @@ class UploadIngestor:
             source_modified_at=source_modified_at,
             source_version_ref=source_version_ref,
             sync_cycle_id=sync_cycle_id,
+            ingested_by=ingested_by,
         )
         try:
             self._raw_store.write_bytes(

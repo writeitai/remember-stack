@@ -5,6 +5,7 @@ bucket a key resolves in (raw vs artifacts) is deployment configuration, and
 the composing profile binds one `ObjectStorePort` per bucket.
 """
 
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -15,6 +16,33 @@ from pydantic import Field
 from rememberstack.model.queue import UTCDateTime
 
 NonEmptyString = Annotated[str, Field(min_length=1)]
+
+
+class IngestPrincipalKind(StrEnum):
+    """What kind of actor ingested a version.
+
+    The three are genuinely different referents and are never collapsed:
+    ``USER`` is a person, ``API_CREDENTIAL`` is a machine credential a person
+    once minted, and ``SERVICE`` is the deployment's own automation.
+    Attributing credential activity to that person would be false attribution.
+    """
+
+    USER = "user"
+    API_CREDENTIAL = "api_credential"
+    SERVICE = "service"
+
+
+class IngestPrincipal(BaseModel):
+    """The typed actor a caller claims created this version.
+
+    ``external_ref`` is opaque to the engine — the caller's stable id for the
+    principal — and is treated as erasable PII.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: IngestPrincipalKind
+    external_ref: NonEmptyString = Field(max_length=255)
 
 
 class DocumentUpload(BaseModel):
@@ -42,6 +70,7 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    ingested_by_principal_id: UUID | None = None
 
 
 class UploadRecord(BaseModel):
@@ -63,6 +92,7 @@ class UploadRecord(BaseModel):
     source_modified_at: UTCDateTime | None = None
     source_version_ref: str | None = None
     sync_cycle_id: UUID | None = None
+    ingested_by: IngestPrincipal | None = None
 
 
 class ConvertSource(BaseModel):

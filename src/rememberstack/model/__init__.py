@@ -108,6 +108,8 @@ from rememberstack.model.documents import ConvertSource
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import DocumentVersionNotFoundError
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.model.documents import IngestPrincipal
+from rememberstack.model.documents import IngestPrincipalKind
 from rememberstack.model.documents import RepresentationNotFoundError
 from rememberstack.model.documents import RepresentationRecord
 from rememberstack.model.documents import SourceItem
@@ -482,6 +484,8 @@ __all__ = (
     "KFreshness",
     "HandlerAlreadyRegisteredError",
     "IngestedVersion",
+    "IngestPrincipal",
+    "IngestPrincipalKind",
     "KRevision",
     "LaneRouteError",
     "MergeApplicationError",

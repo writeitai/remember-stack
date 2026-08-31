@@ -46,6 +46,8 @@ from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
+from rememberstack.model import IngestPrincipal
+from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
@@ -77,7 +79,11 @@ class IngestPort(Protocol):
     """The E0 ingest operations the HTTP surface may expose."""
 
     def ingest(
-        self, *, deployment_id: UUID, upload: DocumentUpload
+        self,
+        *,
+        deployment_id: UUID,
+        upload: DocumentUpload,
+        ingested_by: IngestPrincipal | None = None,
     ) -> IngestedVersion: ...
 
     def ingest_observed(
@@ -91,6 +97,7 @@ class IngestPort(Protocol):
         source_modified_at: datetime | None,
         source_version_ref: str | None,
         sync_cycle_id: UUID | None,
+        ingested_by: IngestPrincipal | None = None,
     ) -> IngestedVersion: ...
 
 
@@ -858,8 +865,18 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        principal_kind: IngestPrincipalKind | None = None,
+        principal_ref: Annotated[
+            str | None, Query(min_length=1, max_length=255)
+        ] = None,
     ) -> IngestedVersion:
-        """Push one file through E0, optionally as a stable lineage version."""
+        """Push one file through E0, optionally as a stable lineage version.
+
+        ``principal_kind``/``principal_ref`` attribute a NEW version to a typed
+        actor. They are supplied together or not at all. The caller is trusted
+        for this value by the perimeter that authenticated it; the engine never
+        infers a person from a credential.
+        """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
             # holds if a server ever passes an unframed oversized body through
@@ -869,6 +886,16 @@ def _mount_ingest(
                 status_code=422,
                 detail="source_kind and source_ref must be supplied together",
             )
+        if (principal_kind is None) != (principal_ref is None):
+            raise HTTPException(
+                status_code=422,
+                detail="principal_kind and principal_ref must be supplied together",
+            )
+        ingested_by = (
+            None
+            if principal_kind is None or principal_ref is None
+            else IngestPrincipal(kind=principal_kind, external_ref=principal_ref)
+        )
         if source_modified_at is not None and (
             source_modified_at.tzinfo is None
             or source_modified_at.utcoffset() != timedelta(0)
@@ -892,7 +919,9 @@ def _mount_ingest(
                         " source_kind/source_ref"
                     ),
                 )
-            return ingest.ingest(deployment_id=deployment_id, upload=upload)
+            return ingest.ingest(
+                deployment_id=deployment_id, upload=upload, ingested_by=ingested_by
+            )
         return ingest.ingest_observed(
             deployment_id=deployment_id,
             source_kind=source_kind,
@@ -902,6 +931,7 @@ def _mount_ingest(
             source_modified_at=source_modified_at,
             source_version_ref=source_version_ref,
             sync_cycle_id=None,
+            ingested_by=ingested_by,
         )
 
 

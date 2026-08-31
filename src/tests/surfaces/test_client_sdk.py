@@ -30,6 +30,7 @@ from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
+from rememberstack.model import IngestPrincipal
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
@@ -82,8 +83,16 @@ class _Ingest:
 
     def __init__(self) -> None:
         self.observed: dict[str, object] | None = None
+        self.principal: IngestPrincipal | None = None
 
-    def ingest(self, *, deployment_id: UUID, upload: DocumentUpload) -> IngestedVersion:
+    def ingest(
+        self,
+        *,
+        deployment_id: UUID,
+        upload: DocumentUpload,
+        ingested_by: IngestPrincipal | None = None,
+    ) -> IngestedVersion:
+        self.principal = ingested_by
         return _ingested(deployment_id=deployment_id)
 
     def ingest_observed(
@@ -97,7 +106,9 @@ class _Ingest:
         source_modified_at: datetime | None,
         source_version_ref: str | None,
         sync_cycle_id: UUID | None,
+        ingested_by: IngestPrincipal | None = None,
     ) -> IngestedVersion:
+        self.principal = ingested_by
         self.observed = {
             "source_kind": source_kind,
             "source_ref": source_ref,
