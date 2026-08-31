@@ -128,7 +128,6 @@ EXPECTED_TABLES: Final = (
     "eval_runs",
     "extension_packs",
     "forget_manifests",
-    "generic_identifier_guard",
     "golden_claim_labels",
     "golden_pairs",
     "grounding_audits",
@@ -334,9 +333,9 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 73,
-    "f": 122,
-    "n": 539,
-    "p": 70,
+    "f": 121,
+    "n": 534,
+    "p": 69,
     "u": 35,
     "x": 1,
 }

@@ -4561,3 +4561,60 @@ assertion-grain forget target first).
 **Amends.** Extends D50's scope statement to distinguish attribution from
 authorization. Does not change D55 versioning, D74 forget, D95/D99/D100
 identity, or any retrieval contract.
+
+## D102. No blocking-stage demotion for shared names (removes the generic-identifier guard)
+
+**Decision.** The `generic_identifier_guard` table, its per-resolve writer,
+and the `is_downweighted` blocking input are **removed** (migration
+`p9_22_0043`). Fuzzy blocking now ranks by match score, then by how closely
+the entity's own canonical name resembles the query, then by `entity_id`:
+
+```sql
+ORDER BY coalesce(t1.score, 0.0) DESC,
+         similarity(entities.normalized_name, :lemma) DESC,
+         entities.entity_id
+```
+
+A name shared by several entities is a normal, adjudicable signal, not a
+weaker one. D21's promiscuous-signal concern is served by the mechanisms
+that decide identity — T3 profile evidence, T4 (D100), `resolution_exclusions`
+cannot-link edges, and D95's rule that T0 never auto-merges — not by
+demoting candidates before anything looks at them.
+
+**Why.** As built, `is_downweighted` was the **primary** blocking sort key,
+ahead of score: a 0.95 trigram hit on a shared name ranked below a 0.31 hit
+on an unshared one and could be truncated out by `blocking_limit`. The floor
+was 2, while D21 said "suddenly links **many**". Worse, the counter counted
+**entity rows, not people** — D95 has the resolver deliberately mint a second
+row for one real person pending adjudication, and the guard read its own
+conservatism as proof the name was generic. Both the "one person recorded
+twice" and "two unrelated people" cases were flagged, and flagging demoted
+exactly the candidates T3/T4 needed. The flag also reached no decision: it
+lived only in `ORDER BY`, never on `ResolutionCandidate`, never in decision
+features, never seen by T3 or T4.
+
+**Consequences.** Candidate order is deterministic where it previously
+collapsed to a random UUID once every candidate matched through the same
+lemma (the rewritten proof passed 15/15 runs with fresh UUIDs). A
+`COUNT(DISTINCT entity_id)` per resolve is gone, as is a table of
+per-deployment surface strings with no lineage provenance that hard-forget
+had to blanket-delete. One function is genuinely lost: overflowing fuzzy
+blocks no longer truncate promiscuous-string matches first.
+`_CandidateSnapshot.search_complete` still reports truncation honestly.
+Downgrade recreates the table empty, which is behaviourally exact — the old
+reader wrapped every lookup in `coalesce(is_downweighted, false)`, so "no
+row" and "not flagged" were already the same state.
+
+**Rejected.** Raising the floor (moves a threshold without fixing what it
+gates, and the signal still reaches no decision); demoting the flag to a
+tiebreak *after* score (preserves the truncation benefit and is the first
+thing to reach for if role addresses prove a real problem, but retains a
+hot-path write and a table for an unmeasured benefit); keeping the table
+unread; fixing only the sort order while keeping the flag.
+
+**Analysis.** `plan/analysis/generic_identifier_guard_removal.md`.
+
+**Amends.** Removes the generic-identifier guard clause from **D21**; the
+rest of D21 (connected-components-to-gather, HAC distance-cut, nDR
+incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
+is unchanged. Does not change D95, D99, or D100.

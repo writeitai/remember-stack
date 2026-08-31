@@ -511,13 +511,21 @@ claim as `provenance=source` in addition to `llm_canonical`. `App` and
 `Application` can be one id. Do not alias `game` onto FIFA 23 because
 they co-occur.
 
-### 4.5 Promiscuous lemmas
+### 4.5 Shared lemmas
 
-The resolver **populates** `generic_identifier_guard` when a lemma
-points at too many distinct entities (D21; starting threshold measured
-on the golden set). Guarded lemmas are down-weighted in T1/T2 blocking.
-They do not change T0's role: exact T0 always lists candidates and never
-accepts a referent.
+A lemma that points at several entities is **not** demoted (D102). Blocking
+ranks by match score, then by how closely the entity's own canonical name
+resembles the query, then by `entity_id`. Sharing a name costs a candidate
+nothing, because sharing a name is the ordinary case the cascade exists to
+adjudicate — under D95 the resolver itself mints a second row for one real
+person pending adjudication, so a shared lemma is as often our own
+conservatism as it is two different people.
+
+D21's promiscuous-signal concern (`info@company.com`, placeholders) is
+carried by the mechanisms that *decide* identity — T3 profile evidence, T4,
+and `resolution_exclusions` cannot-link edges — not by ranking candidates
+down before anything examines them. T0's role is unchanged: exact T0 always
+lists candidates and never accepts a referent.
 
 ---
 
@@ -684,7 +692,6 @@ Minimum rows:
 | `_INSERT_MENTION` | no `emitted_type` |
 | `_INSERT_ENTITY` | no `type` column |
 | `_signature_allows` | removed |
-| `generic_identifier_guard` | written by resolve/cluster, not only deleted by forget |
 | `GraphQueries.neighborhood` | empty predicates = all `RELATES` (keep) |
 | `judge_pair` | lemma equality is not automatic match |
 | E3 prompt | names + governed predicates; no REGISTRY TYPES; bare-noun refusal |
@@ -781,7 +788,7 @@ generations are abandoned, not dual-run. Sequencing:
 - One captured deadline reaches P1 readiness, fact/profile nomination, graph,
   and authority confirmation; a saturated retrieval slot returns a typed
   boundary before that deadline, and no unguarded checkout occurs.
-- Guard: a lemma linking many entities is down-weighted.
+- A lemma linking many entities is ranked on merit, never demoted (D102).
 - Forget: exclusive entity still fully purged; **shared** survivor
   profile no longer contains the forgotten document’s distinctive
   phrase (D74).

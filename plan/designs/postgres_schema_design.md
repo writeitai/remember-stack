@@ -787,22 +787,12 @@ CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normal
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
 
--- ─────────────────────────────────────────────────────────────────────────
--- generic_identifier_guard — the Senzing "promiscuous signal" guard (D21/registries §6).
--- Keyed by the normalized string (not a single alias row): the property "links to MANY distinct
--- entities ⇒ generic not identifying" is about the string across the registry.
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE generic_identifier_guard (
-  deployment_id   uuid NOT NULL REFERENCES deployments,
-  normalized_lemma text NOT NULL,              -- the suspect surface string
-  distinct_entity_count integer NOT NULL,      -- how many distinct entities it currently links — the tell
-  is_downweighted boolean NOT NULL DEFAULT true, -- stop trusting it as a blocking/match signal
-  reason          text,                        -- 'role-address' | 'placeholder' | 'common-name' | ...
-  evaluated_at    timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, normalized_lemma)
-);
-COMMENT ON TABLE generic_identifier_guard IS
-  'Surfaces that link too many entities to be identifying (D21). Down-weighted so they stop driving merges; the merges they already caused are re-evaluated — enumerated via merge_events.trigger_lemmas (below).';
+-- generic_identifier_guard was REMOVED by D102 (migration p9_22_0043). It flagged any lemma
+-- linking >= 2 entities and that flag outranked match score in T1/T2 blocking, so a near-exact
+-- hit on a shared name lost to a barely-matching unshared one. It also counted entity rows
+-- rather than people: D95 has the resolver mint a second row for one real person pending
+-- adjudication, which the guard read as proof the name was generic. The promiscuous-signal
+-- concern now sits with T3/T4 and resolution_exclusions.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolution_exclusions — negative/"these are NOT the same" edges (D21).
@@ -908,9 +898,10 @@ CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE supers
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- merge_events — append-only reversibility record (D21). Snapshots pre-merge membership so
--- un-merge replays it. trigger_lemmas makes the generic-identifier-guard re-evaluation queryable
--- (registries §6: "the merges a downweighted signal caused are re-evaluated"). Not huge ⇒ real
--- composite FKs, no partition.
+-- un-merge replays it. trigger_lemmas records which lemmas drove a merge, so merges can be
+-- enumerated by trigger when one is later called into question (D102 removed the automatic
+-- down-weighting that used to drive that re-evaluation). Not huge ⇒ real composite FKs, no
+-- partition.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE merge_events (
   merge_id        uuid PRIMARY KEY,
@@ -2624,7 +2615,7 @@ Labs."*
 | D17 T0–T4 cascade, block-loose/decide-tight | single-column blocking GIN indexes on `entities.normalized_name` and `aliases.normalized_lemma` (D68); `resolution_decisions.method` (CHECK excludes T1/T2); `resolver_versions` |
 | D19 coref in-call | `mentions.canonical_name_form` (no coref model/table) |
 | D20 no external authority | non-goal §15 |
-| D21 clustering, reversibility, generic-id guard | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `generic_identifier_guard`, `superseded_by` |
+| D21 clustering, reversibility (generic-id guard removed by D102) | `merge_events` (+ `trigger_lemmas`), `resolution_exclusions`, `superseded_by` |
 | D22 golden set + eval | `golden_pairs` (+ `expected_blocking_tier`), `golden_claim_labels`, `eval_runs`, `canary_cases` |
 | D23/D94 partition the big tables; btree-only; GIN on registry targets | §12's eight parents (6 monthly RANGE via `pg_partman`, 2 static HASH-64); claims are non-partitioned for one global current-testimony BM25/HNSW corpus; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm` |
 | D24 cluster review queue | `review_queue` (band boundaries in `resolver_versions.tier_config`) |
