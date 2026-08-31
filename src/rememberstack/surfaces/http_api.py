@@ -304,6 +304,7 @@ def build_api(
     pipeline_readiness: PipelineReadinessPort | None = None,
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
+    trusted_principal_source: bool = False,
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -313,6 +314,12 @@ def build_api(
     on one perimeter credential; and `spend_lease` holds estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
+
+    `trusted_principal_source` declares that this deployment's perimeter is
+    reached only by a caller entitled to state who ingested a document (a
+    managed control plane). It is **off by default**: the deployment-wide
+    bearer identifies a deployment, not a caller, so an ordinary client
+    asserting `X-Ingest-Principal-*` is refused rather than believed.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -435,6 +442,7 @@ def build_api(
             ingest=ingest,
             deployment_id=deployment_id,
             max_body_bytes=ingest_body_max_bytes,
+            trusted_principal_source=trusted_principal_source,
         )
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
@@ -850,7 +858,12 @@ async def _send_json_error(*, send: object, status: int, detail: str) -> None:
 
 
 def _mount_ingest(
-    *, app: FastAPI, ingest: IngestPort, deployment_id: UUID, max_body_bytes: int | None
+    *,
+    app: FastAPI,
+    ingest: IngestPort,
+    deployment_id: UUID,
+    max_body_bytes: int | None,
+    trusted_principal_source: bool = False,
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
@@ -865,17 +878,26 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
-        principal_kind: IngestPrincipalKind | None = None,
+        principal_kind: Annotated[
+            IngestPrincipalKind | None, Header(alias="X-Ingest-Principal-Kind")
+        ] = None,
         principal_ref: Annotated[
-            str | None, Query(min_length=1, max_length=255)
+            str | None,
+            Header(alias="X-Ingest-Principal-Ref", min_length=1, max_length=255),
         ] = None,
     ) -> IngestedVersion:
         """Push one file through E0, optionally as a stable lineage version.
 
-        ``principal_kind``/``principal_ref`` attribute a NEW version to a typed
-        actor. They are supplied together or not at all. The caller is trusted
-        for this value by the perimeter that authenticated it; the engine never
-        infers a person from a credential.
+        Attribution travels in **headers, never the query string**: the
+        reference is erasable PII and a URL is copied verbatim into access
+        logs, proxies and traces, where a later principal deletion cannot
+        reach it.
+
+        The pair is accepted only when the composing profile declares its
+        perimeter trusted (``trusted_principal_source``). The deployment-wide
+        bearer identifies a deployment, not a caller, so without that
+        declaration any client could assert it was a person — the engine
+        refuses rather than record a forgeable claim.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
@@ -889,13 +911,23 @@ def _mount_ingest(
         if (principal_kind is None) != (principal_ref is None):
             raise HTTPException(
                 status_code=422,
-                detail="principal_kind and principal_ref must be supplied together",
+                detail=(
+                    "X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be"
+                    " supplied together"
+                ),
+            )
+        if principal_kind is not None and not trusted_principal_source:
+            raise HTTPException(
+                status_code=403, detail="ingest_attribution_not_trusted"
             )
         ingested_by = (
             None
             if principal_kind is None or principal_ref is None
             else IngestPrincipal(kind=principal_kind, external_ref=principal_ref)
         )
+        # An old structural IngestPort has no `ingested_by` keyword; passing it
+        # unconditionally would break an unattributed call that used to work.
+        attribution = {} if ingested_by is None else {"ingested_by": ingested_by}
         if source_modified_at is not None and (
             source_modified_at.tzinfo is None
             or source_modified_at.utcoffset() != timedelta(0)
@@ -920,7 +952,7 @@ def _mount_ingest(
                     ),
                 )
             return ingest.ingest(
-                deployment_id=deployment_id, upload=upload, ingested_by=ingested_by
+                deployment_id=deployment_id, upload=upload, **attribution
             )
         return ingest.ingest_observed(
             deployment_id=deployment_id,
@@ -931,7 +963,7 @@ def _mount_ingest(
             source_modified_at=source_modified_at,
             source_version_ref=source_version_ref,
             sync_cycle_id=None,
-            ingested_by=ingested_by,
+            **attribution,
         )
 
 

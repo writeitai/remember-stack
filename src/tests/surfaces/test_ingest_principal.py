@@ -5,6 +5,7 @@ contract without a database. The catalog proofs need real PostgreSQL and skip
 when `REMEMBERSTACK_DATABASE_URL` is absent, matching the rest of the suite.
 """
 
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -19,12 +20,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 
+from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import ProcessingLane
 from rememberstack.model import UploadRecord
+from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.http_api import build_api
@@ -106,7 +109,7 @@ class _OpenBoundary:
         return ()
 
 
-def _client(ingest: _RecordingIngest) -> TestClient:
+def _client(ingest: _RecordingIngest, *, trusted: bool = True) -> TestClient:
     """Build the API over the recording ingest port."""
     return TestClient(
         build_api(
@@ -115,23 +118,35 @@ def _client(ingest: _RecordingIngest) -> TestClient:
             admission=_OpenBoundary(),
             readiness=_OpenBoundary(),
             ingest=ingest,
+            trusted_principal_source=trusted,
         )
     )
 
 
-def _post(client: TestClient, **params: str) -> Response:
-    """POST one byte payload with the given query parameters."""
+def _post(client: TestClient, **headers: str) -> Response:
+    """POST one byte payload, attribution carried in headers not the URL."""
     return client.post(
         "/ingest",
-        params={"filename": "notes.txt", "mime": "text/plain", **params},
+        params={"filename": "notes.txt", "mime": "text/plain"},
         content=b"hello",
+        headers=headers,
     )
+
+
+def _attribution(kind: str | None = None, ref: str | None = None) -> dict[str, str]:
+    """Build the attribution headers actually sent on the wire."""
+    out: dict[str, str] = {}
+    if kind is not None:
+        out["X-Ingest-Principal-Kind"] = kind
+    if ref is not None:
+        out["X-Ingest-Principal-Ref"] = ref
+    return out
 
 
 def test_principal_pair_reaches_the_ingest_port() -> None:
     """A complete principal pair is typed and forwarded, not dropped."""
     ingest = _RecordingIngest()
-    response = _post(_client(ingest), principal_kind="user", principal_ref="user:jiri")
+    response = _post(_client(ingest), **_attribution("user", "user:jiri"))
     assert response.status_code == 200
     assert ingest.last_principal == IngestPrincipal(
         kind=IngestPrincipalKind.USER, external_ref="user:jiri"
@@ -146,12 +161,12 @@ def test_absent_principal_stays_none() -> None:
 
 
 @pytest.mark.parametrize(
-    "params", [{"principal_kind": "user"}, {"principal_ref": "user:jiri"}]
+    "headers", [_attribution("user"), _attribution(ref="user:jiri")]
 )
-def test_half_a_principal_is_refused(params: dict[str, str]) -> None:
+def test_half_a_principal_is_refused(headers: dict[str, str]) -> None:
     """Kind and ref are supplied together or not at all."""
     ingest = _RecordingIngest()
-    response = _post(_client(ingest), **params)
+    response = _post(_client(ingest), **headers)
     assert response.status_code == 422
     assert ingest.calls == 0
 
@@ -159,7 +174,7 @@ def test_half_a_principal_is_refused(params: dict[str, str]) -> None:
 def test_unknown_principal_kind_is_refused() -> None:
     """The kind is a closed vocabulary, so a typo cannot invent an actor type."""
     ingest = _RecordingIngest()
-    response = _post(_client(ingest), principal_kind="robot", principal_ref="r1")
+    response = _post(_client(ingest), **_attribution("robot", "r1"))
     assert response.status_code == 422
     assert ingest.calls == 0
 
@@ -167,11 +182,93 @@ def test_unknown_principal_kind_is_refused() -> None:
 def test_credential_principal_is_not_a_user() -> None:
     """A machine credential keeps its own kind; it is never a person."""
     ingest = _RecordingIngest()
-    _post(
-        _client(ingest), principal_kind="api_credential", principal_ref="dpcred:tok-1"
-    )
+    _post(_client(ingest), **_attribution("api_credential", "dpcred:tok-1"))
     assert ingest.last_principal is not None
     assert ingest.last_principal.kind is IngestPrincipalKind.API_CREDENTIAL
+    assert ingest.last_principal.external_ref == "dpcred:tok-1"
+
+
+def test_untrusted_perimeter_refuses_asserted_attribution() -> None:
+    """Without a declared trusted perimeter, a client cannot claim to be anyone.
+
+    The deployment bearer identifies a deployment, not a caller, so believing
+    `X-Ingest-Principal-*` there would let any client record itself as a user.
+    """
+    ingest = _RecordingIngest()
+    response = _post(
+        _client(ingest, trusted=False), **_attribution("user", "user:impostor")
+    )
+    assert response.status_code == 403
+    assert ingest.calls == 0
+
+
+def test_untrusted_perimeter_still_accepts_unattributed_ingest() -> None:
+    """The gate refuses a claim, never ordinary ingest."""
+    ingest = _RecordingIngest()
+    assert _post(_client(ingest, trusted=False)).status_code == 200
+    assert ingest.last_principal is None
+
+
+def test_attribution_never_appears_in_the_request_url() -> None:
+    """The reference is erasable PII, so it must not reach access logs.
+
+    A URL is copied verbatim into server access logs, proxies and traces,
+    where a later principal deletion cannot reach it. Headers are not.
+    """
+    ingest = _RecordingIngest()
+    sentinel = "user:log-sentinel-do-not-leak"
+    response = _post(_client(ingest), **_attribution("user", sentinel))
+    assert response.status_code == 200
+    assert sentinel not in str(response.request.url)
+    assert sentinel not in (response.request.url.query or b"").decode()
+
+
+def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> None:
+    """An old IngestPort has no `ingested_by`; unattributed calls must not break."""
+
+    class _LegacyIngest:
+        """The pre-attribution port signature."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def ingest(
+            self, *, deployment_id: UUID, upload: DocumentUpload
+        ) -> IngestedVersion:
+            """Accept only the original keywords."""
+            _ = upload
+            self.calls += 1
+            return IngestedVersion(
+                deployment_id=deployment_id,
+                doc_id=uuid4(),
+                version_id=uuid4(),
+                content_hash="0" * 64,
+                created=True,
+            )
+
+    legacy = _LegacyIngest()
+    client = TestClient(
+        build_api(
+            engine=None,  # type: ignore[arg-type]
+            deployment_id=_DEPLOYMENT_ID,
+            admission=_OpenBoundary(),
+            readiness=_OpenBoundary(),
+            ingest=legacy,  # type: ignore[arg-type]
+        )
+    )
+    assert _post(client).status_code == 200
+    assert legacy.calls == 1
+
+
+def test_receipt_shape_is_unchanged_for_old_clients() -> None:
+    """`IngestedVersion` gains no field, so an extra-forbid client still parses."""
+    assert set(IngestedVersion.model_fields) == {
+        "deployment_id",
+        "doc_id",
+        "version_id",
+        "content_hash",
+        "created",
+    }
 
 
 def test_empty_external_ref_is_refused() -> None:
@@ -193,13 +290,36 @@ def _database_url() -> str:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for catalog proofs")
 
 
-def _migrated_engine():  # type: ignore[no-untyped-def]
-    """Return an engine with the full migration chain applied."""
+@pytest.fixture()
+def catalog() -> Iterator[DocumentCatalog]:
+    """A migrated database with one bootstrapped deployment, fresh per test.
+
+    The earlier version of this fixture only ran migrations. Every catalog
+    insert then failed `documents_deployment_id_fkey`, so all three proofs
+    errored before any principal SQL ran — they proved nothing.
+    """
     url = _database_url()
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", url)
     command.upgrade(config, "head")
-    return create_engine(url)
+    engine = create_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+        DeploymentBootstrapper(engine=engine).bootstrap_deployment(
+            deployment_input=DeploymentBootstrapInput(
+                deployment_id=_DEPLOYMENT_ID,
+                slug="ingest-principal-test",
+                name="Ingest principal proofs",
+                default_language="en",
+                raw_bucket="mem://raw",
+                artifacts_bucket="mem://artifacts",
+                corpusfs_bucket="mem://corpusfs",
+            )
+        )
+        yield DocumentCatalog(engine=engine)
+    finally:
+        engine.dispose()
 
 
 def _record(*, content_hash: str, principal: IngestPrincipal | None) -> UploadRecord:
@@ -219,10 +339,10 @@ def _record(*, content_hash: str, principal: IngestPrincipal | None) -> UploadRe
     )
 
 
-def test_new_version_records_its_principal_and_reads_back() -> None:
+def test_new_version_records_its_principal_and_reads_back(
+    catalog: DocumentCatalog,
+) -> None:
     """A created version stores the principal; the catalog can return it."""
-    engine = _migrated_engine()
-    catalog = DocumentCatalog(engine=engine)
     principal = IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="user:jiri")
     landed = catalog.record_upload(
         record=_record(content_hash="a" * 64, principal=principal),
@@ -230,7 +350,6 @@ def test_new_version_records_its_principal_and_reads_back() -> None:
         lane=ProcessingLane.STEADY,
     )
     assert landed.created is True
-    assert landed.ingested_by_principal_id is not None
     assert (
         catalog.version_principal(
             deployment_id=_DEPLOYMENT_ID, version_id=landed.version_id
@@ -239,10 +358,10 @@ def test_new_version_records_its_principal_and_reads_back() -> None:
     )
 
 
-def test_identical_bytes_do_not_reattribute_the_version() -> None:
+def test_identical_bytes_do_not_reattribute_the_version(
+    catalog: DocumentCatalog,
+) -> None:
     """D55's no-op must never let a second actor rewrite immutable attribution."""
-    engine = _migrated_engine()
-    catalog = DocumentCatalog(engine=engine)
     first = IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="user:one")
     second = IngestPrincipal(kind=IngestPrincipalKind.USER, external_ref="user:two")
     landed = catalog.record_upload(
@@ -262,10 +381,8 @@ def test_identical_bytes_do_not_reattribute_the_version() -> None:
     )
 
 
-def test_erasing_a_principal_keeps_the_document() -> None:
+def test_erasing_a_principal_keeps_the_document(catalog: DocumentCatalog) -> None:
     """Removing a person nulls attribution; it never destroys the version."""
-    engine = _migrated_engine()
-    catalog = DocumentCatalog(engine=engine)
     landed = catalog.record_upload(
         record=_record(
             content_hash="c" * 64,
@@ -275,10 +392,13 @@ def test_erasing_a_principal_keeps_the_document() -> None:
         ),
         convert_component_version="toy",
     )
-    with engine.begin() as connection:
+    with catalog._engine.begin() as connection:  # noqa: SLF001
         connection.execute(
-            text("DELETE FROM ingest_principals WHERE principal_id = :p"),
-            {"p": landed.ingested_by_principal_id},
+            text(
+                "DELETE FROM ingest_principals WHERE deployment_id = :d"
+                " AND external_ref = :r"
+            ),
+            {"d": _DEPLOYMENT_ID, "r": "user:erase-me"},
         )
         surviving = connection.execute(
             text(

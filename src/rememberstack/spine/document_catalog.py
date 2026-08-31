@@ -151,7 +151,6 @@ class DocumentCatalog:
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
-                ingested_by_principal_id=principal_id,
             )
 
     def version_principal(

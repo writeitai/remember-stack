@@ -70,7 +70,6 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
-    ingested_by_principal_id: UUID | None = None
 
 
 class UploadRecord(BaseModel):

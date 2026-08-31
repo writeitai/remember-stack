@@ -52,38 +52,64 @@ COMMENT ON TABLE ingest_principals IS
   'Typed ingest actors (user | api_credential | service). external_ref is the
    caller''s opaque stable id and is erasable PII. A credential is never
    collapsed into the person who minted it.';
-CREATE INDEX ix_ingest_principals_ref
-  ON ingest_principals (deployment_id, kind, external_ref);
 """
+# No separate lookup index: UNIQUE (deployment_id, kind, external_ref) already
+# provides one. A duplicate would double write cost and, worse, keep a second
+# physical copy of erasable PII.
 
+# Phased so a populated `document_versions` is never locked for a scan:
+# (1) the nullable column is a catalog-only change, (2) the FK is added
+# NOT VALID so no existing row is scanned under a write-blocking lock,
+# (3) the partial index is built CONCURRENTLY outside any transaction, and
+# (4) the FK is validated under SHARE UPDATE EXCLUSIVE, which readers and
+# writers do not block on.
 _ADD_COLUMN = """
 ALTER TABLE document_versions
-  ADD COLUMN ingested_by_principal_id uuid,
-  ADD CONSTRAINT fk_document_versions_ingest_principal
-    FOREIGN KEY (deployment_id, ingested_by_principal_id)
-    REFERENCES ingest_principals (deployment_id, principal_id)
-    ON DELETE SET NULL (ingested_by_principal_id);
+  ADD COLUMN ingested_by_principal_id uuid;
 COMMENT ON COLUMN document_versions.ingested_by_principal_id IS
   'The principal that CREATED this version (immutable, creation-scoped). NULL
    for versions ingested without attribution, including every pre-migration
    row. ON DELETE SET NULL keeps a principal erasure from destroying the
    version itself.';
-CREATE INDEX ix_docversions_principal
+"""
+
+_ADD_FK_NOT_VALID = """
+ALTER TABLE document_versions
+  ADD CONSTRAINT fk_document_versions_ingest_principal
+    FOREIGN KEY (deployment_id, ingested_by_principal_id)
+    REFERENCES ingest_principals (deployment_id, principal_id)
+    ON DELETE SET NULL (ingested_by_principal_id)
+    NOT VALID;
+"""
+
+_CREATE_INDEX_CONCURRENTLY = """
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_docversions_principal
   ON document_versions (deployment_id, ingested_by_principal_id)
   WHERE ingested_by_principal_id IS NOT NULL;
 """
 
+_VALIDATE_FK = """
+ALTER TABLE document_versions
+  VALIDATE CONSTRAINT fk_document_versions_ingest_principal;
+"""
+
 
 def upgrade() -> None:
-    """Add the typed principal registry and the version attribution column."""
+    """Add the principal registry and attribution column without a long lock."""
     op.execute(_CREATE_KIND)
     op.execute(_CREATE_TABLE)
     op.execute(_ADD_COLUMN)
+    op.execute(_ADD_FK_NOT_VALID)
+    with op.get_context().autocommit_block():
+        # CONCURRENTLY cannot run inside a transaction block.
+        op.execute(_CREATE_INDEX_CONCURRENTLY)
+    op.execute(_VALIDATE_FK)
 
 
 def downgrade() -> None:
     """Drop attribution; existing versions lose their principal reference."""
-    op.execute("DROP INDEX IF EXISTS ix_docversions_principal")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_docversions_principal")
     op.execute(
         "ALTER TABLE document_versions "
         "DROP CONSTRAINT IF EXISTS fk_document_versions_ingest_principal, "

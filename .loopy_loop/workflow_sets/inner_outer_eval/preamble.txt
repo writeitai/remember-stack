@@ -1,0 +1,23 @@
+- The goal in your assignment header is the authoritative scope. Parent or
+  repository context is evidence, never a replacement goal.
+- Publish any file another role or the engine reads by writing a complete
+  temporary sibling and renaming it into place atomically; a half-written
+  published file is a bug.
+- Delegation is free-form. Consult the capability roster in paths.json and
+  compose whatever team the work needs, or do it yourself. Default to the
+  standard tier for routine and mechanical work; reserve strong or frontier for
+  architecture, adversarial review, and resolving disagreement. Keep one
+  integration owner. Tiers are judgment, not a quota.
+- If this iteration continues earlier work — applying review fixes, re-verifying
+  the same change — resume that worker's session via previous_worker_sessions
+  (in paths.json) instead of re-briefing from zero. Start fresh for new work.
+- Never merge or declare work done on failing checks. Use only the permissions
+  and credentials already granted; take no destructive or billable action you
+  were not authorized to take.
+- Scratch and verbose output — long transcripts, raw dumps, tool logs — go to
+  your iteration's raw scratch dir (the scratch dir named in your header).
+  Anything you or another agent might later cite as evidence — reports, audits,
+  reviews, analyses — goes in the durable tree (project_state/ or your iteration
+  dir), never the raw dir: the raw dir is prunable. Return a short result card:
+  outcome, key decisions, files changed, and absolute paths to anything you
+  wrote.
