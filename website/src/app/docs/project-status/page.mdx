@@ -108,6 +108,40 @@ Current public release: [`v0.9.0`](https://github.com/writeitai/remember-stack/r
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
 
+## What landed after v0.9.0 (in v0.10.0)
+
+- **A shared name no longer costs a candidate anything.** The
+  generic-identifier guard flagged any name linking two or more entities and
+  used that flag as the *primary* blocking sort key — ahead of match score.
+  A near-exact hit on a common name could rank below a barely-matching
+  unusual one and be truncated out of the candidate list entirely.
+- The premise was wrong: it counted **entity rows, not people**. Because T0
+  never auto-merges, the resolver deliberately mints a second row for one
+  real person pending adjudication — and the guard read its own conservatism
+  as proof the name was generic. Ten unrelated Jan Nováks and one Jan Novák
+  recorded twice were indistinguishable to it, and it demoted both.
+- Fuzzy blocking now ranks by match score, then by how closely the entity's
+  own canonical name resembles the query, then by age, then by id. That
+  replaces a tiebreak that fell through to a random UUID whenever candidates
+  matched through the same name.
+- D21's promiscuous-signal concern (`info@company.com`, placeholders) moves
+  to the mechanisms that *decide* identity — T3 profile evidence, T4, and
+  cannot-link exclusion edges — rather than demoting candidates before
+  anything examines them.
+- **What this costs, stated plainly:** an overflowing fuzzy block no longer
+  truncates promiscuous-string matches first. The candidate set still
+  reports honestly when it was truncated. On a deliberately degenerate shape
+  (100k entities sharing one fuzzy name) the ranking query is measurably
+  slower — runs ranged +3.3% to +31%, consistent in direction, not in
+  magnitude.
+- **Operators:** migration `p9_23_0044` drops `generic_identifier_guard`.
+  Because that table carries a foreign key to `deployments`, the drop briefly
+  takes an `AccessExclusiveLock` on the tenancy root, which blocks readers as
+  well as writers; it is scan-free and short, and the migration sets a 5s
+  `lock_timeout` so it fails fast rather than queueing behind a long read.
+  The resolver generation moves to `resolver-2026.08g`, so evaluation curves
+  measured under `08f` are not comparable and a fresh run is required.
+
 ## What landed after v0.8.1 (in v0.9.0)
 
 - Ingest records **who created a version** as a typed principal
