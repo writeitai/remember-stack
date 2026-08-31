@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.8.1`](https://github.com/writeitai/remember-stack/releases/tag/v0.8.1) on [PyPI](https://pypi.org/project/rememberstack/0.8.1/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.9.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.9.0) on [PyPI](https://pypi.org/project/rememberstack/0.9.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -107,6 +107,26 @@ Current public release: [`v0.8.1`](https://github.com/writeitai/remember-stack/r
   operation version 2, and the bundled saved query follows the same default.
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
+
+## What landed after v0.8.1 (in v0.9.0)
+
+- Ingest records **who created a version** as a typed principal
+  (`user | api_credential | service`). A machine credential is never
+  collapsed into the person who minted it; attributing token activity to
+  that person would be false attribution.
+- Attribution is creation-scoped and immutable. Bytes identical to the
+  lineage's latest version remain the D55 no-op, so a later submitter of the
+  same bytes never rewrites who created it.
+- The pair travels in `X-Ingest-Principal-Kind` / `-Ref` headers, never the
+  query string: the reference is erasable PII and a URL is copied verbatim
+  into access logs, proxies and traces.
+- It is honoured only where the deployment declares
+  `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (default off, for a
+  control-plane-only perimeter). Elsewhere attribution is **ignored, never
+  rejected** — metadata must not be able to fail an otherwise valid ingest.
+- Deleting a principal nulls attribution and never destroys the document
+  version. This is row deletion, **not** a D74-grade hard forget; a
+  person-grain forget target is a later slice.
 
 ## What landed after v0.8.0 (in v0.8.1)
 
