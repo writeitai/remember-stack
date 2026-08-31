@@ -33,6 +33,7 @@ from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
+from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
@@ -1046,7 +1047,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v17", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v18", "openai/gpt-5.6-luna", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1676,6 +1677,46 @@ def test_ingest_refuses_model_binding_drift_before_upload(
     assert uploads == 0
 
 
+def test_ingest_refuses_document_binding_generation_drift_before_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full-v18 cannot silently process with document-local T0 disabled."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "run"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    uploads = 0
+
+    def disabled_binding(request: httpx.Request) -> httpx.Response:
+        nonlocal uploads
+        if request.url.path == "/deployment":
+            payload = _deployment_payload()
+            payload["document_binding_generation"] = None
+            return httpx.Response(200, json=payload)
+        if request.url.path == "/ingest":
+            uploads += 1
+        return _run_transport(request)
+
+    raw_client = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(disabled_binding)
+    )
+    try:
+        with pytest.raises(ExecutionGuardError, match="document binding generation"):
+            ingest_sample(
+                run_dir=run_dir,
+                sample_id="conv-test",
+                max_documents=1,
+                max_evaluator_cost_usd=Decimal("1"),
+                execute=True,
+                isolated_deployment_confirmation="conv-test",
+                client=MemoryClient(client=raw_client),
+                provider=_PreflightProvider(),
+            )
+    finally:
+        raw_client.close()
+
+    assert uploads == 0
+
+
 def test_ingest_refuses_a_deduplicated_document_as_not_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1865,8 +1906,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v17","protocol_fingerprint":'
-        '"adc93908a57512682369a0e62f6650f468335ac5fbcbb72d02cd9a15b609b8b6",'
+        '{"protocol_name":"RS-LoCoMo-Full-v18","protocol_fingerprint":'
+        '"4a90d51241f90ec5bd9826fc4fe0fd4c6a8741448c80f2e09e02ca48e703b72e",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2085,7 +2126,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v17"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v18"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2592,6 +2633,7 @@ def _deployment_payload(*, build_revision: str = "a" * 40) -> dict[str, object]:
     return {
         "build_revision": build_revision,
         "model_bindings": dict(EXPECTED_INGEST_MODEL_BINDINGS),
+        "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
     }
 
 
@@ -2676,6 +2718,7 @@ def _complete_readiness_payload() -> dict[str, object]:
             }
             for capability in ("pipeline", "p1", "live_graph", "p3")
         },
+        "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
         "model_bindings": dict(EXPECTED_INGEST_MODEL_BINDINGS),
         # Must equal the revision the tests prepare with, or the serving-revision
         # guard rejects the run.

@@ -295,8 +295,10 @@ response reports each capability's requested/readiness state and safe reason.
 `live_graph` proves PostgreSQL 19 catalog and bounded query health; it has no
 generation. `p3` separately requires a fresh published CorpusFS snapshot and
 includes its version/publication evidence. The response also includes
-non-secret model IDs. This endpoint inspects work; it does not wait, retry, or
-trigger a build.
+non-secret model IDs plus `document_binding_generation`. The value
+`document-t0-v1` means exact same-document T0 replay is built and enabled;
+`null` means the resolver safely uses the ordinary global cascade. This
+endpoint inspects work; it does not wait, retry, or trigger a build.
 
 ### Connector management
 

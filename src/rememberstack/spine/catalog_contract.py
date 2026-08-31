@@ -117,6 +117,7 @@ EXPECTED_TABLES: Final = (
     "deployment_extension_packs",
     "deployments",
     "document_crossrefs",
+    "document_entity_bindings",
     "document_representations",
     "document_skeleton_checks",
     "document_sections",
@@ -282,7 +283,11 @@ EXPECTED_RANGE_PARENTS: Final = {
     "surface_cost_ledger": "occurred_at",
     "testimony_currency_events": "occurred_at",
 }
-EXPECTED_HASH_PARENTS: Final = ("observation_evidence", "relation_evidence")
+EXPECTED_HASH_PARENTS: Final = (
+    "document_entity_bindings",
+    "observation_evidence",
+    "relation_evidence",
+)
 UNLANED_STAGES: Final = frozenset(
     {
         "refresh_profile",
@@ -333,10 +338,10 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 73,
-    "f": 122,
-    "n": 539,
-    "p": 70,
+    "c": 75,
+    "f": 124,
+    "n": 543,
+    "p": 71,
     "u": 35,
     "x": 1,
 }
@@ -376,6 +381,7 @@ DECISION_OBJECTS: Final = {
         "ix_claims_current_embedding_hnsw",
         "ix_claims_current_bm25",
     ),
+    "D102": ("document_entity_bindings",),
 }
 
 
@@ -650,6 +656,31 @@ def verify_schema(connection: Connection) -> CatalogInventory:
             f"wake function/trigger: expected 1/1, observed {function_count}/{trigger_count}"
         )
 
+    binding_function_count = int(
+        connection.execute(
+            statement=text(
+                "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname='public' "
+                "AND p.proname='maintain_document_entity_binding'"
+            )
+        ).scalar_one()
+    )
+    binding_trigger_count = int(
+        connection.execute(
+            statement=text(
+                "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                "WHERE c.relname='resolution_decisions' "
+                "AND t.tgname='tr_resolution_decision_document_binding' "
+                "AND NOT t.tgisinternal"
+            )
+        ).scalar_one()
+    )
+    if binding_function_count != 1 or binding_trigger_count != 1:
+        problems.append(
+            "document binding function/trigger: expected 1/1, observed "
+            f"{binding_function_count}/{binding_trigger_count}"
+        )
+
     relates_definition = str(
         connection.execute(
             statement=text(
@@ -777,7 +808,8 @@ def verify_schema_absent(connection: Connection) -> None:
         connection.execute(
             statement=text(
                 "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
-                "WHERE n.nspname='public' AND p.proname='notify_due_processing_insert'"
+                "WHERE n.nspname='public' AND p.proname IN "
+                "('notify_due_processing_insert', 'maintain_document_entity_binding')"
             )
         ).scalar_one()
     )
@@ -798,7 +830,7 @@ def verify_schema_absent(connection: Connection) -> None:
     if template_count:
         problems.append(f"UGM pg_partman templates remain: {template_count}")
     if function_count:
-        problems.append(f"UGM wake function remains: {function_count}")
+        problems.append(f"UGM trigger functions remain: {function_count}")
     if problems:
         raise SchemaContractError(
             "downgrade cleanup mismatch:\n- " + "\n- ".join(problems)

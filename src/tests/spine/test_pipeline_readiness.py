@@ -140,6 +140,7 @@ def test_exact_terminal_stages_and_fresh_projections_are_ready(
     assert report.capabilities["pipeline"].ready is True
     assert report.capabilities["p3"].ready is True
     assert report.capabilities["p3"].version == "v1"
+    assert report.document_binding_generation == "document-t0-v1"
     assert report.model_bindings == {"claim_extraction": "model-v1"}
 
 
