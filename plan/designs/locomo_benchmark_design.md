@@ -1,7 +1,15 @@
 # LoCoMo full-system benchmark design
 
-> **Binding D100 amendment (2026-08-31).** The current protocol is
-> `RS-LoCoMo-Full-v17`. It retains v16's dataset, answer/judge models, tools,
+> **Binding D102 amendment (2026-08-31).** The current protocol is
+> `RS-LoCoMo-Full-v18`. It retains v17's dataset, models, tools, budgets,
+> binary match-biased T4, content-before-`Unknown` guard, and no-review scoring
+> rule. Resolver decisions may now use the D102 exact document-local T0 replay
+> after a T4 match, changing provider-call counts, resolver/normalizer
+> generations, protocol identity, and fingerprint. V17 and v18 scores are
+> directional, not a strict protocol A/B.
+
+> **Historical D100 amendment (2026-08-31; superseded by D102).** The D100 protocol was
+> `RS-LoCoMo-Full-v17`. It retained v16's dataset, answer/judge models, tools,
 > budgets, content-before-`Unknown` guard, and no-review scoring rule while
 > rolling the resolver prompt/output schema/generation to one joint binary,
 > match-biased T4 call. V16 and v17 scores are directional, not a strict
@@ -29,7 +37,7 @@
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v17 run.
+> paid v18 run.
 
 ## 1. Acceptance boundary
 
@@ -55,7 +63,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v17
+protocol                RS-LoCoMo-Full-v18
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -79,6 +87,24 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v17 → v18 (2026-08-31 — D102 document-local exact T0):** Once one
+`document-t0-v1` T4 call matches an exact normalized canonical name inside
+one catalog document, later exact occurrences in that document may replay the
+active entity as T0 without T3/T4. Global T0 remains candidate-only; T1/T2
+remain non-deciding. The durable anchor is derived from normal resolution
+history through the bounded document-binding projection and is part of locked
+snapshot revalidation. This changes resolver
+behavior, provider-call counts, decision features, and component generations;
+the dataset, answer/judge models and budgets, read surface, and scoring rules
+are unchanged. File attribution remains outside the protocol change.
+
+V18 retains `auto_merge_enabled=false`. No human accepts or rejects merge
+proposals between ingest and scoring.
+The public readiness report must expose
+`document_binding_generation=document-t0-v1`; prepare fingerprints that value,
+and ingest/pre-answer readiness rejects null or any other generation. A
+v18-labelled run therefore cannot silently execute the v17 resolver path.
 
 **v16 → v17 (2026-08-31 — D100 binary match-biased T4):** The identity
 resolver retains T0–T2 candidate blocking, conservative T3, candidate
@@ -329,7 +355,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and later instead measure the
-owner-selected Luna agent against their pinned surfaces; v17 retains that model
+owner-selected Luna agent against their pinned surfaces; v18 retains that model
 choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -532,7 +558,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v17; no benchmark-specific
+an integrity requirement and an answer channel in v18; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -583,7 +609,10 @@ compatibility form. The response contains:
   property-graph catalog, grant, helper-version, role-limit, and
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
-- every non-secret ingestion/query model binding.
+- every non-secret ingestion/query model binding; and
+- the non-secret `document_binding_generation`, which Full-v18 requires to be
+  exactly `document-t0-v1` and stores in `run.json` plus the protocol
+  fingerprint.
 
 The answer command refuses a false report and checkpoints a true one. The old
 `--confirm-index-ready` flag is removed.
@@ -651,7 +680,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v17 leaves it unset. If the
+   prepared protocol's `answer_word_cap` is set; v18 leaves it unset. If the
    normalized answer is `Unknown` and no successful content-bearing tool has
    been attempted, reject that step, render bounded guard feedback, and continue
    the same loop. Content-bearing tools are the three context operations;
@@ -684,7 +713,7 @@ filesystem orientation/grep/read. It must inspect graph truncation/work-bound
 fields and respect grain, validity, freshness, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v17): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v18): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". The first two remain prompt discipline. D99 makes
@@ -712,11 +741,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v17 \
+  --protocol full-v18 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v17`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v18`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
@@ -814,6 +843,8 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   readiness.
 - Public readiness is true; current serving-process model bindings are reviewed as
   configuration, not processing-time provenance.
+- Public readiness reports `document_binding_generation=document-t0-v1`, and
+  the checkpointed/fingerprinted value matches.
 - Public surface hash, assured-operation descriptors, live implementation-plan hashes,
   seven open-query names, and the fingerprinted complete answer catalog match.
 - Account/provider hard limits and the CLI reported-spend stop threshold are acceptable.

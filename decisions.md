@@ -2908,7 +2908,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D100 amendment.** The current protocol is `RS-LoCoMo-Full-v17`. It retains
+> **D102 amendment.** The current protocol is `RS-LoCoMo-Full-v18`. It retains
+> v17's surface, dataset, models, and budgets while rolling the D102
+> document-local exact-T0 resolver/normalizer generations.
+>
+> **Historical D100 amendment.** `RS-LoCoMo-Full-v17` retained
 > v16's 21-tool surface, dataset, models, and budgets while rolling the D100
 > binary match-biased T4 resolver generation.
 >
@@ -4012,6 +4016,11 @@ statistics without a duplicated claim-search table.
 
 ## D95. Entity identity is the real-world referent
 
+> **D102 amendment (2026-08-31).** T0 remains candidate-only globally. After
+> one T4 match, the exact canonical lemma may replay that entity within the
+> same document through the bounded `document_entity_bindings` projection.
+> D102 contains the complete boundary and lifecycle.
+>
 > **D100 amendment (2026-08-31).** T4 is one bounded, joint, match-biased
 > binary selection call over the candidate set. It returns an existing
 > candidate id or `new`; there is no frontier seat, confidence-routing branch,
@@ -4027,9 +4036,9 @@ statistics without a duplicated claim-search table.
 
 **Decision (2026-08-26; T0 rule revised same day).** One `entity_id` per
 real-world referent. Names generate **candidates**; they are not the
-verdict. **T0 never auto-merges.** Exact lemma match only **lists**
+global verdict. **T0 never auto-merges globally.** Exact lemma match only **lists**
 distinct active entity ids with that cleaned spelling (0, 1, or many).
-The verdict is T3 or T4:
+Outside D102's later same-document exception, the verdict is T3 or T4:
 
 - **T3** (embeddings of mention+claim vs candidate **profile**) may
   accept a repeat of a known person without an LLM — this is the scale
@@ -4410,6 +4419,10 @@ D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
 
 ## D100. T4 is one binary, match-biased candidate-selection call
 
+> **D102 amendment (2026-08-31).** A T4 match may establish the bounded
+> same-document exact-name binding used by later T0 replays. Global T0 and the
+> binary T4 contract below remain unchanged; D102 owns the exception.
+
 **Decision (2026-08-31).** Amend D95 and D99 so the identity residue reaches
 exactly one T4 call on the configured simple model. T4 sees the incoming
 canonical name and claim plus every candidate in the bounded resolver snapshot
@@ -4561,3 +4574,109 @@ assertion-grain forget target first).
 **Amends.** Extends D50's scope statement to distinguish attribution from
 authorization. Does not change D55 versioning, D74 forget, D95/D99/D100
 identity, or any retrieval contract.
+
+## D102. Exact T0 may replay a T4 match inside one document
+
+**Decision (2026-08-31).** Keep T0 candidate-only across the entity registry,
+but add one narrow exact-name verdict. After a current, non-superseded
+`T4_small` decision matches an existing active entity, later occurrences with
+the same `normalized_lemma(reference.name)` in the same catalog `doc_id` may
+reuse that entity as T0 without an embedding or generation call. The key is
+`(deployment_id, doc_id, normalized canonical name)`. A different document
+never inherits it; later versions in the same document lineage may.
+
+Every D102 resolver decision records `document-t0-v1`, `doc_id`, and canonical
+lemma in its existing JSON features and transactionally upserts one
+`document_entity_bindings` membership row keyed by deployment, document,
+canonical lemma, and entity. Only a T4 `match` stores its decision id and
+`decided_at` partition coordinate as the anchor source; the feature contract,
+not the resolver generation string, defines compatibility across later
+releases. T0 mints/replays, T3 matches, and T4 `new` create membership but do
+not authorize one.
+
+Replay requires exactly one active binding row and a source pair that still
+identifies a current, non-new `T4_small` match. A prior T4 `new`, human
+re-decision, or other decision for a second same-name entity creates a durable
+conflict row and uses the ordinary global T0-candidate → T3/T4 cascade. A
+superseded membership row is retained conservatively; it may cost the shortcut
+but cannot cause a false replay. Candidates seen only in other documents do
+not conflict. T1 trigram and T2 phonetic reachability remain candidate
+generation only. Source-surface equality is not enough.
+
+Human re-decision and unmerge-restore paths use the same binding writer before
+exposing a changed mention membership. Merge status filters inactive rows.
+Normal deletion of either a version or a lineage clears all bindings for its
+`doc_id` under the deletion admission barrier; any surviving or reingested
+version must earn a new T4 anchor rather than reuse deleted evidence.
+
+The binding table is a derived bounded access path, not identity authority.
+The append-only source decision is validated on every replay using its full
+partition key. An anchor hit commits in the first normalized-lemma-locked
+transaction. Provider paths include binding/conflict state in their optimistic
+snapshot and revalidate it under that lock. A T4 match or conflict committed
+during a peer provider call invalidates the peer snapshot; its bounded retry
+can use T0 or the ordinary cascade. Provider latency never holds a database
+transaction.
+
+`deployments.document_binding_generation` gates use. New empty deployments
+bootstrap `document-t0-v1`; migrated deployments remain unset and use the
+ordinary cascade until setup rebuilds and verifies bindings in bounded pages.
+D102 decisions rebuild exactly from their feature coordinates. Pre-D102 rows
+expand the entity's canonical aliases in each document conservatively; extra
+rows only disable replay. Clearing the generation disables the shortcut during
+repair. D74 deletes and residual-verifies every binding for the forgotten
+document.
+
+Every replay writes the ordinary mention and an append-only `T0` decision with
+the document id, canonical lemma, anchor contract, and source T4 decision id.
+The binding upsert is in that transaction; hard forget and source supersession
+remain fail-closed through the explicit projection lifecycle above.
+
+**Context.** A retained v0.8.1 D100 `conv-26` store had 983 committed T4
+decisions and 1,015 paid T4 attempts. Grouping by document and canonical name
+showed that 925 committed T4 decisions (94%) occurred after the first T4 in
+their group. The estimated gross saving was about $0.22–$0.24 of a $3.431599
+processing run. This is diagnostic evidence, not a promised corpus-wide rate.
+
+**Consequences.** Repeated exact names inside a document become cheaper and
+deterministic after one T4 match. The first T4 remains the quality boundary: a
+wrong match can be replayed, and a not-yet-recorded second same-named person
+within one document can be over-merged after the anchor exists. Already
+recorded same-name splits disable replay. That deliberate local-consistency trade
+does not justify fuzzy acceptance. A future extractor-supplied source-local
+entity id may replace name equality for that hard case. The bounded binding
+lookup adds one small transactional write per decision and explicit
+setup/forget/recovery work.
+
+D102 amends D22's same-lemma negative gate. Cross-document homonyms and
+same-document homonyms whose conflict rows already exist remain zero-false-
+merge release gates. A second, not-yet-recorded same-name person appearing
+after an anchor is the explicit D102 risk diagnostic and is reported rather
+than made an impossible blocking expectation.
+
+The resolver and normalizer component generations roll. The ordinary LoCoMo
+protocol advances from Full-v17 to Full-v18 because resolution decisions and
+provider-call counts change. Public readiness exposes the binding generation;
+Full-v18 fingerprints and requires exact `document-t0-v1`, so an unready
+deployment cannot be mislabeled v18. No paid run is authorized by this
+decision.
+
+**Rejected.** Keep paying T4 for every exact repeat; restore global exact-name
+T0; enable document-local T1/T2; use process memory as authority; run an
+unbounded partitioned-history join under the lemma lock; couple the change to
+the parallel file-attribution work.
+
+**Design.** `plan/designs/entity_identity_and_retrieval_design.md` §3.1.2;
+`plan/designs/registries_design.md` §3;
+`plan/designs/postgres_schema_design.md` entity decision bindings;
+`plan/designs/locomo_benchmark_design.md` Full-v18 protocol.
+
+**Analysis.** `plan/analysis/document_local_t0_anchor.md`.
+
+**Sequencing.** `plan/plans/entity_identity_and_retrieval.md` WP-I.10.
+
+**Amends.** Narrows D95/D100's “T0 never auto-merges” rule only after a
+same-document T4 match and refines D22's same-name-negative gate as described
+above. Preserves D20 registry self-containment, D99 snapshot/revalidation and
+recovery, D100 binary T4, D55 document lineage, D74 forget, and D97/D98
+retrieval behavior. File attribution remains outside D102.

@@ -1,5 +1,12 @@
 # Postgres Schema Design — the Plane-E Spine
 
+> **Binding D102 amendment (2026-08-31).** Exact same-document T0 replay uses
+> the bounded derived `document_entity_bindings` table below. Every D102
+> decision writes its document/canonical-lemma coordinate transactionally;
+> only T4 match stores a source decision and partition timestamp. Deployment
+> generation readiness, source validation, conservative conflicts, rebuild,
+> and hard-forget lifecycle are part of the schema contract.
+
 > **Binding D98 amendment (2026-08-27).** PostgreSQL 19 is also the live graph
 > execution host. SQL/PGQ property graphs are catalog metadata over normalized
 > `memory_v1` views; bounded recursive functions perform variable/shortest
@@ -313,12 +320,13 @@ CREATE TABLE deployments (
   artifacts_bucket text NOT NULL,              -- gs:// artifacts bucket (markdown/pageindex, mount-readable) — D37
   corpusfs_bucket text NOT NULL,               -- gs:// P3 corpus-filesystem bucket (snapshots + latest) — D40
   knowledge_repo_uri text,                     -- plane-K git remote (git is truth for K; PG holds provenance only) — D1
+  document_binding_generation text,            -- NULL disables D102 replay; document-t0-v1 only after binding build/verification
   status          deployment_status NOT NULL DEFAULT 'active',
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE deployments IS
-  'Identity root for the independent deployment served by this Postgres instance/schema (D16/D68). Entity spaces, registries, graphs and buckets are never shared across deployments; deployment_id is constant here and participates in every scoped FK as defense in depth.';
+  'Identity root for the independent deployment served by this Postgres instance/schema (D16/D68). Entity spaces, registries, graphs and buckets are never shared across deployments; deployment_id is constant here and participates in every scoped FK as defense in depth. document_binding_generation is NULL while D102 bindings are unavailable/rebuilding and document-t0-v1 only after verified completeness.';
 
 -- D94 current-only P1 control state. This is not a search-row mirror or a
 -- generation history: exactly one row describes each target/channel now served.
@@ -901,7 +909,7 @@ CREATE TABLE resolution_decisions (
   CHECK (method NOT IN ('T1','T2'))            -- T1/T2 are candidate generation, never a verdict (D17)
 ) PARTITION BY RANGE (decided_at);
 COMMENT ON TABLE resolution_decisions IS
-  'Append-only resolution verdicts (D17/D21/D99/D100). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; current T4 features keep candidate completeness/order, bounded T3 evidence, binary selection, model and rationale while historical D99 shapes remain readable.';
+  'Append-only resolution verdicts (D17/D21/D99/D100/D102). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; current features include the document-t0-v1 doc/canonical-lemma coordinate; T4 also keeps candidate completeness/order, bounded T3 evidence, binary selection, model and rationale while historical D99 shapes remain readable.';
 CREATE INDEX ix_resdec_mention ON resolution_decisions (mention_id);
 CREATE INDEX ix_resdec_entity  ON resolution_decisions (deployment_id, entity_id);
 CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE superseded_by IS NULL;
@@ -1114,6 +1122,29 @@ COMMENT ON TABLE documents IS
   'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. A forget soft-tombstones the lineage.';
 CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at IS NULL;
 CREATE INDEX ix_documents_entity   ON documents (document_entity_id) WHERE document_entity_id IS NOT NULL;
+
+-- D102 bounded same-document exact-name projection. Append-only decisions
+-- remain authority: replay validates the source pair against the exact monthly
+-- resolution_decisions partition. Membership rows are conservative and are
+-- not removed merely because a decision is superseded. HASH(doc_id) makes one
+-- exact-document lookup and delete prune to one child at target scale; the
+-- migration creates all 64 remainder partitions.
+CREATE TABLE document_entity_bindings (
+  deployment_id   uuid NOT NULL,
+  doc_id           uuid NOT NULL,
+  canonical_lemma  text NOT NULL CHECK (canonical_lemma <> ''),
+  entity_id        uuid NOT NULL,
+  anchor_decision_id uuid,                      -- LOGICAL FK → resolution_decisions
+  anchor_decided_at timestamptz,                -- source partition key; paired with anchor_decision_id
+  PRIMARY KEY (deployment_id, doc_id, canonical_lemma, entity_id),
+  FOREIGN KEY (deployment_id, doc_id)
+    REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, entity_id)
+    REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE,
+  CHECK ((anchor_decision_id IS NULL) = (anchor_decided_at IS NULL))
+) PARTITION BY HASH (doc_id);
+COMMENT ON TABLE document_entity_bindings IS
+  'D102 bounded derived membership for exact T0 replay inside one document. Every resolver decision upserts membership; only T4 match stores its source decision id plus decided_at partition coordinate. Exactly one active row with a still-current source may authorize replay. Extra rows fail closed. Normal delete and D74 delete by document; setup rebuilds before deployments.document_binding_generation becomes document-t0-v1.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- document_versions — semantically append-only observed snapshots of a lineage (D55).
@@ -2387,7 +2418,7 @@ CREATE UNIQUE INDEX uq_assured_operation_active
 ## 12. Partitioning & partition pruning (D23)
 
 Exactly **eight** append-only E-plane tables are partitioned for scale. Six use monthly RANGE
-children managed by `pg_partman`; two evidence joins use 64 static HASH children created by the
+children managed by `pg_partman`; three lookup/evidence families use 64 static HASH children created by the
 schema migration. Monthly RANGE caps btree size, makes detaching an old hot month a partition
 operation, and aligns with projection archival (p2 §8). HASH partitioning puts every evidence row
 for one fact in one child and makes the evidence-once primary key enforceable. This estate is
@@ -2402,15 +2433,24 @@ documented revision to the monthly cadence or the measured HASH starting count o
 | `chunk_claims` | monthly RANGE (`created_at`) | (`chunk_id`, `claim_id`, `created_at`) | `pg_partman` | logical |
 | `claim_extraction_decisions` | monthly RANGE (`decided_at`) | (`decision_id`, `decided_at`) | `pg_partman` | logical |
 | `testimony_currency_events` | monthly RANGE (`occurred_at`) | (`event_id`, `occurred_at`) | `pg_partman` | logical |
+| `document_entity_bindings` | HASH (`doc_id`) | (`deployment_id`, `doc_id`, `canonical_lemma`, `entity_id`) | 64 static migration-created children | real document/entity; logical source decision |
 | `relation_evidence` | HASH (`relation_id`) | (`relation_id`, `claim_id`) | 64 static migration-created children | logical |
 | `observation_evidence` | HASH (`observation_id`) | (`observation_id`, `claim_id`) | 64 static migration-created children | logical |
 
-`pg_partman` creates and maintains only the six monthly RANGE families. It does not manage either
-HASH family; migrations create all remainders `0..63` before inserts can reach those parents.
+`pg_partman` creates and maintains only the six monthly RANGE families. It does not manage the
+three HASH families; migrations create all remainders `0..63` before inserts can reach those parents.
 `entities` and `aliases` are deliberately **not** partitioned (≤10⁷, the blocking targets whose
 single-column GIN trigram/phonetic indexes span the deployment, D23/D68). `relations`,
 `observations`, and their adjudication tables are not partitioned: distinct facts and their
 decision transcripts are far smaller than assertion-grain evidence.
+
+`document_entity_bindings` is at most one row per distinct
+document/canonical-lemma/entity membership: no more than mentions and expected
+to be roughly aliases-order (starting planning bound ≤10⁷, to be checked from
+operations). It is nevertheless hash-partitioned now because millions of
+documents make a single text-bearing primary-key tree avoidable. Every hot
+lookup, normal delete, and D74 purge supplies exact `doc_id`, pruning to one of
+64 children; the primary-key prefix then bounds work to one document/name.
 
 **Partition pruning on ID lookups.** Hot queries over the remaining partitioned
 families often select by id/parent (`mention_id → resolution_decisions`,
@@ -2433,7 +2473,7 @@ is). This is the D23 contract. The `claim_id` reverse lookup still fans across h
 it is the cold path. `observation_evidence` applies the same policy to `observation_id`.
 
 **Partition-key consequences in the DDL:** a partitioned table's PRIMARY KEY/UNIQUE must include the
-partition key, so all six RANGE parents include their time key and the two HASH parents include
+partition key, so all six RANGE parents include their time key and the three HASH parents include
 their fact identifier. The application treats each UUIDv7 alone as row identity (globally unique by
 construction); the wider RANGE keys are the Postgres mechanical requirement. The evidence joins'
 pair keys are also the intended evidence-once identity.
@@ -2464,6 +2504,11 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
    crossref targets resolve sanely). The worker then clears the affected `document_sections`
    (cascade) and sets dependent `document_crossrefs.to_doc_id = NULL, resolved = false` while
    **retaining `raw_citation`** so the link can be re-resolved if the target is re-ingested.
+   Both a single-version delete and a lineage delete also delete every
+   `document_entity_bindings` row for that `doc_id` under the deletion admission
+   barrier. The table is document-scoped rather than version-scoped, so clearing
+   the whole prefix is the safe rule: a surviving or reingested version earns a
+   new T4 anchor and cannot reuse a judgment grounded in deleted evidence.
 4. **`chunks`** (logical FK): rows are **retained** (they are the occurrence record, D56/F4) but
    their P1 rows are deleted by the lifecycle transaction/repair path and are
    immediately ineligible through the authority join. The auditor ignores rows
@@ -2511,7 +2556,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   content-free guards, sections, cross-reference citation text, representation metadata, and assets;
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
-  audit rationales/features, and source-exclusive relation/observation evidence;
+  audit rationales/features, every `document_entity_bindings` row for the lineage, and
+  source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
 - K refresh/compile/plan payloads and transcript URIs tied to the affected evidence (the object
@@ -2550,8 +2596,10 @@ Labs."*
    `anchor_ok`/`window_membership_ok` true (the CHECK); mentions of "Alice Novak", "Acme", "Beacon
    Labs" → `mentions` with `canonical_name_form`.
 4. **Resolution** (T0–T4) writes `resolution_decisions` (method ∈ {T0,T3,T4_*,human}) linking each
-   mention to an `entities` row via the `aliases` blocking indexes; "Beacon Labs" is new
-   (`is_new_entity`).
+   mention to an `entities` row via the `aliases` blocking indexes and transactionally upserts
+   its D102 `document_entity_bindings` membership. A T4 match stores the exact source decision
+   pair; a later sole active same-document/name binding may replay as T0. "Beacon Labs" is new
+   (`is_new_entity`) and its membership is not an anchor.
 5. **E3 normalize**: `c4` → `(alice, founded, beacon_labs)` — new `relations` row (the
    governed predicate is valid; endpoint classes are not a write gate), one `relation_evidence(supports)` row keyed
    `(relation_id, claim_id)` (a re-link is an `ON CONFLICT` no-op). `c3` triggers **supersession** on `(alice, works_for, acme)`: the

@@ -1,11 +1,12 @@
-# Sequencing — entity identity and retrieval (D95–D100)
+# Sequencing — entity identity and retrieval (D95–D102)
 
 **Status:** sequencing only (not design). Binding how:
 [`entity_identity_and_retrieval_design.md`](../designs/entity_identity_and_retrieval_design.md).
 **Why:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
-[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md).
+[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md), and
+[`document_local_t0_anchor.md`](../analysis/document_local_t0_anchor.md).
 **Plan reviews:**
 r1
 [`Codex`](../../design/reviews/REVIEW_codex-sol_entity_identity_retrieval_plan_2026-08-26.md) /
@@ -43,7 +44,8 @@ It also **does not** drop the r1 correctness findings: eval/`judge_pair`
 before T0-as-candidates is activated, profile/T3 safety before that
 activation (or T3 still glues on name-only vectors), rewrite every type
 consumer in the type-cut WP. A static common-name list is **not**
-required: T0 never auto-merges.
+required: T0 never auto-merges globally; D102 later adds only the T4-backed
+same-document replay.
 
 ## Order rationale
 
@@ -80,6 +82,7 @@ drain because “reviewers mentioned it” — operator waived BC.
 | WP-I.7 | Same-PR website pages for each user-visible WP above (D66) | D66 | with the WP it documents | `website/src/app/docs/**` | docs describe shipped behavior only |
 | WP-I.8 | **D99 uncertainty/convergence correction.** Tri-state T4; exclusions only from supported `different`; candidate/T4 completeness and provisional-mint evidence; bounded T3 outcome reasons; snapshot/unlocked-provider/locked-revalidation resolver; current-profile nomination into idempotent neighborhood convergence; benchmark `Unknown` guard after identity-only reads | design §3.1–3.3.3, §7, §9, §11; D99 | WP-I.5, WP-I.6 | resolver/model tests; convergence production composition and proposal dedupe; benchmark loop guard; same-PR website/project-status update if public behavior changes | insufficient/truncated decisions write no false cannot-link or authoritative novelty; stale provider decisions cannot commit; touched current profiles reach convergence; father/son stays split; T3 reasons aggregate; ambiguous lookup cannot terminate `Unknown` without a content read |
 | WP-I.9 | **D100 binary match-biased T4 cut.** Replace pairwise tri-state small→frontier calls with one configured-simple-model call over the complete bounded candidate snapshot; output one supplied candidate id or `new`; include aliases, current profile descriptions, salient facts, and T3 scores/gates; remove current provisional mint and confidence routing; roll resolver/prompt/output-schema/component and LoCoMo protocol generations while retaining D99 locking, diagnostics, convergence, and historical audit readability | design §3.1–3.3, §8–§11; D100 | WP-I.8 | resolver/model tests; Full-v17 benchmark protocol and diagnostics; same-PR shipped docs/project-status update where behavior is public | one T4 call per residue; compatible topic-diverse repeats match; father/son and same-name colleagues split on positive evidence; selected id belongs to supplied candidates; `new` excludes only supplied candidates; incomplete search remains audit-only; old D99 rows decode; no frontier/provisional current path |
+| WP-I.10 | **D102 exact document-local T0 replay.** Add the bounded hash-partitioned `document_entity_bindings` projection and deployment-generation gate; stamp `document-t0-v1` coordinates on all decisions and upsert membership transactionally; only T4 match stores a partition-addressable source; include binding/conflict state in provider-path snapshot revalidation; record later exact replays as auditable T0; wire review/unmerge writers, setup rebuild, ordinary delete, and D74 deletion; expose readiness to Full-v18; no T1/T2 verdict or attribution dependency; roll resolver/normalizer and protocol generations | design §3.1.2, §3.4, §8–§11; schema design; D102 | WP-I.9 | migration + resolver/review/setup/delete/forget/readiness code; focused lifecycle/contention/provider-call tests; protocol/component roll | first exact repeat pays T4, later sole-active-binding exact repeats make no provider call; other documents and fuzzy/phonetic/possessive names use global cascade; T4-new/invalid-source/inactive/unready/conflicting state fails closed; stale in-flight T4 cannot commit over a new binding; rebuild/delete/forget verification and refined D22 gates pass |
 
 **Parallelism:** I.3 and I.4 may be **developed** in parallel after I.2;
 both must **merge before** I.5. I.6 implementation can start against
@@ -93,16 +96,19 @@ runs before app code that omits `type`. One release. No dual writer.
 resolver curve **and** per-tier diagnostics; T0 false-merge on common
 names is a failing test if I.5 regresses; I.5 does not merge without a
 passing post-I.4 eval record. I.8 additionally requires the D99 deterministic
-gates. I.9 requires the D100 binary-selection fixtures and one-call accounting
-before another paid identity rerun; the existing uncalibrated cluster cut
-remains review-only.
+gates. I.9 requires the D100 binary-selection fixtures and one-call accounting.
+I.10 retains that hard gate for cross-document homonyms and recorded
+same-document conflicts, while reporting the accepted unseen-second-person
+risk separately. It requires document-boundary and contention fixtures before another paid
+identity rerun; the existing uncalibrated cluster cut remains review-only.
 
 **Non-goals:** reintroducing hats; expand/contract typed columns;
 mixed-generation E3 drain; LoCoMo-only prompts; `mention_id` on
 evidence; a `bank` type; keeping `resolve(type?)`; shipping
-`t0_exact_accept` (or any exact-lemma auto-merge flag) in WP-I.5 —
+global `t0_exact_accept` (or any corpus-wide exact-lemma auto-merge flag) in
+WP-I.5 —
 that idea is an unchosen proposal
 ([`optional-exact-t0-accept.md`](../../design/proposals/optional-exact-t0-accept.md)),
 and “enable it after a large corpus” is a rejected trigger.
-File/source-attribution changes are a separate contract and are not a WP-I.9
+File/source-attribution changes are a separate contract and are not a WP-I.10
 dependency or deliverable.
