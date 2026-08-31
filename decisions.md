@@ -4625,6 +4625,15 @@ claim, not any single figure. No new scan node appears. This is accepted because
 because the key is what rescues the correct referent from truncation (see
 the overflow canary in `test_resolver.py`).
 
+**Operator action.** The generation bump to `resolver-2026.08f` is not
+cosmetic. D22 acceptance curves live on the `resolver_versions` row keyed by
+version, so `08f` starts with no recorded curves: a fresh evaluation run must
+be recorded under it before its numbers gate anything, and `08e` curves must
+not be carried across. Decisions already stamped `08e` stay as they are —
+that is the provenance working, not a migration gap. The new row is seeded
+lazily on first resolve; thresholds are unchanged, so no
+`ResolverVersionConflictError` can arise from the bump itself.
+
 A `COUNT(DISTINCT entity_id)` per resolve is gone, as is a table of
 per-deployment surface strings with no lineage provenance that hard-forget
 had to blanket-delete. One function is genuinely lost: overflowing fuzzy

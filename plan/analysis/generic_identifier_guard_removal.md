@@ -218,4 +218,5 @@ from. Dropping the table removes both.
   and a per-resolve count for nothing.
 - **Keep the flag, fix only the sort order.** Considered and implemented as
   an intermediate step; superseded within the same change once it was clear
-  the flag reached no decision at all.
+  that with the ranking input gone the flag had no remaining consumer, so
+  the per-resolve write and the table were paying for nothing.
