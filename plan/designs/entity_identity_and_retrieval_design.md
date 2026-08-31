@@ -1,6 +1,14 @@
 # Entity identity and retrieval — design (binding)
 
-> **Binding D99 amendment (2026-08-28).** T4 distinguishes `same`,
+> **Binding D100 amendment (2026-08-31).** T4 is one joint call on the
+> configured simple model over every candidate in the bounded snapshot. It
+> returns one candidate id or `new`, preferring a compatible existing entity
+> unless evidence positively distinguishes a new referent. The current
+> generation has no frontier seat, confidence-routing branch,
+> `insufficient_evidence`, or provisional mint. D99's snapshot/revalidation,
+> T3 diagnostics, convergence, and recovery contracts remain binding.
+>
+> **Historical D99 amendment (2026-08-28; superseded in part by D100).** T4 distinguishes `same`,
 > positively supported `different`, and `insufficient_evidence`. Only
 > `different` creates an automatic cannot-link. An incomplete candidate or T4
 > prefix cannot prove novelty; ingestion may mint a merge-eligible provisional
@@ -15,15 +23,16 @@
 > P2 rebuild. The D95–D97 identity, profile, and retrieval behavior is otherwise
 > unchanged.
 
-**Status:** accepted as operator-directed 2026-08-26 (D95–D97). Dual
-implementation review still applies before code lands; this document is
-the *how*, not a phased MVP.
+**Status:** accepted as operator-directed 2026-08-26 and amended through D100
+on 2026-08-31. Dual implementation review still applies before code lands;
+this document is the *how*, not a phased MVP.
 **Date:** 2026-08-26
-**Decision log:** D95, D96, D97, D99
+**Decision log:** D95, D96, D97, D99, D100
 **Analysis:**
 [`entity_identity_and_retrieval_analysis.md`](../analysis/entity_identity_and_retrieval_analysis.md),
 [`entity_resolution_uncertainty_and_convergence.md`](../analysis/entity_resolution_uncertainty_and_convergence.md),
-[`d99_proposal_convergence_lock_convoy.md`](../analysis/d99_proposal_convergence_lock_convoy.md)
+[`d99_proposal_convergence_lock_convoy.md`](../analysis/d99_proposal_convergence_lock_convoy.md),
+[`binary_match_biased_t4.md`](../analysis/binary_match_biased_t4.md)
 **D99 review:**
 [`Claude Opus — identity uncertainty`](../../design/reviews/REVIEW_claude_opus_d99_identity_uncertainty_2026-08-28.md),
 [`Claude Opus — proposal coalescing`](../../design/reviews/REVIEW_claude_opus_d99_proposal_coalescing_2026-08-28.md)
@@ -75,7 +84,7 @@ query planner.
 
 ## 2. Decisions this design implements
 
-**D95/D99 — Identity is the referent; uncertainty is provisional.** One `entity_id` per real-world
+**D95/D100 — Identity is the referent; ambiguous residue favors reuse.** One `entity_id` per real-world
 thing. A name generates **candidates**. **T0 never auto-merges** (exact
 lemma only lists ids). T3 may accept a repeat when a profile exists;
 T4 when the profile is empty, fights, or several candidates exist. The
@@ -86,12 +95,12 @@ narrower opt-in (closed unique namespace, not entity count) remains an
 [unchosen proposal](../../design/proposals/optional-exact-t0-accept.md),
 not WP-I.5.
 
-T4 has three evidentiary outcomes: `same`, `different`, and
-`insufficient_evidence`. Only a supported `different` verdict is a durable
-cannot-link. Candidate and adjudication limits bound work but do not prove that
-the unchecked tail contains no match. When ingestion needs an id before the
-evidence can decide, it may mint a merge-eligible provisional fragment and must
-reconsider the touched neighborhood after profiles become current.
+T4 compares the bounded candidate set jointly and returns one candidate id or
+`new`. Compatible facts, missing overlap, and different topics favor an
+existing candidate; `new` requires positive distinction from every supplied
+candidate. Candidate limits bound work and remain visible in the decision
+audit. Current profile publication still reconsiders the touched neighborhood
+through D99 convergence.
 
 **D96 — No entity types; extract names; profile is observation prose.**
 Mentions are a diary of names (string, claim, span). E3 does not emit
@@ -131,17 +140,14 @@ verdict. No common-name census. No “distinctive lemma” shortcut.
   cascade outcome**. This says the configured blocking pass surfaced no
   candidate; it does not prove that an entity outside T1/T2's recall ceiling
   cannot be the same referent.
-- **1 or more** → those ids are the candidate set. Decision is T3 or T4
-  (§3.1.1). If every candidate in a **complete** set receives a supported
-  `different` verdict, **mint** another authoritative id with that spelling
-  (§3.2). If candidate loading or T4 adjudication is truncated, the checked
-  prefix cannot authorize that conclusion.
+- **1 or more** → those ids are the candidate set. Decision is T3 or one joint
+  T4 call (§3.1.1). T4 selects one supplied candidate or `new` (§3.2).
 
 Candidate generation returns both the bounded candidate tuple and
 `search_complete`. Loading `limit + 1` rows is sufficient to prove whether the
-returned `limit` is a prefix. T4 similarly records `adjudicated_count` and
-whether every returned candidate received a verdict. Limits remain strict;
-completeness changes the authority of the outcome, not the amount of work.
+returned `limit` is a prefix. T4 receives every candidate in that bounded
+snapshot in deterministic T3-relevance order. Limits remain strict and
+completeness remains audit evidence; neither creates a third decision outcome.
 
 A thousand mentions of the same James are **not** a thousand T4 calls.
 Repeats are T3 once a profile exists.
@@ -153,15 +159,15 @@ Repeats are T3 once a profile exists.
 | No candidates after an **untruncated** block | Authoritative cascade mint | No LLM; the configured blocking pass surfaced no candidate, without claiming perfect blocking recall |
 | One candidate, **profile exists**, mention+claim embedding sits on that profile (T3 accept band; starting threshold from D22, not a folklore constant) | **Accept, no T4** | Repeat “James” after we know him |
 | One candidate, **empty profile**, or profile **fights** the claim, or **several** exact candidates | **T4** | Father/son, second employee, first clash, thin identity |
-| T4: same | That `entity_id` | — |
-| T4: different for **every surfaced candidate in an untruncated set** | Authoritative cascade mint | Positive distinction within the configured blocking recall ceiling, not proof that no missed referent exists |
-| T4: insufficient evidence, or candidate/T4 prefix truncated | Provisional mint | Ingest remains available; no unchecked-tail novelty claim and no cannot-link from uncertainty |
+| T4: `match(candidate_id)` | That supplied `entity_id` | Compatible or strongest existing referent; ambiguity favors reuse |
+| T4: `new` | Authoritative cascade mint | Evidence positively distinguishes the incoming referent from every supplied candidate |
 
 T3 embeds **mention (name + this claim) against the candidate’s
 profile** (name + summary + salient facts), never name-only vs
 name-only. Empty profile is **fail-safe**: do not treat high name-only
-cosine as certainty — that is T4. An uncertain T4 result may create a
-provisional fragment, but never a permanent exclusion.
+cosine as a T3 certainty — send it to T4. When the bounded T4 evidence is
+compatible but inconclusive, the binary policy deliberately prefers a matching
+existing identity over a new fragment.
 
 This is how father/son becomes possible (they reach T4 with different
 facts) **and** how a clean table stays affordable (repeats of a known
@@ -178,27 +184,28 @@ its adoption trigger is a closed unique namespace (SKUs, employee
 numbers), **not** entity count. Identifier-shaped T0 (email, LEI,
 ORCID) is a different future path, not name-lemma auto-merge.
 
-### 3.2 Same lemma, two ids—or a provisional fragment
+### 3.2 Same lemma, two ids—or one selected candidate
 
-If T4 positively distinguishes the mention from **every** member of a complete
-candidate set, **mint** a new authoritative `entity_id` with the same canonical
-spelling and a new alias row. The lemma advisory lock serializes the commit; it
-does not forbid a second row. `resolution_exclusions` records only the pairs
-that received a supported `different` verdict so clustering does not re-propose
-the pair.
-Each effective automatic row names its supporting append-only decision and
-resolver version. Human rows name `basis=human`.
+T4 receives every member of the bounded snapshot together. It returns
+`match(candidate_id)` only for an id present in that snapshot, or `new`.
+Compatible but topically different facts are not positive distinction. When
+several candidates remain compatible, the first candidate in deterministic
+T3-relevance order wins. This makes the tie policy explicit and prevents model
+or row-order noise from minting another active identity.
 
-If any adjudicated candidate returns `insufficient_evidence`, candidate loading
-is truncated, or the T4 budget leaves candidates unchecked, ingestion may mint
-an active **provisional fragment** because relations and observations require an
-endpoint id. Its resolution-decision features record the bounded candidate ids,
-the per-candidate verdicts, `search_complete`, `adjudicated_count`, and
-`identity_authority=provisional`. It writes no exclusion for an insufficient or
-unchecked candidate. “Provisional” describes the authority of the mint; it is
-not a second public entity-status state and does not create a parallel registry.
-All active fragments already participate in the same reversible convergence
-mechanism (§3.3.1).
+`new` means the supplied evidence positively distinguishes the incoming
+referent from every candidate shown to T4. It mints an authoritative
+`entity_id` with the same canonical spelling and a new alias row. The lemma
+advisory lock serializes the commit; it does not forbid a second row.
+`resolution_exclusions` may record the supplied candidate pairs so clustering
+does not immediately re-propose the positively distinguished identities. Each
+effective automatic row names its supporting append-only decision and resolver
+version. Human rows name `basis=human`.
+
+The decision audit retains `search_complete`, the ordered candidate ids, every
+T3 score or gate, the selected candidate or `new`, model, and rationale. The
+current generation has no provisional authority. Historical D99 provisional
+and tri-state rows remain append-only evidence and are never rewritten.
 
 The D99 migration classifies every pre-D99 `created_by=auto` row as
 `basis=legacy_binary, is_effective=false`; it remains audit evidence but cannot
@@ -282,16 +289,21 @@ Production `_T4_PROMPT` includes:
 ```text
 MENTION: {name}
 CLAIM CONTEXT: {claim_text}
-CANDIDATE: {canonical_name}
-CANDIDATE PROFILE: {profile_summary or "(none)"}
-CANDIDATE FACTS: {salient observation statements or "(none)"}
-Choose exactly one identity verdict:
-- same: evidence supports one real-world referent
-- different: evidence positively distinguishes two referents
-- insufficient_evidence: the evidence cannot decide
+CANDIDATES IN RELEVANCE ORDER:
+- candidate id, canonical name, aliases, profile description,
+  current salient facts, and T3 score or gate
+
+Choose exactly one result:
+- match one supplied candidate id; or
+- new, only when evidence positively distinguishes the incoming referent from
+  every supplied candidate.
+
+Prefer an existing compatible candidate. Missing overlap and different topics
+do not establish a new identity. If several candidates remain compatible,
+choose the first candidate in the supplied relevance order.
 ```
 
-T4 answers **same / different / insufficient_evidence** only. It does not emit `related_to`.
+T4 answers **match / new** only. It does not emit `related_to`.
 Father/son, if the claim states kinship, is a **relation** written
 after both ids exist, not a merge.
 
@@ -660,11 +672,12 @@ Minimum rows:
 |---|---|
 | `EntityRef` | canonical `name`; `surface` when the claim spelling differs; **no type** |
 | `CascadeResolver.resolve` | snapshot candidates + completeness under the lemma lock; decide outside the transaction; re-lock/revalidate before writing; bounded contention retry |
-| candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; an unchecked tail cannot prove novelty |
-| `AdjudicationVerdict` | `same` / `different` / `insufficient_evidence`; confidence + optional rationale |
-| `_T4_PROMPT` | candidate profile + salient observations + the explicit three-way evidentiary distinction |
-| resolution decision features | identity authority (`authoritative` / `provisional`), candidate completeness/adjudication, per-candidate T4 outcome, and one bounded T3 outcome reason |
-| `resolution_exclusions` | automatic rows only for supported `different`; uncertainty and unchecked candidates never become cannot-links |
+| candidate result | load `limit + 1`, return bounded candidates plus `search_complete`; order the bounded set by T3 relevance before T4 |
+| `T4Selection` | exactly `match(candidate_id)` or `new`, plus confidence/rationale used only for audit; selected ids must belong to the supplied snapshot |
+| `_T4_PROMPT` | one joint configured-simple-model call with the bounded incoming claim and every candidate's aliases, current profile description, salient facts, and T3 score/gate; explicit match bias |
+| resolution decision features | candidate completeness/order, every T3 score/gate, selected candidate or `new`, rationale/model, and one bounded T3 outcome reason; no current provisional authority |
+| resolution decision method | keep `T4_small` for the configured simple-model seat; `resolver_version` and features distinguish D99 pairwise rows from D100 joint rows; retain `T4_frontier` only for historical readability |
+| `resolution_exclusions` | a T4 `new` may write supported-different rows only for candidates supplied to that joint decision; historical D99 and human rows retain their existing basis/effectiveness rules |
 | T3 upsert | embed name+profile (+ salient facts) when they exist |
 | Profile refresher | deterministic current-fact projection under `entity-profile-v2`; rewrite `profile_summary` + vector attestation from remaining observations/relations; D74 shared-entity forget recomputes, not exclusive-id scrub only |
 | convergence composition | after a current relation/observation profile refresh, nominate distinct touched alias lemmas to the existing bounded clusterer; deduplicate equivalent open review proposals |
@@ -708,9 +721,11 @@ generations are abandoned, not dual-run. Sequencing:
 | Alternative | Why it lost |
 |---|---|
 | Keep T0 exact as verdict | Homonyms impossible |
-| Keep binary T4 and tune its prompt/confidence | Cannot represent the difference between positive distinction and insufficient evidence; uncertainty still gains cannot-link authority |
-| Remove candidate/T4 limits | Unbounded provider work is not a scale contract; retain the limits and make completeness explicit |
-| Fail ingestion while identity is uncertain | Thin evidence could park ordinary ingestion indefinitely; a merge-eligible provisional fragment preserves availability without pretending novelty was proven |
+| Keep D99 tri-state T4 and provisional mint | Honest uncertainty still creates another served identity and makes the next resolution harder |
+| Keep pairwise small→frontier T4 | Up to three isolated calls cannot compare the candidate set jointly; confidence routing adds a model seat without adding evidence |
+| Binary T4 with a neutral prompt | A forced but unspecified tie becomes model or candidate-order noise |
+| Remove candidate limits | Unbounded provider work and prompt growth are not a scale contract |
+| Add a second unresolved identity store | Adds another serving state when the complete-system match-biased policy can make one bounded operational decision |
 | Distinctive lemma + common-name stoplist | Second `Jan` still glues; thousands of locale-dependent names; uniqueness is a table property, not a name property |
 | Exact-T0 auto-accept as a default-off flag, enabled once the corpus is “large” | Large stores have more collisions, not fewer; T3+profile is the scale path. The flag itself is an [unchosen proposal](../../design/proposals/optional-exact-t0-accept.md) whose trigger is **not** entity count |
 | `(name, type)` unique | Forks SAP |
@@ -731,11 +746,19 @@ generations are abandoned, not dual-run. Sequencing:
 
 - T0 never auto-merges: second `Jan` with empty profile goes to T4, not
   T0 accept. Repeat `James` with a profile can T3-accept without T4.
-  Second authoritative mint of the same lemma only after a complete candidate
-  set receives supported `different` verdicts.
-- `insufficient_evidence` and candidate/T4 truncation mint only provisional
-  fragments, write no unsupported exclusions, and preserve completeness and
-  T3/T4 diagnostics in the decision evidence.
+  T4 sees both candidates jointly when several exist.
+- Compatible same-name evidence with different topics selects an existing
+  candidate. Explicit father/son and same-name-colleague evidence selects
+  `new`.
+- Exactly one T4 generation call occurs per residue decision. The current
+  resolver has no frontier call, confidence-routing branch,
+  `insufficient_evidence`, or provisional mint.
+- T4 receives every candidate in the bounded snapshot with aliases, current
+  profile description, salient facts, and T3 score/gate. Its selected id must
+  be one of those candidates; `new` records supported-different exclusions
+  only for the supplied set.
+- Candidate truncation records `search_complete=false` while still producing
+  one binary selection; it does not create a third authority state.
 - Resolver provider calls occur with no lemma-lock transaction open; a
   candidate/profile mutation before commit invalidates and retries the result.
   Exhausted in-call retries enter ordinary work-ledger backoff and remain

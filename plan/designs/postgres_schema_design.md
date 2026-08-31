@@ -199,7 +199,7 @@ CREATE TYPE scope_interest_kind    AS ENUM ('entity_type','predicate','metadata'
 
 CREATE TYPE entity_status          AS ENUM ('active','merged','retired');
 CREATE TYPE alias_provenance       AS ENUM ('source','llm_canonical');
-CREATE TYPE resolution_tier        AS ENUM ('T0','T1','T2','T3','T4_small','T4_frontier','human');
+CREATE TYPE resolution_tier        AS ENUM ('T0','T1','T2','T3','T4_small','T4_frontier','human'); -- D100 keeps T4_small for the configured simple-model seat; frontier is historical
 CREATE TYPE decision_actor         AS ENUM ('auto','human');
 CREATE TYPE resolution_exclusion_basis AS ENUM ('supported_different','human','legacy_binary');
 
@@ -813,7 +813,7 @@ CREATE TABLE resolution_exclusions (
   entity_id_high  uuid NOT NULL,               -- greatest(a,b)
   reason          text,                        -- why they are known-distinct (evidence / reviewer note)
   created_by      decision_actor NOT NULL,     -- auto | human
-  basis           resolution_exclusion_basis NOT NULL, -- D99: positive difference, human verdict, or pre-D99 binary legacy
+  basis           resolution_exclusion_basis NOT NULL, -- D99/D100: positive new-vs-supplied-candidate distinction, human verdict, or pre-D99 binary legacy
   is_effective    boolean NOT NULL,             -- clustering consults only effective rows
   source_decision_id uuid,                      -- LOGICAL FK: append-only resolution decision supporting an automatic edge
   source_resolver_version text,                 -- resolver generation that produced supported_different
@@ -832,7 +832,7 @@ CREATE TABLE resolution_exclusions (
   FOREIGN KEY (deployment_id, entity_id_high) REFERENCES entities (deployment_id, entity_id)
 );
 COMMENT ON TABLE resolution_exclusions IS
-  'Adjudicated positive-difference constraints (D21/D99). Clustering consults only effective supported_different or human rows. Migration classifies pre-D99 auto rows as ineffective legacy_binary until a new supported-different or human decision revalidates the pair. Insufficient evidence or an unchecked candidate never creates this row; withdrawal retains the append-only supporting/retiring decision ids.';
+  'Adjudicated positive-difference constraints (D21/D99/D100). Clustering consults only effective supported_different or human rows. Migration classifies pre-D99 auto rows as ineffective legacy_binary until a new supported-different or human decision revalidates the pair. Current T4 new may constrain only candidates supplied to its joint decision; an unchecked candidate never creates this row. Withdrawal retains the append-only supporting/retiring decision ids.';
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolver_versions — per-version tier config + one global threshold set (D17/D22/D96).
@@ -880,7 +880,7 @@ CREATE INDEX ix_mentions_doc   ON mentions (deployment_id, doc_id);
 -- ─────────────────────────────────────────────────────────────────────────
 -- resolution_decisions — append-only verdict (D17). A better resolver SUPERSEDES (superseded_by),
 -- never overwrites. ~10⁸ rows ⇒ monthly partition by decided_at; logical FKs (D23).
--- method ∈ {T0,T3,T4_small,T4_frontier,human}: T1/T2 are BLOCKING (candidate generation), never a
+-- current method ∈ {T0,T3,T4_small,human}; T4_frontier remains readable for history. T1/T2 are BLOCKING (candidate generation), never a
 -- decision (D17 block-loose/decide-tight) — enforced by the CHECK below; which blocking tier
 -- surfaced a candidate is recorded inside features.
 -- ─────────────────────────────────────────────────────────────────────────
@@ -889,10 +889,10 @@ CREATE TABLE resolution_decisions (
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments
   mention_id      uuid NOT NULL,               -- LOGICAL FK → mentions
   entity_id       uuid NOT NULL,               -- LOGICAL FK → entities; the resolved canonical id
-  method          resolution_tier NOT NULL,    -- T0 | T3 | T4_small | T4_frontier | human (NOT T1/T2 — see CHECK)
-  confidence      real NOT NULL,               -- tier confidence; bands in resolver_versions.thresholds
+  method          resolution_tier NOT NULL,    -- current: T0 | T3 | T4_small | human; T4_frontier is historical (NOT T1/T2)
+  confidence      real NOT NULL,               -- tier confidence for audit/eval; D100 does not route to another seat by this value
   is_new_entity   boolean NOT NULL DEFAULT false, -- true if this decision minted a new entity (no confident match)
-  features        jsonb,                       -- D99 evidence: identity authority, candidate completeness/adjudication, bounded T3 outcome, per-candidate T4 verdicts/rationales
+  features        jsonb,                       -- D100: candidate completeness/order, T3 scores/gates, match id or new, model/rationale; retains historical D99 feature shapes
   resolver_version text NOT NULL,              -- LOGICAL FK → resolver_versions; pins the thresholds in force
   decided_by      decision_actor NOT NULL DEFAULT 'auto',
   decided_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
@@ -901,7 +901,7 @@ CREATE TABLE resolution_decisions (
   CHECK (method NOT IN ('T1','T2'))            -- T1/T2 are candidate generation, never a verdict (D17)
 ) PARTITION BY RANGE (decided_at);
 COMMENT ON TABLE resolution_decisions IS
-  'Append-only resolution verdicts (D17/D21/D99). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; features keeps authoritative/provisional identity authority, search completeness, bounded T3 outcome, and per-candidate T4 evidence.';
+  'Append-only resolution verdicts (D17/D21/D99/D100). Replaced by superseded_by, never overwritten — re-adjudicable. Monthly-partitioned, logical FKs (D23). method excludes blocking T1/T2; current T4 features keep candidate completeness/order, bounded T3 evidence, binary selection, model and rationale while historical D99 shapes remain readable.';
 CREATE INDEX ix_resdec_mention ON resolution_decisions (mention_id);
 CREATE INDEX ix_resdec_entity  ON resolution_decisions (deployment_id, entity_id);
 CREATE INDEX ix_resdec_live    ON resolution_decisions (mention_id) WHERE superseded_by IS NULL;

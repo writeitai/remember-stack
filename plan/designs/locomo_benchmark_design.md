@@ -1,7 +1,14 @@
 # LoCoMo full-system benchmark design
 
-> **Binding D99 amendment (2026-08-28).** The current protocol is
-> `RS-LoCoMo-Full-v16`. It retains v15's dataset, models, tools, call budgets,
+> **Binding D100 amendment (2026-08-31).** The current protocol is
+> `RS-LoCoMo-Full-v17`. It retains v16's dataset, answer/judge models, tools,
+> budgets, content-before-`Unknown` guard, and no-review scoring rule while
+> rolling the resolver prompt/output schema/generation to one joint binary,
+> match-biased T4 call. V16 and v17 scores are directional, not a strict
+> protocol A/B.
+>
+> **Historical D99 amendment (2026-08-28; superseded by D100).** The D99 protocol was
+> `RS-LoCoMo-Full-v16`. It retained v15's dataset, models, tools, call budgets,
 > and existing two-additional-attempt malformed-reader recovery. The answer
 > loop now enforces the already-prompted rule that `resolve_entity` metadata is
 > not content evidence: terminal `Unknown` after identity-only reads is rejected
@@ -22,7 +29,7 @@
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v16 run.
+> paid v17 run.
 
 ## 1. Acceptance boundary
 
@@ -48,7 +55,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v16
+protocol                RS-LoCoMo-Full-v17
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -72,6 +79,25 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v16 → v17 (2026-08-31 — D100 binary match-biased T4):** The identity
+resolver retains T0–T2 candidate blocking, conservative T3, candidate
+completeness, snapshot/revalidation, profile convergence, and all retrieval
+behavior. The residue now makes one configured-simple-model call over every
+candidate in the bounded snapshot and returns one candidate id or `new`.
+There is no tri-state result, provisional mint, confidence-routed frontier
+seat, or pairwise T4 call loop. The joint prompt contains each candidate's
+aliases, current profile description, salient facts, and T3 score/gate, and
+explicitly prefers compatible existing identity. This changes the resolver
+prompt/output schema, provider-call count, decision features, component
+generation, protocol identity, and fingerprint. File attribution is not part
+of v17.
+
+V17 retains `auto_merge_enabled=false`. No human accepts or rejects merge
+proposals between ingest and scoring. Identity diagnostics add the binary T4
+match/new split and preserve candidate-count/completeness, active-name groups,
+proposal membership, and blast-radius reporting; historical provisional counts
+remain only on pre-v17 stores.
 
 **v15 → v16 (2026-08-28 — D99 uncertainty and content fallback):** The engine
 uses tri-state identity adjudication, truncation-honest provisional fragments,
@@ -303,7 +329,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and later instead measure the
-owner-selected Luna agent against their pinned surfaces; v16 retains that model
+owner-selected Luna agent against their pinned surfaces; v17 retains that model
 choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -506,7 +532,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v16; no benchmark-specific
+an integrity requirement and an answer channel in v17; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -625,7 +651,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v16 leaves it unset. If the
+   prepared protocol's `answer_word_cap` is set; v17 leaves it unset. If the
    normalized answer is `Unknown` and no successful content-bearing tool has
    been attempted, reject that step, render bounded guard feedback, and continue
    the same loop. Content-bearing tools are the three context operations;
@@ -658,7 +684,7 @@ filesystem orientation/grep/read. It must inspect graph truncation/work-bound
 fields and respect grain, validity, freshness, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v16): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v17): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". The first two remain prompt discipline. D99 makes
@@ -686,11 +712,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v16 \
+  --protocol full-v17 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v16`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v17`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 
