@@ -300,15 +300,6 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
                 " FROM resolution_exclusions"
             )
         ).one()
-        guard = connection.execute(
-            text(
-                "SELECT distinct_entity_count, is_downweighted"
-                " FROM generic_identifier_guard"
-                " WHERE deployment_id = :deployment_id"
-                " AND normalized_lemma = 'john smith'"
-            ),
-            {"deployment_id": _DEPLOYMENT_ID},
-        ).one()
     assert decision["method"] == "T4_small"
     assert decision["features"]["candidates"][0]["blocking_tier"] == "T0"
     assert {exclusion[0], exclusion[1]} == {father.entity_id, son.entity_id}
@@ -322,7 +313,6 @@ def test_t4_no_match_mints_same_lemma_and_records_exclusion(
     )
     assert decision["features"]["identity_authority"] == "authoritative"
     assert decision["features"]["t3_outcome"] == "profile_missing"
-    assert guard == (2, True)
 
 
 def test_t4_no_match_mints_a_distinct_entity(database_engine: Engine) -> None:
@@ -1238,18 +1228,6 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
             .mappings()
             .all()
         )
-        guards = (
-            connection.execute(
-                text(
-                    "SELECT normalized_lemma, distinct_entity_count, is_downweighted"
-                    " FROM generic_identifier_guard"
-                    " WHERE deployment_id = :deployment_id"
-                ),
-                {"deployment_id": _DEPLOYMENT_ID},
-            )
-            .mappings()
-            .all()
-        )
     provenances = {(row["provenance"], row["alias_text"]) for row in aliases}
     assert ("llm_canonical", "Application") in provenances
     assert ("source", "App") in provenances
@@ -1257,11 +1235,6 @@ def test_source_and_canonical_aliases_on_mint_and_replay(
         row["surface_form"] == "App" and row["canonical_name_form"] == "Application"
         for row in mentions
     )
-    by_lemma = {row["normalized_lemma"]: row for row in guards}
-    assert by_lemma["application"]["distinct_entity_count"] == 1
-    assert by_lemma["application"]["is_downweighted"] is False
-    assert by_lemma["app"]["distinct_entity_count"] == 1
-    assert by_lemma["app"]["is_downweighted"] is False
 
 
 def test_sap_shorthand_matches_through_t4_not_t0(database_engine: Engine) -> None:
@@ -1292,10 +1265,14 @@ def test_sap_shorthand_matches_through_t4_not_t0(database_engine: Engine) -> Non
     assert (method, blocking_tier) == ("T4_small", "T0")
 
 
-def test_generic_identifier_guard_downweights_shared_lemma(
-    database_engine: Engine,
-) -> None:
-    """A promiscuous lemma is marked and downranked without losing recall."""
+def test_shared_lemma_stays_a_usable_blocking_signal(database_engine: Engine) -> None:
+    """Two entities sharing a name costs neither of them any rank.
+
+    Blocking orders by how well the string matched, then by how close the
+    entity's own canonical name is to the query. Nothing demotes a name for
+    being common, so ten unrelated Jan Nováks all stay reachable and the
+    order is decided by resemblance rather than by row identity.
+    """
     provider = FakeModelProvider(generate_router=_first_token_router)
     resolver = _resolver(engine=database_engine, provider=provider)
     first = resolver.resolve(
@@ -1310,7 +1287,7 @@ def test_generic_identifier_guard_downweights_shared_lemma(
     )
     jan_lemma = normalized_lemma(surface="Jan Novák")
     with database_engine.begin() as connection:
-        connection.execute(
+        connection.execute(  # Karel now also answers to the shared name
             text(
                 "INSERT INTO aliases ("
                 " alias_id, deployment_id, entity_id, alias_text,"
@@ -1327,61 +1304,15 @@ def test_generic_identifier_guard_downweights_shared_lemma(
                 "lemma": jan_lemma,
             },
         )
-        resolver.refresh_generic_identifier_guard(
-            connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=jan_lemma
-        )
-    with database_engine.connect() as connection:
-        row = (
-            connection.execute(
-                text(
-                    "SELECT distinct_entity_count, is_downweighted, reason"
-                    " FROM generic_identifier_guard"
-                    " WHERE deployment_id = :deployment_id"
-                    " AND normalized_lemma = :lemma"
-                ),
-                {"deployment_id": _DEPLOYMENT_ID, "lemma": jan_lemma},
-            )
-            .mappings()
-            .one()
-        )
     assert first.entity_id != second.entity_id
-    assert row["distinct_entity_count"] == 2
-    assert row["is_downweighted"] is True
-    assert row["reason"] == "promiscuous-lemma"
 
+    # Both entities match "jan novakk" through the very same alias lemma, so
+    # the trigram scores tie; only the canonical-name tiebreak separates them.
     near_lemma = normalized_lemma(surface="Jan Novakk")
-    unguarded_lemma = normalized_lemma(surface="Jan Novaksson")
-    temporary_alias_id = uuid4()
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO aliases ("
-                " alias_id, deployment_id, entity_id, alias_text,"
-                " normalized_lemma, provenance"
-                ") VALUES ("
-                " :alias_id, :deployment_id, :entity_id, 'Jan Novaksson',"
-                " :lemma, 'source'"
-                ")"
-            ),
-            {
-                "alias_id": temporary_alias_id,
-                "deployment_id": _DEPLOYMENT_ID,
-                "entity_id": first.entity_id,
-                "lemma": unguarded_lemma,
-            },
-        )
-        unguarded_score, guarded_score = connection.execute(
-            text("SELECT similarity(:query, :unguarded), similarity(:query, :guarded)"),
-            {"query": near_lemma, "unguarded": unguarded_lemma, "guarded": jan_lemma},
-        ).one()
+    with database_engine.connect() as connection:
         ranked = resolver._blocked_candidates(  # noqa: SLF001 - pins SQL ordering
             connection=connection, deployment_id=_DEPLOYMENT_ID, lemma=near_lemma
         )
-        connection.execute(
-            text("DELETE FROM aliases WHERE alias_id = :alias_id"),
-            {"alias_id": temporary_alias_id},
-        )
-    assert 0.3 <= unguarded_score < guarded_score
     assert tuple(candidate.entity_id for candidate in ranked) == (
         first.entity_id,
         second.entity_id,
