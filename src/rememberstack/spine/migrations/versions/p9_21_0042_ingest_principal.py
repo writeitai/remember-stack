@@ -57,12 +57,23 @@ COMMENT ON TABLE ingest_principals IS
 # provides one. A duplicate would double write cost and, worse, keep a second
 # physical copy of erasable PII.
 
-# Phased so a populated `document_versions` is never locked for a scan:
-# (1) the nullable column is a catalog-only change, (2) the FK is added
-# NOT VALID so no existing row is scanned under a write-blocking lock,
-# (3) the partial index is built CONCURRENTLY outside any transaction, and
-# (4) the FK is validated under SHARE UPDATE EXCLUSIVE, which readers and
-# writers do not block on.
+# ONE transaction, deliberately.
+#
+# An earlier revision built the index CONCURRENTLY inside an autocommit
+# block. That is gentler on a huge table, but Alembic commits everything
+# before entering the block, so an interruption there left the type, table,
+# column and FK committed with the revision unstamped — and the rerun then
+# died on `type "ingest_principal_kind" already exists`. A migration that
+# cannot be resumed is a worse failure than a lock.
+#
+# Atomicity wins here: this either commits whole or rolls back whole. The
+# index build takes a SHARE lock on `document_versions` for its duration
+# (readers unaffected, writers wait). On a deployment large enough for that
+# to matter, build it by hand first —
+#   CREATE INDEX CONCURRENTLY ix_docversions_principal
+#     ON document_versions (deployment_id, ingested_by_principal_id)
+#     WHERE ingested_by_principal_id IS NOT NULL;
+# — and the IF NOT EXISTS below makes this step a no-op.
 _ADD_COLUMN = """
 ALTER TABLE document_versions
   ADD COLUMN ingested_by_principal_id uuid;
@@ -73,43 +84,33 @@ COMMENT ON COLUMN document_versions.ingested_by_principal_id IS
    version itself.';
 """
 
-_ADD_FK_NOT_VALID = """
+_ADD_FK = """
 ALTER TABLE document_versions
   ADD CONSTRAINT fk_document_versions_ingest_principal
     FOREIGN KEY (deployment_id, ingested_by_principal_id)
     REFERENCES ingest_principals (deployment_id, principal_id)
-    ON DELETE SET NULL (ingested_by_principal_id)
-    NOT VALID;
+    ON DELETE SET NULL (ingested_by_principal_id);
 """
 
-_CREATE_INDEX_CONCURRENTLY = """
-CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_docversions_principal
+_CREATE_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_docversions_principal
   ON document_versions (deployment_id, ingested_by_principal_id)
   WHERE ingested_by_principal_id IS NOT NULL;
 """
 
-_VALIDATE_FK = """
-ALTER TABLE document_versions
-  VALIDATE CONSTRAINT fk_document_versions_ingest_principal;
-"""
-
 
 def upgrade() -> None:
-    """Add the principal registry and attribution column without a long lock."""
+    """Add the principal registry and attribution column in one transaction."""
     op.execute(_CREATE_KIND)
     op.execute(_CREATE_TABLE)
     op.execute(_ADD_COLUMN)
-    op.execute(_ADD_FK_NOT_VALID)
-    with op.get_context().autocommit_block():
-        # CONCURRENTLY cannot run inside a transaction block.
-        op.execute(_CREATE_INDEX_CONCURRENTLY)
-    op.execute(_VALIDATE_FK)
+    op.execute(_ADD_FK)
+    op.execute(_CREATE_INDEX)
 
 
 def downgrade() -> None:
     """Drop attribution; existing versions lose their principal reference."""
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_docversions_principal")
+    op.execute("DROP INDEX IF EXISTS ix_docversions_principal")
     op.execute(
         "ALTER TABLE document_versions "
         "DROP CONSTRAINT IF EXISTS fk_document_versions_ingest_principal, "

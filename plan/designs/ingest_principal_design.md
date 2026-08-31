@@ -53,6 +53,13 @@ co-uploader list and no re-attribution path.
 
 ### 2.3 Trusted perimeters only
 
+The composing profile surfaces this as `trusted_principal_source`
+(`REMEMBERSTACK_TRUSTED_PRINCIPAL_SOURCE`), default off. Enable it **only**
+where the deployment is reachable solely by a control plane that has
+already authenticated the actor it names — a managed data plane behind a
+private transit gateway. On a publicly reachable deployment it makes
+attribution meaningless rather than merely permissive.
+
 Attribution is honoured only when the composing profile declares
 `trusted_principal_source=True`. The deployment-wide bearer identifies a
 *deployment*, not a caller, so elsewhere any client could assert it was a
@@ -101,13 +108,20 @@ the next slice.
 
 ### 2.7 Migration
 
-Phased so a populated `document_versions` is never scanned under a
-write-blocking lock: nullable column → FK `NOT VALID` → partial index
-built `CONCURRENTLY` outside the transaction → `VALIDATE CONSTRAINT`
-(taken under `SHARE UPDATE EXCLUSIVE`, which readers and writers do not
-block on). No separate lookup index on `ingest_principals`: the UNIQUE
-constraint provides one, and a duplicate would be a second physical copy
-of PII.
+**One transaction**, deliberately. An earlier revision built the index
+`CONCURRENTLY` in an autocommit block to spare a huge table a write lock —
+but Alembic commits everything before entering that block, so an
+interruption left the type, table, column and FK committed with the
+revision unstamped, and the rerun died on `type … already exists`. A
+migration that cannot be resumed is a worse failure than a lock, so
+atomicity wins: it commits whole or rolls back whole.
+
+The index build takes a `SHARE` lock on `document_versions` for its
+duration (readers unaffected, writers wait). A deployment large enough for
+that to matter builds it by hand with `CREATE INDEX CONCURRENTLY` first;
+the migration's `IF NOT EXISTS` then makes that step a no-op. No separate
+lookup index on `ingest_principals`: the UNIQUE constraint provides one,
+and a duplicate would be a second physical copy of PII.
 
 `downgrade()` drops attribution and therefore **destroys** it; it is a
 schema rollback, not a data-preserving one.
