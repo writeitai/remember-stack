@@ -353,7 +353,26 @@ class ConversionError(Exception):
 
 
 class UnroutableMimeError(Exception):
-    """No configured conversion route accepts the input's MIME type (D38)."""
+    """No configured conversion route accepts the input's MIME type (D38).
+
+    Raised at the E0 ingest gate (D104), where refusing costs nothing, and
+    still raised in the convert stage for the narrow case where a deployment's
+    route table changes between admission and conversion. `supported_mimes`
+    is None when the raiser did not know the table — the convert stage knows
+    only that its own lookup missed.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        mime: str | None = None,
+        supported_mimes: tuple[str, ...] | None = None,
+    ) -> None:
+        """Carry the refused type and, when known, what would be accepted."""
+        super().__init__(message)
+        self.mime = mime
+        self.supported_mimes = supported_mimes
 
 
 class UnknownConverterError(Exception):

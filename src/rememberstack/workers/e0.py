@@ -12,6 +12,7 @@ trees, assigns title-only roles, and appends immutable generations. A document
 still never fails structuring.
 """
 
+from collections.abc import Collection
 from collections.abc import Iterable
 from datetime import datetime
 from datetime import timezone
@@ -55,6 +56,7 @@ from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -165,12 +167,27 @@ class UploadIngestor:
         raw_store: ObjectStorePort,
         admission: IngestAdmission,
         meter_scope: ManagedMeterScope | None = None,
+        routable_mimes: Collection[str],
     ) -> None:
-        """Bind the connector to the catalog and the deployment's raw bucket."""
+        """Bind the connector to the catalog and the deployment's raw bucket.
+
+        ``routable_mimes`` is the deployment's conversion route table (D104),
+        and it is **required**: every deployment has a route table (the
+        settings default is the stock text table), so there is no real state
+        this could be omitted to express — only a composition that forgot. A
+        default would let a composition silently skip the check, and every
+        ingress writes through this object, so this is the one placement that
+        covers HTTP, the local MCP tool and connector sync alike.
+
+        The table decides *scheduling*, not admission. Input it does not cover
+        is still stored and still reaches the corpus filesystem with its
+        ``raw_uri``; only its convert work is parked.
+        """
         self._catalog = catalog
         self._raw_store = raw_store
         self._admission = admission
         self._meter_scope = meter_scope
+        self._routable = frozenset(routable_mimes)
 
     def ingest(
         self,
@@ -192,6 +209,7 @@ class UploadIngestor:
             source_kind=UPLOAD_SOURCE_KIND,
             source_ref=content_hash,
             content_hash=content_hash,
+            mime=upload.mime,
         )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
@@ -227,6 +245,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
+            convert_defer_reason=self._convert_defer_reason(mime=upload.mime),
         )
 
     def ingest_observed(
@@ -256,6 +275,7 @@ class UploadIngestor:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+            mime=upload.mime,
         )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
@@ -296,6 +316,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
+            convert_defer_reason=self._convert_defer_reason(mime=upload.mime),
         )
 
     def _prepare_managed_text(
@@ -332,6 +353,7 @@ class UploadIngestor:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        mime: str,
     ) -> None:
         """Check D74 before writing forgotten bytes back into the raw store."""
         self._admission.guard_ingest(
@@ -340,6 +362,19 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
+
+    def _convert_defer_reason(self, *, mime: str) -> DeferReason | None:
+        """Decide whether this input's convert work starts parked (D104).
+
+        The lookup is exactly the router's own — an exact match on the same
+        string — so the two never disagree about what is routable. An input
+        outside the table is still ingested: its bytes are durable, and the
+        corpus projection emits a stub carrying ``raw_uri`` even with no
+        representation, so an agent can mount and read the original. Only the
+        convert row is parked, because running it would spend an attempt to
+        discover something the route table already knew.
+        """
+        return None if mime in self._routable else DeferReason.NO_ROUTE
 
 
 class ConvertHandler:

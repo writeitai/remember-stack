@@ -174,6 +174,40 @@ gates everything downstream:
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
+- **Routability is a scheduling decision at ingest — D106.** The routing table is consulted in
+  **E0**, when the version is created. Input the table does not cover is **still ingested** —
+  bytes to the raw store, version row, corpus stub — and only its convert work is **enqueued
+  already parked** (`defer_reason='no_route'`): no attempt spent, no error recorded, the version
+  never marked failed, and the row never in the dead-letter queue. Registering the converter and
+  running `remember ops resume-no-route` releases the backlog.
+
+  **Keeping the document is the point.** The corpus projection `LEFT JOIN`s representations and
+  selects `content_objects.raw_uri`, and the P3 stub builder renders `(not converted)` for a
+  missing `markdown_uri` while still emitting the `raw_uri` pointer — so an unconverted document
+  appears in the corpus filesystem and an agent can follow the pointer into the read-only raw
+  mount (§5) and read the original. That is a designed state, not an accident; refusing the
+  upload would delete it to fix a work-queue problem.
+
+  **The park is expressed by its reason, not a clock.** `no_route` waits on a configuration fact
+  — a converter that does not exist yet — so there is no instant at which it becomes ready. The
+  claim query excludes `defer_reason = 'no_route'` outright rather than hiding the row behind a
+  sentinel `not_before`, which would lie about when the work is due and could be released by
+  anything that recomputes scheduling. Releasing is explicit, because no process can observe
+  another process's restart.
+
+  **The route table is the only authority.** `conversion_routes` is deployment policy (D61);
+  `build_conversion_routes` refuses composition on an unknown adapter, so a process's router keys
+  are exactly the keys of the configuration it was composed with, and ingest performs the router's
+  own exact lookup on the same string. MIME normalization belongs in the router where both
+  callers inherit it. The table is a **required** argument to the E0 ingestor: every deployment
+  has one, so omitting it expresses only a composition that forgot. The guarantee is
+  per-configuration, not global — ingest and the convert worker are separately composed, so a
+  route-table change leaves a window where one has restarted and the other has not.
+
+  This is a *routing* verdict, not a *content* one: an MP3 labelled `text/plain` is scheduled and
+  fails in the converter, correctly. `UnroutableMimeError` therefore remains in the worker and
+  remains non-retryable, covering that window and an operator who resumes before the converter is
+  actually registered.
 
 Output Markdown → artifacts bucket; the source map + manifest + converter metadata → `conversion.json`; the
 blockizer's `blocks.json` beside them; Postgres gets only the URIs + `converter_version` +

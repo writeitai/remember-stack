@@ -968,3 +968,41 @@ def test_body_cap_holds_when_the_app_is_mounted_under_a_prefix() -> None:
         content=b"small note",
     )
     assert accepted.status_code == 200
+
+
+def test_structured_415_refusal_keeps_its_code_and_supported_types() -> None:
+    """D104: the ingest refusal survives the SDK instead of becoming a dict repr.
+
+    Only codes bound to their status are trusted, so this proves both halves:
+    the refusal at 415 is honoured, and the same body at another status is not.
+    """
+    refusal = {
+        "code": "unsupported_media_type",
+        "message": "no conversion route accepts mime 'audio/mpeg'",
+        "mime": "audio/mpeg",
+        "supported_mimes": ["text/markdown", "text/plain"],
+    }
+    honoured = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(415, json={"detail": refusal})
+        ),
+    )
+    with pytest.raises(MemoryApiError) as refused:
+        MemoryClient(client=honoured).ingest(
+            b"x", filename="meeting.mp3", mime="audio/mpeg"
+        )
+    assert refused.value.code == "unsupported_media_type"
+    assert "text/markdown" in refused.value.detail
+
+    mismatched = httpx.Client(
+        base_url="http://memory.test",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(500, json={"detail": refusal})
+        ),
+    )
+    with pytest.raises(MemoryApiError) as untrusted:
+        MemoryClient(client=mismatched).ingest(
+            b"x", filename="meeting.mp3", mime="audio/mpeg"
+        )
+    assert untrusted.value.code is None

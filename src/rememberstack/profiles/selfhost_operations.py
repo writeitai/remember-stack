@@ -48,6 +48,18 @@ class SelfHostOperations:
             engine=self._engine, settings=OperationalSettings()
         ).inspect(deployment_id=deployment_id)
 
+    def resume_no_route(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """Release convert work parked for a missing converter (D106).
+
+        Run after registering a conversion route: uploads that arrived before
+        the converter existed were stored and parked, never failed, so this
+        converts the backlog without anyone re-uploading.
+        """
+        ForgetCatalog(engine=self._engine).assert_available(deployment_id=deployment_id)
+        return WorkLedger(
+            engine=self._engine, settings=WorkLedgerSettings()
+        ).resume_no_route(deployment_id=deployment_id)
+
     def replay(
         self,
         *,

@@ -123,6 +123,37 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
 
+## Unreleased on `main`
+
+- **A file this deployment cannot convert is kept, and its conversion is
+  parked.** The document is ingested normally — the original lands in the raw
+  bucket and the document appears in the corpus filesystem with a
+  `(not converted)` stub carrying its `raw_uri`, so an agent can still mount
+  and read it. Only its convert work is held: `defer_reason=no_route`, no
+  attempt spent, no error recorded, nothing in the dead-letter queue.
+- **Registering the converter converts the backlog.** Run
+  `remember ops resume-no-route --deployment <uuid>` after adding a route and
+  everything that arrived before it existed converts on the next worker pass.
+  Previously such an upload was dead-lettered, the version marked `failed`,
+  and adding the route later did not rescue it — recovery meant an operator
+  replaying rows one at a time.
+- The decision is made in E0, where all three ingresses (HTTP, the local MCP
+  tool, connector sync) write through one object; a check on the HTTP handler
+  would have left the other two enqueueing doomed work.
+- **Breaking for library consumers**: `rememberstack.workers.UploadIngestor`
+  now takes a required `routable_mimes` argument — the deployment's conversion
+  route table, the same mapping you pass to `ConversionRouter`. Pass
+  `frozenset(conversion_routes)` where you build it. It is required rather
+  than defaulted because a default would let a composition silently skip the
+  check, and every deployment has a route table (the settings default is the
+  stock text table). Deployments configured through
+  `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` need no change.
+- Versions dead-lettered by an unroutable MIME *before* this change remain
+  `failed`; parking does not apply retroactively. Reopen those with
+  `remember ops replay` once the route exists.
+- Not yet covered: the managed-metering ingest path enqueues convert after
+  admission without the route table, so it still dead-letters.
+
 ## What landed after v0.9.0 (in v0.10.0)
 
 - **A shared name no longer costs a candidate anything.** The

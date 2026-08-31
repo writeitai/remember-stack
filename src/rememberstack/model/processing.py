@@ -46,6 +46,13 @@ class DeferReason(StrEnum):
     SCHEDULED = "scheduled"
     RETRY_BACKOFF = "retry_backoff"
     BUDGET = "budget"
+    NO_ROUTE = "no_route"
+    """Convert work for input this deployment has no converter for (D104).
+
+    Parked at enqueue, so no attempt is ever spent and the row never reaches
+    the dead-letter queue: nothing is broken, the format is simply not
+    supported yet. Registering the converter and resuming releases the
+    backlog."""
 
 
 class EnqueueWork(BaseModel):
@@ -62,6 +69,13 @@ class EnqueueWork(BaseModel):
     lane: ProcessingLane | None
     payload: dict[str, object] | None = None
     not_before: UTCDateTime | None = None
+    defer_reason: DeferReason | None = None
+    """Land the row already deferred rather than immediately claimable.
+
+    Only `no_route` is enqueued this way: the other reasons describe things
+    that happen to work already in the ledger (a caller's schedule, a retry
+    backoff, a budget window), whereas an absent converter is knowable before
+    the row is created and would otherwise cost a guaranteed failed attempt."""
 
 
 class EnqueueOutcome(BaseModel):

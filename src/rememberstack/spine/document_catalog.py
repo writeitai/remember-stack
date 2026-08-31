@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
 from rememberstack.model import ConvertSource
+from rememberstack.model import DeferReason
 from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import IngestedVersion
@@ -59,6 +60,7 @@ class DocumentCatalog:
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
         metering: ManagedTextMeasurementDraft | None = None,
+        convert_defer_reason: DeferReason | None = None,
     ) -> IngestedVersion:
         """Land one upload's rows and enqueue its convert work in one transaction.
 
@@ -148,6 +150,7 @@ class DocumentCatalog:
                         content_hash=record.content_hash,
                         lane=lane,
                         payload={"version_id": str(version_id)},
+                        defer_reason=convert_defer_reason,
                     ),
                 )
             else:

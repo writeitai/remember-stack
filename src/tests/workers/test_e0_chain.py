@@ -27,6 +27,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core import blockize
 from rememberstack.core import ConversionRouter
+from rememberstack.core import Converter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionCoverage
@@ -269,22 +270,25 @@ class _E0Rig:
                 retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
             ),
         )
+        # One table feeds both the D104 admission gate and the router, the
+        # way a real deployment's `conversion_routes` does. Duplicating it
+        # would let the harness prove a divergence production cannot have.
+        routes: dict[str, Converter] = {
+            "text/markdown": MarkdownPassthroughConverter(),
+            "text/plain": MarkdownPassthroughConverter(),
+            "text/html": MarkitdownConverter(),
+            "application/x-fake-scan": _FakeScanConverter(),
+            "application/x-unlabeled": _UnlabeledConverter(),
+            "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
+            "application/x-transient": _TransientlyFailingConverter(),
+        }
         self.ingestor = UploadIngestor(
             catalog=self.catalog,
             raw_store=self.raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset(routes),
         )
-        router = ConversionRouter(
-            routes={
-                "text/markdown": MarkdownPassthroughConverter(),
-                "text/plain": MarkdownPassthroughConverter(),
-                "text/html": MarkitdownConverter(),
-                "application/x-fake-scan": _FakeScanConverter(),
-                "application/x-unlabeled": _UnlabeledConverter(),
-                "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
-                "application/x-transient": _TransientlyFailingConverter(),
-            }
-        )
+        router = ConversionRouter(routes=routes)
         registry = HandlerRegistry()
         registry.register(
             stage=PipelineStage.CONVERT,
@@ -597,9 +601,86 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
     assert "convert terminated" in str(version["error"])
 
 
-def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:
-    """No route for the MIME type is deterministic — one attempt, dead-lettered."""
+def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -> None:
+    """D106: the document lands, its convert work parks, the DLQ stays empty.
+
+    The bytes are the point. An unconverted version still reaches the corpus
+    filesystem carrying `raw_uri`, so an agent can mount and read the original
+    — refusing the upload would have deleted that. Only the *work* is held.
+    """
     ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+        ),
+    )
+    work = rig.row(
+        sql="""
+        SELECT status, defer_reason, attempts, last_error FROM processing_state
+        WHERE target_id = :version_id AND stage = 'convert'
+        """,
+        params={"version_id": ingested.version_id},
+    )
+    assert work["status"] == "pending"
+    assert str(work["defer_reason"]) == "no_route"
+    # the point of parking rather than failing: nothing was tried, so nothing
+    # is recorded as broken and no attempt budget was spent
+    assert work["attempts"] == 0
+    assert work["last_error"] is None
+    version = rig.row(
+        sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    assert version["status"] != "failed"
+    assert version["error"] is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
+
+
+def test_resuming_after_a_route_is_registered_releases_the_backlog(rig: _E0Rig) -> None:
+    """The recovery the dead-letter path could not offer.
+
+    Adding a converter never rescued a version that had already failed without
+    one. A parked row is not failed, so releasing it puts the backlog back in
+    the queue with no re-upload and no per-row operator replay.
+    """
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="late.bin", mime="application/x-late-route", content=b"late"
+        ),
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
+
+    released = rig.ledger.resume_no_route(deployment_id=_DEPLOYMENT_ID)
+    assert len(released) == 1
+
+    work = rig.row(
+        sql="""
+        SELECT status, defer_reason FROM processing_state
+        WHERE target_id = :version_id AND stage = 'convert'
+        """,
+        params={"version_id": ingested.version_id},
+    )
+    assert work["status"] == "pending"
+    assert work["defer_reason"] is None
+
+
+def test_a_released_row_whose_route_is_still_missing_dead_letters(rig: _E0Rig) -> None:
+    """The narrow window the worker's own handling still exists for.
+
+    Ingest and the convert worker are separately composed, so a route-table
+    change can leave one restarted and the other not — and an operator can
+    resume before the converter is really registered. Constructed by admitting
+    through an ingestor whose table is wider than the worker's router: the
+    convert stage must still fail closed rather than retry forever.
+    """
+    admitting_gate = UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset({"application/x-unknown"}),
+    )
+    ingested = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
             filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"

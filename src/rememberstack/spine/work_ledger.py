@@ -694,6 +694,32 @@ class WorkLedger:
                     "work can be budget-parked"
                 )
 
+    def resume_no_route(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """Release every convert row parked for a missing converter (D106).
+
+        Called after a deployment gains a conversion route: the parked rows
+        become ordinary pending work and are announced, so the backlog that
+        arrived before the converter existed converts without the caller
+        re-uploading anything. Returns what was released so the caller can
+        report it; an empty tuple means there was nothing waiting.
+
+        Deliberately not automatic. The route table is deployment
+        configuration, and a process cannot observe another process's
+        restart, so releasing is an explicit act by whoever changed the
+        configuration rather than a poll that would re-park forever when the
+        route is still absent.
+        """
+        with self._engine.begin() as connection:
+            released = tuple(
+                row["processing_id"]
+                for row in connection.execute(
+                    _RESUME_NO_ROUTE, {"deployment_id": deployment_id}
+                ).mappings()
+            )
+        for processing_id in released:
+            self.wake(processing_id=processing_id)
+        return released
+
     def wake(self, *, processing_id: UUID) -> None:
         """Announce an existing committed row on the self-host wake channel.
 
@@ -1282,6 +1308,7 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
                 "lane": work.lane,
                 "payload": work.payload,
                 "not_before": work.not_before,
+                "defer_reason": work.defer_reason,
             },
         )
         .mappings()
@@ -1350,11 +1377,11 @@ _INSERT_WORK = text(
     """
     INSERT INTO processing_state (
         processing_id, deployment_id, target_kind, target_id, stage,
-        component_version, content_hash, lane, payload, not_before
+        component_version, content_hash, lane, payload, not_before, defer_reason
     ) VALUES (
         :processing_id, :deployment_id, :target_kind, :target_id, :stage,
         :component_version, :content_hash, :lane,
-        :payload, COALESCE(:not_before, now())
+        :payload, COALESCE(:not_before, now()), :defer_reason
     )
     ON CONFLICT (deployment_id, target_kind, target_id, stage, component_version)
     DO NOTHING
@@ -1388,6 +1415,17 @@ _PROMOTE_TO_STEADY = text(
     """
 )
 
+_RESUME_NO_ROUTE = text(
+    """
+    UPDATE processing_state
+    SET defer_reason = NULL, not_before = now()
+    WHERE deployment_id = :deployment_id
+      AND status = 'pending'
+      AND defer_reason::text = 'no_route'
+    RETURNING processing_id
+    """
+)
+
 _CLAIM_SELECT = text(
     """
     SELECT processing_id
@@ -1398,6 +1436,11 @@ _CLAIM_SELECT = text(
       AND status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
+      -- D106: no_route work is parked on a CONFIGURATION fact, not a clock.
+      -- There is no instant at which it becomes ready, so it is excluded by
+      -- its reason rather than by a sentinel timestamp; registering the
+      -- converter and resuming is what releases it.
+      AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
     ORDER BY not_before, enqueued_at, processing_id
     LIMIT 1
     FOR UPDATE SKIP LOCKED

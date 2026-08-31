@@ -56,9 +56,7 @@ def main() -> int:
         errors.append("test files not in any inventory:\n  " + "\n  ".join(orphans))
 
     unreachable = [
-        p
-        for p in integ
-        if not any(p.startswith(prefix) for prefix in SOFT_PREFIXES)
+        p for p in integ if not any(p.startswith(prefix) for prefix in SOFT_PREFIXES)
     ]
     if unreachable:
         errors.append(

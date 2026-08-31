@@ -50,9 +50,17 @@ docker compose exec postgres psql -U rememberstack -d rememberstack -c \
 
 ### 1. Unroutable MIME
 
-Smoke profile routes **Markdown**. PDF/HTML/audio without a registered converter → non-retryable failure for that version.
+Smoke profile routes **Markdown** and **plain text**. A file whose MIME type has no registered converter is **still ingested** — the original stays in the raw bucket and the document appears in the corpus filesystem with a `(not converted)` stub carrying its `raw_uri`, so an agent can still mount and read it. Only its conversion is **parked**: `processing_state` shows `status=pending`, `defer_reason=no_route`, `attempts=0`, and nothing reaches the dead-letter queue.
 
-**Fix:** ingest `text/markdown`, or compose additional conversion routes.
+**Fix:** register the converter for that MIME type in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`, then release the backlog:
+
+```bash
+remember ops resume-no-route --deployment <uuid>
+```
+
+Parked work converts on the next worker pass; nothing needs re-uploading.
+
+Versions dead-lettered by an unroutable MIME *before* parking existed are still `failed`, and adding a route does not convert them retroactively — reopen those with `remember ops replay`.
 
 ### 2. Missing / bad provider key
 

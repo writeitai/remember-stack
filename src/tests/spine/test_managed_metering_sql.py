@@ -231,6 +231,7 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         catalog=DocumentCatalog(engine=database_engine),
         raw_store=raw_store,
         admission=AllowIngest(),
+        routable_mimes=frozenset({"text/markdown", "text/plain"}),
         meter_scope=ManagedMeterScope(
             org_id=_ORG_ID,
             project_id=_PROJECT_ID,
