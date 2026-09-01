@@ -115,6 +115,22 @@ class OpenRouterSettings(BaseSettings):
     endpoint labels; routing uses the base provider slug from the endpoints
     API. See ``design/operations/openrouter-embedding-routing.md``.
     """
+    chat_provider_only: list[str] | None = None
+    """Allowlist of OpenRouter providers for CHAT completions (``provider.only``).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY`` as a comma-separated
+    list of *provider slugs* (not quantization tags): e.g.
+    ``z-ai,novita,deepinfra,gmicloud``. Tags like ``deepinfra/fp8`` are endpoint
+    labels; routing uses the base slug from the endpoints API.
+
+    ``allow_fallbacks`` stays ON, which does not weaken the restriction:
+    ``only`` bounds the candidate pool, so fallback moves between the listed
+    providers and can never leave them. That matters for long ingestion runs,
+    where one host's 5xx or 429 would otherwise dead-letter a stage.
+
+    Unset means OpenRouter's ordinary marketplace routing, which is the shipped
+    default and the behaviour every existing deployment keeps.
+    """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
@@ -160,6 +176,12 @@ class OpenRouterSettings(BaseSettings):
         return _parse_provider_name_list(
             value=value, field_name="embedding_provider_order"
         )
+
+    @field_validator("chat_provider_only", mode="before")
+    @classmethod
+    def parse_chat_provider_only(cls, value: object) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(value=value, field_name="chat_provider_only")
 
     @field_validator("max_completion_tokens", mode="before")
     @classmethod
@@ -256,6 +278,9 @@ class OpenRouterModelProvider:
         effort = self._reasoning_effort_for(request=request)
         if effort is not None:
             payload["reasoning"] = {"effort": effort}
+        provider = self._chat_provider_payload()
+        if provider is not None:
+            payload["provider"] = provider
 
         content, usage, body = self._completion_text(
             payload=payload, response_type=response_type, started_ns=started_ns
@@ -433,6 +458,19 @@ class OpenRouterModelProvider:
             "OpenRouter response carries unusable usage accounting and generation"
             " metadata did not recover it"
         ) from last_error
+
+    def _chat_provider_payload(self) -> dict[str, object] | None:
+        """Build OpenRouter provider routing for chat completions.
+
+        ``only`` bounds the candidate pool to the configured slugs, so keeping
+        ``allow_fallbacks`` on lets a single host's 5xx/429 move to another
+        ALLOWED provider instead of dead-lettering the stage. It cannot route
+        outside the allowlist.
+        """
+        allowed = self._settings.chat_provider_only
+        if not allowed:
+            return None
+        return {"only": list(allowed), "allow_fallbacks": True}
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.

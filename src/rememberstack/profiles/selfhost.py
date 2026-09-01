@@ -1341,6 +1341,14 @@ def _model_bindings() -> dict[str, str]:
             if openrouter.max_completion_tokens is not None
             else "unset"
         ),
+        # Which providers were allowed to serve chat completions is measurement
+        # provenance: two runs on the same model but different hosts are not
+        # necessarily comparable (quantization, context, throughput all differ).
+        "openrouter_chat_provider_only": (
+            ",".join(openrouter.chat_provider_only)
+            if openrouter.chat_provider_only
+            else "unset"
+        ),
         "openrouter_reasoning_effort": openrouter.reasoning_effort or "auto",
         # Canonical (sorted-key) form so the effective per-model effort policy
         # is part of measurement provenance, not hidden behind the global pin.

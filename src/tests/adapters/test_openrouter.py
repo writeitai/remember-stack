@@ -967,6 +967,113 @@ def test_embedding_provider_pin_is_not_forwarded_to_generation(
     assert response.output.answer == "Prague"
 
 
+def test_chat_provider_only_restricts_generation_to_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An allowlist bounds the pool; fallback may move only inside it."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_only=["z-ai", "novita", "deepinfra", "gmicloud"],
+        )
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/chat/completions"
+        assert payload["provider"] == {
+            "only": ["z-ai", "novita", "deepinfra", "gmicloud"],
+            # ON is not a loophole: `only` already bounds the candidate pool, so
+            # this buys failover between allowed hosts, never outside them.
+            "allow_fallbacks": True,
+        }
+        return {
+            "model": "z-ai/glm-5.3-flash",
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert response.output.answer == "Prague"
+
+
+def test_chat_provider_only_is_absent_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing deployments keep ordinary marketplace routing untouched."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert "provider" not in payload
+        return {
+            "model": "z-ai/glm-5.3-flash",
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+
+def test_chat_provider_only_is_not_forwarded_to_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chat routing must not constrain independently hosted embedding models."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key", chat_provider_only=["z-ai"])
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/embeddings"
+        assert "provider" not in payload
+        return {
+            "model": "qwen/qwen3-embedding-8b",
+            "usage": {"prompt_tokens": 2, "cost": "0.000001"},
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.embed(
+            request=EmbeddingRequest(
+                model="qwen/qwen3-embedding-8b", texts=("memory",), dimensions=2
+            )
+        )
+    finally:
+        provider._client.close()
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("z-ai,novita", ["z-ai", "novita"]),
+        (' ["z-ai", "deepinfra"] ', ["z-ai", "deepinfra"]),
+        ("", None),
+    ],
+)
+def test_chat_provider_only_parses_env_shapes(
+    configured: str, expected: list[str] | None
+) -> None:
+    """Compose passes strings; both comma and JSON list forms must work."""
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "chat_provider_only": configured}
+    )
+    assert settings.chat_provider_only == expected
+
+
 def _completion(*, content: object, finish: str = "stop", cost: str = "0.0001") -> dict:
     """One provider chat-completion body with the given message content."""
     return {
