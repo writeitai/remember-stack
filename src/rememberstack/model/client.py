@@ -41,6 +41,13 @@ class ToolDescriptor(BaseModel):
     result_contract: str = Field(min_length=1)
     output_grain: str | None
     answer_intent: str
+    #: Whether running this operation changes the memory.
+    #:
+    #: ``None`` means the operation has not said. The perimeter treats that as
+    #: mutating, so a read-only credential is refused it: an operation nobody
+    #: classified is an operation nobody has checked, and guessing "harmless"
+    #: is the guess that costs something when it is wrong.
+    mutates: bool | None = None
     version: int | None = Field(default=None, ge=1)
     implementation_plan_hash: str | None = Field(
         default=None, min_length=64, max_length=64

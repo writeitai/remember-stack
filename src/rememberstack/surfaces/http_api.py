@@ -68,6 +68,8 @@ from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 from rememberstack.surfaces.query_sandbox.result import QueryResult
+from rememberstack.surfaces.route_scope import operation_scope
+from rememberstack.surfaces.route_scope import required_scope
 
 PIPELINE_READINESS_VERSION_LIMIT: Final = 1_000
 """Maximum document versions in one read-only readiness inspection."""
@@ -776,9 +778,30 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV1)
     def run_operation(
-        name: str, arguments: Annotated[dict[str, object], Body(default_factory=dict)]
+        name: str,
+        arguments: Annotated[dict[str, object], Body(default_factory=dict)],
+        request: Request,
     ) -> Envelope | ContextBundleV1:
-        """Run one assured operation by name over JSON arguments."""
+        """Run one assured operation by name over JSON arguments.
+
+        The route-level table cannot classify this one: operations are registry
+        data, and whether a given operation mutates is a property of the
+        operation rather than of the path. So the scope check happens here,
+        against the descriptor, and an operation that has not declared itself
+        non-mutating is refused to a read-only credential.
+        """
+        context = getattr(request.state, "perimeter_context", None)
+        if context is not None:
+            descriptor = next(
+                (item for item in surface.descriptors() if item.name == name), None
+            )
+            required = operation_scope(
+                mutates=descriptor.mutates if descriptor is not None else None
+            )
+            if not context.scope.covers(required=required):
+                raise HTTPException(
+                    status_code=403, detail="credential may not perform this operation"
+                )
         try:
             return surface.run(name=name, arguments=arguments)
         except UnknownOperationError as error:
@@ -1076,6 +1099,20 @@ def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
             raise HTTPException(
                 status_code=403, detail="credential is for another deployment"
             )
+
+        # Authentication answered "who"; this answers "may they". It lives here
+        # rather than in the port because the port is handed a credential and
+        # never sees the request — and because the method alone cannot tell a
+        # read from a write on this API (`POST /graph/path` reads,
+        # `POST /ingest` does not). See ``route_scope``.
+        required = required_scope(method=request.method, path=request.url.path)
+        if not context.scope.covers(required=required):
+            raise HTTPException(
+                status_code=403, detail="credential may not perform this operation"
+            )
+        # Published for the one route the table cannot classify statically:
+        # ``POST /operations/{name}`` asks the descriptor instead.
+        request.state.perimeter_context = context
         return context
 
     return dependency
