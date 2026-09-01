@@ -512,6 +512,7 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
             raise MemoryApiError(status_code=0, detail=str(error)) from error
         if stored is not None:
             _warn_if_expiring(credential=stored)
+            _warn_if_revocation_outstanding()
     if (
         flag_url is None
         and flag_token is None
@@ -574,6 +575,30 @@ def _warn_if_expiring(*, credential: CredentialFile) -> None:
         )
 
 
+def _warn_if_revocation_outstanding() -> None:
+    """Say that a superseded credential is still live, without calling out.
+
+    Ordinary commands do not retry the revoke: a query should not make an
+    unrelated network call to a token host the user did not ask about. Staying
+    silent about a live credential nobody is tracking would be worse than the
+    noise.
+    """
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_pending_revocation
+
+    try:
+        pending = load_pending_revocation()
+    except CredentialError:
+        return
+    if pending is None:
+        return
+    print(
+        f"warning: a superseded credential (token_id {pending.token_id}) is "
+        "still live; run `remember login` or `remember logout` to retire it",
+        file=sys.stderr,
+    )
+
+
 def _resolved_token_host(
     *, explicit: str | None, stored_host: str | None = None
 ) -> str:
@@ -589,11 +614,26 @@ def _resolved_token_host(
 
 
 def _run_login(args: argparse.Namespace) -> int:
-    """Device-grant login; writes the owner-only credential file."""
+    """Device-grant login; writes the owner-only credential file.
+
+    Held under the credential lock end to end, so two concurrent logins cannot
+    each mint a replacement and overwrite the other's file — which would leave
+    one live credential with nothing on disk naming it.
+    """
+    from rememberstack.surfaces.credentials import credential_lock
+
+    with credential_lock():
+        return _login_locked(args)
+
+
+def _login_locked(args: argparse.Namespace) -> int:
+    """The login itself, with the credential lock already held."""
     from rememberstack.surfaces.credentials import CliClientEnv
     from rememberstack.surfaces.credentials import CredentialError
     from rememberstack.surfaces.credentials import load_credentials
+    from rememberstack.surfaces.credentials import PendingRevocation
     from rememberstack.surfaces.credentials import write_credentials
+    from rememberstack.surfaces.credentials import write_pending_revocation
     from rememberstack.surfaces.device_login import authorize_device
     from rememberstack.surfaces.device_login import credential_from_token
     from rememberstack.surfaces.device_login import DeviceGrantError
@@ -606,6 +646,9 @@ def _run_login(args: argparse.Namespace) -> int:
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    # Anything a previous run failed to retire is retried first, while its
+    # secret is still on disk and before this run writes its own journal entry.
+    _retry_pending_revocation()
     existing = None
     try:
         existing = load_credentials()
@@ -629,6 +672,19 @@ def _run_login(args: argparse.Namespace) -> int:
             credential = credential_from_token(
                 token=token, api_url=api_url, token_host=token_host
             )
+            if existing is not None:
+                # Written before the file is overwritten, because overwriting it
+                # destroys the only copy of the predecessor's secret. A crash
+                # after this point leaves a record of what still needs revoking;
+                # a crash before it leaves the old credential intact and in use.
+                write_pending_revocation(
+                    pending=PendingRevocation(
+                        version=1,
+                        token_host=existing.token_host,
+                        access_token=existing.access_token,
+                        token_id=existing.token_id,
+                    )
+                )
             write_credentials(credential=credential)
     except KeyboardInterrupt:
         return 130
@@ -644,7 +700,7 @@ def _run_login(args: argparse.Namespace) -> int:
         # step — a closed tab, an expired user code — leaves the machine with no
         # credential at all, having destroyed the working one to make room.
         if existing is not None:
-            _revoke_superseded(credential=existing)
+            _retry_pending_revocation()
         print(f"token_prefix: {credential.token_prefix}")
         print(f"deployment_id: {credential.deployment_id}")
         print(f"api_url: {credential.api_url}")
@@ -653,36 +709,62 @@ def _run_login(args: argparse.Namespace) -> int:
         return 0
 
 
-def _revoke_superseded(*, credential: CredentialFile) -> None:
-    """Revoke the credential this login replaced; never fail the login for it.
+def _retry_pending_revocation() -> None:
+    """Finish retiring a superseded credential, and say so when it cannot be.
 
-    The new credential is already written and working. A predecessor left
-    active is a credential too many, which is worth a loud warning and a
-    documented way to remove it — but it is not worth telling the user their
-    login failed when it did not.
+    Never fails the caller. The replacement is already written and working; a
+    predecessor left active is one credential too many, which is worth a loud
+    warning and a retry on the next login or logout, but is not worth telling
+    someone their login failed when it did not.
+
+    **Only a 2xx clears the journal, and a 401 besides.** The self-revoke route
+    answers 200 for the first revoke and for an idempotent repeat, so a 2xx is
+    genuine confirmation; a 401 means the token host no longer resolves that
+    bearer, which is the outcome we wanted by another name. Everything else —
+    a 404, which may mean the route is simply absent rather than the credential
+    gone; a 5xx; no response at all — confirms nothing, so the entry stays and
+    is retried.
     """
+    from rememberstack.surfaces.credentials import clear_pending_revocation
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_pending_revocation
     from rememberstack.surfaces.device_login import revoke_self
 
     try:
+        pending = load_pending_revocation()
+    except CredentialError as error:
+        print(f"warning: {error}", file=sys.stderr)
+        return
+    if pending is None:
+        return
+    try:
         with httpx.Client(
-            base_url=credential.token_host, timeout=30.0, follow_redirects=False
+            base_url=pending.token_host, timeout=30.0, follow_redirects=False
         ) as client:
             status = revoke_self(
-                client=client, access_token=credential.access_token.get_secret_value()
+                client=client, access_token=pending.access_token.get_secret_value()
             )
     except httpx.HTTPError:
         status = 0
-    if status == 0 or status < 200 or (status >= 300 and status not in {401, 404}):
-        print(
-            "warning: the credential this login replaced could not be revoked "
-            f"(token_id {credential.token_id}); revoke it in the console",
-            file=sys.stderr,
-        )
+    if (200 <= status < 300) or status == 401:
+        clear_pending_revocation()
+        return
+    print(
+        "warning: a superseded credential is still live and could not be "
+        f"revoked (token_id {pending.token_id}, HTTP {status or 'no response'}); "
+        "the next `remember login` or `logout` will retry, or revoke it in the "
+        "console",
+        file=sys.stderr,
+    )
 
 
 def _run_logout(args: argparse.Namespace) -> int:
     """Revoke the stored bearer, then unlink the file."""
-    return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+    from rememberstack.surfaces.credentials import credential_lock
+
+    with credential_lock():
+        _retry_pending_revocation()
+        return _logout_existing(token_host=args.token_host, allow_stored_host=True)
 
 
 def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:

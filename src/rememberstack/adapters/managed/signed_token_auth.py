@@ -46,6 +46,7 @@ from jwt import PyJWK
 
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
+from rememberstack.model.auth import CredentialKind
 from rememberstack.model.auth import PerimeterScope
 
 logger = logging.getLogger(__name__)
@@ -61,28 +62,29 @@ _ACCEPTED_ALGORITHMS = ("EdDSA",)
 #: genuinely valid credential is both alarming and hard to diagnose.
 _CLOCK_LEEWAY_SECONDS = 30
 
-#: Subject values that name a credential rather than a person. The control
-#: plane issues machine credentials with these markers (D53, D60).
-_MACHINE_ACTOR_PREFIXES = ("dpcred:", "cpcred:")
+#: The one subject marker a data-plane credential may carry (D60). ``cpcred:``
+#: names a *control-plane* credential, which this perimeter never verifies;
+#: honouring it here would let the two kinds be used interchangeably at a
+#: perimeter that reasons about only one of them.
+_MACHINE_ACTOR_PREFIX = "dpcred:"
 
-#: Credential prefixes the control plane puts in front of signed material so it
-#: can route a presented secret to the right verifier. They are not part of the
-#: JWT and must come off before parsing — a prefixed token is not valid JWS.
-_CREDENTIAL_PREFIXES = ("umc_dp_", "umc_cp_")
+#: The routing label the control plane puts in front of signed material so it
+#: can pick a verifier before parsing. It is not part of the JWT and must come
+#: off before parsing — a prefixed token is not valid JWS. Only the data-plane
+#: label is stripped here, for the same reason as above.
+_CREDENTIAL_PREFIX = "umc_dp_"
 
 
 def _strip_credential_prefix(*, presented: str) -> str:
-    """Remove a known credential prefix, if one is present.
+    """Remove the data-plane routing label, if the credential carries one.
 
-    The control plane keeps ``umc_dp_``/``umc_cp_`` in front of signed material
-    so that *it* can tell credential kinds apart before verifying. A JWT parser
-    cannot: ``umc_dp_eyJ…`` is not valid JWS. Only exact known prefixes are
-    stripped, so this cannot be used to smuggle arbitrary leading bytes past the
-    parser.
+    ``umc_dp_eyJ…`` is not valid JWS, so the label has to come off before
+    parsing. Exactly one pass, and only this exact label: ``umc_dp_umc_dp_<jws>``
+    is not two labels around a token but a credential no issuer produced, and
+    unwrapping repeatedly would accept it.
     """
-    for prefix in _CREDENTIAL_PREFIXES:
-        if presented.startswith(prefix):
-            return presented[len(prefix) :]
+    if presented.startswith(_CREDENTIAL_PREFIX):
+        return presented[len(_CREDENTIAL_PREFIX) :]
     return presented
 
 
@@ -154,6 +156,14 @@ class SignedTokenAuth:
                     "verify_exp": True,
                     "verify_iat": True,
                     "verify_signature": True,
+                    # JWT allows `aud` to be a list, and PyJWT's default accepts
+                    # the credential when *any* entry matches. That would make
+                    # one signed credential usable at several deployments at
+                    # once — precisely the property D45's issued-deployment
+                    # binding exists to prevent, and one neither end could
+                    # detect. Strict means one audience, and it is this
+                    # deployment.
+                    "strict_aud": True,
                 },
             )
         except jwt.PyJWTError as error:
@@ -182,7 +192,13 @@ class SignedTokenAuth:
     def _context(self, *, claims: Mapping[str, Any]) -> AuthenticatedContext:
         """Narrow verified claims into the perimeter's own vocabulary."""
         token_id = claims["jti"]
-        if not isinstance(token_id, str) or token_id in self._revoked_ids:
+        if not isinstance(token_id, str) or not token_id:
+            # An empty id is not merely untidy: a credential with no id cannot
+            # be named in a revocation list, so it would stay usable for its
+            # whole life whatever the control plane decided. Refusing it is what
+            # makes the deny-list mean anything.
+            raise SignedTokenUnusable("credential names no id")
+        if token_id in self._revoked_ids:
             raise SignedTokenUnusable("credential is revoked")
 
         subject = claims["sub"]
@@ -190,12 +206,19 @@ class SignedTokenAuth:
             raise SignedTokenUnusable("credential names no subject")
 
         # A subject naming a credential is not a person. The control plane marks
-        # machine credentials with a `dpcred:`/`cpcred:` actor prefix, and an
-        # audit that recorded one in the human field would be attributing a read
-        # to something that cannot be accountable for it.
-        machine_actor = any(
-            subject.startswith(marker) for marker in _MACHINE_ACTOR_PREFIXES
-        )
+        # the machine credential with a `dpcred:` prefix, and an audit that
+        # recorded one in the human field would attribute a read to something
+        # that cannot be accountable for it.
+        #
+        # The marker is not taken on trust. D60 fixes the machine subject as
+        # `dpcred:` followed by the credential's own id, so a payload claiming
+        # to be a machine while naming some *other* credential — or naming
+        # nothing — is refused rather than recorded. Without this, a signed
+        # credential could be attributed to whatever actor its payload chose,
+        # which is an audit trail that cannot be relied on.
+        machine_actor = subject.startswith(_MACHINE_ACTOR_PREFIX)
+        if machine_actor and subject != f"{_MACHINE_ACTOR_PREFIX}{token_id}":
+            raise SignedTokenUnusable("credential subject does not name itself")
 
         raw_scope = claims.get("scope", PerimeterScope.READ.value)
         try:
@@ -211,6 +234,13 @@ class SignedTokenAuth:
             principal="signed-bearer",
             subject=None if machine_actor else subject,
             credential_id=token_id,
+            # Derived from the subject rather than carried as its own claim: a
+            # newly required claim would reject every credential signed by a
+            # control plane that predates it, and there is nothing to infer
+            # wrongly, because the issuer — never the caller — writes `sub`.
+            credential_kind=(
+                CredentialKind.DEPLOYMENT if machine_actor else CredentialKind.BROWSER
+            ),
             scope=scope,
         )
 

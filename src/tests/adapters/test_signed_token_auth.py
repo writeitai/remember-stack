@@ -348,3 +348,135 @@ def test_a_browser_credential_still_names_its_person() -> None:
 
     assert context.subject == "member-1"
     assert context.credential_id is not None
+
+
+def test_a_multi_audience_credential_is_refused() -> None:
+    """One credential must not authenticate at two deployments.
+
+    JWT permits `aud` to be a list, and the default is to accept when *any*
+    entry matches. A control plane — or anyone who obtained signing authority —
+    could then issue a single credential valid at several customers'
+    deployments at once, which is exactly what D45's issued-deployment binding
+    exists to prevent, and neither end could see it from the credential.
+
+    Found by review, with a working token: the audience array below was
+    accepted by verifiers bound to both deployments before `strict_aud`.
+    """
+    deployment = uuid4()
+    other = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(
+        private=private,
+        kid="k1",
+        audience=str(deployment),
+        aud=[str(deployment), str(other)],
+    )
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, token)
+
+
+def test_a_credential_with_an_empty_id_is_refused() -> None:
+    """A credential with no id could never be revoked.
+
+    The deny-list names ids. A credential presenting an empty one cannot appear
+    in it, so it would stay usable for its whole life whatever the control
+    plane decided — which makes the whole revocation mechanism decorative.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(
+        private=private, kid="k1", audience=str(deployment), subject="dpcred:", jti=""
+    )
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, token)
+
+
+def test_a_machine_subject_must_name_its_own_credential() -> None:
+    """`dpcred:` is a claim about identity, and it is checked.
+
+    Without this, a payload could name any credential it liked — or drop the
+    delegating person from a credential that has one — and the audit record
+    would faithfully report the lie.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(
+        private=private,
+        kid="k1",
+        audience=str(deployment),
+        subject="dpcred:not-the-jti",
+        jti=uuid4().hex,
+    )
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, token)
+
+
+def test_the_control_plane_routing_label_is_not_stripped_here() -> None:
+    """`umc_cp_` addresses the control plane, which this perimeter is not.
+
+    Accepting it would make the routing label decorative — the two credential
+    kinds would become interchangeable at a verifier that reasons about only
+    one of them.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(private=private, kid="k1", audience=str(deployment))
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, f"umc_cp_{token}")
+
+
+def test_a_doubled_routing_label_is_refused() -> None:
+    """Unwrapping repeatedly would accept a credential no issuer produced."""
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(private=private, kid="k1", audience=str(deployment))
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, f"umc_dp_umc_dp_{token}")
+
+
+def test_the_credential_kind_names_the_audit_actor() -> None:
+    """Audit needs to say *which credential*, not only which person."""
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token_id = uuid4().hex
+    machine = _present(
+        auth,
+        "umc_dp_"
+        + _token(
+            private=private,
+            kid="k1",
+            audience=str(deployment),
+            subject=f"dpcred:{token_id}",
+            jti=token_id,
+        ),
+    )
+    browser = _present(
+        auth, _token(private=private, kid="k1", audience=str(deployment))
+    )
+
+    assert machine.actor_id == f"dpcred:{token_id}"
+    assert browser.actor_id is not None
+    assert browser.actor_id.startswith("browsercred:")

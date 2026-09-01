@@ -11,6 +11,7 @@ import stat
 from uuid import UUID
 
 import httpx
+from pydantic import SecretStr
 import pytest
 
 from rememberstack.surfaces import cli_main
@@ -583,3 +584,96 @@ def test_expiring_credential_warns_on_stderr_not_stdout(
     )
     _warn_if_expiring(credential=_stored())
     assert capsys.readouterr().err == ""
+
+
+def test_a_crash_between_write_and_revoke_leaves_a_retryable_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The predecessor's secret outlives the file that held it.
+
+    Mint-before-revoke opens a window: the replacement is on disk, the old
+    credential is still live at the control plane, and overwriting the file
+    destroys the only copy of the old secret. Without a journal, a crash there
+    strands a working credential nobody can name any more.
+    """
+    from rememberstack.surfaces.credentials import load_pending_revocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored(token_prefix="old-prefix"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            raise httpx.ConnectError("the machine died here")
+        if request.url.path == "/v1/device/authorize":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "DEVICE-SECRET",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://tokens.example.test/device",
+                    "verification_uri_complete": "https://tokens.example.test/device?c=1",
+                    "expires_in": 90,
+                    "interval": 1,
+                },
+            )
+        if request.url.path == "/v1/device/token":
+            return httpx.Response(200, json=_token_body())
+        return httpx.Response(404)
+
+    _mock_client(monkeypatch, handler)
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    assert "still live" in capsys.readouterr().err
+
+    pending = load_pending_revocation()
+    assert pending is not None
+    assert pending.token_id == _TOKEN_ID
+    assert pending.access_token.get_secret_value() == _ACCESS
+
+
+def test_a_404_does_not_count_as_a_revoke(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """404 can mean the route is absent, not that the credential is gone.
+
+    Clearing the journal on it would quietly forget a live credential. 401 is
+    different: the host resolved nothing for that bearer, which is the outcome
+    we wanted by another name.
+    """
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import clear_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocation
+    from rememberstack.surfaces.credentials import PendingRevocation
+    from rememberstack.surfaces.credentials import write_pending_revocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    status = {"code": 404}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status["code"])
+
+    _mock_client(monkeypatch, handler)
+    entry = PendingRevocation(
+        version=1,
+        token_host=_TOKEN_HOST,
+        access_token=SecretStr(_ACCESS),
+        token_id=_TOKEN_ID,
+    )
+    write_pending_revocation(pending=entry)
+    _retry_pending_revocation()
+    assert load_pending_revocation() is not None
+
+    status["code"] = 401
+    _retry_pending_revocation()
+    assert load_pending_revocation() is None
+
+    write_pending_revocation(pending=entry)
+    status["code"] = 200
+    _retry_pending_revocation()
+    assert load_pending_revocation() is None
+    clear_pending_revocation()
+
+
+def test_a_naive_expiry_is_refused_rather_than_assumed_utc() -> None:
+    """An absolute instant with no offset is a bug, not a UTC timestamp."""
+    with pytest.raises(ValueError):
+        _stored(expires_at=datetime(2027, 1, 1, 12, 0))

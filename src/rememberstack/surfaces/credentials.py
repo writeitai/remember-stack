@@ -6,6 +6,8 @@ file pickup would send an embedded library to a host the caller never set.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 import errno
 import json
@@ -18,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
+from pydantic import field_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -82,6 +85,21 @@ class CredentialFile(BaseModel):
     label: str
     token_prefix: str
     expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _expiry_must_be_absolute(cls, value: datetime | None) -> datetime | None:
+        """Refuse a naive expiry rather than guessing it means UTC.
+
+        D60 defines this as an absolute, database-stamped instant. A value with
+        no offset is not that; assuming UTC would silently be right in the
+        common case and silently wrong by hours in the case that matters, and
+        the wrongness would show up as a credential that warns — or does not —
+        on the wrong day.
+        """
+        if value is not None and value.tzinfo is None:
+            raise ValueError("expires_at must carry a timezone offset")
+        return value
 
 
 def credentials_dir(*, settings: TokenHostSettings | None = None) -> Path:
@@ -159,11 +177,159 @@ def write_credentials(
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-    except Exception:
+        _fsync_directory(directory)
+    except BaseException:
+        # BaseException, not Exception: a Ctrl-C between opening the temporary
+        # file and renaming it would otherwise leave the bearer secret sitting
+        # in a world-visible directory listing under a name nothing will ever
+        # clean up.
         if temporary.exists():
             temporary.unlink()
         raise
     return path
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make the rename itself durable, not only the bytes it renamed.
+
+    ``os.replace`` is atomic with respect to readers, but the directory entry
+    it changed can still be lost to a crash while the file's contents are
+    safely on disk. Without this a machine that loses power mid-login can come
+    back holding the *old* credential while the control plane has already
+    issued — and the old one may since have been revoked.
+    """
+    handle = os.open(directory, getattr(os, "O_DIRECTORY", os.O_RDONLY))
+    try:
+        os.fsync(handle)
+    except OSError:
+        # Some filesystems refuse to fsync a directory. Nothing is corrupted by
+        # that; the guarantee is simply weaker there, and failing the login
+        # over it would be worse than proceeding.
+        pass
+    finally:
+        os.close(handle)
+
+
+class PendingRevocation(BaseModel):
+    """A predecessor credential that has been replaced but not yet revoked.
+
+    ``remember login`` mints its replacement before retiring what it replaces
+    (D60), which leaves a window: the new credential is on disk, the old one is
+    still live at the control plane, and the only copy of the old secret is
+    about to be overwritten. A crash or a Ctrl-C in that window would strand a
+    working credential nobody can name any more.
+
+    So the old credential is written here *first*, and cleared only once the
+    control plane has confirmed the revoke. The next ``login`` or ``logout``
+    finishes the job; other commands say it is outstanding rather than making
+    network calls the user did not ask for.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    version: Literal[1]
+    token_host: str
+    access_token: SecretStr
+    token_id: UUID
+
+
+def pending_revocation_path(*, settings: TokenHostSettings | None = None) -> Path:
+    """Return the journal path beside the credential file."""
+    return credentials_dir(settings=settings) / "pending-revocation.json"
+
+
+def write_pending_revocation(
+    *, pending: PendingRevocation, settings: TokenHostSettings | None = None
+) -> Path:
+    """Record a credential that must still be revoked. Owner-only, like the file."""
+    directory = credentials_dir(settings=settings)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    path = pending_revocation_path(settings=settings)
+    if path.exists() and path.is_symlink():
+        raise CredentialError("pending-revocation path is a symlink")
+    temporary = directory / f".pending-revocation.{uuid4().hex}.tmp"
+    dumped = pending.model_dump(mode="json")
+    dumped["access_token"] = pending.access_token.get_secret_value()
+    payload = json.dumps(dumped, separators=(",", ":"), sort_keys=True)
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(directory)
+    except BaseException:
+        if temporary.exists():
+            temporary.unlink()
+        raise
+    return path
+
+
+def load_pending_revocation(
+    *, settings: TokenHostSettings | None = None
+) -> PendingRevocation | None:
+    """Read the journal, or None when nothing is outstanding.
+
+    A journal that will not parse is removed rather than raised: it exists only
+    to let a best-effort revoke be retried, and a corrupt one must not wedge
+    every subsequent login.
+    """
+    path = pending_revocation_path(settings=settings)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise CredentialError("pending-revocation file is unreadable") from error
+    try:
+        return PendingRevocation.model_validate_json(raw)
+    except Exception:
+        clear_pending_revocation(settings=settings)
+        return None
+
+
+def clear_pending_revocation(*, settings: TokenHostSettings | None = None) -> None:
+    """Forget the outstanding revocation. Missing is success."""
+    path = pending_revocation_path(settings=settings)
+    if path.exists():
+        path.unlink()
+
+
+@contextmanager
+def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[None]":
+    """Serialise credential-replacing commands on this machine.
+
+    Two ``remember login`` runs at once would each read the same predecessor,
+    mint a replacement, and overwrite the other's file — leaving one freshly
+    minted credential live and unrecorded, with nothing on disk naming it.
+
+    An advisory lock, held for the whole replace, is enough because the only
+    writers are this program's own commands. Where ``flock`` is unavailable the
+    block still runs: an unlocked login is what shipped before this, and
+    refusing to log in at all would be a worse answer than the race it avoids.
+    """
+    directory = credentials_dir(settings=settings)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    handle = os.open(directory / ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    locked = False
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            locked = True
+        except (ImportError, OSError):
+            locked = False
+        yield
+    finally:
+        if locked:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        os.close(handle)
 
 
 def unlink_credentials(*, settings: TokenHostSettings | None = None) -> None:
