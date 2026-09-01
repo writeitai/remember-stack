@@ -48,6 +48,7 @@ MODEL_BINDING_ENVIRONMENT = {
     "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
     "observation_frontier": "REMEMBERSTACK_OBS_FRONTIER_MODEL",
     "observation_small": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "openrouter_chat_provider_only": "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY",
     "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",
     "openrouter_embedding_provider_order": (
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER"
@@ -69,6 +70,7 @@ MODEL_BINDING_ENVIRONMENT = {
     "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
 }
 UNSET_MODEL_BINDINGS = {
+    "openrouter_chat_provider_only": "unset",
     "openrouter_embedding_provider": "auto",
     "openrouter_embedding_provider_order": "unset",
     "openrouter_max_completion_tokens": "unset",

@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v19"
-DEFAULT_PROTOCOL_KEY: Final = "full-v19"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-counterfactual-v19"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v20"
+DEFAULT_PROTOCOL_KEY: Final = "full-v20"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-glm53-pinned-providers-v20"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -87,30 +87,31 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
 EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "chunk_embedding": "qwen/qwen3-embedding-8b",
-        "claim_extraction": "openai/gpt-5.6-luna",
-        "context_prefix": "openai/gpt-5.6-luna",
+        "claim_extraction": "z-ai/glm-5.3-flash",
+        "context_prefix": "z-ai/glm-5.3-flash",
         "entity_observation_embedding": "qwen/qwen3-embedding-8b",
-        "fact_label": "openai/gpt-5.6-luna",
-        "observation_frontier": "openai/gpt-5.6-luna",
-        "observation_small": "openai/gpt-5.6-luna",
+        "fact_label": "z-ai/glm-5.3-flash",
+        "observation_frontier": "z-ai/glm-5.3-flash",
+        "observation_small": "z-ai/glm-5.3-flash",
+        "openrouter_chat_provider_only": "z-ai,novita,deepinfra,gmicloud",
         "openrouter_embedding_provider": "nebius",
         "openrouter_embedding_provider_order": "unset",
         "openrouter_max_completion_tokens": "32000",
         "openrouter_reasoning_effort": "auto",
-        "openrouter_reasoning_effort_map": '{"openai/gpt-5.6-luna": "high"}',
+        "openrouter_reasoning_effort_map": '{"z-ai/glm-5.3-flash": "high"}',
         "p1_embedding": "qwen/qwen3-embedding-8b",
-        "relation_normalization": "openai/gpt-5.6-luna",
-        "section_role": "openai/gpt-5.6-luna",
-        "section_summary": "openai/gpt-5.6-luna",
-        "skeleton_check": "openai/gpt-5.6-luna",
-        "structure_fallback": "openai/gpt-5.6-luna",
-        "supersession_frontier": "openai/gpt-5.6-luna",
-        "supersession_small": "openai/gpt-5.6-luna",
+        "relation_normalization": "z-ai/glm-5.3-flash",
+        "section_role": "z-ai/glm-5.3-flash",
+        "section_summary": "z-ai/glm-5.3-flash",
+        "skeleton_check": "z-ai/glm-5.3-flash",
+        "structure_fallback": "z-ai/glm-5.3-flash",
+        "supersession_frontier": "z-ai/glm-5.3-flash",
+        "supersession_small": "z-ai/glm-5.3-flash",
     }
 )
-ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
+ANSWER_AGENT_MODEL: Final = "z-ai/glm-5.3-flash"
 ANSWER_AGENT_REASONING_EFFORT: Final = "none"
-JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
+JUDGE_MODEL: Final = "z-ai/glm-5.3-flash"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
 
@@ -206,8 +207,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V19 = LoCoMoProtocol(
-    key="full-v19",
+_FULL_V20 = LoCoMoProtocol(
+    key="full-v20",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -229,7 +230,7 @@ _FULL_V19 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V19.key: _FULL_V19}
+    {_FULL_V20.key: _FULL_V20}
 )
 
 

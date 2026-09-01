@@ -1033,7 +1033,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
     assert answer.agent_call_count == 2
     assert answer.reader_usage is not None
     assert answer.reader_usage.model_name == (
-        "mixed:openai/gpt-5.6-luna|openai/not-luna"
+        "mixed:openai/not-luna|z-ai/glm-5.3-flash"
     )
     assert answer.reader_usage.cost_usd == Decimal("0.02")
     assert state.evaluator_cost_usd == Decimal("0.02")
@@ -1047,7 +1047,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v19", "openai/gpt-5.6-luna", "none", 0, 2),),
+    (("full-v20", "z-ai/glm-5.3-flash", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1906,8 +1906,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v19","protocol_fingerprint":'
-        '"099aee28603fab2db6f6c775095307b4e46a68e7e6913f05e87330183439c05d",'
+        '{"protocol_name":"RS-LoCoMo-Full-v20","protocol_fingerprint":'
+        '"76ac68117dbddd72a7e1f44734cde043180ad8b720109af9f9a839641c152784",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2126,8 +2126,8 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v19"
-    assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v20"
+    assert prepared.answer_agent_model == "z-ai/glm-5.3-flash"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
     assert prepared.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH

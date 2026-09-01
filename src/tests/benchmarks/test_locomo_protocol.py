@@ -241,8 +241,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_protocol_is_v19_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v19"
-    assert DEFAULT_PROTOCOL_KEY == "full-v19"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v20"
+    assert DEFAULT_PROTOCOL_KEY == "full-v20"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -269,11 +269,11 @@ def test_protocol_is_v19_and_answer_prompt_has_reasoning_and_loop_guards() -> No
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v19",)
-    protocol = PROTOCOL_REGISTRY["full-v19"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v20",)
+    protocol = PROTOCOL_REGISTRY["full-v20"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v19"
-    assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
+    assert protocol.name == "RS-LoCoMo-Full-v20"
+    assert protocol.answer_agent_model == "z-ai/glm-5.3-flash"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
     assert protocol.answer_reader_retry_budget == 2
@@ -310,7 +310,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v19"]
+    assert selected == ["full-v20"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(

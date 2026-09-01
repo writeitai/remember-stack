@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v19 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v20 protocol."""
 
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v19"]
-ProtocolName = Literal["RS-LoCoMo-Full-v19"]
+ProtocolKey = Literal["full-v20"]
+ProtocolName = Literal["RS-LoCoMo-Full-v20"]
 SourceTimezoneBasis = Literal["assumed_utc"]
-AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
-JudgeModel = Literal["openai/gpt-5.6-luna"]
+AnswerAgentModel = Literal["z-ai/glm-5.3-flash"]
+JudgeModel = Literal["z-ai/glm-5.3-flash"]
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]
@@ -120,7 +120,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v19"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v20"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -139,10 +139,10 @@ class RunConfiguration(FrozenModel):
     api_timeout_seconds: float = Field(default=60.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     document_binding_generation: Literal["document-t0-v1"] = "document-t0-v1"
-    answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
+    answer_agent_model: AnswerAgentModel = "z-ai/glm-5.3-flash"
     answer_agent_reasoning_effort: Literal["none"] = "none"
     answer_word_cap: int | None = Field(default=None, ge=1)
-    judge_model: JudgeModel = "openai/gpt-5.6-luna"
+    judge_model: JudgeModel = "z-ai/glm-5.3-flash"
     judge_reasoning_effort: Literal["none"] = "none"
     answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
     judge_temperature: float = Field(default=0.0, ge=0, le=2)
@@ -393,7 +393,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v19"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v20"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)
