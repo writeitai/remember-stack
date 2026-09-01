@@ -3,6 +3,7 @@ src/tests/adapters/test_codex_writer.py
 src/tests/adapters/test_composite_auth.py
 src/tests/adapters/test_control_plane_spend_lease.py
 src/tests/adapters/test_hashed_bearer_auth.py
+src/tests/adapters/test_managed_metering.py
 src/tests/adapters/test_minio_store.py
 src/tests/adapters/test_mistral_ocr.py
 src/tests/adapters/test_openrouter.py
@@ -38,6 +39,7 @@ src/tests/core/test_knowledge_planner.py
 src/tests/core/test_knowledge_writer.py
 src/tests/core/test_section_snap.py
 src/tests/core/test_structure_skeleton.py
+src/tests/core/test_text_metering.py
 src/tests/eval/test_s55_hard_forget.py
 src/tests/eval/test_s55_selfhost_restore.py
 src/tests/model/test_component_version.py

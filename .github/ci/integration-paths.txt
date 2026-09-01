@@ -12,6 +12,7 @@ src/tests/spine/test_forget_catalog.py
 src/tests/spine/test_governance.py
 src/tests/spine/test_knowledge_commit_driver.py
 src/tests/spine/test_knowledge_control_plane.py
+src/tests/spine/test_managed_metering_sql.py
 src/tests/spine/test_migrations.py
 src/tests/spine/test_observation_adjudication.py
 src/tests/spine/test_operations.py
