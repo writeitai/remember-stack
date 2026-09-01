@@ -206,15 +206,30 @@ def write_credentials(
     return path
 
 
-def _fsync_directory(directory: Path) -> None:
+def _fsync_directory(directory: Path) -> bool:
     """Make the rename itself durable, not only the bytes it renamed.
 
-    ``os.replace`` is atomic with respect to readers, but the directory entry
-    it changed can still be lost to a crash while the file's contents are
-    safely on disk. Without this a machine that loses power mid-login can come
-    back holding the *old* credential while the control plane has already
-    issued — and the old one may since have been revoked.
+    ``os.replace`` is atomic with respect to readers, but the directory entry it
+    changed can still be lost to a crash while the file's contents are safely on
+    disk. Without this a machine that loses power mid-login can come back
+    holding the *old* credential while the control plane has already issued —
+    and the old one may since have been revoked.
+
+    Three outcomes, and callers need to tell them apart:
+
+    - **True** — the directory was synced. The rename is durable.
+    - **False** — this platform or filesystem has no way to sync a directory,
+      so durability is *unknowable* here. Not a failure, and not a guarantee.
+      Windows has no such operation at all; some filesystems say so by errno.
+    - **raises** :class:`DurabilityUnconfirmed` — a real IO failure. The write
+      may not have landed, and a caller must not act as though it did.
+
+    Collapsing the middle case into either of the others was a bug both ways:
+    treating it as success claimed durability nobody established, and treating
+    it as failure would have made login impossible on Windows.
     """
+    if os.name == "nt":  # pragma: no cover - Windows
+        return False
     try:
         handle = os.open(directory, getattr(os, "O_DIRECTORY", os.O_RDONLY))
     except OSError as error:
@@ -228,9 +243,8 @@ def _fsync_directory(directory: Path) -> None:
         os.fsync(handle)
     except OSError as error:
         # Only the errnos that actually mean "this filesystem cannot fsync a
-        # directory" are tolerated. `EPERM` and `EBADF` were in this set and are
-        # not that: the first is a permission problem and the second is a bug,
-        # and swallowing either reported durability we did not have.
+        # directory". `EPERM` and `EBADF` were once in this set and are not
+        # that: the first is a permission problem and the second is a bug.
         #
         # ENOTSUP and EOPNOTSUPP are the same number on Linux and different on
         # some BSDs, so both are named rather than assumed equal.
@@ -239,21 +253,22 @@ def _fsync_directory(directory: Path) -> None:
             errno.ENOTSUP,
             getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
         }
-        if error.errno not in unsupported:
-            raise DurabilityUnconfirmed(
-                f"the credential directory could not be synced ({error})"
-            ) from error
+        if error.errno in unsupported:
+            return False
+        raise DurabilityUnconfirmed(
+            f"the credential directory could not be synced ({error})"
+        ) from error
     finally:
         try:
             os.close(handle)
         except OSError as error:
-            # A close that fails can mean buffered metadata never reached the
-            # device, so the rename may not be durable after all. Reported for
-            # the same reason as the fsync itself: unwinding would revoke a
-            # credential the file already names.
+            # Also after the rename; a close that fails can mean buffered
+            # metadata never reached the device, so the rename may not be
+            # durable after all.
             raise DurabilityUnconfirmed(
                 f"the credential directory could not be closed after syncing ({error})"
             ) from error
+    return True
 
 
 def credential_origin(*, token_host: str) -> str:
@@ -640,19 +655,22 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
         os.close(handle)
 
 
-def confirm_credentials_durable(*, settings: TokenHostSettings | None = None) -> None:
+def confirm_credentials_durable(*, settings: TokenHostSettings | None = None) -> bool:
     """Re-attempt the directory sync a previous write could not confirm.
 
     Reading the credential file back proves it is *visible*, which is not the
     same as its directory entry being on disk: a power loss can still lose the
-    rename while every read in this process succeeds. So the question "did that
-    write survive?" cannot be answered by looking — only by syncing again and
-    seeing it work.
+    rename while every read in this process succeeds. So "did that write
+    survive?" cannot be answered by looking — only by syncing again.
 
-    Raises :class:`DurabilityUnconfirmed` when it still cannot be confirmed, so
-    a caller deciding whether to forget its recovery record keeps it instead.
+    Returns **True** when the sync succeeded and **False** when this filesystem
+    cannot sync a directory at all, and raises :class:`DurabilityUnconfirmed`
+    on a real failure. The middle case matters: on such a filesystem no amount
+    of retrying will ever confirm anything, so a caller that kept its recovery
+    record until confirmation would keep it forever. It is reported rather than
+    disguised as either success or failure, and the caller decides.
     """
-    _fsync_directory(credentials_dir(settings=settings))
+    return _fsync_directory(credentials_dir(settings=settings))
 
 
 def unlink_credentials(*, settings: TokenHostSettings | None = None) -> None:

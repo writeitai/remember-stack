@@ -915,9 +915,22 @@ def _retry_pending_revocation() -> None:
             # the record. If it still cannot be confirmed the entry stays, and
             # the next command tries again.
             try:
-                confirm_credentials_durable()
+                confirmed = confirm_credentials_durable()
             except DurabilityUnconfirmed:
+                # A real IO failure: the write may not have landed, so the
+                # record stays and the next command tries again.
                 continue
+            if not confirmed:
+                # This filesystem cannot sync a directory, so no amount of
+                # retrying will ever confirm anything and holding the record
+                # forever would achieve nothing but occupying a slot. Dropped,
+                # with the weaker guarantee said out loud rather than implied.
+                print(
+                    "warning: this filesystem cannot confirm that the "
+                    "credential file's rename is durable; a crash could lose "
+                    f"it while credential {pending.token_id} stays live",
+                    file=sys.stderr,
+                )
             drop_pending_revocation(identity=pending.identity)
             continue
         try:

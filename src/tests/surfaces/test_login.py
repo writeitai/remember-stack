@@ -1250,7 +1250,74 @@ def test_recovery_confirms_durability_before_forgetting_a_record(
     assert load_pending_revocations().entries, "an unconfirmed write keeps its record"
 
     monkeypatch.setattr(
-        credentials_module, "confirm_credentials_durable", lambda **_kwargs: None
+        credentials_module, "confirm_credentials_durable", lambda **_kwargs: True
     )
     _retry_pending_revocation()
     assert not load_pending_revocations().entries
+
+
+def test_a_filesystem_that_cannot_confirm_says_so_and_moves_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "Cannot confirm" is a third outcome, not a quiet success or a failure.
+
+    Where a directory cannot be synced at all, no amount of retrying will ever
+    establish durability — so holding the record forever would occupy a slot
+    and achieve nothing. It is dropped, with the weaker guarantee stated rather
+    than implied.
+    """
+    from rememberstack.surfaces import credentials as credentials_module
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored())
+    _mock_client(monkeypatch, lambda request: httpx.Response(204))
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=_TOKEN_HOST,
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+    monkeypatch.setattr(
+        credentials_module, "confirm_credentials_durable", lambda **_kwargs: False
+    )
+
+    _retry_pending_revocation()
+
+    assert "cannot confirm" in capsys.readouterr().err
+    assert not load_pending_revocations().entries
+
+
+def test_an_unsupported_directory_sync_is_not_reported_as_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The three outcomes are distinct at the source, not just at the caller."""
+    import errno as errno_module
+    import os as os_module
+
+    from rememberstack.surfaces.credentials import confirm_credentials_durable
+    from rememberstack.surfaces.credentials import credentials_dir
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+
+    _isolate_config(monkeypatch, tmp_path)
+    credentials_dir().mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    assert confirm_credentials_durable() is True
+
+    def unsupported(_handle: int) -> None:
+        raise OSError(errno_module.EINVAL, "this filesystem cannot sync a directory")
+
+    monkeypatch.setattr(os_module, "fsync", unsupported)
+    assert confirm_credentials_durable() is False
+
+    def broken(_handle: int) -> None:
+        raise OSError(errno_module.EIO, "the device is on fire")
+
+    monkeypatch.setattr(os_module, "fsync", broken)
+    with pytest.raises(DurabilityUnconfirmed):
+        confirm_credentials_durable()
