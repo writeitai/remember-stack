@@ -6,6 +6,7 @@ file pickup would send an embedded library to a host the caller never set.
 
 from __future__ import annotations
 
+from datetime import datetime
 import errno
 import json
 import os
@@ -53,7 +54,20 @@ class CliClientEnv(BaseSettings):
 
 
 class CredentialFile(BaseModel):
-    """Version-1 credential document. Unknown version refuses to read."""
+    """Version-1 credential document. Unknown version refuses to read.
+
+    ``expires_at`` is optional because it was added to version 1 after version 1
+    shipped, and because a control plane that predates expiring credentials does
+    not send one. ``None`` therefore means *this credential has no recorded
+    expiry* — not *it never expires*. The server is the authority either way;
+    this field exists so the CLI can warn a human before a job fails at 3am.
+
+    ``extra="forbid"`` is kept deliberately, even though it means a file written
+    by a newer CLI is refused by an older one. This file is written by this
+    program, so an unrecognised key really is corruption, and being told to log
+    in again is a recoverable outcome — quietly ignoring a field that changes
+    when the credential stops working is not.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
@@ -67,6 +81,7 @@ class CredentialFile(BaseModel):
     deployment_id: UUID
     label: str
     token_prefix: str
+    expires_at: datetime | None = None
 
 
 def credentials_dir(*, settings: TokenHostSettings | None = None) -> Path:

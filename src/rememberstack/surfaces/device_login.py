@@ -211,6 +211,7 @@ def credential_from_token(
         deployment_id=token.deployment_id,
         label=token.label,
         token_prefix=token.token_prefix,
+        expires_at=token.expires_at,
     )
 
 

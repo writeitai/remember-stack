@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from datetime import timedelta
+from datetime import UTC
 from importlib import import_module
 import json
 from pathlib import Path
@@ -30,6 +32,7 @@ from rememberstack.surfaces.sdk import MemoryClient
 if TYPE_CHECKING:
     from rememberstack.spine.review import ReviewQueue
     from rememberstack.spine.work_ledger import WorkLedger
+    from rememberstack.surfaces.credentials import CredentialFile
 
 _MERGE_VERDICTS = ("merge", "not_merge")
 _TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
@@ -507,6 +510,8 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
             stored = load_credentials()
         except CredentialError as error:
             raise MemoryApiError(status_code=0, detail=str(error)) from error
+        if stored is not None:
+            _warn_if_expiring(credential=stored)
     if (
         flag_url is None
         and flag_token is None
@@ -527,6 +532,46 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
         base_url=api_url,
         authorization=authorization_header(token=raw_token) if raw_token else None,
     )
+
+
+#: How long before a stored credential lapses the CLI starts saying so.
+#:
+#: A machine credential lives in configuration a human edits rarely, so the
+#: warning has to arrive far enough ahead that replacing it can be scheduled
+#: rather than done in a hurry — but not so far ahead that it becomes noise
+#: the operator learns to scroll past.
+_EXPIRY_WARNING_WINDOW = timedelta(days=30)
+
+
+def _warn_if_expiring(*, credential: CredentialFile) -> None:
+    """Say on stderr when the stored credential is close to, or past, its end.
+
+    Written to stderr, never stdout: these commands print machine-readable
+    output that a script parses, and a warning in that stream would corrupt it.
+
+    A credential with no recorded expiry says nothing — the field is absent for
+    credentials issued before expiry existed, and silence is the honest answer
+    when we do not know.
+    """
+    if credential.expires_at is None:
+        return
+    expires_at = credential.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    remaining = expires_at - datetime.now(tz=UTC)
+    if remaining <= timedelta(0):
+        print(
+            f"warning: this credential expired on {expires_at.isoformat()}; "
+            "run `remember login` to replace it",
+            file=sys.stderr,
+        )
+        return
+    if remaining <= _EXPIRY_WARNING_WINDOW:
+        print(
+            f"warning: this credential expires on {expires_at.isoformat()} "
+            f"({remaining.days}d); run `remember login` to replace it",
+            file=sys.stderr,
+        )
 
 
 def _resolved_token_host(
@@ -567,16 +612,6 @@ def _run_login(args: argparse.Namespace) -> int:
     except CredentialError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    if existing is not None:
-        revoked = _logout_existing(
-            token_host=existing.token_host, allow_stored_host=True
-        )
-        if revoked != 0:
-            print(
-                "error: existing credential could not be revoked; file kept",
-                file=sys.stderr,
-            )
-            return revoked
     try:
         with httpx.Client(
             base_url=token_host, timeout=30.0, follow_redirects=False
@@ -604,10 +639,45 @@ def _run_login(args: argparse.Namespace) -> int:
         print("error: login failed", file=sys.stderr)
         return 1
     else:
+        # The predecessor is revoked only now, with the replacement already on
+        # disk. Revoking first would mean a login interrupted at the browser
+        # step — a closed tab, an expired user code — leaves the machine with no
+        # credential at all, having destroyed the working one to make room.
+        if existing is not None:
+            _revoke_superseded(credential=existing)
         print(f"token_prefix: {credential.token_prefix}")
         print(f"deployment_id: {credential.deployment_id}")
         print(f"api_url: {credential.api_url}")
+        if credential.expires_at is not None:
+            print(f"expires_at: {credential.expires_at.isoformat()}")
         return 0
+
+
+def _revoke_superseded(*, credential: CredentialFile) -> None:
+    """Revoke the credential this login replaced; never fail the login for it.
+
+    The new credential is already written and working. A predecessor left
+    active is a credential too many, which is worth a loud warning and a
+    documented way to remove it — but it is not worth telling the user their
+    login failed when it did not.
+    """
+    from rememberstack.surfaces.device_login import revoke_self
+
+    try:
+        with httpx.Client(
+            base_url=credential.token_host, timeout=30.0, follow_redirects=False
+        ) as client:
+            status = revoke_self(
+                client=client, access_token=credential.access_token.get_secret_value()
+            )
+    except httpx.HTTPError:
+        status = 0
+    if status == 0 or status < 200 or (status >= 300 and status not in {401, 404}):
+        print(
+            "warning: the credential this login replaced could not be revoked "
+            f"(token_id {credential.token_id}); revoke it in the console",
+            file=sys.stderr,
+        )
 
 
 def _run_logout(args: argparse.Namespace) -> int:

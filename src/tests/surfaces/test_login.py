@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timedelta
+from datetime import UTC
 import json
 from pathlib import Path
 import stat
@@ -177,10 +180,14 @@ def test_logout_401_unlinks_and_503_keeps_file(
     assert load_credentials() is not None
 
 
-def test_second_login_aborts_when_revoke_is_5xx(
+def test_login_keeps_the_old_credential_when_the_grant_never_completes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A live token must not be replaced when revoke cannot be confirmed."""
+    """A live credential survives a login that fails before minting.
+
+    This is what D60's mint-before-revoke buys: the old order revoked first, so
+    a login that then failed at the browser step left the machine with nothing.
+    """
     _isolate_config(monkeypatch, tmp_path)
     write_credentials(credential=_stored(token_prefix="old-prefix"))
 
@@ -413,3 +420,166 @@ def test_logout_without_file_is_success(
     """Idempotent logout when nothing is stored."""
     _isolate_config(monkeypatch, tmp_path)
     assert cli_main(["logout"]) == 0
+
+
+def _token_body(**overrides: object) -> dict[str, object]:
+    """The device-token success body the control plane actually returns."""
+    body: dict[str, object] = {
+        "access_token": _ACCESS,
+        "token_type": "Bearer",
+        "token_id": str(_TOKEN_ID),
+        "org_id": str(_ORG_ID),
+        "deployment_id": str(_DEPLOYMENT_ID),
+        "label": "cli",
+        "token_prefix": "umc_dp_sec",
+    }
+    body.update(overrides)
+    return body
+
+
+def _grant_handler(*, token_body: dict[str, object], calls: list[str]) -> "object":
+    """Serve authorize/token/revoke, recording the order they are called in."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            calls.append("revoke")
+            return httpx.Response(204)
+        if request.url.path == "/v1/device/authorize":
+            calls.append("authorize")
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "DEVICE-SECRET",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://tokens.example.test/device",
+                    "verification_uri_complete": "https://tokens.example.test/device?c=1",
+                    "expires_in": 90,
+                    "interval": 1,
+                },
+            )
+        if request.url.path == "/v1/device/token":
+            calls.append("token")
+            return httpx.Response(200, json=token_body)
+        return httpx.Response(404)
+
+    return handler
+
+
+def _mock_client(monkeypatch: pytest.MonkeyPatch, handler: object) -> None:
+    """Route every httpx.Client through the given handler."""
+    original = httpx.Client
+
+    def factory(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = httpx.MockTransport(handler)  # type: ignore[arg-type]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", factory)
+
+
+def test_login_revokes_the_predecessor_only_after_minting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The replacement is obtained first; the old credential dies after."""
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored(token_prefix="old-prefix"))
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    assert calls == ["authorize", "token", "revoke"]
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.token_prefix == "umc_dp_sec"
+
+
+def test_login_stores_and_prints_the_expiry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``expires_at`` reaches the credential file and the operator's screen."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    expiry = "2027-09-01T12:00:00+00:00"
+    _mock_client(
+        monkeypatch,
+        _grant_handler(token_body=_token_body(expires_at=expiry), calls=calls),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.expires_at == datetime(2027, 9, 1, 12, 0, tzinfo=UTC)
+    assert "expires_at: 2027-09-01T12:00:00+00:00" in capsys.readouterr().out
+
+
+def test_a_control_plane_without_expiry_leaves_the_field_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No expiry means *not recorded*, never *never expires*."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.expires_at is None
+
+
+def test_a_failed_predecessor_revoke_warns_and_keeps_the_new_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Login succeeded; a stale predecessor is a warning, not a failure."""
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored(token_prefix="old-prefix"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(503)
+        if request.url.path == "/v1/device/authorize":
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "DEVICE-SECRET",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://tokens.example.test/device",
+                    "verification_uri_complete": "https://tokens.example.test/device?c=1",
+                    "expires_in": 90,
+                    "interval": 1,
+                },
+            )
+        if request.url.path == "/v1/device/token":
+            return httpx.Response(200, json=_token_body())
+        return httpx.Response(404)
+
+    _mock_client(monkeypatch, handler)
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    captured = capsys.readouterr()
+    assert "could not be revoked" in captured.err
+    assert str(_TOKEN_ID) in captured.err
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.token_prefix == "umc_dp_sec"
+
+
+def test_expiring_credential_warns_on_stderr_not_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The warning must not corrupt the machine-readable stream."""
+    from rememberstack.surfaces.cli import _warn_if_expiring
+
+    soon = datetime.now(tz=UTC) + timedelta(days=3)
+    _warn_if_expiring(credential=_stored(expires_at=soon))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "expires on" in captured.err
+
+    _warn_if_expiring(
+        credential=_stored(expires_at=datetime.now(tz=UTC) - timedelta(days=1))
+    )
+    assert "expired on" in capsys.readouterr().err
+
+    _warn_if_expiring(
+        credential=_stored(expires_at=datetime.now(tz=UTC) + timedelta(days=200))
+    )
+    _warn_if_expiring(credential=_stored())
+    assert capsys.readouterr().err == ""

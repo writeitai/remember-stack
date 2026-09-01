@@ -334,5 +334,6 @@ def test_auth_fake_returns_only_single_deployment_context() -> None:
         "deployment_id",
         "principal",
         "subject",
+        "credential_id",
         "scope",
     }
