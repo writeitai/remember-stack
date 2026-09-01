@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
+import errno
 import json
 from pathlib import Path
 import stat
@@ -848,3 +849,129 @@ def test_logout_does_not_treat_404_as_a_revoke(
 
     assert cli_main(["logout", "--token-host", _TOKEN_HOST]) == 1
     assert load_credentials() is not None
+
+
+def test_a_same_id_credential_from_another_host_is_still_revoked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ids are unique per issuer, not globally.
+
+    Comparing ids alone let a current credential from one token host cancel a
+    pending revocation for a same-id credential on another — leaving that one
+    live forever.
+    """
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored())
+    revoked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        revoked.append(str(request.url.host))
+        return httpx.Response(204)
+
+    _mock_client(monkeypatch, handler)
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host="https://other.example.test",
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+
+    _retry_pending_revocation()
+
+    assert revoked == ["other.example.test"]
+    assert not load_pending_revocations().entries
+
+
+def test_the_same_host_written_two_ways_is_one_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`https://HOST:443/` and `https://host` are the same server."""
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    for spelling in ("https://tokens.example.test", "https://TOKENS.example.test:443/"):
+        append_pending_revocation(
+            pending=PendingRevocation(
+                version=1,
+                token_host=spelling,
+                access_token=SecretStr(_ACCESS),
+                token_id=_TOKEN_ID,
+            )
+        )
+
+    assert len(load_pending_revocations().entries) == 1
+
+
+def test_a_full_journal_refuses_the_login_before_minting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Discovering a full journal after minting strands the new credential.
+
+    The cap has to be checked while the only consequence is an error message.
+    """
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import MAX_PENDING_REVOCATIONS
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    grant = _grant_handler(token_body=_token_body(), calls=calls)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            # Unreachable, so recovery cannot clear the journal first. A full
+            # journal only happens when its entries genuinely cannot be retired.
+            return httpx.Response(503)
+        return grant(request)  # type: ignore[operator]
+
+    _mock_client(monkeypatch, handler)
+    for index in range(MAX_PENDING_REVOCATIONS - 1):
+        append_pending_revocation(
+            pending=PendingRevocation(
+                version=1,
+                token_host=f"https://host-{index}.example.test",
+                access_token=SecretStr(_ACCESS),
+                token_id=UUID(int=index + 1),
+            )
+        )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 1
+
+    assert "awaiting revocation" in capsys.readouterr().err
+    # Nothing was minted: the grant was never started.
+    assert "authorize" not in calls
+
+
+def test_the_lock_refuses_rather_than_running_unlocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two concurrent logins leave one credential live and unrecorded.
+
+    So being unable to serialise is a reason to refuse, not to proceed: a
+    filesystem that cannot lock gets the same answer as a permission failure,
+    because the consequence is the same.
+    """
+    import fcntl
+
+    from rememberstack.surfaces.credentials import credential_lock
+    from rememberstack.surfaces.credentials import CredentialError
+
+    _isolate_config(monkeypatch, tmp_path)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EOPNOTSUPP, "this filesystem cannot lock")
+
+    monkeypatch.setattr(fcntl, "flock", refuse)
+
+    with pytest.raises(CredentialError, match="lock could not be taken"):
+        with credential_lock():
+            pass  # pragma: no cover - the lock must refuse before this runs

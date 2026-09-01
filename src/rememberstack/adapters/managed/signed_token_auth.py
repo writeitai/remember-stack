@@ -287,8 +287,13 @@ def load_verification_keys(*, jwks: str) -> dict[str, PyJWK]:
         if not isinstance(raw, dict):
             raise ValueError("every verification key must be an object")
         kid = key.key_id
-        if not kid:
-            raise ValueError("every verification key must carry a kid")
+        if not isinstance(kid, str) or not kid:
+            # Selection at request time looks up a string from the token's
+            # header, so a key declared with a non-string kid — an integer, say
+            # — is a key that can never be chosen. Refusing it here is the
+            # difference between a configuration error and a rotation that
+            # silently does nothing.
+            raise ValueError("every verification key must carry a string kid")
         if kid in keys:
             raise ValueError(f"verification key set repeats kid {kid!r}")
         _assert_ed25519_public_key(raw=raw, kid=kid)
@@ -335,5 +340,9 @@ def _assert_ed25519_public_key(*, raw: dict[str, Any], kid: str) -> None:
         # object, would pass a naive `"verify" in key_ops` — `"verify" in
         # "verify"` is true, and so is membership in a dict with that key — so
         # a malformed declaration would be read as permission it never gave.
-        if not isinstance(key_ops, list) or "verify" not in key_ops:
+        if not isinstance(key_ops, list) or not all(
+            isinstance(operation, str) for operation in key_ops
+        ):
+            raise ValueError(f"verification key {kid!r} declares malformed key_ops")
+        if "verify" not in key_ops:
             raise ValueError(f"verification key {kid!r} does not permit verification")

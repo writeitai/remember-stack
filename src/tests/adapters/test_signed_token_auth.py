@@ -566,7 +566,7 @@ def test_a_key_declaring_the_wrong_operations_is_refused() -> None:
     document = json.loads(jwks)
     document["keys"][0]["key_ops"] = "verify"
 
-    with pytest.raises(ValueError, match="permit verification"):
+    with pytest.raises(ValueError, match="malformed key_ops"):
         load_verification_keys(jwks=json.dumps(document))
 
     document["keys"][0]["key_ops"] = ["sign"]
@@ -592,3 +592,28 @@ def test_a_key_set_carrying_private_material_is_refused() -> None:
 
     with pytest.raises(ValueError, match="private key material"):
         load_verification_keys(jwks=json.dumps({"keys": [private_jwk]}))
+
+
+def test_a_key_with_a_non_string_kid_is_refused() -> None:
+    """Selection looks up a string, so a numeric kid can never be chosen.
+
+    It would load happily and then never match anything — a rotation that
+    silently does nothing, discovered by whoever holds the credential signed
+    with it.
+    """
+    _private, jwks = _keypair(kid="k1")
+    document = json.loads(jwks)
+    document["keys"][0]["kid"] = 7
+
+    with pytest.raises(ValueError, match="string kid"):
+        load_verification_keys(jwks=json.dumps(document))
+
+
+def test_key_ops_members_must_all_be_strings() -> None:
+    """An array containing an object is not the array RFC 7517 describes."""
+    _private, jwks = _keypair(kid="k1")
+    document = json.loads(jwks)
+    document["keys"][0]["key_ops"] = ["verify", {"verify": True}]
+
+    with pytest.raises(ValueError, match="malformed key_ops"):
+        load_verification_keys(jwks=json.dumps(document))

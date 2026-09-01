@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import stat
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 from uuid import uuid4
 
@@ -213,7 +214,15 @@ def _fsync_directory(directory: Path) -> None:
     back holding the *old* credential while the control plane has already
     issued — and the old one may since have been revoked.
     """
-    handle = os.open(directory, getattr(os, "O_DIRECTORY", os.O_RDONLY))
+    try:
+        handle = os.open(directory, getattr(os, "O_DIRECTORY", os.O_RDONLY))
+    except OSError as error:
+        # Opening the directory can fail after the rename has already happened,
+        # and treating that as a failed write would unwind a credential the
+        # file now names.
+        raise DurabilityUnconfirmed(
+            f"the credential directory could not be opened to sync ({error})"
+        ) from error
     try:
         os.fsync(handle)
     except OSError as error:
@@ -234,7 +243,39 @@ def _fsync_directory(directory: Path) -> None:
                 f"the credential directory could not be synced ({error})"
             ) from error
     finally:
-        os.close(handle)
+        try:
+            os.close(handle)
+        except OSError:
+            # Also after the rename; nothing is undone by a close that failed.
+            pass
+
+
+def credential_origin(*, token_host: str) -> str:
+    """Canonicalise a token host to a comparable origin.
+
+    Lowercasing and trimming a slash is not enough: ``https://HOST:443/`` and
+    ``https://host`` are the same server, and treating them as different
+    consumed two journal entries for one credential — and, worse, let a
+    same-id credential from what is really the same host be dropped as if it
+    were somebody else's.
+
+    So the scheme and host are lowercased and the port is made explicit,
+    defaulting to the scheme's own. Anything unparseable is returned trimmed
+    and lowercased rather than raising: this is used to *compare* entries, and
+    an entry naming a host we cannot parse still has to be comparable with
+    itself.
+    """
+    text = (token_host or "").strip()
+    try:
+        parsed = urlsplit(text if "//" in text else f"//{text}", scheme="https")
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError("no host")
+        scheme = (parsed.scheme or "https").lower()
+        port = parsed.port or (80 if scheme == "http" else 443)
+    except ValueError:
+        return text.rstrip("/").lower()
+    return f"{scheme}://{host}:{port}"
 
 
 class PendingRevocation(BaseModel):
@@ -261,14 +302,14 @@ class PendingRevocation(BaseModel):
     def identity(self) -> tuple[str, UUID]:
         """What makes this entry the same credential as another.
 
-        The token id **and** the host that issued it. Ids are unique per issuer,
-        not globally: two token hosts — a staging control plane and production,
-        or a self-hosted one beside the managed one — can each mint a credential
-        with the same UUID. Comparing ids alone let a current credential from
-        one host silently cancel a pending revocation for the other, leaving
-        that one live forever.
+        The token id **and the origin** that issued it. Ids are unique per
+        issuer, not globally: two token hosts — a staging control plane and
+        production, or a self-hosted one beside the managed one — can each mint
+        a credential with the same UUID. Comparing ids alone let a current
+        credential from one host silently cancel a pending revocation for the
+        other, leaving that one live forever.
         """
-        return (self.token_host.strip().rstrip("/").lower(), self.token_id)
+        return (credential_origin(token_host=self.token_host), self.token_id)
 
 
 #: The most credentials that may be awaiting revocation at once.
@@ -319,11 +360,12 @@ def append_pending_revocation(
     if any(entry.identity == pending.identity for entry in existing.entries):
         return pending_revocation_path(settings=settings)
     if len(existing.entries) >= MAX_PENDING_REVOCATIONS:
-        # An unbounded journal is a denial of service against the next login:
-        # every entry is retried under the lock, so a thousand unreachable ones
-        # hold it for as long as they take to time out. Past the cap the oldest
-        # entries stay — they are the ones most likely to be genuinely stranded
-        # — and the newest is dropped with a record in the raised error.
+        # The hard ceiling, which includes the reserve below. Refusing here is
+        # a last resort: `assert_revocation_capacity` is called *before* a mint
+        # so a full journal fails the login before a credential exists, rather
+        # than after — refusing afterwards would leave the new credential live
+        # with nowhere to record it, which is the failure this cap exists to
+        # prevent.
         raise CredentialError(
             f"{len(existing.entries)} credentials are already awaiting "
             "revocation; revoke them in the console before logging in again"
@@ -366,6 +408,25 @@ def _write_pending_revocations(
         raise
     _fsync_directory(directory)
     return path
+
+
+def assert_revocation_capacity(*, settings: TokenHostSettings | None = None) -> None:
+    """Refuse a login that could not record what it is about to replace.
+
+    Called **before** minting. A journal that is full at the moment of writing
+    would leave the freshly minted credential live and unrecorded — the exact
+    leak the journal exists to close — so the check happens while the only
+    consequence is an error message.
+
+    One slot below the cap, deliberately: the reserve is what guarantees that
+    a mint which then fails to persist can always record itself for cleanup.
+    """
+    outstanding = len(load_pending_revocations(settings=settings).entries)
+    if outstanding >= MAX_PENDING_REVOCATIONS - 1:
+        raise CredentialError(
+            f"{outstanding} credentials are already awaiting revocation; "
+            "revoke them in the console before logging in again"
+        )
 
 
 def load_pending_revocations(
@@ -461,6 +522,7 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
     lock_path = directory / ".lock"
     handle = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
     locked = False
+    portable_sentinel: Path | None = None
     try:
         # A pre-existing lock file may have been created with a wider mode; it
         # holds nothing secret, but leaving it group-writable would let another
@@ -469,35 +531,43 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
         try:
             import fcntl
         except ImportError:
-            # A platform without flock cannot serialise, and refusing to log in
-            # there would be worse than the race: an unlocked login is what
-            # shipped before this existed.
-            yield
-            return
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            locked = True
-        except OSError as error:
-            # A filesystem that does not implement locking is the one case
-            # worth continuing through. Anything else — a permission failure, a
-            # broken descriptor — is a real fault, and proceeding would quietly
-            # re-open the concurrent-login race the lock exists to close.
-            unsupported = {
-                errno.ENOLCK,
-                errno.ENOTSUP,
-                getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
-                errno.EINVAL,
-            }
-            if error.errno not in unsupported:
+            fcntl = None  # type: ignore[assignment]
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                locked = True
+            except OSError as error:
+                # **No unlocked fallthrough.** Two concurrent logins each mint a
+                # credential and overwrite the other's file, leaving one live
+                # and unrecorded — so being unable to serialise is a reason to
+                # refuse, not to proceed and hope. A filesystem that cannot lock
+                # gets the same answer as a permission failure, because the
+                # consequence is the same.
                 raise CredentialError(
-                    f"the credential lock could not be taken ({error})"
+                    f"the credential lock could not be taken ({error}); "
+                    "another `remember login` or `logout` may be running"
                 ) from error
+        else:
+            # No flock on this platform. An exclusive-create sentinel is the
+            # portable equivalent and fails the same way: if it exists, someone
+            # else holds it.
+            sentinel = directory / ".lock.exclusive"
+            try:
+                os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            except FileExistsError as error:
+                raise CredentialError(
+                    "another `remember login` or `logout` holds the credential "
+                    f"lock ({sentinel}); remove it if no such command is running"
+                ) from error
+            portable_sentinel = sentinel
         yield
     finally:
         if locked:
             import fcntl
 
             fcntl.flock(handle, fcntl.LOCK_UN)
+        if portable_sentinel is not None and portable_sentinel.exists():
+            portable_sentinel.unlink()
         os.close(handle)
 
 
