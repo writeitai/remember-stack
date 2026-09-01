@@ -49,6 +49,7 @@ from pydantic_settings import SettingsConfigDict
 
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
+from rememberstack.model.conversion import UnroutableMimeError
 from rememberstack.model.documents import IngestedVersion
 
 logger = logging.getLogger(__name__)
@@ -483,6 +484,27 @@ def map_backend_error(error: BaseException) -> ToolError:
     if isinstance(status_code, int) and detail is not None:
         return _map_http_style_error(
             status_code=status_code, detail=str(detail), explicit_code=explicit_code
+        )
+    if isinstance(error, UnroutableMimeError):
+        # D104 refuses at the E0 gate, so a LOCAL composition raises this typed
+        # error with no HTTP status to key off. Mapping it here keeps the local
+        # MCP answer identical to the remote one instead of degrading to
+        # internal_error, which would tell an agent to report a defect for a
+        # perfectly ordinary "we do not convert that".
+        supported = error.supported_mimes
+        return ToolError(
+            code="unsupported_media_type",
+            message=(
+                str(error)
+                if supported is None
+                else f"{error}; this deployment converts: {', '.join(supported)}"
+            ),
+            http_status=415,
+            retryable=False,
+            agent_action=(
+                "Convert the file to a supported type, or ingest its text; do"
+                " not retry the same bytes under the same MIME type."
+            ),
         )
     if isinstance(error, ValidationError):
         return ToolError(
@@ -1239,6 +1261,25 @@ def _map_http_style_error(
             reason_code=reason_code
             if reason_code and code != "spend_safety"
             else (reason_code or _reason_from_spend_detail(detail=detail)),
+        )
+    if status_code == 415:
+        # Bound to the status, not the code alone: a 500 carrying this detail
+        # must not be relabelled as a typed routing refusal, which would undo
+        # the SDK's status-and-path trust rule one layer up.
+        return ToolError(
+            code="unsupported_media_type",
+            message=(
+                detail
+                if code == "unsupported_media_type"
+                else "This deployment has no conversion route for that MIME type."
+            ),
+            http_status=415,
+            retryable=False,
+            agent_action=(
+                "Convert the file to a supported type, or ingest its text; do"
+                " not retry the same bytes under the same MIME type."
+            ),
+            reason_code=reason_code,
         )
     if code == "body_too_large" or status_code == 413:
         return ToolError(

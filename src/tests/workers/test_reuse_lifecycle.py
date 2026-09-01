@@ -175,7 +175,10 @@ class _ReuseRig:
         self.document_catalog = catalog
         self.artifact_store = artifact_store
         self.ingestor = UploadIngestor(
-            catalog=catalog, raw_store=raw_store, admission=ForgetCatalog(engine=engine)
+            catalog=catalog,
+            raw_store=raw_store,
+            admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset({"text/markdown"}),
         )
         registry = HandlerRegistry()
         registry.register(

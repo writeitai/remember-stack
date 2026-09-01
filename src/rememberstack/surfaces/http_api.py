@@ -55,6 +55,7 @@ from rememberstack.model import ReadinessRequirements
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
+from rememberstack.model import UnroutableMimeError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
@@ -326,6 +327,11 @@ def build_api(
     are buffered (413 over the cap; 411 when no Content-Length is declared).
     None — the self-host default — imposes no limit: caps are deployment
     policy, never an engine default (D61).
+
+    A `POST /ingest` whose MIME the deployment has no conversion route for is
+    refused with 415 (D104). That verdict is reached in the E0 gate, not here,
+    so every ingress inherits it; this surface only renders the resulting
+    `UnroutableMimeError` as HTTP.
     """
     if surface is not None and surface.deployment_id != deployment_id:
         raise ValueError(
@@ -991,20 +997,45 @@ def _mount_ingest(
                         " source_kind/source_ref"
                     ),
                 )
-            return ingest.ingest(
-                deployment_id=deployment_id, upload=upload, **attribution
+            try:
+                return ingest.ingest(
+                    deployment_id=deployment_id, upload=upload, **attribution
+                )
+            except UnroutableMimeError as error:
+                raise _unsupported_media_type(error) from error
+        try:
+            return ingest.ingest_observed(
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
+                upload=upload,
+                versioning_mode=versioning_mode,
+                source_modified_at=source_modified_at,
+                source_version_ref=source_version_ref,
+                sync_cycle_id=None,
+                **attribution,
             )
-        return ingest.ingest_observed(
-            deployment_id=deployment_id,
-            source_kind=source_kind,
-            source_ref=source_ref,
-            upload=upload,
-            versioning_mode=versioning_mode,
-            source_modified_at=source_modified_at,
-            source_version_ref=source_version_ref,
-            sync_cycle_id=None,
-            **attribution,
-        )
+        except UnroutableMimeError as error:
+            raise _unsupported_media_type(error) from error
+
+
+def _unsupported_media_type(error: UnroutableMimeError) -> HTTPException:
+    """Render the E0 gate's D104 refusal as HTTP 415.
+
+    The verdict is the gate's, not this surface's: every ingress writes
+    through E0, so rendering here keeps HTTP from being the only path that
+    refuses. `supported_mimes` is present whenever the raiser knew the
+    deployment's table, which the gate always does.
+    """
+    detail: dict[str, object] = {
+        "code": "unsupported_media_type",
+        "message": str(error),
+    }
+    if error.mime is not None:
+        detail["mime"] = error.mime
+    if error.supported_mimes is not None:
+        detail["supported_mimes"] = list(error.supported_mimes)
+    return HTTPException(status_code=415, detail=detail)
 
 
 def _mount_connectors(

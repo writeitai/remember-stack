@@ -4793,3 +4793,121 @@ unread; fixing only the sort order while keeping the flag.
 rest of D21 (connected-components-to-gather, HAC distance-cut, nDR
 incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
 is unchanged. Does not change D95, D99, or D100.
+
+## D104. Ingest refuses a MIME type the deployment cannot convert
+
+**Decision (2026-08-31).** Routability is an **admission** property, not a
+conversion-time discovery. **E0 itself** compares the declared `mime` against
+the deployment's configured conversion route table and raises
+`UnroutableMimeError` for an absent type, carrying the refused MIME and the
+accepted set. Nothing is written, no version is created, no lineage is touched.
+Surfaces render it in their own idiom; HTTP `POST /ingest` returns **415
+`unsupported_media_type`**.
+
+**The gate is in E0, not on a surface, and that placement is the decision.**
+Three ingresses reach E0 without sharing a handler: HTTP `POST /ingest`, the
+local MCP `ingest` tool, and the connector sync worker, the latter two calling
+the composed ingest port directly. A check on the HTTP handler would leave two
+of three paths still admitting bytes the convert stage can only dead-letter,
+while appearing fixed. `UploadIngestor` is the one object all three write
+through — which is what the library boundary already requires: ingestion always
+writes through E0, and no extension point may bypass an invariant. The check
+therefore sits in `_guard_ingest`, beside the D74 admission guard that is there
+for the same reason.
+
+The table is the only authority. `conversion_routes` is deployment policy
+(D61), and `build_conversion_routes` refuses composition when a route names an
+unknown adapter — so a process's router key set is exactly the key set of the
+configuration it was composed with, and a membership test against that
+configuration is a membership test against that router. The gate performs the
+same **exact** dictionary lookup the router performs, on the same string: any
+MIME normalization belongs in the router where both callers inherit it, never
+at the gate alone, because a gate more permissive than the worker would
+recreate the dead letters this decision removes.
+
+The guarantee is per-configuration, not global. The gate and the convert worker
+are separately composed processes, so a route-table change has a window in
+which one has restarted and the other has not — the same race the worker's
+`UnroutableMimeError` still covers.
+
+**The table is a required argument, not an option.** Every deployment has a
+route table — the settings default is the stock text table — so omission
+expresses nothing except a composition that forgot, and a default would let any
+consumer silently opt out. An invariant with an opt-out is not an invariant, so
+`UploadIngestor` refuses to construct without one.
+
+**Routability is decided before the D74 per-source admission query.** It is
+the cheaper and more fundamental question: an input no route accepts is refused
+whatever that source's forget state. Deciding it first avoids an admission
+query for a request that cannot be accepted, and stops a forget-state error
+from masking a plain "we do not convert that". D74 still runs before any byte
+is written. This ordering is internal to the gate: a deployment-wide
+availability barrier — an in-progress forget that makes the whole deployment
+503 — is composed above the surfaces and still answers first, because it says
+the deployment cannot serve the request at all.
+
+**Why.** The router was previously consulted for the first time inside the
+convert worker, on every ingress. An unroutable upload was accepted, hashed, written to immutable
+raw storage, returned as a normal accepted-not-ready receipt, and only then
+dead-lettered through `UnroutableMimeError` → `mark_version_failed` →
+`NonRetryableHandlerError`. The caller discovered a terminal state by polling.
+The waste was knowable at submission: the route table was already in memory.
+
+The decisive property is who can recover. Under D55 identical bytes return the
+existing version, so a caller cannot repair a dead-lettered upload by sending
+the file again, and no API lets them request reprocessing. Recovery exists only
+as operator work: the convert failure dead-letters a work-ledger row, and
+`remember ops replay` (`WorkLedger.replay_dead_letter`) reopens one such row
+with a fresh attempt allowance, after which a now-routable version converts
+normally. Recovery is therefore out-of-band, per-document, and unavailable to
+the person who caused it — each wrong guess costs a durable raw object, a
+committed reservation in the managed product, and one operator ticket, to
+discover something a set lookup already knew.
+
+This is not a media decision. The mechanism keys on absence from the table, so
+it fired identically for audio, video, images, office documents and archives —
+every type outside a deployment's configured routes.
+
+**Rejected.** Place the check on the HTTP ingest handler (leaves the MCP tool
+and connector sync bypassing it — two of three ingresses still dead-lettering
+while the defect looks fixed); default the route table to "no check" (makes the
+invariant as strong as every composer remembering it); keep discovering
+unroutable input in the worker; hard-code a known-media deny list at ingest (drifts from the table immediately, and is
+wrong for any deployment that configures a route it does not know); build the
+`ConversionRouter` in the API process to query it (constructing adapters would
+force provider credentials into a process that performs no conversion);
+content-sniff at admission and route on the detected type (a decode-and-inspect
+step with its own cost and sandboxing needs — it answers "is this really what
+you said it is", a different and more expensive question, and must not gate the
+cheap one; the two compose, cheap check first).
+
+**Scope of the guarantee.** *No upload is admitted under a MIME this
+deployment cannot convert* — not *no unconvertible version is ever created*.
+The gate reads the declared MIME; the convert stage reads
+`content_objects.mime`, which is first-write-wins per content hash. They
+diverge only when the same bytes are ingested again under a different MIME and
+the first-seen one has since become unrouted, and closing that would cost a
+content-object lookup on every ingest. That trade is recorded as an open
+question in the analysis rather than paid or dismissed here, and the worker's
+`UnroutableMimeError` still covers the case.
+
+**Consequences.** `POST /ingest` gains one published refusal, 415
+`unsupported_media_type`. The MCP ingest tool and the connector sync worker
+raise `UnroutableMimeError` where they previously returned an accepted receipt;
+a connector pointed at a directory of unconvertible files now fails those items
+at admission instead of dead-lettering them one stage later. Callers that
+previously received an accepted receipt for an unconvertible type now receive a
+synchronous refusal, which is a behavior change in their favour but a change
+nonetheless. `UnroutableMimeError` gains optional `mime` and `supported_mimes`
+attributes so a surface can render it; both are None when the raiser did not
+know the table. It remains in the worker and remains non-retryable, covering
+the window where a deployment's route table changes between admission and
+conversion.
+
+**Design.** `plan/designs/e0_files_design.md` §3.
+
+**Analysis.** `plan/analysis/unroutable_mime_preflight.md`.
+
+**Amends.** Adds an admission check to the D38 conversion router's contract.
+Preserves D55 lineage and identical-byte semantics, D61 deployment policy, D65
+converter envelope, and the worker's D12 non-retryable handling unchanged.

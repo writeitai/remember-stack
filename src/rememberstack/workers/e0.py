@@ -12,6 +12,7 @@ trees, assigns title-only roles, and appends immutable generations. A document
 still never fails structuring.
 """
 
+from collections.abc import Collection
 from collections.abc import Iterable
 from datetime import datetime
 import hashlib
@@ -157,11 +158,25 @@ class UploadIngestor:
         catalog: DocumentCatalog,
         raw_store: ObjectStorePort,
         admission: IngestAdmission,
+        routable_mimes: Collection[str],
     ) -> None:
-        """Bind the connector to the catalog and the deployment's raw bucket."""
+        """Bind the connector to the catalog and the deployment's raw bucket.
+
+        ``routable_mimes`` is the deployment's conversion route table (D104),
+        and it is **required**: every deployment has a route table (the
+        settings default is the stock text table), so there is no real state
+        this could be omitted to express — only a composition that forgot.
+        A default would let any consumer silently opt out of the gate, and an
+        invariant with an opt-out is not an invariant.
+
+        The gate lives here, at E0, rather than on any one surface: HTTP, the
+        local MCP tool and connector sync all write through this object, so
+        this is the only placement that cannot be bypassed.
+        """
         self._catalog = catalog
         self._raw_store = raw_store
         self._admission = admission
+        self._routable = frozenset(routable_mimes)
 
     def ingest(
         self,
@@ -183,6 +198,7 @@ class UploadIngestor:
             source_kind=UPLOAD_SOURCE_KIND,
             source_ref=content_hash,
             content_hash=content_hash,
+            mime=upload.mime,
         )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
@@ -244,6 +260,7 @@ class UploadIngestor:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+            mime=upload.mime,
         )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
@@ -288,8 +305,31 @@ class UploadIngestor:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        mime: str,
     ) -> None:
-        """Check D74 before writing forgotten bytes back into the raw store."""
+        """Refuse what this deployment cannot convert, and what D74 forgot.
+
+        Routability (D104) is checked first. It is the cheaper question and the
+        more fundamental one — an input no configured route accepts is refused
+        whatever its forget state — so answering it first avoids an admission
+        query for a request that cannot be accepted, and avoids letting a
+        forget-state error mask a plain "we do not convert that". The lookup is
+        exactly the router's own, an exact match on the same string, so this
+        gate can never admit what the convert stage would dead-letter.
+
+        D74's per-source check follows, still before any byte is written, so
+        forgotten content is never recreated. This ordering is internal to the
+        gate: a deployment-wide availability barrier (an in-progress forget
+        making the whole deployment 503) is composed above the surfaces and
+        still answers first, as it must — it says the deployment cannot serve
+        the request at all, not that these bytes are unwelcome.
+        """
+        if mime not in self._routable:
+            raise UnroutableMimeError(
+                f"no conversion route accepts mime {mime!r}",
+                mime=mime,
+                supported_mimes=tuple(sorted(self._routable)),
+            )
         self._admission.guard_ingest(
             deployment_id=deployment_id,
             source_kind=source_kind,

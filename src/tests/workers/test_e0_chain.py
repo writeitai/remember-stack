@@ -27,6 +27,7 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core import blockize
 from rememberstack.core import ConversionRouter
+from rememberstack.core import Converter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionCoverage
@@ -269,22 +270,25 @@ class _E0Rig:
                 retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
             ),
         )
+        # One table feeds both the D104 admission gate and the router, the
+        # way a real deployment's `conversion_routes` does. Duplicating it
+        # would let the harness prove a divergence production cannot have.
+        routes: dict[str, Converter] = {
+            "text/markdown": MarkdownPassthroughConverter(),
+            "text/plain": MarkdownPassthroughConverter(),
+            "text/html": MarkitdownConverter(),
+            "application/x-fake-scan": _FakeScanConverter(),
+            "application/x-unlabeled": _UnlabeledConverter(),
+            "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
+            "application/x-transient": _TransientlyFailingConverter(),
+        }
         self.ingestor = UploadIngestor(
             catalog=self.catalog,
             raw_store=self.raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset(routes),
         )
-        router = ConversionRouter(
-            routes={
-                "text/markdown": MarkdownPassthroughConverter(),
-                "text/plain": MarkdownPassthroughConverter(),
-                "text/html": MarkitdownConverter(),
-                "application/x-fake-scan": _FakeScanConverter(),
-                "application/x-unlabeled": _UnlabeledConverter(),
-                "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
-                "application/x-transient": _TransientlyFailingConverter(),
-            }
-        )
+        router = ConversionRouter(routes=routes)
         registry = HandlerRegistry()
         registry.register(
             stage=PipelineStage.CONVERT,
@@ -598,8 +602,23 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
 
 
 def test_unroutable_mime_dead_letters_without_retries(rig: _E0Rig) -> None:
-    """No route for the MIME type is deterministic — one attempt, dead-lettered."""
-    ingested = rig.ingestor.ingest(
+    """No route for the MIME type is deterministic — one attempt, dead-lettered.
+
+    D104 normally makes this unreachable: the gate refuses an unrouted MIME at
+    admission, so the worker never sees one. The worker's handling survives for
+    the window where the two disagree — gate and convert worker are separately
+    composed processes, so a route-table change leaves one restarted and the
+    other not. This constructs exactly that window by admitting through a gate
+    whose table is wider than the router the worker runs, and proves the
+    convert stage still fails closed rather than retrying forever.
+    """
+    admitting_gate = UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset({"application/x-unknown"}),
+    )
+    ingested = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
             filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"

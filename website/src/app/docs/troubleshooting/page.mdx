@@ -50,9 +50,11 @@ docker compose exec postgres psql -U rememberstack -d rememberstack -c \
 
 ### 1. Unroutable MIME
 
-Smoke profile routes **Markdown**. PDF/HTML/audio without a registered converter → non-retryable failure for that version.
+Smoke profile routes **Markdown** and **plain text**. A type without a registered converter is **refused at ingest**, before any document version exists. HTTP returns `415 unsupported_media_type` naming the accepted set, and the MCP `ingest` tool returns the same code and set. Connector sync also refuses, but reports it only as an incremented `failed` count for that cycle — check the deployment's route table when a sync reports failures it cannot explain. Nothing is stored either way, so there is nothing to clean up.
 
 **Fix:** ingest `text/markdown`, or compose additional conversion routes.
+
+Versions dead-lettered by an unroutable MIME *before* this refusal existed are still `failed`; adding the route does not retroactively convert them. Reopen those with `remember ops replay` once the route is in place.
 
 ### 2. Missing / bad provider key
 

@@ -174,6 +174,51 @@ gates everything downstream:
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
+- **Routability is admission, not discovery — D104.** The routing table is consulted in **E0
+  itself**, before any byte is stored. A declared `mime` absent from the deployment's configured
+  routes raises `UnroutableMimeError` carrying the refused type and the accepted set; no raw
+  object is written, no version row is created, and no lineage is touched. Surfaces render it in
+  their own idiom — HTTP `POST /ingest` returns **415 `unsupported_media_type`** naming the types
+  this deployment converts.
+
+  **The placement is the point.** Three ingresses reach E0 without sharing a handler: HTTP
+  `POST /ingest`, the local MCP `ingest` tool, and the connector sync worker — the latter two
+  calling the composed ingest port directly. A check on the HTTP handler would leave two of three
+  paths still admitting bytes the convert stage can only dead-letter, while looking fixed. The
+  gate therefore sits in the E0 ingestor's guard, beside the D74 admission check that is there for
+  the same reason: ingestion always writes through E0, so E0 is where an ingestion invariant
+  belongs. The alternative — admitting the upload and discovering the missing route one stage
+  later in the convert worker — writes a durable raw object for input that can never yield a
+  representation, and the caller cannot undo it: identical bytes are a no-op (D55) and no API lets
+  them ask for reprocessing. Recovery is operator work only — `remember ops replay`
+  (`WorkLedger.replay_dead_letter`) reopens the dead-lettered work row, after which a now-routable
+  version converts normally. So each wrong guess costs durable storage and an operator ticket to
+  discover what the route table, already in memory at admission, could have answered for free.
+
+  The **route table is the only authority**. `conversion_routes` is deployment policy (D61);
+  `build_conversion_routes` refuses composition when a route names an unknown adapter, so a
+  process's router key set is exactly the key set of the configuration it was composed with, and
+  a membership test against that configuration is a membership test against that router. The
+  guarantee is per-configuration, not global — gate and convert worker are separately composed,
+  so a route-table change leaves a window in which one has restarted and the other has not. The gate performs the **same exact lookup** the router
+  performs, on the same string — MIME normalization, if ever wanted, belongs in the router where
+  both callers inherit it, never at the gate alone, because a gate more permissive than the
+  worker would recreate the dead letters this rule removes. The route table is a **required** argument to the E0
+  ingestor: every deployment has one (the settings default is the stock text table), so omitting
+  it expresses nothing but a composition that forgot, and a default would let any consumer
+  silently opt out — an invariant with an opt-out is not one.
+
+  The guarantee is scoped: *no upload is admitted under a MIME this deployment cannot convert*,
+  not *no unconvertible version is ever created*. The gate reads the declared MIME while convert
+  reads `content_objects.mime`, which is first-write-wins per content hash; the two diverge only
+  when the same bytes return under a different MIME whose first-seen reading has since become
+  unrouted. Closing that needs a content-object lookup on every ingest — an open question in the
+  analysis, not a silent cost.
+
+  This is a *routing* verdict, not a *content* one. It does not check that the bytes match the
+  declared type; an MP3 labelled `text/plain` passes the gate and fails in the converter, which
+  is correct — that is a content error. `UnroutableMimeError` therefore remains in the worker and
+  remains non-retryable, covering the route-change window above.
 
 Output Markdown → artifacts bucket; the source map + manifest + converter metadata → `conversion.json`; the
 blockizer's `blocks.json` beside them; Postgres gets only the URIs + `converter_version` +

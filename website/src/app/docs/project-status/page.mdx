@@ -108,6 +108,31 @@ Current public release: [`v0.11.0`](https://github.com/writeitai/remember-stack/
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
 
+## Unreleased on `main`
+
+- **Ingest refuses a MIME type this deployment cannot convert.** A type absent
+  from the conversion route table is rejected before raw storage and before a
+  version exists: HTTP `POST /ingest` returns `415 unsupported_media_type`
+  naming the accepted set, the MCP `ingest` tool returns the same code, and
+  connector sync counts the item as failed for that cycle. Previously such an
+  upload was accepted, stored, and dead-lettered one stage later in convert —
+  and a caller could not undo it, because identical bytes are the D55 no-op
+  and only an operator can reopen the work row with `remember ops replay`.
+- The check sits in E0, not on a surface. All three ingresses write through
+  the same ingestor, so a surface-level check would have left two of them
+  bypassing it.
+- **Breaking for library consumers**: `rememberstack.workers.UploadIngestor`
+  now takes a required `routable_mimes` argument — the deployment's conversion
+  route table, the same mapping you pass to `ConversionRouter`. Pass
+  `frozenset(conversion_routes)` where you build it. It is required rather
+  than defaulted because a default would let a composition silently opt out of
+  the gate, and every deployment has a route table (the settings default is
+  the stock text table). Deployments configured through
+  `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` need no change.
+- Versions dead-lettered by an unroutable MIME before this change remain
+  `failed`; adding the route does not convert them retroactively. Reopen them
+  with `remember ops replay` once the route exists.
+
 ## What landed after v0.9.0 (in v0.10.0)
 
 - **A shared name no longer costs a candidate anything.** The

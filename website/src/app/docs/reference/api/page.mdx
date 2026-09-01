@@ -287,6 +287,31 @@ connector cursor, but the existing version's `source_modified_at` never changes
 or clears because it already fed extraction. A supplied source timestamp must
 be timezone-aware UTC; omitting it preserves an unknown source time.
 
+The declared `mime` must be one this deployment has a conversion route for.
+An unrouted type is refused with **415** and a body naming what is accepted:
+
+```json
+{
+  "detail": {
+    "code": "unsupported_media_type",
+    "message": "no conversion route accepts mime 'audio/mpeg'",
+    "mime": "audio/mpeg",
+    "supported_mimes": ["text/markdown", "text/plain"]
+  }
+}
+```
+
+The refusal happens before anything is stored, so no document version is
+created and there is nothing to clean up. Matching is exact, so a type carrying
+parameters (`text/plain; charset=utf-8`) is not the same key as `text/plain`.
+The accepted set is the deployment's own `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`
+table — see [Configuration](/docs/configuration) — so adding a converter widens
+it automatically.
+
+The check lives in the ingest layer, not this endpoint, so the MCP `ingest`
+tool and connector sync refuse the same types; they surface it as an error
+rather than an HTTP status.
+
 ### `POST /readiness`
 
 When composed, accepts document-version UUIDs plus an exhaustive `require`

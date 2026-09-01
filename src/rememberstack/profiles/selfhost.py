@@ -807,6 +807,11 @@ class SelfHostProfile:
                 catalog=DocumentCatalog(engine=self._engine),
                 raw_store=self._raw_store,
                 admission=ForgetCatalog(engine=self._engine),
+                # D104: the same table that builds the router.
+                # build_conversion_routes refuses composition on an unknown
+                # adapter name, so a running deployment's router keys are
+                # exactly these keys.
+                routable_mimes=frozenset(self._settings.conversion_routes),
             ),
             pipeline_readiness=PipelineReadinessCatalog(
                 engine=self._engine,

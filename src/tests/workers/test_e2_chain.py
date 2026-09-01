@@ -203,6 +203,7 @@ class _E2Rig:
             catalog=document_catalog,
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset({"text/markdown"}),
         )
         registry = HandlerRegistry()
         registry.register(

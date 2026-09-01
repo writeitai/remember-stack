@@ -21,6 +21,7 @@ from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import VersionPipelineReadiness
+from rememberstack.model.conversion import UnroutableMimeError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.mcp import OperationMcpServer
@@ -982,3 +983,40 @@ def test_remote_and_local_descriptors_match() -> None:
     ]
     assert remote_names == local_names == ["ingest", "pipeline_readiness"]
     _ = uuid4()
+
+
+def test_local_unroutable_mime_maps_to_unsupported_media_type() -> None:
+    """D104: a LOCAL composition raises the typed error with no HTTP status.
+
+    Without this branch the agent was told `internal_error` — "report a
+    composition defect" — for the perfectly ordinary case of sending a file
+    type the deployment does not convert.
+    """
+    error = map_backend_error(
+        UnroutableMimeError(
+            "no conversion route accepts mime 'audio/mpeg'",
+            mime="audio/mpeg",
+            supported_mimes=("text/markdown", "text/plain"),
+        )
+    )
+    assert error.code == "unsupported_media_type"
+    assert error.http_status == 415
+    assert error.retryable is False
+    assert "text/markdown" in error.message
+    assert error.agent_action
+
+
+def test_remote_unsupported_media_type_keeps_its_structured_code() -> None:
+    """The remote path must not degrade the refusal to engine_client_error."""
+    error = map_backend_error(
+        MemoryApiError(
+            status_code=415,
+            detail="no conversion route accepts mime 'audio/mpeg'; "
+            "supported_mimes=text/markdown, text/plain",
+            code="unsupported_media_type",
+        )
+    )
+    assert error.code == "unsupported_media_type"
+    assert error.http_status == 415
+    assert error.retryable is False
+    assert "text/markdown" in error.message

@@ -124,6 +124,11 @@ the tool does **not** block until ready. When `created=false` the content-hash
 no-op applied — call `pipeline_readiness` once rather than assuming work is in
 flight.
 
+A file whose MIME type the deployment has no conversion route for is refused
+before anything is stored; the tool returns `unsupported_media_type` naming the
+types that deployment does convert. Convert the file, or ingest its text —
+retrying the same bytes under the same MIME type cannot succeed.
+
 Body size limits are enforced by the **deployment**. Client preflight applies
 only when a served capability document supplies a max body size; otherwise the
 server rejects and the tool maps `body_too_large` / `empty_body`. Path reads
