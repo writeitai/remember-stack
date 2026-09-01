@@ -35,6 +35,7 @@ from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
+from rememberstack.spine.managed_metering import MeterDrainResult
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import UploadIngestor
@@ -305,6 +306,14 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
     assert no_op_result.outcomes_accepted == 1
     assert receipts.outcomes[-1].outcome == "no_op"
     assert _work_count(engine=database_engine, version_id=noop.version_id) == 1
+    repeated_noop = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="first-third.txt", mime="text/plain", content=b"hello  world"
+        ),
+    )
+    assert repeated_noop.created is False
+    assert meter.drain_once() == MeterDrainResult()
 
     failed = ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
@@ -395,3 +404,13 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         ).scalar_one()
     assert state == "quarantined"
     assert meter.drain_once().measurements_parked == 0
+    healed = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="conflict-retry.txt",
+            mime="text/plain",
+            content=b"conflicting receipt",
+        ),
+    )
+    assert healed.created is False and healed.version_id == quarantined.version_id
+    assert meter.drain_once().measurements_accepted == 1

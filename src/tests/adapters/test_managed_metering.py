@@ -121,6 +121,19 @@ def test_rejected_credential_is_distinct_from_payload_conflict() -> None:
         adapter.admit_measurement(measurement=_measurement())
 
 
+def test_generic_bad_request_remains_retryable_transport_failure() -> None:
+    """A proxy/WAF 400 is not durable evidence of a canonical receipt conflict."""
+    adapter = ControlPlaneMeterReceipts(
+        base_url="https://meter.invalid/v1/meter",
+        token=SecretStr("umc_mi_secret"),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(400, json={"detail": "bad request"})
+        ),
+    )
+    with pytest.raises(MeterReceiptUnavailable):
+        adapter.admit_measurement(measurement=_measurement())
+
+
 def test_non_approved_decisions_cannot_smuggle_hold_ids() -> None:
     """A malformed no-op/parked response cannot crash the SQL acceptance write."""
     with pytest.raises(ValidationError):

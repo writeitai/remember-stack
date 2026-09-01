@@ -40,7 +40,7 @@ CREATE TABLE managed_ingest_measurements (
   lane processing_lane NOT NULL,
   staged_content bytea,
   delivery_state text NOT NULL DEFAULT 'pending'
-    CHECK (delivery_state IN ('pending', 'parked', 'quarantined', 'accepted')),
+    CHECK (delivery_state IN ('pending', 'parked', 'quarantined', 'cancelled', 'accepted')),
   decision_reason text CHECK (decision_reason IS NULL OR char_length(decision_reason) <= 64),
   processing_hold_id uuid,
   storage_growth_hold_id uuid,
@@ -66,7 +66,9 @@ CREATE TABLE managed_ingest_measurements (
   CHECK (
     (document_version_disposition = 'new_version' AND
       ((delivery_state = 'accepted' AND staged_content IS NULL) OR
-       (delivery_state <> 'accepted' AND staged_content IS NOT NULL))) OR
+       (delivery_state IN ('pending', 'parked', 'quarantined')
+        AND staged_content IS NOT NULL) OR
+       (delivery_state = 'cancelled' AND staged_content IS NULL))) OR
     (document_version_disposition = 'no_op' AND staged_content IS NULL)
   )
 );

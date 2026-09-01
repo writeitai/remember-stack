@@ -282,6 +282,14 @@ class SelfHostSettings(BaseSettings):
             return None
         return value
 
+    @field_validator("meter_org_id", "meter_project_id", mode="before")
+    @classmethod
+    def _blank_meter_scope_uuid_is_unset(cls, value: object) -> object:
+        """Treat empty Compose interpolation as no managed UUID scope."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 def resolve_selfhost_api_auth(
     *, settings: SelfHostSettings

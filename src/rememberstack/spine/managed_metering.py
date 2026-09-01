@@ -61,6 +61,19 @@ def record_managed_measurement_on(
     lane: str,
 ) -> None:
     """Persist one immutable receipt in the same transaction as version choice."""
+    if not created:
+        requeued = connection.execute(
+            _REQUEUE_QUARANTINED_VERSION,
+            {"deployment_id": deployment_id, "version_id": version_id},
+        )
+        if int(requeued.rowcount or 0) > 0:
+            return
+        prior_no_op = connection.execute(
+            _EXISTING_NOOP_VERSION,
+            {"deployment_id": deployment_id, "version_id": version_id},
+        ).scalar_one_or_none()
+        if prior_no_op is not None:
+            return
     identity_key = draft.identity_key.get_secret_value().encode("utf-8")
     opaque_lineage_id = _opaque_identity(
         identity_key=identity_key,
@@ -72,7 +85,7 @@ def record_managed_measurement_on(
         identity_key=identity_key,
         domain=("source-version" if created else "no-op-observation"),
         deployment_id=deployment_id,
-        local_id=(version_id if created else draft.measurement_id),
+        local_id=version_id,
     )
     disposition = "new_version" if created else "no_op"
     connection.execute(
@@ -219,6 +232,37 @@ class ManagedMeterCatalog:
                 if current["delivery_state"] == "accepted":
                     continue
                 if receipt.document_version_disposition == "new_version":
+                    if (
+                        current["delivery_state"] == "cancelled"
+                        or current["version_status"] == "deleted"
+                    ):
+                        connection.execute(
+                            _ACCEPT_MEASUREMENT,
+                            {
+                                "measurement_id": receipt.measurement_id,
+                                "processing_hold_id": decision.processing_hold_id,
+                                "storage_growth_hold_id": (
+                                    decision.storage_growth_hold_id
+                                ),
+                            },
+                        )
+                        connection.execute(
+                            _INSERT_OUTCOME,
+                            {
+                                "measurement_id": receipt.measurement_id,
+                                "document_version_id": str(current["version_id"]),
+                                "outcome": "failed",
+                                "completed_at": datetime.now(timezone.utc),
+                                "reason_code": "source_forgotten",
+                                "profile_complete": False,
+                                "version_commit_sequence": None,
+                                "derived_normalized_character_count": current[
+                                    "normalized_character_count"
+                                ],
+                            },
+                        )
+                        accepted += 1
+                        continue
                     staged_content = current["staged_content"]
                     if not isinstance(staged_content, bytes) or not staged_content:
                         raise RuntimeError(
@@ -508,6 +552,28 @@ _INSERT_MEASUREMENT = text(
     """
 )
 
+_REQUEUE_QUARANTINED_VERSION = text(
+    """
+    UPDATE managed_ingest_measurements
+    SET delivery_state = 'pending', decision_reason = NULL, next_attempt_at = NULL
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND document_version_disposition = 'new_version'
+      AND delivery_state = 'quarantined'
+    """
+)
+
+_EXISTING_NOOP_VERSION = text(
+    """
+    SELECT measurement_id
+    FROM managed_ingest_measurements
+    WHERE deployment_id = :deployment_id
+      AND version_id = :version_id
+      AND document_version_disposition = 'no_op'
+    LIMIT 1
+    """
+)
+
 _INSERT_OUTCOME = text(
     """
     INSERT INTO managed_ingest_outcomes (
@@ -535,7 +601,7 @@ _DUE_MEASUREMENTS = text(
 
 _LOCK_MEASUREMENT = text(
     """
-    SELECT m.*, v.content_hash, c.raw_uri, c.mime
+    SELECT m.*, v.content_hash, v.status::text AS version_status, c.raw_uri, c.mime
     FROM managed_ingest_measurements m
     JOIN document_versions v ON v.version_id = m.version_id
     JOIN content_objects c

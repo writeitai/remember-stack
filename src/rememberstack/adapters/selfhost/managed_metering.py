@@ -65,7 +65,7 @@ class ControlPlaneMeterReceipts:
             )
         except (httpx.TimeoutException, httpx.HTTPError) as error:
             raise MeterReceiptUnavailable("meter ingest unavailable") from error
-        if response.status_code in {400, 409, 422}:
+        if response.status_code in {409, 422}:
             raise MeterReceiptConflict("meter receipt rejected")
         if response.status_code in {401, 403}:
             raise MeterReceiptUnauthorized("meter producer credential rejected")

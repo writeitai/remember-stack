@@ -128,6 +128,25 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH: "
         "${REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH:-false}" in compose
     )
+    assert 'meter-receipts:\n    <<: *app\n    command: ["meter-receipts"]' in compose
+    assert 'profiles: ["managed"]' in compose
+
+
+def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
+    """Resolved `${VAR:-}` UUID blanks cannot crash ordinary OSS services."""
+    settings = SelfHostSettings.model_validate(
+        {
+            "deployment_id": uuid4(),
+            "meter_ingest_url": "",
+            "meter_ingest_token": "",
+            "meter_identity_key": "",
+            "meter_org_id": "",
+            "meter_project_id": "",
+        }
+    )
+    assert settings.meter_ingest_url is None
+    assert settings.meter_org_id is None
+    assert settings.meter_project_id is None
 
 
 def test_selfhost_fact_authority_and_p1_share_bounded_retrieval_pool() -> None:
