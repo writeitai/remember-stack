@@ -262,6 +262,16 @@ from rememberstack.model.knowledge_planner import KnowledgeRetirePageProposal
 from rememberstack.model.knowledge_planner import KnowledgeSplitPageProposal
 from rememberstack.model.lifecycle import CurrencyTransition
 from rememberstack.model.lifecycle import ReconciliationDelta
+from rememberstack.model.metering import DocTextQuantity
+from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
+from rememberstack.model.metering import ManagedIngestMeasurementV2
+from rememberstack.model.metering import ManagedMeterScope
+from rememberstack.model.metering import ManagedTextClassificationError
+from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.model.metering import MeterAdmissionResult
+from rememberstack.model.metering import MeterReceiptConflict
+from rememberstack.model.metering import MeterReceiptUnauthorized
+from rememberstack.model.metering import MeterReceiptUnavailable
 from rememberstack.model.model_provider import EmbeddingRequest
 from rememberstack.model.model_provider import EmbeddingResponse
 from rememberstack.model.model_provider import GeneratedResponse
@@ -486,6 +496,16 @@ __all__ = (
     "IngestedVersion",
     "IngestPrincipal",
     "IngestPrincipalKind",
+    "DocTextQuantity",
+    "ManagedDocumentVersionOutcomeV2",
+    "ManagedIngestMeasurementV2",
+    "ManagedMeterScope",
+    "ManagedTextClassificationError",
+    "ManagedTextMeasurementDraft",
+    "MeterAdmissionResult",
+    "MeterReceiptConflict",
+    "MeterReceiptUnauthorized",
+    "MeterReceiptUnavailable",
     "KRevision",
     "LaneRouteError",
     "MergeApplicationError",

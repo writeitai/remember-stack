@@ -14,6 +14,7 @@ still never fails structuring.
 
 from collections.abc import Iterable
 from datetime import datetime
+from datetime import timezone
 import hashlib
 import json
 from pathlib import PurePosixPath
@@ -46,6 +47,10 @@ from rememberstack.core import SKELETON_PARSER_VERSION
 from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
+from rememberstack.core.text_metering import classify_doc_text
+from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
+from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
+from rememberstack.core.text_metering import DOC_TEXT_PROCESSING_PROFILE_ID
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
@@ -77,6 +82,8 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import UnroutableMimeError
 from rememberstack.model import UploadRecord
+from rememberstack.model.metering import ManagedMeterScope
+from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -157,11 +164,13 @@ class UploadIngestor:
         catalog: DocumentCatalog,
         raw_store: ObjectStorePort,
         admission: IngestAdmission,
+        meter_scope: ManagedMeterScope | None = None,
     ) -> None:
         """Bind the connector to the catalog and the deployment's raw bucket."""
         self._catalog = catalog
         self._raw_store = raw_store
         self._admission = admission
+        self._meter_scope = meter_scope
 
     def ingest(
         self,
@@ -184,21 +193,23 @@ class UploadIngestor:
             source_ref=content_hash,
             content_hash=content_hash,
         )
+        upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
-        try:
-            self._raw_store.write_bytes(
-                key=ObjectKey(raw_uri),
-                content=upload.content,
-                # D51: media a harness reads stays hot; text originals
-                # kept only for audit go cold — routed at the write
-                storage_class=storage_class_for(mime=upload.mime),
-            )
-        except ObjectAlreadyExistsError:
-            pass  # identical bytes already landed — ingest retries are no-ops
+        if metering is None:
+            try:
+                self._raw_store.write_bytes(
+                    key=ObjectKey(raw_uri),
+                    content=upload.content,
+                    # D51: media a harness reads stays hot; text originals
+                    # kept only for audit go cold — routed at the write
+                    storage_class=storage_class_for(mime=upload.mime),
+                )
+            except ObjectAlreadyExistsError:
+                pass  # identical bytes already landed — ingest retries are no-ops
         return self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
@@ -215,6 +226,7 @@ class UploadIngestor:
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
+            metering=metering,
         )
 
     def ingest_observed(
@@ -245,6 +257,7 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
+        upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
         )
@@ -267,18 +280,49 @@ class UploadIngestor:
             sync_cycle_id=sync_cycle_id,
             ingested_by=ingested_by,
         )
-        try:
-            self._raw_store.write_bytes(
-                key=ObjectKey(raw_uri),
-                content=upload.content,
-                # D51: media a harness reads stays hot; text originals
-                # kept only for audit go cold — routed at the write
-                storage_class=storage_class_for(mime=upload.mime),
-            )
-        except ObjectAlreadyExistsError:
-            pass
+        if metering is None:
+            try:
+                self._raw_store.write_bytes(
+                    key=ObjectKey(raw_uri),
+                    content=upload.content,
+                    # D51: media a harness reads stays hot; text originals
+                    # kept only for audit go cold — routed at the write
+                    storage_class=storage_class_for(mime=upload.mime),
+                )
+            except ObjectAlreadyExistsError:
+                pass
         return self._catalog.record_upload(
-            record=record, convert_component_version=E0_CONVERT_VERSION, lane=lane
+            record=record,
+            convert_component_version=E0_CONVERT_VERSION,
+            lane=lane,
+            metering=metering,
+        )
+
+    def _prepare_managed_text(
+        self, *, upload: DocumentUpload
+    ) -> tuple[DocumentUpload, ManagedTextMeasurementDraft | None]:
+        """Classify/measure before any managed source version or work is accepted."""
+        scope = self._meter_scope
+        if scope is None:
+            return upload, None
+        classified = classify_doc_text(
+            content=upload.content, declared_mime=upload.mime
+        )
+        measurement_id = uuid4()
+        prepared = upload.model_copy(update={"mime": classified.canonical_mime})
+        return prepared, ManagedTextMeasurementDraft(
+            measurement_id=measurement_id,
+            ingest_attempt_id=f"ing_{uuid4().hex}",
+            org_id=scope.org_id,
+            project_id=scope.project_id,
+            normalized_character_count=classified.normalized_character_count,
+            canonical_source_bytes=classified.canonical_source_bytes,
+            classifier_version=DOC_TEXT_CLASSIFIER_VERSION,
+            measurement_algorithm_version=(DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION),
+            processing_profile_id=DOC_TEXT_PROCESSING_PROFILE_ID,
+            measured_at=datetime.now(timezone.utc),
+            identity_key=scope.identity_key,
+            staged_content=upload.content,
         )
 
     def _guard_ingest(

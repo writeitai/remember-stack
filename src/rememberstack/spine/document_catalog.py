@@ -40,6 +40,8 @@ from rememberstack.model import SyntheticRootRecord
 from rememberstack.model import UploadRecord
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
+from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -56,6 +58,7 @@ class DocumentCatalog:
         record: UploadRecord,
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
+        metering: ManagedTextMeasurementDraft | None = None,
     ) -> IngestedVersion:
         """Land one upload's rows and enqueue its convert work in one transaction.
 
@@ -119,6 +122,7 @@ class DocumentCatalog:
                         "source_version_ref": record.source_version_ref,
                         "sync_cycle_id": record.sync_cycle_id,
                         "ingested_by_principal_id": principal_id,
+                        "status": "ingesting" if metering is not None else "converting",
                     },
                 )
             elif record.source_version_ref is not None:
@@ -129,28 +133,43 @@ class DocumentCatalog:
                         "source_version_ref": record.source_version_ref,
                     },
                 )
-            enqueue_on(
-                connection=connection,
-                work=EnqueueWork(
+            if metering is None:
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=record.deployment_id,
+                        # the idempotency key names the VERSION (D12/D55): a
+                        # lineage's second version must never collide with the
+                        # first version's completed work row
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=version_id,
+                        stage=PipelineStage.CONVERT,
+                        component_version=convert_component_version,
+                        content_hash=record.content_hash,
+                        lane=lane,
+                        payload={"version_id": str(version_id)},
+                    ),
+                )
+            else:
+                record_managed_measurement_on(
+                    connection=connection,
+                    draft=metering,
                     deployment_id=record.deployment_id,
-                    # the idempotency key names the VERSION (D12/D55): a
-                    # lineage's second version must never collide with the
-                    # first version's completed work row
-                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                    target_id=version_id,
-                    stage=PipelineStage.CONVERT,
-                    component_version=convert_component_version,
-                    content_hash=record.content_hash,
-                    lane=lane,
-                    payload={"version_id": str(version_id)},
-                ),
-            )
+                    doc_id=doc_id,
+                    version_id=version_id,
+                    created=created,
+                    convert_component_version=convert_component_version,
+                    lane=lane.value,
+                )
             return IngestedVersion(
                 deployment_id=record.deployment_id,
                 doc_id=doc_id,
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
+                processing_admission=(
+                    "pending" if metering is not None else "not_required"
+                ),
             )
 
     def version_principal(
@@ -637,7 +656,7 @@ _INSERT_VERSION = text(
         :version_id, :deployment_id, :doc_id, :content_hash,
         (SELECT coalesce(max(version_no), 0) + 1 FROM document_versions
          WHERE deployment_id = :deployment_id AND doc_id = :doc_id),
-        'converting',
+        CAST(:status AS document_status),
         :source_modified_at, :source_version_ref, :sync_cycle_id,
         :ingested_by_principal_id
     )

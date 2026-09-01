@@ -48,6 +48,7 @@ from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
+from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
@@ -910,6 +911,14 @@ def _parse_ingest_principal(
         ) from error
 
 
+def _managed_text_http_error(*, error: ManagedTextClassificationError) -> HTTPException:
+    """Map bounded pre-version classifier refusals to stable HTTP failures."""
+    status = 413 if error.code == "source_bytes_limit_exceeded" else 422
+    if error.code == "rate_class_unavailable":
+        status = 409
+    return HTTPException(status_code=status, detail=error.code)
+
+
 def _mount_ingest(
     *,
     app: FastAPI,
@@ -1014,20 +1023,26 @@ def _mount_ingest(
                         " source_kind/source_ref"
                     ),
                 )
-            return ingest.ingest(
-                deployment_id=deployment_id, upload=upload, **attribution
+            try:
+                return ingest.ingest(
+                    deployment_id=deployment_id, upload=upload, **attribution
+                )
+            except ManagedTextClassificationError as error:
+                raise _managed_text_http_error(error=error) from error
+        try:
+            return ingest.ingest_observed(
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
+                upload=upload,
+                versioning_mode=versioning_mode,
+                source_modified_at=source_modified_at,
+                source_version_ref=source_version_ref,
+                sync_cycle_id=None,
+                **attribution,
             )
-        return ingest.ingest_observed(
-            deployment_id=deployment_id,
-            source_kind=source_kind,
-            source_ref=source_ref,
-            upload=upload,
-            versioning_mode=versioning_mode,
-            source_modified_at=source_modified_at,
-            source_version_ref=source_version_ref,
-            sync_cycle_id=None,
-            **attribution,
-        )
+        except ManagedTextClassificationError as error:
+            raise _managed_text_http_error(error=error) from error
 
 
 def _mount_connectors(

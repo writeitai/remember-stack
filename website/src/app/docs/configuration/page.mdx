@@ -69,6 +69,19 @@ Replace every local-only secret before any non-isolated use.
 | --- | --- |
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | Optional `POST /ingest` request-body ceiling in bytes, enforced before the body is buffered (`413 body_too_large`; requests without a `Content-Length` get `411`). Unset (default) = no engine-imposed limit — a managed host publishes and sets its own bound |
 
+Managed deployments also configure content-free billing receipts. These values
+are fleet-authored as one all-or-nothing set; ordinary self-host installations
+leave all of them unset and do not start the Compose `managed` profile.
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_SELFHOST_METER_INGEST_URL` | HTTPS root of the managed control-plane receipt service |
+| `REMEMBERSTACK_SELFHOST_METER_INGEST_TOKEN` | Deployment-scoped `umc_mi_` producer credential; never a customer API token |
+| `REMEMBERSTACK_SELFHOST_METER_IDENTITY_KEY` | Deployment-local `umc_mik_` HMAC key for stable opaque lineage/version IDs. It never leaves the engine and must survive token rotation |
+| `REMEMBERSTACK_SELFHOST_METER_ORG_ID` | Fleet-bound organisation UUID carried in every receipt |
+| `REMEMBERSTACK_SELFHOST_METER_PROJECT_ID` | Fleet-bound Project UUID carried in every receipt |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_METERING` | When `true`, startup fails unless the entire managed receipt configuration is present |
+
 ### Conversion routes
 
 | Variable | Purpose |

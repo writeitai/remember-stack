@@ -28,6 +28,8 @@ from rememberstack.spine.knowledge import KnowledgeCompileContextMissingError
 from rememberstack.spine.knowledge import KnowledgeControlPlane
 from rememberstack.spine.knowledge import KnowledgeDispatchUnavailableError
 from rememberstack.spine.lifecycle import LifecycleCatalog
+from rememberstack.spine.managed_metering import ManagedMeterCatalog
+from rememberstack.spine.managed_metering import MeterDrainResult
 from rememberstack.spine.observation_adjudication import OBSERVATION_ADJUDICATOR_VERSION
 from rememberstack.spine.observation_adjudication import ObservationAdjudicator
 from rememberstack.spine.observation_adjudication import ObservationSettings
@@ -81,6 +83,8 @@ __all__ = (
     "RESOLVER_VERSION",
     "ResolutionContendedError",
     "LifecycleCatalog",
+    "ManagedMeterCatalog",
+    "MeterDrainResult",
     "KnowledgeCompilationError",
     "KnowledgeCommitBusyError",
     "KnowledgeCompileContextMissingError",

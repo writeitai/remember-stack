@@ -1053,6 +1053,18 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        UPDATE managed_ingest_measurements
+        SET staged_content = NULL,
+            delivery_state = 'cancelled',
+            decision_reason = 'source_forgotten',
+            next_attempt_at = NULL
+        WHERE deployment_id = :deployment_id
+          AND doc_id = :doc_id
+          AND delivery_state IN ('pending', 'parked', 'quarantined')
+        """
+    ),
+    text(
+        """
         UPDATE document_versions
         SET current_representation_id = NULL,
             source_version_ref = NULL,
@@ -1540,6 +1552,11 @@ _VERIFY_POSTGRES_SCRUB = text(
                OR error IS NOT NULL
                OR superseded_at IS NOT NULL
                OR deleted_at IS NULL)
+        UNION ALL
+        SELECT 1 FROM managed_ingest_measurements
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          AND (staged_content IS NOT NULL
+               OR delivery_state IN ('pending', 'parked', 'quarantined'))
         UNION ALL
         SELECT 1 FROM document_sections
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
