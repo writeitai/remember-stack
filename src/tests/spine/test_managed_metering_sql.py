@@ -34,6 +34,7 @@ from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import managed_metering as managed_metering_module
 from rememberstack.spine.managed_metering import ManagedMeterCatalog
 from rememberstack.spine.managed_metering import MeterDrainResult
 from rememberstack.spine.readiness import PipelineReadinessCatalog
@@ -83,22 +84,26 @@ class ControlledReadiness:
     def __init__(self) -> None:
         """Start with no ready versions."""
         self.ready: set[UUID] = set()
+        self.stage_status: dict[UUID, str] = {}
 
     def inspect(self, *, version_ids: tuple[UUID, ...], **kwargs: object) -> FakeReport:
         """Return exact completion state for the requested single version."""
         del kwargs
         version_id = version_ids[0]
         is_ready = version_id in self.ready
+        status = self.stage_status.get(
+            version_id, "succeeded" if is_ready else "pending"
+        )
         return FakeReport(
             versions=(
                 FakeVersion(
                     ready=is_ready,
                     stages=(
                         FakeStage(
-                            status="succeeded" if is_ready else "pending",
+                            status=status,
                             finished_at=(
                                 datetime(2026, 9, 2, 2, tzinfo=timezone.utc)
-                                if is_ready
+                                if status in {"succeeded", "failed", "dead_letter"}
                                 else None
                             ),
                         ),
@@ -322,6 +327,35 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         ),
     )
     assert meter.drain_once().measurements_accepted == 1
+
+    retried = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="retried.txt", mime="text/plain", content=b"retry this work"
+        ),
+    )
+    assert meter.drain_once().measurements_accepted == 1
+    readiness.stage_status[retried.version_id] = "failed"
+    transient = meter.drain_once()
+    assert transient.outcomes_created == 0
+    assert all(
+        outcome.document_version_id != str(retried.version_id)
+        for outcome in receipts.outcomes
+    )
+    readiness.stage_status[retried.version_id] = "dead_letter"
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE managed_ingest_measurements "
+                "SET outcome_next_attempt_at = NULL WHERE version_id = :version_id"
+            ),
+            {"version_id": retried.version_id},
+        )
+    terminal = meter.drain_once()
+    assert terminal.outcomes_created == 1
+    assert terminal.outcomes_accepted == 1
+    assert receipts.outcomes[-1].document_version_id == str(retried.version_id)
+    assert receipts.outcomes[-1].outcome == "failed"
     with database_engine.begin() as connection:
         connection.execute(
             text(
@@ -414,3 +448,50 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
     )
     assert healed.created is False and healed.version_id == quarantined.version_id
     assert meter.drain_once().measurements_accepted == 1
+
+    cancelled = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="cancelled.txt", mime="text/plain", content=b"cancel before retry"
+        ),
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE managed_ingest_measurements "
+                "SET staged_content = NULL, delivery_state = 'cancelled', "
+                "decision_reason = 'source_forgotten' "
+                "WHERE version_id = :version_id"
+            ),
+            {"version_id": cancelled.version_id},
+        )
+        cancelled_measurement_id = UUID(
+            str(
+                connection.execute(
+                    text(
+                        "SELECT measurement_id FROM managed_ingest_measurements "
+                        "WHERE version_id = :version_id"
+                    ),
+                    {"version_id": cancelled.version_id},
+                ).scalar_one()
+            )
+        )
+    meter._record_measurement_retry(
+        measurement_id=cancelled_measurement_id, reason_code="control_plane_unavailable"
+    )
+    with database_engine.connect() as connection:
+        cancelled_state = connection.execute(
+            text(
+                "SELECT delivery_state, decision_reason "
+                "FROM managed_ingest_measurements WHERE version_id = :version_id"
+            ),
+            {"version_id": cancelled.version_id},
+        ).one()
+    assert tuple(cancelled_state) == ("cancelled", "source_forgotten")
+
+
+def test_due_measurement_scan_never_loads_staged_source_bytes() -> None:
+    """The bounded replay scan carries only the content-free receipt envelope."""
+    statement = str(managed_metering_module._DUE_MEASUREMENTS)
+    assert "SELECT *" not in statement
+    assert "staged_content" not in statement

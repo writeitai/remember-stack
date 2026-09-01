@@ -363,10 +363,7 @@ class ManagedMeterCatalog:
                     ),
                 )
                 version = report.versions[0]
-                failed = any(
-                    stage.status in {"failed", "dead_letter"}
-                    for stage in version.stages
-                )
+                failed = any(stage.status == "dead_letter" for stage in version.stages)
                 if failed:
                     outcome = "failed"
                     completed_at = max(
@@ -591,7 +588,12 @@ _INSERT_OUTCOME = text(
 
 _DUE_MEASUREMENTS = text(
     """
-    SELECT * FROM managed_ingest_measurements
+    SELECT measurement_id, ingest_attempt_id, org_id, project_id, deployment_id,
+           opaque_lineage_id, opaque_source_version_id,
+           normalized_character_count, canonical_source_bytes,
+           document_version_disposition, classifier_version,
+           measurement_algorithm_version, processing_profile_id, measured_at
+    FROM managed_ingest_measurements
     WHERE delivery_state IN ('pending', 'parked')
       AND (next_attempt_at IS NULL OR next_attempt_at <= statement_timestamp())
     ORDER BY created_at, measurement_id
@@ -642,7 +644,8 @@ _PARK_MEASUREMENT = text(
     SET delivery_state = 'parked', decision_reason = :reason_code,
         delivery_attempts = delivery_attempts + 1,
         last_attempt_at = statement_timestamp(), next_attempt_at = :next_attempt_at
-    WHERE measurement_id = :measurement_id AND delivery_state <> 'accepted'
+    WHERE measurement_id = :measurement_id
+      AND delivery_state IN ('pending', 'parked')
     """
 )
 
