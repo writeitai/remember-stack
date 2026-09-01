@@ -44,6 +44,10 @@ server = [
     "alembic>=1.16",
     "boto3>=1.42",
     "fastapi>=0.139.2",
+    # EdDSA verification for the managed auth perimeter (D61 reference
+    # adapter). A boring, widely implemented JWT envelope beats a parser we
+    # would have to get right ourselves, and `cryptography` already resolves.
+    "pyjwt[crypto]>=2.10",
     "markdown-it-py>=4.2.0",
     "markitdown>=0.1.6",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
@@ -99,6 +103,9 @@ dev = [
     "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
     "pyarrow>=25.0.0",
+    # Mirrors the `server` extra: CI installs the dev group, so an adapter that
+    # needs this at runtime needs it here to be tested at all.
+    "pyjwt[crypto]>=2.10",
     "pyright>=1.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",

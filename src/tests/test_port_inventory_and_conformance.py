@@ -318,4 +318,18 @@ def test_auth_fake_returns_only_single_deployment_context() -> None:
 
     assert context.deployment_id == deployment_id
     assert context.principal == "api-key"
-    assert set(AuthenticatedContext.model_fields) == {"deployment_id", "principal"}
+    # The guard is about *authority*, not field count: the perimeter context
+    # must never carry an organisation or a content role, because either would
+    # be tenancy leaking into a single-deployment trust domain (D60/D61).
+    #
+    # `subject` names the person a credential was issued to, so an audit can
+    # say who caused a read instead of impersonating them; `scope` is the
+    # perimeter's own read/write, not a role over content. Neither introduces
+    # tenancy, and both are pinned here so a third addition has to argue for
+    # itself.
+    assert set(AuthenticatedContext.model_fields) == {
+        "deployment_id",
+        "principal",
+        "subject",
+        "scope",
+    }
