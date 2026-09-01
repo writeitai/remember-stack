@@ -55,6 +55,25 @@ def test_mime_does_not_hide_native_text_or_change_quantity() -> None:
     assert result.canonical_source_bytes == 6
 
 
+@pytest.mark.parametrize(
+    ("payload", "mime"),
+    [
+        (b"{\\rtf1 formatted}", "text/plain"),
+        (b"<!doctype html><p>hello</p>", "text/plain"),
+        (b"<svg><text>hello</text></svg>", "application/octet-stream"),
+        (b"JVBERi0xLjQK", "text/plain"),
+        (b"a,b,c\n1,2,3", "text/csv"),
+    ],
+)
+def test_structured_or_armoured_text_is_not_native_doc_text(
+    payload: bytes, mime: str
+) -> None:
+    """Markup, structured MIME, and armoured binary remain ambiguous."""
+    with pytest.raises(ManagedTextClassificationError) as raised:
+        classify_doc_text(content=payload, declared_mime=mime)
+    assert raised.value.code == "rate_class_ambiguous"
+
+
 def test_bound_exceed_is_typed_before_any_source_version() -> None:
     """The published v1 profile has a hard, byte-counted source ceiling."""
     with pytest.raises(ManagedTextClassificationError) as raised:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from rememberstack.model.metering import ManagedTextClassificationError
 
@@ -24,6 +25,13 @@ _BINARY_MAGICS: tuple[bytes, ...] = (
     b"ID3",
     b"\x00\x00\x00\x18ftyp",
     b"\x00\x00\x00\x20ftyp",
+)
+_DOC_TEXT_MIMES = frozenset(
+    {"", "application/octet-stream", "text/markdown", "text/plain", "text/x-markdown"}
+)
+_STRUCTURED_TEXT_PREFIX = re.compile(
+    rb"(?:\{\\rtf|<!doctype\s+html|<html(?:\s|>)|<\?xml(?:\s|>)|<svg(?:\s|>)|<[/!?]?[a-z][^>]{0,128}>)",
+    re.IGNORECASE,
 )
 
 
@@ -64,6 +72,12 @@ def classify_doc_text(*, content: bytes, declared_mime: str) -> ClassifiedText:
         raise ManagedTextClassificationError(code="empty_text")
     if any(content.startswith(magic) for magic in _BINARY_MAGICS):
         raise ManagedTextClassificationError(code="rate_class_unavailable")
+    mime = declared_mime.partition(";")[0].strip().lower()
+    if mime not in _DOC_TEXT_MIMES:
+        raise ManagedTextClassificationError(code="rate_class_ambiguous")
+    stripped = content.lstrip()
+    if _STRUCTURED_TEXT_PREFIX.match(stripped) or stripped.startswith(b"JVBERi0"):
+        raise ManagedTextClassificationError(code="rate_class_ambiguous")
     try:
         decoded = content.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -76,13 +90,13 @@ def classify_doc_text(*, content: bytes, declared_mime: str) -> ClassifiedText:
     quantity = normalized_character_count(text=decoded)
     if quantity == 0 or decoded.isspace():
         raise ManagedTextClassificationError(code="empty_text")
-    mime = (
+    canonical_mime = (
         "text/markdown"
-        if declared_mime.strip().lower() in {"text/markdown", "text/x-markdown"}
+        if mime in {"text/markdown", "text/x-markdown"}
         else "text/plain"
     )
     return ClassifiedText(
         normalized_character_count=quantity,
         canonical_source_bytes=len(content),
-        canonical_mime=mime,
+        canonical_mime=canonical_mime,
     )

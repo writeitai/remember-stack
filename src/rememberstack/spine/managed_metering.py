@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+import hashlib
+import hmac
+import logging
 from typing import Any
-from uuid import NAMESPACE_URL
 from uuid import UUID
-from uuid import uuid5
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.core import storage_class_for
 from rememberstack.model import EnqueueWork
+from rememberstack.model import ObjectAlreadyExistsError
+from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ReadinessRequirements
@@ -24,10 +29,14 @@ from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
 from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.model.metering import MeterReceiptConflict
+from rememberstack.model.metering import MeterReceiptUnauthorized
 from rememberstack.model.metering import MeterReceiptUnavailable
 from rememberstack.ports.metering import MeterReceiptPort
+from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.work_ledger import enqueue_on
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,14 +61,18 @@ def record_managed_measurement_on(
     lane: str,
 ) -> None:
     """Persist one immutable receipt in the same transaction as version choice."""
-    opaque_lineage_id = str(
-        uuid5(NAMESPACE_URL, f"rememberstack:meter-lineage:{deployment_id}:{doc_id}")
+    identity_key = draft.identity_key.get_secret_value().encode("utf-8")
+    opaque_lineage_id = _opaque_identity(
+        identity_key=identity_key,
+        domain="lineage",
+        deployment_id=deployment_id,
+        local_id=doc_id,
     )
-    opaque_source_version_id = str(
-        uuid5(
-            NAMESPACE_URL,
-            f"rememberstack:meter-source-version:{deployment_id}:{draft.measurement_id}",
-        )
+    opaque_source_version_id = _opaque_identity(
+        identity_key=identity_key,
+        domain=("source-version" if created else "no-op-observation"),
+        deployment_id=deployment_id,
+        local_id=(version_id if created else draft.measurement_id),
     )
     disposition = "new_version" if created else "no_op"
     connection.execute(
@@ -83,6 +96,7 @@ def record_managed_measurement_on(
             "measured_at": draft.measured_at,
             "convert_component_version": convert_component_version,
             "lane": lane,
+            "staged_content": (draft.staged_content if created else None),
         },
     )
     if not created:
@@ -112,11 +126,13 @@ class ManagedMeterCatalog:
         engine: Engine,
         receipts: MeterReceiptPort,
         readiness: PipelineReadinessCatalog,
+        raw_store: ObjectStorePort,
     ) -> None:
         """Bind the spine, control-plane adapter, and exact profile readiness."""
         self._engine = engine
         self._receipts = receipts
         self._readiness = readiness
+        self._raw_store = raw_store
 
     def drain_once(self, *, limit: int = 100) -> MeterDrainResult:
         """Run one bounded measurement, terminalization, and outcome replay pass."""
@@ -145,9 +161,21 @@ class ManagedMeterCatalog:
             try:
                 decision = self._receipts.admit_measurement(measurement=receipt)
             except MeterReceiptConflict:
-                self._record_measurement_retry(
+                self._quarantine_measurement(
                     measurement_id=receipt.measurement_id,
                     reason_code="receipt_conflict",
+                )
+                _logger.error(
+                    "managed meter measurement quarantined reason=receipt_conflict "
+                    "measurement_id=%s",
+                    receipt.measurement_id,
+                )
+                parked += 1
+                continue
+            except MeterReceiptUnauthorized:
+                self._record_measurement_retry(
+                    measurement_id=receipt.measurement_id,
+                    reason_code="producer_credential_rejected",
                 )
                 parked += 1
                 continue
@@ -184,11 +212,26 @@ class ManagedMeterCatalog:
                         _LOCK_MEASUREMENT, {"measurement_id": receipt.measurement_id}
                     )
                     .mappings()
-                    .one()
+                    .one_or_none()
                 )
+                if current is None:
+                    continue
                 if current["delivery_state"] == "accepted":
                     continue
                 if receipt.document_version_disposition == "new_version":
+                    staged_content = current["staged_content"]
+                    if not isinstance(staged_content, bytes) or not staged_content:
+                        raise RuntimeError(
+                            "managed staged content missing before approval"
+                        )
+                    try:
+                        self._raw_store.write_bytes(
+                            key=ObjectKey(str(current["raw_uri"])),
+                            content=staged_content,
+                            storage_class=storage_class_for(mime=str(current["mime"])),
+                        )
+                    except ObjectAlreadyExistsError:
+                        pass
                     connection.execute(
                         _OPEN_VERSION_FOR_CONVERT, {"version_id": current["version_id"]}
                     )
@@ -215,6 +258,16 @@ class ManagedMeterCatalog:
                 )
             accepted += 1
         return accepted, parked
+
+    def _quarantine_measurement(
+        self, *, measurement_id: UUID, reason_code: str
+    ) -> None:
+        """Durably stop replaying a contradictory canonical receipt."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _QUARANTINE_MEASUREMENT,
+                {"measurement_id": measurement_id, "reason_code": reason_code[:64]},
+            )
 
     def _record_measurement_retry(
         self, *, measurement_id: UUID, reason_code: str
@@ -247,10 +300,14 @@ class ManagedMeterCatalog:
         for row in rows:
             deployment_id = UUID(str(row["deployment_id"]))
             version_id = UUID(str(row["version_id"]))
-            if row["version_status"] == "failed":
+            if row["version_status"] in {"failed", "deleted"}:
                 outcome = "failed"
                 completed_at = datetime.now(timezone.utc)
-                reason_code = "pipeline_terminal_failure"
+                reason_code = (
+                    "source_forgotten"
+                    if row["version_status"] == "deleted"
+                    else "pipeline_terminal_failure"
+                )
                 profile_complete = False
                 sequence = None
             else:
@@ -293,6 +350,9 @@ class ManagedMeterCatalog:
                             connection.execute(_NEXT_COMMIT_SEQUENCE).scalar_one()
                         )
                 else:
+                    self._record_outcome_check_retry(
+                        measurement_id=UUID(str(row["measurement_id"]))
+                    )
                     continue
             with self._engine.begin() as connection:
                 result = connection.execute(
@@ -313,6 +373,22 @@ class ManagedMeterCatalog:
                 if int(result.rowcount or 0) > 0:
                     created += 1
         return created
+
+    def _record_outcome_check_retry(self, *, measurement_id: UUID) -> None:
+        """Back off a non-terminal readiness check to prevent head blocking."""
+        with self._engine.begin() as connection:
+            attempts = int(
+                connection.execute(
+                    _OUTCOME_CHECK_ATTEMPTS, {"measurement_id": measurement_id}
+                ).scalar_one()
+            )
+            connection.execute(
+                _RETRY_OUTCOME_CHECK,
+                {
+                    "measurement_id": measurement_id,
+                    "next_attempt_at": _next_attempt(attempts=attempts),
+                },
+            )
 
     def _deliver_outcomes(self, *, limit: int) -> int:
         """Replay terminal receipts until the control plane acknowledges them."""
@@ -352,6 +428,21 @@ def _next_attempt(*, attempts: int) -> datetime:
     """Return a bounded exponential replay time without random content metadata."""
     seconds = min(300, 2 ** min(max(attempts, 0), 8))
     return datetime.now(timezone.utc) + timedelta(seconds=seconds)
+
+
+def _opaque_identity(
+    *, identity_key: bytes, domain: str, deployment_id: UUID, local_id: UUID
+) -> str:
+    """Derive an unlinkable stable identifier under deployment-local custody."""
+    message = (
+        b"rememberstack-meter-identity-v1\x00"
+        + domain.encode("ascii")
+        + b"\x00"
+        + deployment_id.bytes
+        + local_id.bytes
+    )
+    digest = hmac.new(identity_key, message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 def _measurement_from_row(*, row: dict[str, Any]) -> ManagedIngestMeasurementV2:
@@ -405,14 +496,14 @@ _INSERT_MEASUREMENT = text(
       normalized_character_count, canonical_source_bytes,
       document_version_disposition, classifier_version,
       measurement_algorithm_version, processing_profile_id, measured_at,
-      convert_component_version, lane
+      convert_component_version, lane, staged_content
     ) VALUES (
       :measurement_id, :deployment_id, :doc_id, :version_id, :ingest_attempt_id,
       :org_id, :project_id, :opaque_lineage_id, :opaque_source_version_id,
       :normalized_character_count, :canonical_source_bytes,
       :document_version_disposition, :classifier_version,
       :measurement_algorithm_version, :processing_profile_id, :measured_at,
-      :convert_component_version, CAST(:lane AS processing_lane)
+      :convert_component_version, CAST(:lane AS processing_lane), :staged_content
     )
     """
 )
@@ -435,7 +526,7 @@ _INSERT_OUTCOME = text(
 _DUE_MEASUREMENTS = text(
     """
     SELECT * FROM managed_ingest_measurements
-    WHERE delivery_state <> 'accepted'
+    WHERE delivery_state IN ('pending', 'parked')
       AND (next_attempt_at IS NULL OR next_attempt_at <= statement_timestamp())
     ORDER BY created_at, measurement_id
     LIMIT :limit
@@ -444,9 +535,11 @@ _DUE_MEASUREMENTS = text(
 
 _LOCK_MEASUREMENT = text(
     """
-    SELECT m.*, v.content_hash
+    SELECT m.*, v.content_hash, c.raw_uri, c.mime
     FROM managed_ingest_measurements m
     JOIN document_versions v ON v.version_id = m.version_id
+    JOIN content_objects c
+      ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
     WHERE m.measurement_id = :measurement_id
     FOR UPDATE OF m, v
     """
@@ -468,7 +561,7 @@ _ACCEPT_MEASUREMENT = text(
         storage_growth_hold_id = :storage_growth_hold_id,
         delivery_attempts = delivery_attempts + 1,
         last_attempt_at = statement_timestamp(), next_attempt_at = NULL,
-        accepted_at = statement_timestamp()
+        accepted_at = statement_timestamp(), staged_content = NULL
     WHERE measurement_id = :measurement_id AND delivery_state <> 'accepted'
     """
 )
@@ -487,6 +580,17 @@ _PARK_MEASUREMENT = text(
     """
 )
 
+_QUARANTINE_MEASUREMENT = text(
+    """
+    UPDATE managed_ingest_measurements
+    SET delivery_state = 'quarantined', decision_reason = :reason_code,
+        delivery_attempts = delivery_attempts + 1,
+        last_attempt_at = statement_timestamp(), next_attempt_at = NULL
+    WHERE measurement_id = :measurement_id
+      AND delivery_state IN ('pending', 'parked')
+    """
+)
+
 _AWAITING_OUTCOMES = text(
     """
     SELECT m.measurement_id, m.deployment_id, m.version_id,
@@ -497,8 +601,26 @@ _AWAITING_OUTCOMES = text(
     WHERE m.delivery_state = 'accepted'
       AND m.document_version_disposition = 'new_version'
       AND o.measurement_id IS NULL
+      AND (m.outcome_next_attempt_at IS NULL
+           OR m.outcome_next_attempt_at <= statement_timestamp()
+           OR v.status::text IN ('failed', 'deleted'))
     ORDER BY m.accepted_at, m.measurement_id
     LIMIT :limit
+    """
+)
+
+_OUTCOME_CHECK_ATTEMPTS = text(
+    "SELECT outcome_check_attempts FROM managed_ingest_measurements "
+    "WHERE measurement_id = :measurement_id FOR UPDATE"
+)
+
+_RETRY_OUTCOME_CHECK = text(
+    """
+    UPDATE managed_ingest_measurements
+    SET outcome_check_attempts = outcome_check_attempts + 1,
+        outcome_last_checked_at = statement_timestamp(),
+        outcome_next_attempt_at = :next_attempt_at
+    WHERE measurement_id = :measurement_id
     """
 )
 

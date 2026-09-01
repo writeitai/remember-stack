@@ -18,7 +18,7 @@ CREATE SEQUENCE managed_version_commit_sequence_seq AS bigint START WITH 1;
 
 CREATE TABLE managed_ingest_measurements (
   measurement_id uuid PRIMARY KEY,
-  deployment_id uuid NOT NULL REFERENCES deployments(deployment_id) ON DELETE CASCADE,
+  deployment_id uuid NOT NULL REFERENCES deployments(deployment_id) ON DELETE RESTRICT,
   doc_id uuid NOT NULL,
   version_id uuid NOT NULL,
   ingest_attempt_id text NOT NULL CHECK (char_length(ingest_attempt_id) BETWEEN 1 AND 128),
@@ -38,8 +38,9 @@ CREATE TABLE managed_ingest_measurements (
   measured_at timestamptz NOT NULL,
   convert_component_version text NOT NULL,
   lane processing_lane NOT NULL,
+  staged_content bytea,
   delivery_state text NOT NULL DEFAULT 'pending'
-    CHECK (delivery_state IN ('pending', 'parked', 'accepted')),
+    CHECK (delivery_state IN ('pending', 'parked', 'quarantined', 'accepted')),
   decision_reason text CHECK (decision_reason IS NULL OR char_length(decision_reason) <= 64),
   processing_hold_id uuid,
   storage_growth_hold_id uuid,
@@ -47,10 +48,13 @@ CREATE TABLE managed_ingest_measurements (
   last_attempt_at timestamptz,
   next_attempt_at timestamptz,
   accepted_at timestamptz,
+  outcome_check_attempts integer NOT NULL DEFAULT 0 CHECK (outcome_check_attempts >= 0),
+  outcome_last_checked_at timestamptz,
+  outcome_next_attempt_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
   UNIQUE (deployment_id, opaque_lineage_id, opaque_source_version_id),
   FOREIGN KEY (deployment_id, doc_id, version_id)
-    REFERENCES document_versions(deployment_id, doc_id, version_id) ON DELETE CASCADE,
+    REFERENCES document_versions(deployment_id, doc_id, version_id) ON DELETE RESTRICT,
   CHECK (
     (delivery_state = 'accepted' AND accepted_at IS NOT NULL) OR
     (delivery_state <> 'accepted' AND accepted_at IS NULL)
@@ -58,11 +62,17 @@ CREATE TABLE managed_ingest_measurements (
   CHECK (
     (document_version_disposition = 'new_version') OR
     (processing_hold_id IS NULL AND storage_growth_hold_id IS NULL)
+  ),
+  CHECK (
+    (document_version_disposition = 'new_version' AND
+      ((delivery_state = 'accepted' AND staged_content IS NULL) OR
+       (delivery_state <> 'accepted' AND staged_content IS NOT NULL))) OR
+    (document_version_disposition = 'no_op' AND staged_content IS NULL)
   )
 );
 CREATE INDEX ix_managed_ingest_measurements_delivery
   ON managed_ingest_measurements (delivery_state, next_attempt_at, created_at)
-  WHERE delivery_state <> 'accepted';
+  WHERE delivery_state IN ('pending', 'parked');
 CREATE INDEX ix_managed_ingest_measurements_terminal
   ON managed_ingest_measurements (deployment_id, accepted_at)
   WHERE delivery_state = 'accepted' AND document_version_disposition = 'new_version';

@@ -199,16 +199,17 @@ class UploadIngestor:
         )
         suffix = PurePosixPath(upload.filename).suffix
         raw_uri = f"{doc_id}/{content_hash}/original{suffix}"
-        try:
-            self._raw_store.write_bytes(
-                key=ObjectKey(raw_uri),
-                content=upload.content,
-                # D51: media a harness reads stays hot; text originals
-                # kept only for audit go cold — routed at the write
-                storage_class=storage_class_for(mime=upload.mime),
-            )
-        except ObjectAlreadyExistsError:
-            pass  # identical bytes already landed — ingest retries are no-ops
+        if metering is None:
+            try:
+                self._raw_store.write_bytes(
+                    key=ObjectKey(raw_uri),
+                    content=upload.content,
+                    # D51: media a harness reads stays hot; text originals
+                    # kept only for audit go cold — routed at the write
+                    storage_class=storage_class_for(mime=upload.mime),
+                )
+            except ObjectAlreadyExistsError:
+                pass  # identical bytes already landed — ingest retries are no-ops
         return self._catalog.record_upload(
             record=UploadRecord(
                 deployment_id=deployment_id,
@@ -279,16 +280,17 @@ class UploadIngestor:
             sync_cycle_id=sync_cycle_id,
             ingested_by=ingested_by,
         )
-        try:
-            self._raw_store.write_bytes(
-                key=ObjectKey(raw_uri),
-                content=upload.content,
-                # D51: media a harness reads stays hot; text originals
-                # kept only for audit go cold — routed at the write
-                storage_class=storage_class_for(mime=upload.mime),
-            )
-        except ObjectAlreadyExistsError:
-            pass
+        if metering is None:
+            try:
+                self._raw_store.write_bytes(
+                    key=ObjectKey(raw_uri),
+                    content=upload.content,
+                    # D51: media a harness reads stays hot; text originals
+                    # kept only for audit go cold — routed at the write
+                    storage_class=storage_class_for(mime=upload.mime),
+                )
+            except ObjectAlreadyExistsError:
+                pass
         return self._catalog.record_upload(
             record=record,
             convert_component_version=E0_CONVERT_VERSION,
@@ -319,6 +321,8 @@ class UploadIngestor:
             measurement_algorithm_version=(DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION),
             processing_profile_id=DOC_TEXT_PROCESSING_PROFILE_ID,
             measured_at=datetime.now(timezone.utc),
+            identity_key=scope.identity_key,
+            staged_content=upload.content,
         )
 
     def _guard_ingest(

@@ -270,6 +270,7 @@ from rememberstack.model.metering import ManagedTextClassificationError
 from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
+from rememberstack.model.metering import MeterReceiptUnauthorized
 from rememberstack.model.metering import MeterReceiptUnavailable
 from rememberstack.model.model_provider import EmbeddingRequest
 from rememberstack.model.model_provider import EmbeddingResponse
@@ -503,6 +504,7 @@ __all__ = (
     "ManagedTextMeasurementDraft",
     "MeterAdmissionResult",
     "MeterReceiptConflict",
+    "MeterReceiptUnauthorized",
     "MeterReceiptUnavailable",
     "KRevision",
     "LaneRouteError",

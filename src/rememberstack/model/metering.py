@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
+from pydantic import SecretStr
 
 
 class DocTextQuantity(BaseModel):
@@ -99,6 +100,8 @@ class ManagedTextMeasurementDraft(BaseModel):
     measurement_algorithm_version: str = Field(min_length=1, max_length=128)
     processing_profile_id: str = Field(min_length=1, max_length=128)
     measured_at: datetime
+    identity_key: SecretStr = Field(exclude=True)
+    staged_content: bytes = Field(exclude=True, min_length=1)
 
 
 class ManagedMeterScope(BaseModel):
@@ -108,6 +111,7 @@ class ManagedMeterScope(BaseModel):
 
     org_id: UUID
     project_id: UUID
+    identity_key: SecretStr
 
 
 class MeterAdmissionResult(BaseModel):
@@ -121,12 +125,17 @@ class MeterAdmissionResult(BaseModel):
     storage_growth_hold_id: UUID | None = None
 
     @model_validator(mode="after")
-    def approved_append_has_both_holds(self) -> MeterAdmissionResult:
-        """Never release expensive work after only one financial hold exists."""
+    def decision_has_exact_hold_shape(self) -> MeterAdmissionResult:
+        """Require two holds only for approval and forbid them otherwise."""
         if self.decision == "approved" and (
             self.processing_hold_id is None or self.storage_growth_hold_id is None
         ):
             raise ValueError("approved admission requires both holds")
+        if self.decision != "approved" and (
+            self.processing_hold_id is not None
+            or self.storage_growth_hold_id is not None
+        ):
+            raise ValueError("non-approved admission must not carry holds")
         return self
 
 
@@ -136,6 +145,10 @@ class MeterReceiptError(RuntimeError):
 
 class MeterReceiptUnavailable(MeterReceiptError):
     """The control plane could not return an authoritative decision."""
+
+
+class MeterReceiptUnauthorized(MeterReceiptUnavailable):
+    """The producer credential was rejected and requires fleet reconciliation."""
 
 
 class MeterReceiptConflict(MeterReceiptError):

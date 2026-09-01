@@ -162,6 +162,7 @@ class SelfHostSettings(BaseSettings):
     spend_lease_url: str | None = None
     meter_ingest_url: str | None = None
     meter_ingest_token: SecretStr | None = None
+    meter_identity_key: SecretStr | None = None
     meter_org_id: UUID | None = None
     meter_project_id: UUID | None = None
     require_metering: bool = False
@@ -199,9 +200,15 @@ class SelfHostSettings(BaseSettings):
             if self.meter_ingest_token is None
             else self.meter_ingest_token.get_secret_value().strip() or None
         )
+        identity_key = (
+            None
+            if self.meter_identity_key is None
+            else self.meter_identity_key.get_secret_value().strip() or None
+        )
         values = (
             self.meter_ingest_url,
             token,
+            identity_key,
             self.meter_org_id,
             self.meter_project_id,
         )
@@ -209,7 +216,8 @@ class SelfHostSettings(BaseSettings):
             value is not None for value in values
         ):
             raise ValueError(
-                "managed metering requires URL, token, org_id, and project_id"
+                "managed metering requires URL, token, identity key, org_id, "
+                "and project_id"
             )
         if self.require_metering and not all(value is not None for value in values):
             raise ValueError(
@@ -217,6 +225,10 @@ class SelfHostSettings(BaseSettings):
             )
         if token is not None and not token.startswith("umc_mi_"):
             raise ValueError("meter_ingest_token must use the umc_mi_ prefix")
+        if identity_key is not None and (
+            not identity_key.startswith("umc_mik_") or len(identity_key) < 40
+        ):
+            raise ValueError("meter_identity_key must be a high-entropy umc_mik_ key")
         return self
 
     @field_validator("ingest_body_max_bytes", mode="before")
@@ -964,9 +976,11 @@ class SelfHostProfile:
 
         assert self._settings.meter_org_id is not None
         assert self._settings.meter_project_id is not None
+        assert self._settings.meter_identity_key is not None
         return ManagedMeterScope(
             org_id=self._settings.meter_org_id,
             project_id=self._settings.meter_project_id,
+            identity_key=self._settings.meter_identity_key,
         )
 
     def meter_catalog(self):  # noqa: ANN202
@@ -993,6 +1007,7 @@ class SelfHostProfile:
                 model_bindings=_model_bindings(),
                 build_revision=_build_revision(),
             ),
+            raw_store=self._raw_store,
         )
 
     def run_meter_receipts(self, *, once: bool = False, limit: int = 100) -> None:

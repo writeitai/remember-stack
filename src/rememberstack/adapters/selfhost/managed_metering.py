@@ -9,6 +9,7 @@ from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
 from rememberstack.model.metering import MeterAdmissionResult
 from rememberstack.model.metering import MeterReceiptConflict
+from rememberstack.model.metering import MeterReceiptUnauthorized
 from rememberstack.model.metering import MeterReceiptUnavailable
 
 
@@ -64,8 +65,10 @@ class ControlPlaneMeterReceipts:
             )
         except (httpx.TimeoutException, httpx.HTTPError) as error:
             raise MeterReceiptUnavailable("meter ingest unavailable") from error
-        if response.status_code in {400, 401, 403, 409, 422}:
+        if response.status_code in {400, 409, 422}:
             raise MeterReceiptConflict("meter receipt rejected")
+        if response.status_code in {401, 403}:
+            raise MeterReceiptUnauthorized("meter producer credential rejected")
         if response.status_code >= 400:
             raise MeterReceiptUnavailable(
                 f"meter ingest returned HTTP {response.status_code}"

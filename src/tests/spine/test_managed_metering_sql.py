@@ -8,11 +8,14 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import cast
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from alembic import command
 from alembic.config import Config
+from pydantic import SecretStr
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -22,10 +25,12 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
+from rememberstack.model import ObjectKey
 from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.model.metering import MeterAdmissionResult
+from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
@@ -108,6 +113,7 @@ class ControlledReceipts(MeterReceiptPort):
     def __init__(self) -> None:
         """Start approved, with an opt-in one-shot parking decision."""
         self.park_next = False
+        self.conflict_next = False
         self.measurements: list[ManagedIngestMeasurementV2] = []
         self.outcomes: list[ManagedDocumentVersionOutcomeV2] = []
         self.holds: dict[UUID, tuple[UUID, UUID]] = {}
@@ -117,6 +123,9 @@ class ControlledReceipts(MeterReceiptPort):
     ) -> MeterAdmissionResult:
         """Return no-op, one-shot parked, or an idempotent two-hold approval."""
         self.measurements.append(measurement)
+        if self.conflict_next:
+            self.conflict_next = False
+            raise MeterReceiptConflict("synthetic changed receipt")
         if measurement.document_version_disposition == "no_op":
             return MeterAdmissionResult(decision="no_op")
         if self.park_next:
@@ -205,16 +214,22 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
     """Park, approve, no-op, succeed, and fail through the real SQL spine."""
     receipts = ControlledReceipts()
     readiness = ControlledReadiness()
+    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
     meter = ManagedMeterCatalog(
         engine=database_engine,
         receipts=receipts,
         readiness=cast(PipelineReadinessCatalog, readiness),
+        raw_store=raw_store,
     )
     ingestor = UploadIngestor(
         catalog=DocumentCatalog(engine=database_engine),
-        raw_store=LocalFSObjectStore(root=tmp_path / "raw"),
+        raw_store=raw_store,
         admission=AllowIngest(),
-        meter_scope=ManagedMeterScope(org_id=_ORG_ID, project_id=_PROJECT_ID),
+        meter_scope=ManagedMeterScope(
+            org_id=_ORG_ID,
+            project_id=_PROJECT_ID,
+            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        ),
     )
 
     receipts.park_next = True
@@ -229,6 +244,19 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         "ingesting"
     )
     assert _work_count(engine=database_engine, version_id=first.version_id) == 0
+    with database_engine.connect() as connection:
+        raw_uri = str(
+            connection.execute(
+                text(
+                    "SELECT c.raw_uri FROM content_objects c "
+                    "JOIN document_versions v USING (deployment_id, content_hash) "
+                    "WHERE v.version_id = :version_id"
+                ),
+                {"version_id": first.version_id},
+            ).scalar_one()
+        )
+    with pytest.raises(FileNotFoundError):
+        raw_store.read_bytes(key=ObjectKey(raw_uri))
     parked = meter.drain_once()
     assert parked.measurements_parked == 1
     assert _work_count(engine=database_engine, version_id=first.version_id) == 0
@@ -247,8 +275,17 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         "converting"
     )
     assert _work_count(engine=database_engine, version_id=first.version_id) == 1
+    assert raw_store.read_bytes(key=ObjectKey(raw_uri)) == b"hello  world"
 
     readiness.ready.add(first.version_id)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE managed_ingest_measurements "
+                "SET outcome_next_attempt_at = NULL WHERE version_id = :version_id"
+            ),
+            {"version_id": first.version_id},
+        )
     succeeded = meter.drain_once()
     assert succeeded.outcomes_created == 1
     assert succeeded.outcomes_accepted == 1
@@ -290,12 +327,71 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
     assert receipts.outcomes[-1].outcome == "failed"
     assert receipts.outcomes[-1].reason_code == "pipeline_terminal_failure"
 
-    with database_engine.connect() as connection:
-        leaked = connection.execute(
+    forgotten = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="forgotten.txt", mime="text/plain", content=b"forget this"
+        ),
+    )
+    assert meter.drain_once().measurements_accepted == 1
+    with database_engine.begin() as connection:
+        connection.execute(
             text(
-                "SELECT count(*) FROM managed_ingest_measurements "
-                "WHERE opaque_lineage_id LIKE '%hello%' "
-                "OR opaque_source_version_id LIKE '%hello%'"
+                "UPDATE document_versions SET status = 'deleted' "
+                "WHERE version_id = :version_id"
+            ),
+            {"version_id": forgotten.version_id},
+        )
+    forgotten_result = meter.drain_once()
+    assert forgotten_result.outcomes_created == 1
+    assert forgotten_result.outcomes_accepted == 1
+    assert receipts.outcomes[-1].outcome == "failed"
+    assert receipts.outcomes[-1].reason_code == "source_forgotten"
+
+    with database_engine.connect() as connection:
+        identities = (
+            connection.execute(
+                text(
+                    "SELECT opaque_lineage_id, opaque_source_version_id, doc_id "
+                    "FROM managed_ingest_measurements "
+                    "WHERE version_id = :version_id "
+                    "AND document_version_disposition = 'new_version'"
+                ),
+                {"version_id": first.version_id},
             )
+            .mappings()
+            .one()
+        )
+    public_lineage_guess = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"rememberstack:meter-lineage:{_DEPLOYMENT_ID}:{identities['doc_id']}",
+        )
+    )
+    public_version_guess = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"rememberstack:meter-source-version:{_DEPLOYMENT_ID}:{first.version_id}",
+        )
+    )
+    assert identities["opaque_lineage_id"] != public_lineage_guess
+    assert identities["opaque_source_version_id"] != public_version_guess
+
+    receipts.conflict_next = True
+    quarantined = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="conflict.txt", mime="text/plain", content=b"conflicting receipt"
+        ),
+    )
+    assert meter.drain_once().measurements_parked == 1
+    with database_engine.connect() as connection:
+        state = connection.execute(
+            text(
+                "SELECT delivery_state FROM managed_ingest_measurements "
+                "WHERE version_id = :version_id"
+            ),
+            {"version_id": quarantined.version_id},
         ).scalar_one()
-    assert leaked == 0
+    assert state == "quarantined"
+    assert meter.drain_once().measurements_parked == 0

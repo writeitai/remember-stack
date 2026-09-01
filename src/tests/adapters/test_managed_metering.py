@@ -6,13 +6,16 @@ from uuid import UUID
 
 import httpx
 from pydantic import SecretStr
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.adapters.selfhost.managed_metering import ControlPlaneMeterReceipts
 from rememberstack.model import DocTextQuantity
 from rememberstack.model import ManagedDocumentVersionOutcomeV2
 from rememberstack.model import ManagedIngestMeasurementV2
+from rememberstack.model import MeterAdmissionResult
 from rememberstack.model import MeterReceiptConflict
+from rememberstack.model import MeterReceiptUnauthorized
 from rememberstack.model import MeterReceiptUnavailable
 
 _ORG = UUID("10000000-0000-0000-0000-000000000001")
@@ -103,3 +106,26 @@ def test_changed_identity_conflict_is_not_treated_as_transient_approval() -> Non
     )
     with pytest.raises(MeterReceiptConflict):
         adapter.admit_measurement(measurement=_measurement())
+
+
+def test_rejected_credential_is_distinct_from_payload_conflict() -> None:
+    """401/403 can recover after fleet rotation and remain retryable auth errors."""
+    adapter = ControlPlaneMeterReceipts(
+        base_url="https://meter.invalid/v1/meter",
+        token=SecretStr("umc_mi_secret"),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(401, json={"detail": "unauthorized"})
+        ),
+    )
+    with pytest.raises(MeterReceiptUnauthorized):
+        adapter.admit_measurement(measurement=_measurement())
+
+
+def test_non_approved_decisions_cannot_smuggle_hold_ids() -> None:
+    """A malformed no-op/parked response cannot crash the SQL acceptance write."""
+    with pytest.raises(ValidationError):
+        MeterAdmissionResult(
+            decision="no_op",
+            processing_hold_id=UUID("50000000-0000-0000-0000-000000000001"),
+            storage_growth_hold_id=UUID("60000000-0000-0000-0000-000000000001"),
+        )
