@@ -26,6 +26,17 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 
+class DurabilityUnconfirmed(Exception):
+    """The bytes were written and renamed, but the rename is not yet durable.
+
+    Deliberately not a :class:`CredentialError`. Treating this as a failed write
+    is worse than reporting it: the file *is* on disk and naming the new
+    credential, so a caller that unwinds — by revoking what it just minted —
+    leaves the machine holding a credential it has itself destroyed. The honest
+    response is to continue and say the guarantee is weaker than intended.
+    """
+
+
 class CredentialError(ValueError):
     """The credential file cannot be read or written safely."""
 
@@ -177,7 +188,6 @@ def write_credentials(
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        _fsync_directory(directory)
     except BaseException:
         # BaseException, not Exception: a Ctrl-C between opening the temporary
         # file and renaming it would otherwise leave the bearer secret sitting
@@ -186,6 +196,11 @@ def write_credentials(
         if temporary.exists():
             temporary.unlink()
         raise
+    # After the replace, and outside the cleanup above, because by this point
+    # the new credential *is* the file. A durability failure here raises
+    # `DurabilityUnconfirmed`, which the caller reports rather than treating as
+    # a failed write — unwinding now would revoke a credential this file names.
+    _fsync_directory(directory)
     return path
 
 
@@ -202,16 +217,22 @@ def _fsync_directory(directory: Path) -> None:
     try:
         os.fsync(handle)
     except OSError as error:
-        # Some filesystems genuinely cannot fsync a directory and say so with a
-        # specific errno. That is a weaker guarantee, not a corruption, and
-        # failing the login over it would be worse than proceeding.
+        # Only the errnos that actually mean "this filesystem cannot fsync a
+        # directory" are tolerated. `EPERM` and `EBADF` were in this set and are
+        # not that: the first is a permission problem and the second is a bug,
+        # and swallowing either reported durability we did not have.
         #
-        # Anything else is a real IO failure and is raised: swallowing it would
-        # report success for a write that may not have landed, which is the
-        # opposite of what this function exists to promise.
-        unsupported = {errno.EINVAL, errno.ENOTSUP, errno.EPERM, errno.EBADF}
+        # ENOTSUP and EOPNOTSUPP are the same number on Linux and different on
+        # some BSDs, so both are named rather than assumed equal.
+        unsupported = {
+            errno.EINVAL,
+            errno.ENOTSUP,
+            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+        }
         if error.errno not in unsupported:
-            raise
+            raise DurabilityUnconfirmed(
+                f"the credential directory could not be synced ({error})"
+            ) from error
     finally:
         os.close(handle)
 
@@ -235,6 +256,30 @@ class PendingRevocation(BaseModel):
     token_host: str
     access_token: SecretStr
     token_id: UUID
+
+    @property
+    def identity(self) -> tuple[str, UUID]:
+        """What makes this entry the same credential as another.
+
+        The token id **and** the host that issued it. Ids are unique per issuer,
+        not globally: two token hosts — a staging control plane and production,
+        or a self-hosted one beside the managed one — can each mint a credential
+        with the same UUID. Comparing ids alone let a current credential from
+        one host silently cancel a pending revocation for the other, leaving
+        that one live forever.
+        """
+        return (self.token_host.strip().rstrip("/").lower(), self.token_id)
+
+
+#: The most credentials that may be awaiting revocation at once.
+#:
+#: Every one is retried under the credential lock on the next login or logout,
+#: so an unbounded journal is a denial of service against the next login: a
+#: thousand unreachable entries hold the lock for as long as they take to time
+#: out. Twenty is far more than a machine that logs in occasionally will ever
+#: accumulate, and a machine that has accumulated twenty has a problem a human
+#: needs to look at.
+MAX_PENDING_REVOCATIONS = 20
 
 
 class PendingRevocations(BaseModel):
@@ -271,8 +316,18 @@ def append_pending_revocation(
     outstanding credential is retried first.
     """
     existing = load_pending_revocations(settings=settings)
-    if any(entry.token_id == pending.token_id for entry in existing.entries):
+    if any(entry.identity == pending.identity for entry in existing.entries):
         return pending_revocation_path(settings=settings)
+    if len(existing.entries) >= MAX_PENDING_REVOCATIONS:
+        # An unbounded journal is a denial of service against the next login:
+        # every entry is retried under the lock, so a thousand unreachable ones
+        # hold it for as long as they take to time out. Past the cap the oldest
+        # entries stay — they are the ones most likely to be genuinely stranded
+        # — and the newest is dropped with a record in the raised error.
+        raise CredentialError(
+            f"{len(existing.entries)} credentials are already awaiting "
+            "revocation; revoke them in the console before logging in again"
+        )
     return _write_pending_revocations(
         journal=PendingRevocations(version=1, entries=(*existing.entries, pending)),
         settings=settings,
@@ -305,11 +360,11 @@ def _write_pending_revocations(
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        _fsync_directory(directory)
     except BaseException:
         if temporary.exists():
             temporary.unlink()
         raise
+    _fsync_directory(directory)
     return path
 
 
@@ -361,11 +416,15 @@ def load_pending_revocations(
 
 
 def drop_pending_revocation(
-    *, token_id: UUID, settings: TokenHostSettings | None = None
+    *, identity: tuple[str, UUID], settings: TokenHostSettings | None = None
 ) -> None:
-    """Forget one confirmed revocation, leaving the rest outstanding."""
+    """Forget one confirmed revocation, leaving the rest outstanding.
+
+    Keyed by :attr:`PendingRevocation.identity`, not by id: two hosts can mint
+    the same id, and dropping by id alone forgot the wrong credential.
+    """
     journal = load_pending_revocations(settings=settings)
-    remaining = tuple(entry for entry in journal.entries if entry.token_id != token_id)
+    remaining = tuple(entry for entry in journal.entries if entry.identity != identity)
     if len(remaining) == len(journal.entries):
         return
     if not remaining:
@@ -399,16 +458,40 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
     directory = credentials_dir(settings=settings)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
-    handle = os.open(directory / ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    lock_path = directory / ".lock"
+    handle = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
     locked = False
     try:
+        # A pre-existing lock file may have been created with a wider mode; it
+        # holds nothing secret, but leaving it group-writable would let another
+        # local account hold this lock and stall every login.
+        os.fchmod(handle, 0o600)
         try:
             import fcntl
-
+        except ImportError:
+            # A platform without flock cannot serialise, and refusing to log in
+            # there would be worse than the race: an unlocked login is what
+            # shipped before this existed.
+            yield
+            return
+        try:
             fcntl.flock(handle, fcntl.LOCK_EX)
             locked = True
-        except (ImportError, OSError):
-            locked = False
+        except OSError as error:
+            # A filesystem that does not implement locking is the one case
+            # worth continuing through. Anything else — a permission failure, a
+            # broken descriptor — is a real fault, and proceeding would quietly
+            # re-open the concurrent-login race the lock exists to close.
+            unsupported = {
+                errno.ENOLCK,
+                errno.ENOTSUP,
+                getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+                errno.EINVAL,
+            }
+            if error.errno not in unsupported:
+                raise CredentialError(
+                    f"the credential lock could not be taken ({error})"
+                ) from error
         yield
     finally:
         if locked:

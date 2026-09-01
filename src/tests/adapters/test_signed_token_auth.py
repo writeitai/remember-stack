@@ -480,3 +480,115 @@ def test_the_credential_kind_names_the_audit_actor() -> None:
     assert machine.actor_id == f"dpcred:{token_id}"
     assert browser.actor_id is not None
     assert browser.actor_id.startswith("browsercred:")
+
+
+def test_a_credential_without_a_scope_is_refused() -> None:
+    """A credential silent about its authority must not receive some by default.
+
+    Defaulting to `read` looked harmless and was not: it made "the issuer said
+    nothing" and "the issuer said read-only" the same thing, so a signing bug
+    that dropped the claim would produce working credentials nobody had decided
+    the authority of.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "aud": str(deployment),
+            "sub": "member-1",
+            "iat": now,
+            "nbf": now,
+            "exp": now + timedelta(minutes=5),
+            "jti": uuid4().hex,
+        },
+        private,
+        algorithm="EdDSA",
+        headers={"kid": "k1"},
+    )
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, token)
+
+
+def test_a_credential_without_nbf_is_refused() -> None:
+    """D59 lists `nbf` among the claims a credential carries."""
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "aud": str(deployment),
+            "sub": "member-1",
+            "scope": "read",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+            "jti": uuid4().hex,
+        },
+        private,
+        algorithm="EdDSA",
+        headers={"kid": "k1"},
+    )
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, token)
+
+
+def test_a_key_set_that_half_loads_is_refused() -> None:
+    """PyJWT skips members it cannot use; a rotation must not half apply.
+
+    One good key beside one malformed one loaded as a set of one, so the
+    deployment silently kept verifying with the outgoing key and rejected
+    everything signed by the incoming one — discovered later, by a caller
+    holding the half that was dropped.
+    """
+    _private, jwks = _keypair(kid="k1")
+    document = json.loads(jwks)
+    document["keys"].append({"kty": "OKP", "crv": "Ed25519", "kid": "k2"})
+
+    with pytest.raises(ValueError, match="usable"):
+        load_verification_keys(jwks=json.dumps(document))
+
+
+def test_a_key_declaring_the_wrong_operations_is_refused() -> None:
+    """`key_ops` is an array of strings, and a bare string must not pass.
+
+    `"verify" in "verify"` is true, so a malformed declaration would have been
+    read as permission it never gave.
+    """
+    _private, jwks = _keypair(kid="k1")
+    document = json.loads(jwks)
+    document["keys"][0]["key_ops"] = "verify"
+
+    with pytest.raises(ValueError, match="permit verification"):
+        load_verification_keys(jwks=json.dumps(document))
+
+    document["keys"][0]["key_ops"] = ["sign"]
+    with pytest.raises(ValueError, match="permit verification"):
+        load_verification_keys(jwks=json.dumps(document))
+
+
+def test_a_key_set_carrying_private_material_is_refused() -> None:
+    """A JWKS with `d` means the signing key was published to every deployment.
+
+    Nothing downstream would notice: it verifies perfectly. The deployment
+    would simply be able to mint the credentials it is supposed only to check,
+    which is the one property this whole arrangement exists to prevent.
+
+    A *valid* private JWK is used here on purpose — a malformed one is refused
+    by the parser before this check is reached, which proves nothing.
+    """
+    private, _jwks = _keypair(kid="k1")
+    private_jwk = json.loads(OKPAlgorithm.to_jwk(private))
+    private_jwk["kid"] = "k1"
+    private_jwk["alg"] = "EdDSA"
+    assert private_jwk.get("d"), "the fixture must actually carry the seed"
+
+    with pytest.raises(ValueError, match="private key material"):
+        load_verification_keys(jwks=json.dumps({"keys": [private_jwk]}))

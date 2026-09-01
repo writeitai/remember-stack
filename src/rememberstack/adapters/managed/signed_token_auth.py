@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from collections.abc import Sequence
+import json
 import logging
 from typing import Any
 from uuid import UUID
@@ -151,7 +152,7 @@ class SignedTokenAuth:
                     # perimeter has ever agreed to accept, and treating a
                     # missing claim as "unconstrained" is how audience checks
                     # quietly stop happening.
-                    "require": ["aud", "exp", "iat", "nbf", "jti", "sub"],
+                    "require": ["aud", "exp", "iat", "nbf", "jti", "sub", "scope"],
                     "verify_aud": True,
                     "verify_exp": True,
                     "verify_iat": True,
@@ -220,7 +221,11 @@ class SignedTokenAuth:
         if machine_actor and subject != f"{_MACHINE_ACTOR_PREFIX}{token_id}":
             raise SignedTokenUnusable("credential subject does not name itself")
 
-        raw_scope = claims.get("scope", PerimeterScope.READ.value)
+        # Required above, so this is present. Read rather than defaulted,
+        # because a default would mean a credential that says nothing about its
+        # authority silently receives some — and "some" is a decision the
+        # issuer should have to make explicitly.
+        raw_scope = claims["scope"]
         try:
             scope = PerimeterScope(raw_scope)
         except ValueError as error:
@@ -253,25 +258,45 @@ def load_verification_keys(*, jwks: str) -> dict[str, PyJWK]:
     discovered later by a caller holding the fourth.
     """
     try:
-        key_set = jwt.PyJWKSet.from_json(jwks)
+        document = json.loads(jwks)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"verification key set is not usable: {error}") from error
+    if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
+        raise ValueError("verification key set has no 'keys' array")
+    declared = document["keys"]
+    if not declared:
+        raise ValueError("verification key set is empty")
+
+    try:
+        key_set = jwt.PyJWKSet.from_dict(document)
     except Exception as error:  # noqa: BLE001 - PyJWT raises several types here
         raise ValueError(f"verification key set is not usable: {error}") from error
 
+    # PyJWT *skips* members it cannot use rather than failing, so a set of one
+    # good key and one malformed one loads as a set of one — which is a rotation
+    # that half works, discovered later by a caller holding the other half. The
+    # counts must agree.
+    if len(key_set.keys) != len(declared):
+        raise ValueError(
+            f"verification key set declares {len(declared)} keys but only "
+            f"{len(key_set.keys)} are usable"
+        )
+
     keys: dict[str, PyJWK] = {}
-    for key in key_set.keys:
+    for key, raw in zip(key_set.keys, declared, strict=True):
+        if not isinstance(raw, dict):
+            raise ValueError("every verification key must be an object")
         kid = key.key_id
         if not kid:
             raise ValueError("every verification key must carry a kid")
         if kid in keys:
             raise ValueError(f"verification key set repeats kid {kid!r}")
-        _assert_ed25519_public_key(key=key, kid=kid)
+        _assert_ed25519_public_key(raw=raw, kid=kid)
         keys[kid] = key
-    if not keys:
-        raise ValueError("verification key set is empty")
     return keys
 
 
-def _assert_ed25519_public_key(*, key: PyJWK, kid: str) -> None:
+def _assert_ed25519_public_key(*, raw: dict[str, Any], kid: str) -> None:
     """Refuse anything that is not an Ed25519 *public* verification key.
 
     D59 fixes the algorithm at EdDSA over Ed25519, and checking only the ``kid``
@@ -291,9 +316,6 @@ def _assert_ed25519_public_key(*, key: PyJWK, kid: str) -> None:
     A misdeclared key set fails at load, where a person is looking, rather than
     at the next request.
     """
-    raw = key._jwk_data if hasattr(key, "_jwk_data") else {}
-    if not isinstance(raw, dict):  # pragma: no cover - PyJWT always gives a dict
-        raise ValueError(f"verification key {kid!r} is unreadable")
     if raw.get("kty") != "OKP" or raw.get("crv") != "Ed25519":
         raise ValueError(
             f"verification key {kid!r} must be an Ed25519 (OKP) key; "
@@ -308,5 +330,10 @@ def _assert_ed25519_public_key(*, key: PyJWK, kid: str) -> None:
     if use is not None and use != "sig":
         raise ValueError(f"verification key {kid!r} is declared for {use!r}, not 'sig'")
     key_ops = raw.get("key_ops")
-    if key_ops is not None and "verify" not in key_ops:
-        raise ValueError(f"verification key {kid!r} does not permit verification")
+    if key_ops is not None:
+        # RFC 7517 says `key_ops` is an array of strings. A bare string, or an
+        # object, would pass a naive `"verify" in key_ops` — `"verify" in
+        # "verify"` is true, and so is membership in a dict with that key — so
+        # a malformed declaration would be read as permission it never gave.
+        if not isinstance(key_ops, list) or "verify" not in key_ops:
+            raise ValueError(f"verification key {kid!r} does not permit verification")

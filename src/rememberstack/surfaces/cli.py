@@ -736,30 +736,39 @@ def _discard_unadopted_credential(
 
     Mint-before-revoke means the control plane has already issued by the time
     persistence can fail. Leaving it would be the same leak the journal exists
-    to prevent, only from the other direction: a live credential with nothing
-    on this machine naming it.
+    to prevent, from the other direction: a live credential with nothing on
+    this machine naming it.
 
-    Best effort, and loud when it fails — the login is already failing, and the
-    caller's existing credential is intact.
+    **Journalled first, then revoked.** An earlier version revoked and only
+    warned when the server said no — so a network failure, or a Ctrl-C during
+    the call, escaped with the credential live and no record of it anywhere.
+    Writing the record first means every exit from here leaves either a revoked
+    credential or a retryable note about one.
     """
-    from rememberstack.surfaces.device_login import revoke_self
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import PendingRevocation
 
     try:
-        with httpx.Client(
-            base_url=token_host, timeout=30.0, follow_redirects=False
-        ) as client:
-            status = revoke_self(
-                client=client, access_token=credential.access_token.get_secret_value()
+        append_pending_revocation(
+            pending=PendingRevocation(
+                version=1,
+                token_host=token_host,
+                access_token=credential.access_token,
+                token_id=credential.token_id,
             )
-    except httpx.HTTPError:
-        status = 0
-    if not _revoke_confirmed(status=status):
+        )
+    except (CredentialError, OSError) as error:
+        # Nothing further can be done: the record cannot be written and the
+        # credential is live. Say exactly that, with the id, so a human can act.
         print(
-            "warning: a credential was minted but could not be stored or "
-            f"withdrawn (token_id {credential.token_id}); revoke it in the "
-            "console",
+            "warning: a credential was minted but could neither be stored nor "
+            f"recorded (token_id {credential.token_id}: {error}); revoke it in "
+            "the console",
             file=sys.stderr,
         )
+        return
+    _retry_pending_revocation()
 
 
 def _retry_pending_revocation() -> None:
@@ -810,7 +819,7 @@ def _retry_pending_revocation() -> None:
             # leaves both naming the same credential. Revoking it here would
             # destroy the only credential on this machine — so the entry is
             # dropped instead: what it describes never happened.
-            drop_pending_revocation(token_id=pending.token_id)
+            drop_pending_revocation(identity=pending.identity)
             continue
         try:
             host = normalize_token_host(token_host=pending.token_host)
@@ -833,7 +842,7 @@ def _retry_pending_revocation() -> None:
         except httpx.HTTPError:
             status = 0
         if _revoke_confirmed(status=status):
-            drop_pending_revocation(token_id=pending.token_id)
+            drop_pending_revocation(identity=pending.identity)
             continue
         print(
             "warning: a superseded credential is still live and could not be "
