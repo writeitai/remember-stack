@@ -150,11 +150,13 @@ Current public release: [`v0.13.0`](https://github.com/writeitai/remember-stack/
   The resolver generation moves to `resolver-2026.08g`, so evaluation curves
   measured under `08f` are not comparable and a fresh run is required.
 
-## What landed after v0.12.0 (in v0.13.0)
+## What landed after v0.13.0 (in v0.14.0)
 
 - **`remember login` works again.** It has failed since 2026-08-25 with a
   validation error: the managed token host began returning two fields the
-  client's response model refused. That model now ignores fields it does not
+  client's response model refused. **0.13.0 does not contain this fix** — it
+  was released from `main` while the change was still on its branch, so an
+  0.13.0 install is as broken as an 0.12.0 one. That model now ignores fields it does not
   know, the way a client of a separately deployed service has to
   ([#351](https://github.com/writeitai/remember-stack/pull/351)).
 - **Login mints before it revokes.** Replacing a credential no longer starts by

@@ -314,9 +314,15 @@ def request_same_origin(
     ``max_redirects`` narrows the budget for a caller that pays for each hop.
     The token poll does, because signals are deferred across the whole call:
     every redirect it follows is another timeout a user's Ctrl-C waits behind.
+
+    It counts **redirects, not sends** — one redirect means two requests — so a
+    budget of 1 follows a redirect rather than refusing it. The loop below
+    bounds sends, and the two differ by exactly the original request; conflating
+    them made a budget of 1 reject the first redirect it saw.
     """
+    budget = max_redirects if max_redirects is not None else _MAX_REDIRECTS - 1
     current = client.build_request(method, url, **kwargs)  # type: ignore[arg-type]
-    for _ in range(max_redirects if max_redirects is not None else _MAX_REDIRECTS):
+    for _ in range(budget + 1):
         response = client.send(current)
         if response.is_redirect:
             location = response.headers.get("location")

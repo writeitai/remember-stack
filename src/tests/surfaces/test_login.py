@@ -1541,3 +1541,53 @@ def test_the_poll_follows_fewer_redirects_than_the_shared_default() -> None:
     from rememberstack.surfaces.device_login import _POLL_MAX_REDIRECTS
 
     assert _POLL_MAX_REDIRECTS < _MAX_REDIRECTS
+
+
+def test_the_poll_follows_one_redirect_rather_than_refusing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget counts redirects, not sends — they differ by the first request.
+
+    Conflating them made a budget of 1 reject the first redirect it saw, which
+    is the opposite of following one.
+    """
+    from rememberstack.surfaces.device_login import request_same_origin
+
+    sends: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sends.append(str(request.url))
+        if len(sends) == 1:
+            return httpx.Response(
+                307, headers={"location": f"{_TOKEN_HOST}/v1/device/token/moved"}
+            )
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(base_url=_TOKEN_HOST, transport=transport) as client:
+        response = request_same_origin(
+            client=client, method="POST", url="/v1/device/token", max_redirects=1
+        )
+
+    assert response.status_code == 200
+    assert len(sends) == 2, "one redirect is two requests"
+
+
+def test_a_redirect_budget_of_zero_refuses_the_first_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """And zero really means none, so the boundary is not off by one."""
+    from rememberstack.surfaces.device_login import DeviceGrantError
+    from rememberstack.surfaces.device_login import request_same_origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            307, headers={"location": f"{_TOKEN_HOST}/v1/device/token/moved"}
+        )
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(base_url=_TOKEN_HOST, transport=transport) as client:
+        with pytest.raises(DeviceGrantError):
+            request_same_origin(
+                client=client, method="POST", url="/v1/device/token", max_redirects=0
+            )
