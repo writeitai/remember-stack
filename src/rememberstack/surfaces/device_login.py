@@ -7,6 +7,7 @@ The token host contract is JSON, not RFC 8628 form-encoding. Only the
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 import time
 from typing import Literal
 from uuid import UUID
@@ -50,9 +51,26 @@ class DeviceAuthorizeResponse(BaseModel):
 
 
 class DeviceTokenSuccess(BaseModel):
-    """Successful token poll body."""
+    """Successful token poll body.
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    ``extra="ignore"``, not ``forbid``, and the difference is a bug we shipped.
+    This model describes a response written by a *separately deployed* control
+    plane, and that control plane added ``data_plane_hostname`` and
+    ``data_plane_hostname_live`` on 2026-08-25. Every ``remember login`` against
+    it has failed since with a validation error, because forbidding unknown
+    fields turns any additive server change into a client outage.
+
+    Forbidding extras is right for something we own both ends of. For a response
+    crossing a deployment boundary it inverts the compatibility we want: the
+    server may add, and the client must carry on. Fields this client actually
+    needs are declared and validated; anything else is the server's business.
+
+    Known-but-unused fields are declared explicitly rather than swallowed, so a
+    reader can see what the server sends and a future change to use one does not
+    have to rediscover it.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     access_token: SecretStr
     token_type: Literal["Bearer"]
@@ -61,6 +79,15 @@ class DeviceTokenSuccess(BaseModel):
     deployment_id: UUID
     label: str
     token_prefix: str
+    #: Where this deployment answers, and whether that name resolves yet (D33).
+    #: Advertised by the control plane; the CLI stores it so a caller does not
+    #: have to be told the host separately.
+    data_plane_hostname: str | None = None
+    data_plane_hostname_live: bool = False
+    #: When the credential stops working (D60). Absent for the unexpiring
+    #: tokens minted before that decision, which is why it is optional rather
+    #: than required — a client that demanded it would refuse today's tokens.
+    expires_at: datetime | None = None
 
 
 class DeviceTokenErrorBody(BaseModel):

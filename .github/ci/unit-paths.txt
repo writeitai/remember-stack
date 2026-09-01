@@ -57,6 +57,7 @@ src/tests/spine/test_rank_embed_cache.py
 src/tests/surfaces/test_assured_operation_authorities.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py
+src/tests/surfaces/test_device_login_contract.py
 src/tests/surfaces/test_forget_admission.py
 src/tests/surfaces/test_graph_http_api.py
 src/tests/surfaces/test_login.py

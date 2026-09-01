@@ -61,6 +61,30 @@ _ACCEPTED_ALGORITHMS = ("EdDSA",)
 #: genuinely valid credential is both alarming and hard to diagnose.
 _CLOCK_LEEWAY_SECONDS = 30
 
+#: Subject values that name a credential rather than a person. The control
+#: plane issues machine credentials with these markers (D53, D60).
+_MACHINE_ACTOR_PREFIXES = ("dpcred:", "cpcred:")
+
+#: Credential prefixes the control plane puts in front of signed material so it
+#: can route a presented secret to the right verifier. They are not part of the
+#: JWT and must come off before parsing — a prefixed token is not valid JWS.
+_CREDENTIAL_PREFIXES = ("umc_dp_", "umc_cp_")
+
+
+def _strip_credential_prefix(*, presented: str) -> str:
+    """Remove a known credential prefix, if one is present.
+
+    The control plane keeps ``umc_dp_``/``umc_cp_`` in front of signed material
+    so that *it* can tell credential kinds apart before verifying. A JWT parser
+    cannot: ``umc_dp_eyJ…`` is not valid JWS. Only exact known prefixes are
+    stripped, so this cannot be used to smuggle arbitrary leading bytes past the
+    parser.
+    """
+    for prefix in _CREDENTIAL_PREFIXES:
+        if presented.startswith(prefix):
+            return presented[len(prefix) :]
+    return presented
+
 
 class SignedTokenUnusable(Exception):
     """This adapter cannot serve the presented credential.
@@ -108,7 +132,8 @@ class SignedTokenAuth:
         if credential.scheme.lower() != "bearer":
             raise SignedTokenUnusable("unsupported credential scheme")
 
-        token = credential.value.get_secret_value().decode("utf-8", errors="strict")
+        presented = credential.value.get_secret_value().decode("utf-8", errors="strict")
+        token = _strip_credential_prefix(presented=presented)
         key = self._select_key(token=token)
 
         try:
@@ -164,6 +189,14 @@ class SignedTokenAuth:
         if not isinstance(subject, str) or not subject:
             raise SignedTokenUnusable("credential names no subject")
 
+        # A subject naming a credential is not a person. The control plane marks
+        # machine credentials with a `dpcred:`/`cpcred:` actor prefix, and an
+        # audit that recorded one in the human field would be attributing a read
+        # to something that cannot be accountable for it.
+        machine_actor = any(
+            subject.startswith(marker) for marker in _MACHINE_ACTOR_PREFIXES
+        )
+
         raw_scope = claims.get("scope", PerimeterScope.READ.value)
         try:
             scope = PerimeterScope(raw_scope)
@@ -176,7 +209,8 @@ class SignedTokenAuth:
         return AuthenticatedContext(
             deployment_id=self._deployment_id,
             principal="signed-bearer",
-            subject=subject,
+            subject=None if machine_actor else subject,
+            credential_id=token_id,
             scope=scope,
         )
 

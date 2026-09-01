@@ -271,3 +271,80 @@ def test_a_key_set_without_kids_is_rejected_at_load() -> None:
 
     with pytest.raises(ValueError, match="kid"):
         load_verification_keys(jwks=json.dumps({"keys": [jwk]}))
+
+
+def test_a_routing_prefixed_credential_is_accepted() -> None:
+    """The control plane keeps `umc_dp_` in front of signed material.
+
+    It needs the prefix to pick a verifier before parsing; a JWT parser cannot
+    read it, because `umc_dp_eyJ…` is not valid JWS. Without stripping, every
+    signed deployment token would be refused here — which the design asserted
+    was fine, wrongly, until a review checked it.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(private=private, kid="k1", audience=str(deployment), scope="write")
+
+    context = _present(auth, f"umc_dp_{token}")
+
+    assert context.scope is PerimeterScope.WRITE
+    assert context.deployment_id == deployment
+
+
+def test_only_known_prefixes_are_stripped() -> None:
+    """Stripping arbitrary leading bytes would be a parser bypass."""
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token = _token(private=private, kid="k1", audience=str(deployment))
+
+    with pytest.raises(SignedTokenUnusable):
+        _present(auth, f"anything_{token}")
+
+
+def test_a_machine_credential_names_no_person() -> None:
+    """`dpcred:` in the subject is a credential id, not somebody accountable.
+
+    Recording it as the human subject would let an audit attribute a memory read
+    to something that cannot answer for it.
+    """
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+    token_id = uuid4().hex
+    token = _token(
+        private=private,
+        kid="k1",
+        audience=str(deployment),
+        subject=f"dpcred:{token_id}",
+        scope="write",
+        jti=token_id,
+    )
+
+    context = _present(auth, f"umc_dp_{token}")
+
+    assert context.subject is None
+    assert context.credential_id == token_id
+
+
+def test_a_browser_credential_still_names_its_person() -> None:
+    """The distinction must not erase attribution where it exists."""
+    deployment = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    )
+
+    context = _present(
+        auth, _token(private=private, kid="k1", audience=str(deployment))
+    )
+
+    assert context.subject == "member-1"
+    assert context.credential_id is not None

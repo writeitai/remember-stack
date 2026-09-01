@@ -57,7 +57,19 @@ class AuthenticatedContext(BaseModel):
     deployment_id: UUID
     principal: Annotated[str, Field(min_length=1)]
     #: The delegating human, when the credential names one.
+    #:
+    #: A browser credential names a person. A deployment token does not — it is
+    #: an organisation-wide machine credential, and treating its subject as a
+    #: human would put a credential id where an audit expects someone
+    #: accountable. So this stays ``None`` for machine credentials, and
+    #: :attr:`credential_id` carries what they do name.
     subject: str | None = None
+    #: The credential itself, when it names one (a JWT's ``jti``).
+    #:
+    #: Separate from ``subject`` because they answer different questions: which
+    #: credential acted, and on whose behalf. A machine credential answers only
+    #: the first; a browser credential answers both.
+    credential_id: str | None = None
     #: Full authority unless the credential says otherwise. A credential that
     #: predates scopes — the self-host shared secret — is unrestricted, which
     #: is what it has always been.
