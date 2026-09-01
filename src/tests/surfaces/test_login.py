@@ -1176,3 +1176,39 @@ def test_only_one_trailing_dot_is_the_dns_root() -> None:
     assert credential_origin(token_host="https://example.com..") != credential_origin(
         token_host="https://example.com"
     )
+
+
+def test_an_unconfirmed_write_keeps_the_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rename that may not have landed must not discard the only record.
+
+    The file is written and names the new credential, so unwinding would revoke
+    something the machine is using — but a power loss could still restore the
+    old file while the credential stays live at the token host. Keeping the
+    entry lets the next command resolve it after reading the file back, which
+    is proof the write survived.
+    """
+    from rememberstack.surfaces import credentials as credentials_module
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import write_credentials as real_write
+
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    def unconfirmed(**kwargs: object) -> object:
+        real_write(**kwargs)  # type: ignore[arg-type]
+        raise DurabilityUnconfirmed("the directory could not be synced")
+
+    monkeypatch.setattr(credentials_module, "write_credentials", unconfirmed)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    assert "could not be synced" in capsys.readouterr().err
+
+    outstanding = {entry.token_id for entry in load_pending_revocations().entries}
+    assert _NEW_TOKEN_ID in outstanding, "the record must outlive an unsure write"
+    # The credential is usable, and a later command resolves the record by
+    # reading the file back.
+    assert load_credentials() is not None

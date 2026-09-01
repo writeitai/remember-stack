@@ -757,6 +757,7 @@ def _login_locked(args: argparse.Namespace) -> int:
                             token_id=existing.token_id,
                         )
                     )
+                durable = True
                 try:
                     write_credentials(credential=credential)
                 except DurabilityUnconfirmed as error:
@@ -764,9 +765,19 @@ def _login_locked(args: argparse.Namespace) -> int:
                     # the rename's durability is unconfirmed. Unwinding here
                     # would revoke a credential this machine is now using.
                     print(f"warning: {error}", file=sys.stderr)
-                drop_pending_revocation(
-                    identity=(credential_origin(token_host=token_host), token.token_id)
-                )
+                    durable = False
+                if durable:
+                    # Dropped only when the rename is known to have landed. If
+                    # durability was unconfirmed, the file may not survive a
+                    # power loss while the credential stays live at the token
+                    # host — so the record stays, and the next command drops it
+                    # after reading the file back, which is proof it survived.
+                    drop_pending_revocation(
+                        identity=(
+                            credential_origin(token_host=token_host),
+                            token.token_id,
+                        )
+                    )
             except BaseException:
                 # The journal entry stays: whatever went wrong, the credential
                 # exists at the token host and the next login or logout will
@@ -894,6 +905,11 @@ def _retry_pending_revocation() -> None:
             # leaves both naming the same credential. Revoking it here would
             # destroy the only credential on this machine — so the entry is
             # dropped instead: what it describes never happened.
+            #
+            # Dropping is safe here in a way it is not during login: `current`
+            # was *read back from disk* a moment ago, so the write it describes
+            # demonstrably survived. A login that could not confirm its own
+            # rename leaves the entry for exactly this check to resolve.
             drop_pending_revocation(identity=pending.identity)
             continue
         try:
