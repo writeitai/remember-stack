@@ -423,12 +423,21 @@ def test_logout_without_file_is_success(
     assert cli_main(["logout"]) == 0
 
 
+#: The credential a fresh login receives, distinct from the one it replaces.
+#:
+#: They must differ: recovery refuses to revoke an entry naming the credential
+#: currently on disk, because a crash between writing the journal and writing
+#: the replacement leaves both naming the same token — and revoking there would
+#: destroy the only credential the machine has.
+_NEW_TOKEN_ID = UUID("11111111-2222-3333-4444-555555555555")
+
+
 def _token_body(**overrides: object) -> dict[str, object]:
     """The device-token success body the control plane actually returns."""
     body: dict[str, object] = {
-        "access_token": _ACCESS,
+        "access_token": f"{_ACCESS}-new",
         "token_type": "Bearer",
-        "token_id": str(_TOKEN_ID),
+        "token_id": str(_NEW_TOKEN_ID),
         "org_id": str(_ORG_ID),
         "deployment_id": str(_DEPLOYMENT_ID),
         "label": "cli",
@@ -596,7 +605,7 @@ def test_a_crash_between_write_and_revoke_leaves_a_retryable_record(
     destroys the only copy of the old secret. Without a journal, a crash there
     strands a working credential nobody can name any more.
     """
-    from rememberstack.surfaces.credentials import load_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
 
     _isolate_config(monkeypatch, tmp_path)
     write_credentials(credential=_stored(token_prefix="old-prefix"))
@@ -624,10 +633,10 @@ def test_a_crash_between_write_and_revoke_leaves_a_retryable_record(
     assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
     assert "still live" in capsys.readouterr().err
 
-    pending = load_pending_revocation()
-    assert pending is not None
-    assert pending.token_id == _TOKEN_ID
-    assert pending.access_token.get_secret_value() == _ACCESS
+    journal = load_pending_revocations()
+    assert len(journal.entries) == 1
+    assert journal.entries[0].token_id == _TOKEN_ID
+    assert journal.entries[0].access_token.get_secret_value() == _ACCESS
 
 
 def test_a_404_does_not_count_as_a_revoke(
@@ -640,10 +649,10 @@ def test_a_404_does_not_count_as_a_revoke(
     we wanted by another name.
     """
     from rememberstack.surfaces.cli import _retry_pending_revocation
-    from rememberstack.surfaces.credentials import clear_pending_revocation
-    from rememberstack.surfaces.credentials import load_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import clear_pending_revocations
+    from rememberstack.surfaces.credentials import load_pending_revocations
     from rememberstack.surfaces.credentials import PendingRevocation
-    from rememberstack.surfaces.credentials import write_pending_revocation
 
     _isolate_config(monkeypatch, tmp_path)
     status = {"code": 404}
@@ -658,22 +667,184 @@ def test_a_404_does_not_count_as_a_revoke(
         access_token=SecretStr(_ACCESS),
         token_id=_TOKEN_ID,
     )
-    write_pending_revocation(pending=entry)
+    append_pending_revocation(pending=entry)
     _retry_pending_revocation()
-    assert load_pending_revocation() is not None
+    assert load_pending_revocations().entries
 
     status["code"] = 401
     _retry_pending_revocation()
-    assert load_pending_revocation() is None
+    assert not load_pending_revocations().entries
 
-    write_pending_revocation(pending=entry)
+    append_pending_revocation(pending=entry)
     status["code"] = 200
     _retry_pending_revocation()
-    assert load_pending_revocation() is None
-    clear_pending_revocation()
+    assert not load_pending_revocations().entries
+    clear_pending_revocations()
 
 
 def test_a_naive_expiry_is_refused_rather_than_assumed_utc() -> None:
     """An absolute instant with no offset is a bug, not a UTC timestamp."""
     with pytest.raises(ValueError):
         _stored(expires_at=datetime(2027, 1, 1, 12, 0))
+
+
+def test_recovery_never_revokes_the_credential_in_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A crash before the replacement lands leaves both naming one token.
+
+    The journal is written first, so an interruption before `write_credentials`
+    leaves the journal and the credential file pointing at the same credential.
+    Revoking it would destroy the only credential this machine has — so the
+    entry is dropped instead: what it describes never happened.
+    """
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored())
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(204)
+
+    _mock_client(monkeypatch, handler)
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=_TOKEN_HOST,
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+
+    _retry_pending_revocation()
+
+    assert calls == []
+    assert not load_pending_revocations().entries
+    assert load_credentials() is not None
+
+
+def test_a_second_login_does_not_forget_an_unresolved_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two credentials may be outstanding, and both must be retried.
+
+    An earlier journal held one entry and was overwritten wholesale, so a login
+    that followed an unreachable one forgot the first credential permanently.
+    """
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    first = UUID("99999999-9999-9999-9999-999999999999")
+    for token_id in (first, _TOKEN_ID):
+        append_pending_revocation(
+            pending=PendingRevocation(
+                version=1,
+                token_host=_TOKEN_HOST,
+                access_token=SecretStr(_ACCESS),
+                token_id=token_id,
+            )
+        )
+
+    entries = load_pending_revocations().entries
+
+    assert [entry.token_id for entry in entries] == [first, _TOKEN_ID]
+
+
+def test_an_unreadable_journal_is_kept_not_discarded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It names credentials that may still be live; deleting it loses them."""
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import pending_revocation_path
+
+    root = _isolate_config(monkeypatch, tmp_path)
+    path = pending_revocation_path()
+    path.write_text("{ not json", encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(CredentialError):
+        load_pending_revocations()
+
+    assert path.exists()
+    assert root.exists()
+
+
+def test_a_world_readable_journal_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It holds a bearer secret, so it gets the credential file's protections."""
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import pending_revocation_path
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=_TOKEN_HOST,
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+    pending_revocation_path().chmod(0o644)
+
+    with pytest.raises(CredentialError, match="readable by others"):
+        load_pending_revocations()
+
+
+def test_an_unusable_token_host_does_not_stop_the_other_entries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One bad entry must not block recovery of the rest."""
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    broken = UUID("88888888-8888-8888-8888-888888888888")
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=":::",
+            access_token=SecretStr(_ACCESS),
+            token_id=broken,
+        )
+    )
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=_TOKEN_HOST,
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+    _mock_client(monkeypatch, lambda request: httpx.Response(204))
+
+    _retry_pending_revocation()
+
+    remaining = [entry.token_id for entry in load_pending_revocations().entries]
+    assert remaining == [broken]
+    assert "unusable token host" in capsys.readouterr().err
+
+
+def test_logout_does_not_treat_404_as_a_revoke(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """404 may mean the route is absent; unlinking discards a live secret."""
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored())
+    _mock_client(monkeypatch, lambda request: httpx.Response(404))
+
+    assert cli_main(["logout", "--token-host", _TOKEN_HOST]) == 1
+    assert load_credentials() is not None

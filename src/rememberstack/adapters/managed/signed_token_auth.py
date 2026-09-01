@@ -151,7 +151,7 @@ class SignedTokenAuth:
                     # perimeter has ever agreed to accept, and treating a
                     # missing claim as "unconstrained" is how audience checks
                     # quietly stop happening.
-                    "require": ["aud", "exp", "iat", "jti", "sub"],
+                    "require": ["aud", "exp", "iat", "nbf", "jti", "sub"],
                     "verify_aud": True,
                     "verify_exp": True,
                     "verify_iat": True,
@@ -264,7 +264,49 @@ def load_verification_keys(*, jwks: str) -> dict[str, PyJWK]:
             raise ValueError("every verification key must carry a kid")
         if kid in keys:
             raise ValueError(f"verification key set repeats kid {kid!r}")
+        _assert_ed25519_public_key(key=key, kid=kid)
         keys[kid] = key
     if not keys:
         raise ValueError("verification key set is empty")
     return keys
+
+
+def _assert_ed25519_public_key(*, key: PyJWK, kid: str) -> None:
+    """Refuse anything that is not an Ed25519 *public* verification key.
+
+    D59 fixes the algorithm at EdDSA over Ed25519, and checking only the ``kid``
+    let three wrong things through, each of which fails somewhere worse than
+    here:
+
+    - **another curve.** An Ed448 key is still ``EdDSA``, so it verifies happily
+      and the deployment is now trusting an algorithm nobody reviewed for this
+      perimeter.
+    - **private key material.** A JWKS carrying ``d`` means the *signing* key
+      was published to every deployment. Nothing downstream would notice; the
+      deployment would simply be able to mint the credentials it is supposed
+      only to check, which is the one property D59 was built to prevent.
+    - **a key marked for something else.** ``use: "enc"``, or ``key_ops``
+      without ``verify``, is a key its publisher said not to verify with.
+
+    A misdeclared key set fails at load, where a person is looking, rather than
+    at the next request.
+    """
+    raw = key._jwk_data if hasattr(key, "_jwk_data") else {}
+    if not isinstance(raw, dict):  # pragma: no cover - PyJWT always gives a dict
+        raise ValueError(f"verification key {kid!r} is unreadable")
+    if raw.get("kty") != "OKP" or raw.get("crv") != "Ed25519":
+        raise ValueError(
+            f"verification key {kid!r} must be an Ed25519 (OKP) key; "
+            f"got kty={raw.get('kty')!r} crv={raw.get('crv')!r}"
+        )
+    if raw.get("d"):
+        raise ValueError(
+            f"verification key {kid!r} carries private key material; a key set "
+            "published to deployments must contain public keys only"
+        )
+    use = raw.get("use")
+    if use is not None and use != "sig":
+        raise ValueError(f"verification key {kid!r} is declared for {use!r}, not 'sig'")
+    key_ops = raw.get("key_ops")
+    if key_ops is not None and "verify" not in key_ops:
+        raise ValueError(f"verification key {kid!r} does not permit verification")

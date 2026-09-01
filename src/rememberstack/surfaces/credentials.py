@@ -201,17 +201,23 @@ def _fsync_directory(directory: Path) -> None:
     handle = os.open(directory, getattr(os, "O_DIRECTORY", os.O_RDONLY))
     try:
         os.fsync(handle)
-    except OSError:
-        # Some filesystems refuse to fsync a directory. Nothing is corrupted by
-        # that; the guarantee is simply weaker there, and failing the login
-        # over it would be worse than proceeding.
-        pass
+    except OSError as error:
+        # Some filesystems genuinely cannot fsync a directory and say so with a
+        # specific errno. That is a weaker guarantee, not a corruption, and
+        # failing the login over it would be worse than proceeding.
+        #
+        # Anything else is a real IO failure and is raised: swallowing it would
+        # report success for a write that may not have landed, which is the
+        # opposite of what this function exists to promise.
+        unsupported = {errno.EINVAL, errno.ENOTSUP, errno.EPERM, errno.EBADF}
+        if error.errno not in unsupported:
+            raise
     finally:
         os.close(handle)
 
 
 class PendingRevocation(BaseModel):
-    """A predecessor credential that has been replaced but not yet revoked.
+    """One credential that has been replaced but not yet revoked.
 
     ``remember login`` mints its replacement before retiring what it replaces
     (D60), which leaves a window: the new credential is on disk, the old one is
@@ -220,9 +226,7 @@ class PendingRevocation(BaseModel):
     working credential nobody can name any more.
 
     So the old credential is written here *first*, and cleared only once the
-    control plane has confirmed the revoke. The next ``login`` or ``logout``
-    finishes the job; other commands say it is outstanding rather than making
-    network calls the user did not ask for.
+    control plane has confirmed the revoke.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
@@ -233,15 +237,52 @@ class PendingRevocation(BaseModel):
     token_id: UUID
 
 
+class PendingRevocations(BaseModel):
+    """Every credential still awaiting revocation, oldest first.
+
+    A **list**, not a single entry, because a login that cannot reach the token
+    host leaves an entry behind and the next login would otherwise overwrite it
+    — forgetting a live credential permanently, which is exactly the failure
+    the journal exists to prevent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    version: Literal[1]
+    entries: tuple[PendingRevocation, ...] = ()
+
+
 def pending_revocation_path(*, settings: TokenHostSettings | None = None) -> Path:
     """Return the journal path beside the credential file."""
     return credentials_dir(settings=settings) / "pending-revocation.json"
 
 
-def write_pending_revocation(
+def append_pending_revocation(
     *, pending: PendingRevocation, settings: TokenHostSettings | None = None
 ) -> Path:
-    """Record a credential that must still be revoked. Owner-only, like the file."""
+    """Add a credential to the outstanding set, keeping what is already there.
+
+    Appending rather than replacing is the whole point: a previous login that
+    could not reach its token host left an entry, and overwriting it would
+    forget a live credential for good.
+
+    An entry already present for the same token id is not duplicated — a retry
+    should not grow the file — and the ordering is preserved so the oldest
+    outstanding credential is retried first.
+    """
+    existing = load_pending_revocations(settings=settings)
+    if any(entry.token_id == pending.token_id for entry in existing.entries):
+        return pending_revocation_path(settings=settings)
+    return _write_pending_revocations(
+        journal=PendingRevocations(version=1, entries=(*existing.entries, pending)),
+        settings=settings,
+    )
+
+
+def _write_pending_revocations(
+    *, journal: PendingRevocations, settings: TokenHostSettings | None = None
+) -> Path:
+    """Replace the journal atomically, owner-only from the first byte."""
     directory = credentials_dir(settings=settings)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
@@ -249,8 +290,13 @@ def write_pending_revocation(
     if path.exists() and path.is_symlink():
         raise CredentialError("pending-revocation path is a symlink")
     temporary = directory / f".pending-revocation.{uuid4().hex}.tmp"
-    dumped = pending.model_dump(mode="json")
-    dumped["access_token"] = pending.access_token.get_secret_value()
+    dumped = journal.model_dump(mode="json")
+    dumped["entries"] = [
+        {**entry.model_dump(mode="json"), "access_token": secret}
+        for entry, secret in (
+            (entry, entry.access_token.get_secret_value()) for entry in journal.entries
+        )
+    ]
     payload = json.dumps(dumped, separators=(",", ":"), sort_keys=True)
     handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -267,31 +313,71 @@ def write_pending_revocation(
     return path
 
 
-def load_pending_revocation(
+def load_pending_revocations(
     *, settings: TokenHostSettings | None = None
-) -> PendingRevocation | None:
-    """Read the journal, or None when nothing is outstanding.
+) -> PendingRevocations:
+    """Read the journal; an empty one when nothing is outstanding.
 
-    A journal that will not parse is removed rather than raised: it exists only
-    to let a best-effort revoke be retried, and a corrupt one must not wedge
-    every subsequent login.
+    Read with the same care as the credential file, because it holds the same
+    kind of secret: ``O_NOFOLLOW`` so a symlink cannot redirect the read, and a
+    refusal if the mode has been widened past the owner.
+
+    A journal that will not parse **is not deleted**. It is the only record that
+    a live credential needs retiring, and silently removing it destroys the
+    evidence that something went wrong — so it raises, and a human decides.
     """
     path = pending_revocation_path(settings=settings)
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
     try:
-        raw = path.read_text(encoding="utf-8")
+        handle = os.open(path, flags)
     except FileNotFoundError:
-        return None
+        return PendingRevocations(version=1)
     except OSError as error:
+        if error.errno in {errno.ELOOP, getattr(errno, "EMLINK", errno.ELOOP)}:
+            raise CredentialError("pending-revocation path is a symlink") from error
+        if error.errno == errno.ENOENT:
+            return PendingRevocations(version=1)
         raise CredentialError("pending-revocation file is unreadable") from error
     try:
-        return PendingRevocation.model_validate_json(raw)
-    except Exception:
-        clear_pending_revocation(settings=settings)
-        return None
+        mode = stat.S_IMODE(os.fstat(handle).st_mode)
+        if mode & (stat.S_IROTH | stat.S_IRGRP):
+            raise CredentialError("pending-revocation file is readable by others")
+        with os.fdopen(handle, "r", encoding="utf-8") as stream:
+            handle = -1
+            raw = stream.read()
+    finally:
+        if handle >= 0:
+            os.close(handle)
+    try:
+        return PendingRevocations.model_validate_json(raw)
+    except Exception as error:
+        raise CredentialError(
+            "pending-revocation file is unreadable; it names credentials that "
+            "may still be live, so it is kept rather than discarded"
+        ) from error
 
 
-def clear_pending_revocation(*, settings: TokenHostSettings | None = None) -> None:
-    """Forget the outstanding revocation. Missing is success."""
+def drop_pending_revocation(
+    *, token_id: UUID, settings: TokenHostSettings | None = None
+) -> None:
+    """Forget one confirmed revocation, leaving the rest outstanding."""
+    journal = load_pending_revocations(settings=settings)
+    remaining = tuple(entry for entry in journal.entries if entry.token_id != token_id)
+    if len(remaining) == len(journal.entries):
+        return
+    if not remaining:
+        clear_pending_revocations(settings=settings)
+        return
+    _write_pending_revocations(
+        journal=PendingRevocations(version=1, entries=remaining), settings=settings
+    )
+
+
+def clear_pending_revocations(*, settings: TokenHostSettings | None = None) -> None:
+    """Forget every outstanding revocation. Missing is success."""
     path = pending_revocation_path(settings=settings)
     if path.exists():
         path.unlink()
