@@ -1134,3 +1134,45 @@ def test_the_mint_is_recorded_before_the_caller_can_see_it(
 
     assert seen == [token], "the callback runs before the value is returned"
     assert not load_pending_revocations().entries, "the callback is the caller's"
+
+
+def test_a_record_that_cannot_be_written_gives_the_credential_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The callback is the last point that knows the secret.
+
+    An interrupt or an IO failure inside it used to escape with the mint
+    untracked, and nothing later could notice — the credential existed only at
+    the token host, named by nothing on this machine.
+    """
+    from rememberstack.surfaces import credentials as credentials_module
+
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise OSError("the disk is full")
+
+    monkeypatch.setattr(credentials_module, "append_pending_revocation", refuse)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 1
+
+    # It could not be recorded, so it was withdrawn instead.
+    assert "revoke" in calls
+
+
+def test_only_one_trailing_dot_is_the_dns_root() -> None:
+    """`example.com.` is the same host; `example.com..` is not one httpx accepts.
+
+    Merging them let recovery drop a pending revocation for a credential it had
+    not revoked.
+    """
+    from rememberstack.surfaces.credentials import credential_origin
+
+    assert credential_origin(token_host="https://example.com.") == credential_origin(
+        token_host="https://example.com"
+    )
+    assert credential_origin(token_host="https://example.com..") != credential_origin(
+        token_host="https://example.com"
+    )

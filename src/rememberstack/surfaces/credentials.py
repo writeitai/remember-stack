@@ -301,7 +301,11 @@ def _canonical_host(*, host: str) -> str:
     *compare* entries, and an entry naming a host we cannot parse still has to
     compare equal to itself.
     """
-    trimmed = host.rstrip(".")
+    # Exactly one, not `rstrip`: a single trailing dot is the DNS root and
+    # names the same host, but `example.com..` is not a host httpx accepts as
+    # the same one — and merging them let recovery drop a pending revocation
+    # for a credential it never revoked.
+    trimmed = host[:-1] if host.endswith(".") else host
     if not trimmed:
         return host
     try:
@@ -572,7 +576,15 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
         # A pre-existing lock file may have been created with a wider mode; it
         # holds nothing secret, but leaving it group-writable would let another
         # local account hold this lock and stall every login.
-        os.fchmod(handle, 0o600)
+        #
+        # Guarded because `os.fchmod` is Unix-only before Python 3.13, and this
+        # package supports 3.12: calling it unconditionally raised
+        # `AttributeError` on Windows *before* the lock was ever attempted, so
+        # the platform this fallback exists for could never reach it.
+        if hasattr(os, "fchmod"):
+            os.fchmod(handle, 0o600)
+        else:  # pragma: no cover - Windows
+            os.chmod(lock_path, 0o600)
         try:
             import fcntl
         except ImportError:

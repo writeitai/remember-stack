@@ -693,15 +693,33 @@ def _login_locked(args: argparse.Namespace) -> int:
 
                 The entry is removed once the credential is adopted, so the
                 journal describes only credentials that still need retiring.
+
+                **If the record cannot be written, the credential is given back
+                here rather than left live.** This is the last point at which
+                anything knows the secret and can act on it: an interrupt or an
+                IO failure inside this function used to escape with the mint
+                untracked, and there was no later opportunity to notice.
                 """
-                append_pending_revocation(
-                    pending=PendingRevocation(
-                        version=1,
-                        token_host=token_host,
-                        access_token=minted.access_token,  # type: ignore[attr-defined]
-                        token_id=minted.token_id,  # type: ignore[attr-defined]
+                secret = minted.access_token  # type: ignore[attr-defined]
+                token_id = minted.token_id  # type: ignore[attr-defined]
+                try:
+                    append_pending_revocation(
+                        pending=PendingRevocation(
+                            version=1,
+                            token_host=token_host,
+                            access_token=secret,
+                            token_id=token_id,
+                        )
                     )
-                )
+                except BaseException:
+                    if not _revoke_now(token_host=token_host, secret=secret):
+                        print(
+                            "warning: a credential was minted but could "
+                            f"neither be recorded nor withdrawn (token_id "
+                            f"{token_id}); revoke it in the console",
+                            file=sys.stderr,
+                        )
+                    raise
 
             token = poll_device_token(
                 client=client,
@@ -758,7 +776,10 @@ def _login_locked(args: argparse.Namespace) -> int:
     except DeviceGrantError as error:
         print(f"error: {error}", file=sys.stderr)
         return error.exit_code
-    except (httpx.HTTPError, CredentialError, ValueError):
+    except (httpx.HTTPError, CredentialError, ValueError, OSError):
+        # OSError included deliberately: a disk that cannot be written to
+        # during login is a failed login, not a crash. The credential has
+        # already been withdrawn or recorded by the time we get here.
         print("error: login failed", file=sys.stderr)
         return 1
     else:
@@ -774,54 +795,6 @@ def _login_locked(args: argparse.Namespace) -> int:
         if credential.expires_at is not None:
             print(f"expires_at: {credential.expires_at.isoformat()}")
         return 0
-
-
-def _discard_minted_credential(
-    *, token_host: str, token_id: UUID | None, secret: object
-) -> None:
-    """Hand back a credential this machine minted but could not adopt.
-
-    Mint-before-revoke means the control plane has already issued by the time
-    anything here can fail. Leaving it would be the same leak the journal
-    exists to prevent, from the other direction: a live credential with nothing
-    on this machine naming it.
-
-    **Journalled first, then revoked**, and journalled even when the credential
-    never became a `CredentialFile` — a response that failed to convert still
-    carried a working bearer, and withdrawing it directly lost it whenever that
-    call failed. Writing the record first means every exit from here leaves
-    either a revoked credential or a retryable note about one.
-    """
-    from rememberstack.surfaces.credentials import append_pending_revocation
-    from rememberstack.surfaces.credentials import PendingRevocation
-
-    if secret is None or token_id is None:
-        # Nothing identifiable to record or revoke. Only reachable if the token
-        # host answered 200 with a body missing its own identifiers, which the
-        # response model refuses — belt and braces, not a path.
-        return
-    try:
-        append_pending_revocation(
-            pending=PendingRevocation(
-                version=1,
-                token_host=token_host,
-                access_token=secret,  # type: ignore[arg-type]
-                token_id=token_id,
-            )
-        )
-    except BaseException as error:
-        # The record could not be written — but the credential is live, so the
-        # revoke is still worth attempting rather than skipping.
-        if _revoke_now(token_host=token_host, secret=secret):
-            return
-        print(
-            "warning: a credential was minted but could neither be stored nor "
-            f"recorded (token_id {token_id}: {error}); revoke it in the "
-            "console",
-            file=sys.stderr,
-        )
-        return
-    _retry_pending_revocation()
 
 
 def _revoke_now(*, token_host: str, secret: object) -> bool:
