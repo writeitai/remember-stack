@@ -867,9 +867,11 @@ def _retry_pending_revocation() -> None:
     gone; a 5xx; no response at all — confirms nothing, so the entry stays and
     is retried.
     """
+    from rememberstack.surfaces.credentials import confirm_credentials_durable
     from rememberstack.surfaces.credentials import credential_origin
     from rememberstack.surfaces.credentials import CredentialError
     from rememberstack.surfaces.credentials import drop_pending_revocation
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
     from rememberstack.surfaces.credentials import load_credentials
     from rememberstack.surfaces.credentials import load_pending_revocations
     from rememberstack.surfaces.device_login import normalize_token_host
@@ -906,10 +908,16 @@ def _retry_pending_revocation() -> None:
             # destroy the only credential on this machine — so the entry is
             # dropped instead: what it describes never happened.
             #
-            # Dropping is safe here in a way it is not during login: `current`
-            # was *read back from disk* a moment ago, so the write it describes
-            # demonstrably survived. A login that could not confirm its own
-            # rename leaves the entry for exactly this check to resolve.
+            # Reading `current` back proves the file is *visible*, which is
+            # not the same as its directory entry being on disk — a power loss
+            # can still lose the rename while every read here succeeds. So the
+            # sync is re-attempted, and only its success justifies forgetting
+            # the record. If it still cannot be confirmed the entry stays, and
+            # the next command tries again.
+            try:
+                confirm_credentials_durable()
+            except DurabilityUnconfirmed:
+                continue
             drop_pending_revocation(identity=pending.identity)
             continue
         try:

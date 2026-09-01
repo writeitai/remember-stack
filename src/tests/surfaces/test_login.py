@@ -1212,3 +1212,45 @@ def test_an_unconfirmed_write_keeps_the_record(
     # The credential is usable, and a later command resolves the record by
     # reading the file back.
     assert load_credentials() is not None
+
+
+def test_recovery_confirms_durability_before_forgetting_a_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reading the file back is visibility, not durability.
+
+    A power loss can lose a directory entry while every read in this process
+    succeeds, so "I can see it" is not proof the write survived. The sync is
+    re-attempted, and only its success justifies forgetting the record.
+    """
+    from rememberstack.surfaces import credentials as credentials_module
+    from rememberstack.surfaces.cli import _retry_pending_revocation
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.credentials import PendingRevocation
+
+    _isolate_config(monkeypatch, tmp_path)
+    write_credentials(credential=_stored())
+    _mock_client(monkeypatch, lambda request: httpx.Response(204))
+    append_pending_revocation(
+        pending=PendingRevocation(
+            version=1,
+            token_host=_TOKEN_HOST,
+            access_token=SecretStr(_ACCESS),
+            token_id=_TOKEN_ID,
+        )
+    )
+
+    def unconfirmed(**kwargs: object) -> None:
+        raise DurabilityUnconfirmed("the directory could not be synced")
+
+    monkeypatch.setattr(credentials_module, "confirm_credentials_durable", unconfirmed)
+    _retry_pending_revocation()
+    assert load_pending_revocations().entries, "an unconfirmed write keeps its record"
+
+    monkeypatch.setattr(
+        credentials_module, "confirm_credentials_durable", lambda **_kwargs: None
+    )
+    _retry_pending_revocation()
+    assert not load_pending_revocations().entries

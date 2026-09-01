@@ -640,6 +640,21 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
         os.close(handle)
 
 
+def confirm_credentials_durable(*, settings: TokenHostSettings | None = None) -> None:
+    """Re-attempt the directory sync a previous write could not confirm.
+
+    Reading the credential file back proves it is *visible*, which is not the
+    same as its directory entry being on disk: a power loss can still lose the
+    rename while every read in this process succeeds. So the question "did that
+    write survive?" cannot be answered by looking — only by syncing again and
+    seeing it work.
+
+    Raises :class:`DurabilityUnconfirmed` when it still cannot be confirmed, so
+    a caller deciding whether to forget its recovery record keeps it instead.
+    """
+    _fsync_directory(credentials_dir(settings=settings))
+
+
 def unlink_credentials(*, settings: TokenHostSettings | None = None) -> None:
     """Remove the credential file when present. Leaves a missing file alone."""
     path = credentials_path(settings=settings)
