@@ -20,6 +20,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import JsonValue
+from pydantic import SecretStr
 
 from rememberstack import __version__
 from rememberstack.model.adjudication import ReviewDecisionError
@@ -722,12 +723,33 @@ def _login_locked(args: argparse.Namespace) -> int:
                     _withdraw_or_warn(token_host=token_host, minted=minted)
                     raise
 
+            def orphaned(payload: object) -> None:
+                """Withdraw a credential that never became a usable one.
+
+                A ``200`` means the token host issued something, whatever
+                happened next — a body that would not parse, a validation
+                failure, an interrupt while recording. The raw body is the only
+                place its secret still exists, so this is the last chance to
+                give it back.
+                """
+                secret = (payload or {}).get("access_token")  # type: ignore[union-attr]
+                if not isinstance(secret, str) or not secret:
+                    return
+                if _revoke_now(token_host=token_host, secret=SecretStr(secret)):
+                    return
+                print(
+                    "warning: the token host issued a credential this login "
+                    "could not use or withdraw; revoke it in the console",
+                    file=sys.stderr,
+                )
+
             token = poll_device_token(
                 client=client,
                 device_code=granted.device_code.get_secret_value(),
                 interval=granted.interval,
                 expires_in=granted.expires_in,
                 on_minted=record,
+                on_orphan=orphaned,
             )
             # From here the control plane has issued, so the **whole**
             # adoption phase is guarded rather than each call in it: a Ctrl-C
@@ -759,19 +781,30 @@ def _login_locked(args: argparse.Namespace) -> int:
                     )
                 durable = True
                 try:
-                    write_credentials(credential=credential)
+                    # False means this filesystem cannot confirm the rename at
+                    # all. That is not durability, and treating it as such was
+                    # the same bug recovery had: it dropped the only record of
+                    # a live credential on the strength of nothing.
+                    durable = write_credentials(credential=credential)
+                    if not durable:
+                        print(
+                            "warning: this filesystem cannot confirm that the "
+                            "credential file's rename is durable; a crash "
+                            "could lose it while the credential stays live",
+                            file=sys.stderr,
+                        )
                 except DurabilityUnconfirmed as error:
                     # The file *is* written and names the new credential; only
                     # the rename's durability is unconfirmed. Unwinding here
                     # would revoke a credential this machine is now using.
                     print(f"warning: {error}", file=sys.stderr)
                     durable = False
-                if durable:
-                    # Dropped only when the rename is known to have landed. If
-                    # durability was unconfirmed, the file may not survive a
-                    # power loss while the credential stays live at the token
-                    # host — so the record stays, and the next command drops it
-                    # after reading the file back, which is proof it survived.
+                if durable is not False:
+                    # Dropped when the rename landed, and also when this
+                    # filesystem can never confirm one — holding the record
+                    # there would occupy a slot forever without ever resolving.
+                    # A real failure (`DurabilityUnconfirmed`) leaves it, and
+                    # the next command re-attempts the sync.
                     drop_pending_revocation(
                         identity=(
                             credential_origin(token_host=token_host),

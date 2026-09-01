@@ -1321,3 +1321,67 @@ def test_an_unsupported_directory_sync_is_not_reported_as_success(
     monkeypatch.setattr(os_module, "fsync", broken)
     with pytest.raises(DurabilityUnconfirmed):
         confirm_credentials_durable()
+
+
+def test_a_credential_that_never_parses_is_still_withdrawn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A 200 means the token host issued something, whatever happened next.
+
+    A body that carries a bearer but fails validation used to escape with that
+    credential live and named by nothing: the raw body is the only place its
+    secret still exists, so it is the last chance to give it back.
+    """
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            calls.append("revoke")
+            return httpx.Response(204)
+        if request.url.path == "/v1/device/authorize":
+            calls.append("authorize")
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "DEVICE-SECRET",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://tokens.example.test/device",
+                    "verification_uri_complete": "https://tokens.example.test/device?c=1",
+                    "expires_in": 90,
+                    "interval": 1,
+                },
+            )
+        if request.url.path == "/v1/device/token":
+            calls.append("token")
+            # A bearer, and an expiry the stored model refuses: issued, unusable.
+            return httpx.Response(200, json=_token_body(expires_at="not-a-timestamp"))
+        return httpx.Response(404)
+
+    _mock_client(monkeypatch, handler)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 1
+    assert "revoke" in calls, "the issued credential was given back"
+    assert load_credentials() is None
+
+
+def test_an_unconfirmable_filesystem_warns_at_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unsupported is not durable, and login says so rather than implying it."""
+    from rememberstack.surfaces import credentials as credentials_module
+    from rememberstack.surfaces.credentials import write_credentials as real_write
+
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    def unconfirmable(**kwargs: object) -> bool:
+        real_write(**kwargs)  # type: ignore[arg-type]
+        return False
+
+    monkeypatch.setattr(credentials_module, "write_credentials", unconfirmable)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    assert "cannot confirm" in capsys.readouterr().err
+    assert load_credentials() is not None

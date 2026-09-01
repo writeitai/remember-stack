@@ -7,6 +7,7 @@ The token host contract is JSON, not RFC 8628 form-encoding. Only the
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Mapping
 from datetime import datetime
 import time
 from typing import Literal
@@ -124,6 +125,27 @@ def authorize_device(*, client: httpx.Client) -> DeviceAuthorizeResponse:
         ) from error
 
 
+def _report_orphan(
+    *,
+    response: httpx.Response,
+    on_orphan: "Callable[[Mapping[str, object]], None] | None",
+) -> None:
+    """Hand a caller the raw body of a credential that never became usable.
+
+    Best effort by construction: the body may be exactly what failed to parse.
+    A body that yields nothing usable simply reports nothing, because there is
+    nothing to act on.
+    """
+    if on_orphan is None:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        return
+    if isinstance(payload, dict):
+        on_orphan(payload)
+
+
 def poll_device_token(
     *,
     client: httpx.Client,
@@ -133,6 +155,7 @@ def poll_device_token(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     on_minted: Callable[[DeviceTokenSuccess], None] | None = None,
+    on_orphan: Callable[[Mapping[str, object]], None] | None = None,
 ) -> DeviceTokenSuccess:
     """Poll ``/v1/device/token`` until 200, a terminal error, or TTL expiry.
 
@@ -145,6 +168,12 @@ def poll_device_token(
     with nothing on the machine naming it, and no possible cleanup. Recording
     it here removes the window instead of narrowing it: by the time the value
     is visible to a caller, it has already been written down.
+
+    ``on_orphan`` covers the rest of that window. From the moment a ``200``
+    arrives a credential exists at the token host, and everything between there
+    and ``on_minted`` succeeding — parsing, validating, recording — can fail or
+    be interrupted. It is called with the raw response body so a caller can
+    still withdraw a credential that never became a usable one.
     """
     deadline = clock() + expires_in
     wait = _clamp_poll_wait(seconds=float(interval))
@@ -159,14 +188,23 @@ def poll_device_token(
             json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
         )
         if response.status_code == 200:
+            # A credential exists at the token host from this point, so the
+            # whole of the rest — parsing, validating, recording — is guarded.
+            # Guarding only the parse left the gaps between the steps, and an
+            # interrupt in one of them stranded a live credential.
             try:
-                minted = DeviceTokenSuccess.model_validate(response.json())
+                payload = response.json()
+                minted = DeviceTokenSuccess.model_validate(payload)
+                if on_minted is not None:
+                    on_minted(minted)
             except (ValidationError, ValueError) as error:
+                _report_orphan(response=response, on_orphan=on_orphan)
                 raise DeviceGrantError(
                     "token host returned an unusable token response", exit_code=1
                 ) from error
-            if on_minted is not None:
-                on_minted(minted)
+            except BaseException:
+                _report_orphan(response=response, on_orphan=on_orphan)
+                raise
             return minted
         if response.status_code == 400:
             try:

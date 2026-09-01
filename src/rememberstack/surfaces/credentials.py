@@ -171,8 +171,15 @@ def load_credentials(
 
 def write_credentials(
     *, credential: CredentialFile, settings: TokenHostSettings | None = None
-) -> Path:
-    """Write ``credentials.json`` with ``0600`` from the first byte."""
+) -> bool:
+    """Write ``credentials.json`` with ``0600`` from the first byte.
+
+    Returns whether the rename's **durability was confirmed** — see
+    :func:`_fsync_directory` for the three outcomes it distinguishes. The
+    caller needs that difference: it decides whether the recovery record naming
+    this credential can be forgotten, and a filesystem that cannot sync a
+    directory must not be mistaken for one that did.
+    """
     directory = credentials_dir(settings=settings)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
@@ -202,8 +209,7 @@ def write_credentials(
     # the new credential *is* the file. A durability failure here raises
     # `DurabilityUnconfirmed`, which the caller reports rather than treating as
     # a failed write — unwinding now would revoke a credential this file names.
-    _fsync_directory(directory)
-    return path
+    return _fsync_directory(directory)
 
 
 def _fsync_directory(directory: Path) -> bool:
