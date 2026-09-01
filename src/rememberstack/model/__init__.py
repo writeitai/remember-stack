@@ -16,6 +16,7 @@ from rememberstack.model.assured_operations import OperationBundlePlan
 from rememberstack.model.assured_operations import OperationStep
 from rememberstack.model.assured_operations import PrimitiveChainPlan
 from rememberstack.model.auth import AuthenticatedContext
+from rememberstack.model.auth import CredentialKind
 from rememberstack.model.auth import PerimeterCredential
 from rememberstack.model.blocks import Block
 from rememberstack.model.blocks import BlockType
@@ -374,6 +375,7 @@ __all__ = (
     "AssuredOperationName",
     "AssuredResultContract",
     "AuthenticatedContext",
+    "CredentialKind",
     "AtTemporalScope",
     "Block",
     "BlockType",

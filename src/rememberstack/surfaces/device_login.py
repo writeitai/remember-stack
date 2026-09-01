@@ -7,6 +7,8 @@ The token host contract is JSON, not RFC 8628 form-encoding. Only the
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Mapping
+from datetime import datetime
 import time
 from typing import Literal
 from uuid import UUID
@@ -19,6 +21,7 @@ from pydantic import SecretStr
 from pydantic import ValidationError
 
 from rememberstack.surfaces.credentials import CredentialFile
+from rememberstack.surfaces.credentials import DeferredInterrupts
 
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _POLL_FLOOR_SECONDS = 1.0
@@ -50,9 +53,26 @@ class DeviceAuthorizeResponse(BaseModel):
 
 
 class DeviceTokenSuccess(BaseModel):
-    """Successful token poll body."""
+    """Successful token poll body.
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    ``extra="ignore"``, not ``forbid``, and the difference is a bug we shipped.
+    This model describes a response written by a *separately deployed* control
+    plane, and that control plane added ``data_plane_hostname`` and
+    ``data_plane_hostname_live`` on 2026-08-25. Every ``remember login`` against
+    it has failed since with a validation error, because forbidding unknown
+    fields turns any additive server change into a client outage.
+
+    Forbidding extras is right for something we own both ends of. For a response
+    crossing a deployment boundary it inverts the compatibility we want: the
+    server may add, and the client must carry on. Fields this client actually
+    needs are declared and validated; anything else is the server's business.
+
+    Known-but-unused fields are declared explicitly rather than swallowed, so a
+    reader can see what the server sends and a future change to use one does not
+    have to rediscover it.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     access_token: SecretStr
     token_type: Literal["Bearer"]
@@ -61,6 +81,15 @@ class DeviceTokenSuccess(BaseModel):
     deployment_id: UUID
     label: str
     token_prefix: str
+    #: Where this deployment answers, and whether that name resolves yet (D33).
+    #: Advertised by the control plane; the CLI stores it so a caller does not
+    #: have to be told the host separately.
+    data_plane_hostname: str | None = None
+    data_plane_hostname_live: bool = False
+    #: When the credential stops working (D60). Absent for the unexpiring
+    #: tokens minted before that decision, which is why it is optional rather
+    #: than required — a client that demanded it would refuse today's tokens.
+    expires_at: datetime | None = None
 
 
 class DeviceTokenErrorBody(BaseModel):
@@ -97,6 +126,45 @@ def authorize_device(*, client: httpx.Client) -> DeviceAuthorizeResponse:
         ) from error
 
 
+#: The token poll's own per-operation timeout.
+#:
+#: Short and explicit, because signals are deferred across this call. It is
+#: **not** an absolute deadline: HTTP timeouts here are per-operation, so a
+#: response that trickles a byte at a time resets it, and no client-side
+#: setting bounds that without a watchdog. What it does bound is the ordinary
+#: case — a slow or unresponsive token host — and, with the redirect limit
+#: below, the pathological-redirect case too.
+#:
+#: A device-token response is a few hundred bytes, so a generous client-wide
+#: timeout would only mean a longer silence for no benefit.
+_POLL_TIMEOUT_SECONDS = 10.0
+
+#: Redirects the token poll will follow. One is generosity; five was the shared
+#: default, and five sends at the timeout above is five times the silence.
+_POLL_MAX_REDIRECTS = 1
+
+
+def _report_orphan(
+    *,
+    response: httpx.Response,
+    on_orphan: "Callable[[Mapping[str, object]], None] | None",
+) -> None:
+    """Hand a caller the raw body of a credential that never became usable.
+
+    Best effort by construction: the body may be exactly what failed to parse.
+    A body that yields nothing usable simply reports nothing, because there is
+    nothing to act on.
+    """
+    if on_orphan is None:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        return
+    if isinstance(payload, dict):
+        on_orphan(payload)
+
+
 def poll_device_token(
     *,
     client: httpx.Client,
@@ -105,27 +173,72 @@ def poll_device_token(
     expires_in: int,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    on_minted: Callable[[DeviceTokenSuccess], None] | None = None,
+    on_orphan: Callable[[Mapping[str, object]], None] | None = None,
 ) -> DeviceTokenSuccess:
-    """Poll ``/v1/device/token`` until 200, a terminal error, or TTL expiry."""
+    """Poll ``/v1/device/token`` until 200, a terminal error, or TTL expiry.
+
+    ``on_minted`` is called with the parsed token **before this function
+    returns**, and is where a caller records that a credential now exists.
+
+    That placement is the point. A caller cannot guard the moment between this
+    returning and its own next statement — CPython leaves that boundary outside
+    any exception region, so a Ctrl-C landing there produced a live credential
+    with nothing on the machine naming it, and no possible cleanup. Recording
+    it here removes the window instead of narrowing it: by the time the value
+    is visible to a caller, it has already been written down.
+
+    ``on_orphan`` covers the rest of that window. From the moment a ``200``
+    arrives a credential exists at the token host, and everything between there
+    and ``on_minted`` succeeding — parsing, validating, recording — can fail or
+    be interrupted. It is called with the raw response body so a caller can
+    still withdraw a credential that never became a usable one.
+    """
     deadline = clock() + expires_in
     wait = _clamp_poll_wait(seconds=float(interval))
     while clock() < deadline:
         sleep(wait)
         if clock() >= deadline:
             break
-        response = request_same_origin(
-            client=client,
-            method="POST",
-            url="/v1/device/token",
-            json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
-        )
-        if response.status_code == 200:
-            try:
-                return DeviceTokenSuccess.model_validate(response.json())
-            except (ValidationError, ValueError) as error:
-                raise DeviceGrantError(
-                    "token host returned an unusable token response", exit_code=1
-                ) from error
+        # Signals are held for the request and everything that follows a
+        # `200`. From the moment the token host answers, a credential exists —
+        # and no arrangement of `try` blocks makes the steps that follow safe,
+        # because a signal lands *between* bytecodes and the gaps between
+        # statements belong to no exception region. Deferring is what closes
+        # them.
+        #
+        # The hold starts *before* the request, because a `200` that arrives
+        # while a signal is in flight must still be recorded — but it is
+        # released the instant the answer turns out not to be a credential, so
+        # a user who pressed Ctrl-C while waiting is not made to sit through
+        # the rest of the poll.
+        with DeferredInterrupts() as deferred:
+            response = request_same_origin(
+                client=client,
+                method="POST",
+                url="/v1/device/token",
+                json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
+                timeout=_POLL_TIMEOUT_SECONDS,
+                max_redirects=_POLL_MAX_REDIRECTS,
+            )
+            if response.status_code != 200:
+                # Nothing was issued, so nothing has to be protected.
+                deferred.deliver_if_pending()
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                    minted = DeviceTokenSuccess.model_validate(payload)
+                    if on_minted is not None:
+                        on_minted(minted)
+                except (ValidationError, ValueError) as error:
+                    _report_orphan(response=response, on_orphan=on_orphan)
+                    raise DeviceGrantError(
+                        "token host returned an unusable token response", exit_code=1
+                    ) from error
+                except BaseException:
+                    _report_orphan(response=response, on_orphan=on_orphan)
+                    raise
+                return minted
         if response.status_code == 400:
             try:
                 body = DeviceTokenErrorBody.model_validate(response.json())
@@ -184,15 +297,32 @@ def credential_from_token(
         deployment_id=token.deployment_id,
         label=token.label,
         token_prefix=token.token_prefix,
+        expires_at=token.expires_at,
     )
 
 
 def request_same_origin(
-    *, client: httpx.Client, method: str, url: str, **kwargs: object
+    *,
+    client: httpx.Client,
+    method: str,
+    url: str,
+    max_redirects: int | None = None,
+    **kwargs: object,
 ) -> httpx.Response:
-    """Send one request; follow only host-preserving redirects."""
+    """Send one request; follow only host-preserving redirects.
+
+    ``max_redirects`` narrows the budget for a caller that pays for each hop.
+    The token poll does, because signals are deferred across the whole call:
+    every redirect it follows is another timeout a user's Ctrl-C waits behind.
+
+    It counts **redirects, not sends** — one redirect means two requests — so a
+    budget of 1 follows a redirect rather than refusing it. The loop below
+    bounds sends, and the two differ by exactly the original request; conflating
+    them made a budget of 1 reject the first redirect it saw.
+    """
+    budget = max_redirects if max_redirects is not None else _MAX_REDIRECTS - 1
     current = client.build_request(method, url, **kwargs)  # type: ignore[arg-type]
-    for _ in range(_MAX_REDIRECTS):
+    for _ in range(budget + 1):
         response = client.send(current)
         if response.is_redirect:
             location = response.headers.get("location")

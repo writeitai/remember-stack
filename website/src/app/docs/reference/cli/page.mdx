@@ -56,8 +56,53 @@ remember logout
 `0600`.
 
 `logout` calls `DELETE {token_host}/v1/api-tokens/self` with the stored bearer
-and unlinks the file only after 2xx, 401, or 404. A 5xx or network error keeps
-the file and exits 1.
+and unlinks the file only when the token host confirms: a 2xx, or a 401 meaning
+it no longer resolves that bearer. A 404, a 5xx, or a network error keeps the
+file and exits 1 — none of those confirms the credential is gone, and unlinking
+on them would discard the only copy of a secret that may still work.
+
+### Replacing a credential
+
+`login` **mints the replacement before revoking what it replaces.** If the
+grant is interrupted — a closed tab, an expired user code, a dropped network —
+the existing credential is untouched and still works.
+
+That leaves a moment where both exist, so the one being replaced is written to
+`pending-revocation.json` (same directory, same `0600`) before the credential
+file is overwritten, and removed once the token host confirms the revoke. If
+the revoke cannot be confirmed, `login` still succeeds — the new credential
+works — and every subsequent command says so on **stderr** until the next
+`login` or `logout` retries it:
+
+```text
+warning: a superseded credential (token_id …) is still live; run `remember
+login` or `remember logout` to retire it
+```
+
+Warnings go to stderr, never stdout, so they cannot corrupt output a script is
+parsing.
+
+`login` and `logout` hold an exclusive lock on the credential directory, so two
+running at once cannot overwrite each other's file. A login refuses to start if
+it cannot take that lock, or if more than a handful of credentials are already
+awaiting revocation — minting into that state would leave the new credential
+untracked.
+
+### Expiring credentials
+
+A credential may carry an expiry, in which case `login` prints it and every
+command that uses the stored credential warns on stderr within 30 days of it:
+
+```text
+expires_at: 2027-09-01T12:00:00+00:00
+warning: this credential expires on 2027-09-01T12:00:00+00:00 (12d); run
+`remember login` to replace it
+```
+
+No expiry in the file means **none was recorded** — a token host that predates
+expiring credentials sends none — not that the credential never expires. The
+server is the authority either way; the warning exists so a scheduled job does
+not fail at 3am with an unexplained 401.
 
 Client command precedence: `--token` / `--api-url` on the subcommand, then
 `REMEMBERSTACK_API_*`, then the credential file, then SDK defaults.

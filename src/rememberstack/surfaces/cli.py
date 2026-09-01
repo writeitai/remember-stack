@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from datetime import timedelta
+from datetime import UTC
 from importlib import import_module
 import json
 from pathlib import Path
@@ -18,6 +20,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import JsonValue
+from pydantic import SecretStr
 
 from rememberstack import __version__
 from rememberstack.model.adjudication import ReviewDecisionError
@@ -30,6 +33,7 @@ from rememberstack.surfaces.sdk import MemoryClient
 if TYPE_CHECKING:
     from rememberstack.spine.review import ReviewQueue
     from rememberstack.spine.work_ledger import WorkLedger
+    from rememberstack.surfaces.credentials import CredentialFile
 
 _MERGE_VERDICTS = ("merge", "not_merge")
 _TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
@@ -37,6 +41,7 @@ _TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
 
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
+    _warn_if_revocation_outstanding()
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
@@ -507,6 +512,8 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
             stored = load_credentials()
         except CredentialError as error:
             raise MemoryApiError(status_code=0, detail=str(error)) from error
+        if stored is not None:
+            _warn_if_expiring(credential=stored)
     if (
         flag_url is None
         and flag_token is None
@@ -529,6 +536,70 @@ def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
     )
 
 
+#: How long before a stored credential lapses the CLI starts saying so.
+#:
+#: A machine credential lives in configuration a human edits rarely, so the
+#: warning has to arrive far enough ahead that replacing it can be scheduled
+#: rather than done in a hurry — but not so far ahead that it becomes noise
+#: the operator learns to scroll past.
+_EXPIRY_WARNING_WINDOW = timedelta(days=30)
+
+
+def _warn_if_expiring(*, credential: CredentialFile) -> None:
+    """Say on stderr when the stored credential is close to, or past, its end.
+
+    Written to stderr, never stdout: these commands print machine-readable
+    output that a script parses, and a warning in that stream would corrupt it.
+
+    A credential with no recorded expiry says nothing — the field is absent for
+    credentials issued before expiry existed, and silence is the honest answer
+    when we do not know.
+    """
+    if credential.expires_at is None:
+        return
+    expires_at = credential.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    remaining = expires_at - datetime.now(tz=UTC)
+    if remaining <= timedelta(0):
+        print(
+            f"warning: this credential expired on {expires_at.isoformat()}; "
+            "run `remember login` to replace it",
+            file=sys.stderr,
+        )
+        return
+    if remaining <= _EXPIRY_WARNING_WINDOW:
+        print(
+            f"warning: this credential expires on {expires_at.isoformat()} "
+            f"({remaining.days}d); run `remember login` to replace it",
+            file=sys.stderr,
+        )
+
+
+def _warn_if_revocation_outstanding() -> None:
+    """Say that a superseded credential is still live, without calling out.
+
+    Ordinary commands do not retry the revoke: a query should not make an
+    unrelated network call to a token host the user did not ask about. Staying
+    silent about a live credential nobody is tracking would be worse than the
+    noise.
+    """
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import load_pending_revocations
+
+    try:
+        journal = load_pending_revocations()
+    except CredentialError as error:
+        print(f"warning: {error}", file=sys.stderr)
+        return
+    for pending in journal.entries:
+        print(
+            f"warning: a superseded credential (token_id {pending.token_id}) is "
+            "still live; run `remember login` or `remember logout` to retire it",
+            file=sys.stderr,
+        )
+
+
 def _resolved_token_host(
     *, explicit: str | None, stored_host: str | None = None
 ) -> str:
@@ -544,10 +615,39 @@ def _resolved_token_host(
 
 
 def _run_login(args: argparse.Namespace) -> int:
-    """Device-grant login; writes the owner-only credential file."""
-    from rememberstack.surfaces.credentials import CliClientEnv
+    """Device-grant login; writes the owner-only credential file.
+
+    Held under the credential lock end to end, so two concurrent logins cannot
+    each mint a replacement and overwrite the other's file — which would leave
+    one live credential with nothing on disk naming it.
+    """
+    from rememberstack.surfaces.credentials import credential_lock
     from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+
+    try:
+        with credential_lock():
+            return _login_locked(args)
+    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
+        # A lock we cannot take, a disk we cannot write, a sync we cannot
+        # confirm: all refusals, none of them crashes. These arise outside the
+        # login body — in the lock itself and in journal recovery — so the
+        # body's own catch never sees them, and the user got a traceback.
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def _login_locked(args: argparse.Namespace) -> int:
+    """The login itself, with the credential lock already held."""
+    from rememberstack.surfaces.credentials import append_pending_revocation
+    from rememberstack.surfaces.credentials import assert_revocation_capacity
+    from rememberstack.surfaces.credentials import CliClientEnv
+    from rememberstack.surfaces.credentials import credential_origin
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import drop_pending_revocation
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
     from rememberstack.surfaces.credentials import load_credentials
+    from rememberstack.surfaces.credentials import PendingRevocation
     from rememberstack.surfaces.credentials import write_credentials
     from rememberstack.surfaces.device_login import authorize_device
     from rememberstack.surfaces.device_login import credential_from_token
@@ -561,22 +661,22 @@ def _run_login(args: argparse.Namespace) -> int:
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    # Anything a previous run failed to retire is retried first, while its
+    # secret is still on disk and before this run writes its own journal entry.
+    _retry_pending_revocation()
+    try:
+        # Before minting, not after: a journal with no room left would otherwise
+        # be discovered when there is already a live credential to record.
+        assert_revocation_capacity()
+    except CredentialError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     existing = None
     try:
         existing = load_credentials()
     except CredentialError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    if existing is not None:
-        revoked = _logout_existing(
-            token_host=existing.token_host, allow_stored_host=True
-        )
-        if revoked != 0:
-            print(
-                "error: existing credential could not be revoked; file kept",
-                file=sys.stderr,
-            )
-            return revoked
     try:
         with httpx.Client(
             base_url=token_host, timeout=30.0, follow_redirects=False
@@ -585,34 +685,353 @@ def _run_login(args: argparse.Namespace) -> int:
             print(f"verification_uri: {granted.verification_uri}")
             print(f"verification_uri_complete: {granted.verification_uri_complete}")
             print(f"user_code: {granted.user_code}")
+
+            def record(minted: object) -> None:
+                """Write the credential down the instant it exists.
+
+                Called from inside ``poll_device_token``, before the value is
+                visible here, because the boundary between that function
+                returning and this frame's next statement cannot be guarded —
+                an interrupt landing there left a live credential with nothing
+                naming it and no cleanup possible.
+
+                The entry is removed once the credential is adopted, so the
+                journal describes only credentials that still need retiring.
+
+                **If the record cannot be written, the credential is given back
+                here rather than left live.** This is the last point at which
+                anything knows the secret and can act on it: an interrupt or an
+                IO failure inside this function used to escape with the mint
+                untracked, and there was no later opportunity to notice.
+
+                The ``try`` is the **first** statement, and the attributes are
+                read inside it as arguments to the call it protects. Reading
+                them beforehand put three more bytecode boundaries outside the
+                protected region, and an interrupt at any of them escaped.
+                """
+                try:
+                    append_pending_revocation(
+                        pending=PendingRevocation(
+                            version=1,
+                            token_host=token_host,
+                            access_token=minted.access_token,  # type: ignore[attr-defined]
+                            token_id=minted.token_id,  # type: ignore[attr-defined]
+                        )
+                    )
+                except BaseException:
+                    # The handler's first statement, for the same reason.
+                    _withdraw_or_warn(token_host=token_host, minted=minted)
+                    raise
+
+            def orphaned(payload: object) -> None:
+                """Withdraw a credential that never became a usable one.
+
+                A ``200`` means the token host issued something, whatever
+                happened next — a body that would not parse, a validation
+                failure, an interrupt while recording. The raw body is the only
+                place its secret still exists, so this is the last chance to
+                give it back.
+                """
+                secret = (payload or {}).get("access_token")  # type: ignore[union-attr]
+                if not isinstance(secret, str) or not secret:
+                    return
+                if _revoke_now(token_host=token_host, secret=SecretStr(secret)):
+                    return
+                print(
+                    "warning: the token host issued a credential this login "
+                    "could not use or withdraw; revoke it in the console",
+                    file=sys.stderr,
+                )
+
             token = poll_device_token(
                 client=client,
                 device_code=granted.device_code.get_secret_value(),
                 interval=granted.interval,
                 expires_in=granted.expires_in,
+                on_minted=record,
+                on_orphan=orphaned,
             )
-            credential = credential_from_token(
-                token=token, api_url=api_url, token_host=token_host
-            )
-            write_credentials(credential=credential)
+            # From here the control plane has issued, so the **whole**
+            # adoption phase is guarded rather than each call in it: a Ctrl-C
+            # lands wherever it lands, and guarding the calls left the gaps
+            # between them — an interrupt after converting the response and
+            # before journalling produced a live bearer with no file, no
+            # journal entry, and no attempt to withdraw it.
+            # The new credential is already journalled by `record` above, so
+            # nothing below can lose it. What remains is to adopt it and, on
+            # success, take it back out of the journal — it is the current
+            # credential now, not one awaiting revocation.
+            try:
+                credential = credential_from_token(
+                    token=token, api_url=api_url, token_host=token_host
+                )
+                if existing is not None:
+                    # Written before the file is overwritten, because
+                    # overwriting it destroys the only copy of the
+                    # predecessor's secret. A crash after this point leaves a
+                    # record of what still needs revoking; a crash before it
+                    # leaves the old credential intact and in use.
+                    append_pending_revocation(
+                        pending=PendingRevocation(
+                            version=1,
+                            token_host=existing.token_host,
+                            access_token=existing.access_token,
+                            token_id=existing.token_id,
+                        )
+                    )
+                # Three outcomes, and exactly the rule recovery follows:
+                #
+                #   confirmed      → the rename is durable; drop the record.
+                #   unconfirmable  → this filesystem can never tell us, so
+                #                    retrying achieves nothing and holding the
+                #                    record would occupy a slot forever. Drop
+                #                    it, and say the guarantee is weaker.
+                #   raised         → a real failure; keep the record and let
+                #                    the next command re-attempt the sync.
+                resolved = False
+                try:
+                    if not write_credentials(credential=credential):
+                        print(
+                            "warning: this filesystem cannot confirm that the "
+                            "credential file's rename is durable; a crash "
+                            "could lose it while the credential stays live",
+                            file=sys.stderr,
+                        )
+                    resolved = True
+                except DurabilityUnconfirmed as error:
+                    # The file *is* written and names the new credential, so
+                    # unwinding would revoke something the machine is using.
+                    # Only the record's fate differs.
+                    print(f"warning: {error}", file=sys.stderr)
+                if resolved:
+                    drop_pending_revocation(
+                        identity=(
+                            credential_origin(token_host=token_host),
+                            token.token_id,
+                        )
+                    )
+            except BaseException:
+                # The journal entry stays: whatever went wrong, the credential
+                # exists at the token host and the next login or logout will
+                # retire it. Nothing here has to succeed for that to hold.
+                raise
     except KeyboardInterrupt:
         return 130
     except DeviceGrantError as error:
         print(f"error: {error}", file=sys.stderr)
         return error.exit_code
-    except (httpx.HTTPError, CredentialError, ValueError):
+    except (
+        httpx.HTTPError,
+        CredentialError,
+        ValueError,
+        OSError,
+        DurabilityUnconfirmed,
+    ):
+        # OSError included deliberately: a disk that cannot be written to
+        # during login is a failed login, not a crash. The credential has
+        # already been withdrawn or recorded by the time we get here.
         print("error: login failed", file=sys.stderr)
         return 1
     else:
+        # The predecessor is revoked only now, with the replacement already on
+        # disk. Revoking first would mean a login interrupted at the browser
+        # step — a closed tab, an expired user code — leaves the machine with no
+        # credential at all, having destroyed the working one to make room.
+        if existing is not None:
+            _retry_pending_revocation()
         print(f"token_prefix: {credential.token_prefix}")
         print(f"deployment_id: {credential.deployment_id}")
         print(f"api_url: {credential.api_url}")
+        if credential.expires_at is not None:
+            print(f"expires_at: {credential.expires_at.isoformat()}")
         return 0
+
+
+def _withdraw_or_warn(*, token_host: str, minted: object) -> None:
+    """Give a credential back, and say so loudly when that fails.
+
+    The failure handler's first statement, so as little as possible sits
+    between something going wrong and the attempt to undo it.
+    """
+    secret = getattr(minted, "access_token", None)
+    if secret is not None and _revoke_now(token_host=token_host, secret=secret):
+        return
+    print(
+        "warning: a credential was minted but could neither be recorded nor "
+        f"withdrawn (token_id {getattr(minted, 'token_id', 'unknown')}); "
+        "revoke it in the console",
+        file=sys.stderr,
+    )
+
+
+def _revoke_now(*, token_host: str, secret: object) -> bool:
+    """Best-effort immediate revoke. True only when the host confirmed it."""
+    from rememberstack.surfaces.device_login import revoke_self
+
+    try:
+        with httpx.Client(
+            base_url=token_host,
+            timeout=_RECOVERY_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        ) as client:
+            status = revoke_self(
+                client=client,
+                access_token=secret.get_secret_value(),  # type: ignore[attr-defined]
+            )
+    except BaseException:
+        return False
+    return _revoke_confirmed(status=status)
+
+
+def _retry_pending_revocation() -> None:
+    """Finish retiring a superseded credential, and say so when it cannot be.
+
+    Never fails the caller. The replacement is already written and working; a
+    predecessor left active is one credential too many, which is worth a loud
+    warning and a retry on the next login or logout, but is not worth telling
+    someone their login failed when it did not.
+
+    **Only a 2xx clears the journal, and a 401 besides.** The self-revoke route
+    answers 200 for the first revoke and for an idempotent repeat, so a 2xx is
+    genuine confirmation; a 401 means the token host no longer resolves that
+    bearer, which is the outcome we wanted by another name. Everything else —
+    a 404, which may mean the route is simply absent rather than the credential
+    gone; a 5xx; no response at all — confirms nothing, so the entry stays and
+    is retried.
+    """
+    from rememberstack.surfaces.credentials import confirm_credentials_durable
+    from rememberstack.surfaces.credentials import credential_origin
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import drop_pending_revocation
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+    from rememberstack.surfaces.credentials import load_credentials
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.device_login import normalize_token_host
+    from rememberstack.surfaces.device_login import revoke_self
+
+    try:
+        journal = load_pending_revocations()
+    except CredentialError as error:
+        print(f"warning: {error}", file=sys.stderr)
+        return
+    if not journal.entries:
+        return
+    try:
+        current = load_credentials()
+    except CredentialError:
+        # The credential file cannot be read, so we cannot tell whether an
+        # entry names the credential still in use. Revoking blind could take
+        # away the only working one; say so and change nothing.
+        print(
+            "warning: credentials are unreadable, so outstanding revocations "
+            "were left alone",
+            file=sys.stderr,
+        )
+        return
+    current_identity = (
+        (credential_origin(token_host=current.token_host), current.token_id)
+        if current is not None
+        else None
+    )
+    for pending in journal.entries:
+        if current_identity is not None and pending.identity == current_identity:
+            # A crash between writing the journal and writing the replacement
+            # leaves both naming the same credential. Revoking it here would
+            # destroy the only credential on this machine — so the entry is
+            # dropped instead: what it describes never happened.
+            #
+            # Reading `current` back proves the file is *visible*, which is
+            # not the same as its directory entry being on disk — a power loss
+            # can still lose the rename while every read here succeeds. So the
+            # sync is re-attempted, and only its success justifies forgetting
+            # the record. If it still cannot be confirmed the entry stays, and
+            # the next command tries again.
+            try:
+                confirmed = confirm_credentials_durable()
+            except DurabilityUnconfirmed:
+                # A real IO failure: the write may not have landed, so the
+                # record stays and the next command tries again.
+                continue
+            if not confirmed:
+                # This filesystem cannot sync a directory, so no amount of
+                # retrying will ever confirm anything and holding the record
+                # forever would achieve nothing but occupying a slot. Dropped,
+                # with the weaker guarantee said out loud rather than implied.
+                print(
+                    "warning: this filesystem cannot confirm that the "
+                    "credential file's rename is durable; a crash could lose "
+                    f"it while credential {pending.token_id} stays live",
+                    file=sys.stderr,
+                )
+            drop_pending_revocation(identity=pending.identity)
+            continue
+        try:
+            host = normalize_token_host(token_host=pending.token_host)
+            with httpx.Client(
+                base_url=host,
+                # Short, unlike an interactive request: this runs under the
+                # credential lock, and a handful of black-holed entries at the
+                # interactive timeout would hold a login up for minutes.
+                timeout=_RECOVERY_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ) as client:
+                status = revoke_self(
+                    client=client, access_token=pending.access_token.get_secret_value()
+                )
+        except (ValueError, httpx.InvalidURL):
+            # A journal entry naming an unusable host can never be retried, and
+            # letting it raise would block every later entry behind it. Say so
+            # and move on; the entry stays, so the record is not lost.
+            print(
+                "warning: a superseded credential names an unusable token host "
+                f"(token_id {pending.token_id}); revoke it in the console",
+                file=sys.stderr,
+            )
+            continue
+        except httpx.HTTPError:
+            status = 0
+        if _revoke_confirmed(status=status):
+            drop_pending_revocation(identity=pending.identity)
+            continue
+        print(
+            "warning: a superseded credential is still live and could not be "
+            f"revoked (token_id {pending.token_id}, "
+            f"HTTP {status or 'no response'}); the next `remember login` or "
+            "`logout` will retry, or revoke it in the console",
+            file=sys.stderr,
+        )
+
+
+#: How long one journal retry may take. Deliberately short: recovery runs
+#: under the credential lock, so a slow entry delays the login behind it.
+_RECOVERY_TIMEOUT_SECONDS = 5.0
+
+
+def _revoke_confirmed(*, status: int) -> bool:
+    """True only when the token host actually said the credential is gone.
+
+    The self-revoke route answers 2xx for the first revoke and for an
+    idempotent repeat, and 401 when it no longer resolves that bearer — which
+    is the same outcome by another name. Everything else confirms nothing: a
+    404 may mean the route is absent rather than the credential retired, and a
+    5xx or a dropped connection means we simply do not know.
+    """
+    return (200 <= status < 300) or status == 401
 
 
 def _run_logout(args: argparse.Namespace) -> int:
     """Revoke the stored bearer, then unlink the file."""
-    return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+    from rememberstack.surfaces.credentials import credential_lock
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
+
+    try:
+        with credential_lock():
+            _retry_pending_revocation()
+            return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
@@ -641,11 +1060,14 @@ def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
         status = revoke_self(
             client=client, access_token=stored.access_token.get_secret_value()
         )
-    if status == 0 or status >= 500:
-        print("error: token host did not confirm revoke; file kept", file=sys.stderr)
-        return 1
-    if status < 200 or (status >= 300 and status not in {401, 404}):
-        print(f"error: revoke returned HTTP {status}; file kept", file=sys.stderr)
+    if not _revoke_confirmed(status=status):
+        # 404 used to count as success here and does not: it can mean the route
+        # is absent rather than the credential retired, and unlinking on it
+        # discards the only copy of a secret that may still authenticate.
+        print(
+            f"error: revoke not confirmed (HTTP {status or 'no response'}); file kept",
+            file=sys.stderr,
+        )
         return 1
     try:
         unlink_credentials()

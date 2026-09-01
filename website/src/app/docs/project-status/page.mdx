@@ -150,6 +150,30 @@ Current public release: [`v0.13.0`](https://github.com/writeitai/remember-stack/
   The resolver generation moves to `resolver-2026.08g`, so evaluation curves
   measured under `08f` are not comparable and a fresh run is required.
 
+## What landed after v0.13.0 (in v0.14.0)
+
+- **`remember login` works again.** It has failed since 2026-08-25 with a
+  validation error: the managed token host began returning two fields the
+  client's response model refused. **0.13.0 does not contain this fix** — it
+  was released from `main` while the change was still on its branch, so an
+  0.13.0 install is as broken as an 0.12.0 one. That model now ignores fields it does not
+  know, the way a client of a separately deployed service has to
+  ([#351](https://github.com/writeitai/remember-stack/pull/351)).
+- **Login mints before it revokes.** Replacing a credential no longer starts by
+  destroying the one you have, so a login interrupted at the browser step
+  leaves the existing credential working. The credential being replaced is
+  journalled until the token host confirms it is gone, and any command will
+  tell you if one is still outstanding.
+- **A credential can carry an expiry.** `login` prints it, it is stored, and
+  every command warns on stderr within 30 days of it — so a scheduled job does
+  not fail at 3am with an unexplained 401. No expiry recorded means none was
+  sent, not that the credential never expires.
+- **The signed-credential perimeter is stricter.** Exactly one audience, and it
+  must be this deployment; `nbf`, `scope` and a non-empty credential id are
+  required; the key set must be Ed25519 public keys and is refused if any
+  declared key fails to load. Nothing here changes an open quickstart or a
+  deployment using only the Bearer BIND.
+
 ## What landed after v0.8.1 (in v0.9.0)
 
 - Ingest records **who created a version** as a typed principal
