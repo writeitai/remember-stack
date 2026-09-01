@@ -1,5 +1,6 @@
 """S3-compatible MinIO object storage for the self-host profile."""
 
+from collections.abc import Iterator
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -15,6 +16,7 @@ from pydantic_settings import SettingsConfigDict
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
+from rememberstack.model import SourceRangeError
 
 
 class MinIOSettings(BaseSettings):
@@ -31,8 +33,8 @@ class MinIOSettings(BaseSettings):
 class _StreamingBody(Protocol):
     """The two response-body operations used by this adapter."""
 
-    def read(self) -> bytes:
-        """Read the complete response body."""
+    def read(self, amt: int | None = None) -> bytes:
+        """Read the whole body, or at most ``amt`` bytes when given."""
         ...
 
     def close(self) -> None:
@@ -77,8 +79,10 @@ class _S3Client(Protocol):
         """Create one bucket."""
         ...
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
-        """Read one object."""
+    def get_object(
+        self, *, Bucket: str, Key: str, Range: str | None = None
+    ) -> _GetObjectOutput:
+        """Read one object, optionally restricted to an HTTP byte range."""
         ...
 
     def put_object(
@@ -147,6 +151,44 @@ class MinIOObjectStore:
         """Read all bytes stored at one validated object key."""
         response = self._client.get_object(
             Bucket=self._bucket, Key=_validated_key(key=key)
+        )
+        body = response["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
+
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[bytes]:
+        """Yield one object in order, holding at most one chunk at a time."""
+        if chunk_bytes <= 0:
+            raise SourceRangeError(f"chunk_bytes must be positive, got {chunk_bytes}")
+        response = self._client.get_object(
+            Bucket=self._bucket, Key=_validated_key(key=key)
+        )
+        body = response["Body"]
+        try:
+            while chunk := body.read(chunk_bytes):
+                yield chunk
+        finally:
+            body.close()
+
+    def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
+        """Read the half-open byte interval ``[start, end)`` of one object.
+
+        S3 ranges are inclusive on both ends, so the exclusive `end` becomes
+        ``end - 1`` on the wire. Converting here keeps every interval in the
+        system half-open (D65) regardless of the provider behind the port.
+        """
+        if start < 0 or end <= start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) is empty, reversed, or negative"
+            )
+        response = self._client.get_object(
+            Bucket=self._bucket,
+            Key=_validated_key(key=key),
+            Range=f"bytes={start}-{end - 1}",
         )
         body = response["Body"]
         try:

@@ -1,5 +1,6 @@
 """Inventory tests for D61 substrate seams plus D74 store capabilities."""
 
+from collections.abc import Iterator
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -12,6 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 from pydantic import SecretBytes
 
+from rememberstack.adapters.selfhost.source_handle import ObjectSourceHandle
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
@@ -23,6 +25,7 @@ from rememberstack.model import PerimeterCredential
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import PublishedMounts
 from rememberstack.model import QueueRoute
+from rememberstack.model import SourceIdentity
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import TelemetryEvent
 from rememberstack.model import UTCDateTime
@@ -32,6 +35,7 @@ from rememberstack.ports import KGitRemotePort
 from rememberstack.ports import ModelProviderPort
 from rememberstack.ports import MountPublisherPort
 from rememberstack.ports import ObjectStorePort
+from rememberstack.ports import SourceHandlePort
 from rememberstack.ports import TaskQueuePort
 from rememberstack.ports import TelemetryPort
 import rememberstack.ports.auth as auth_module
@@ -43,6 +47,7 @@ import rememberstack.ports.object_store as object_store_module
 import rememberstack.ports.postgres_read as postgres_read_module
 import rememberstack.ports.purge as purge_module
 import rememberstack.ports.queue as queue_module
+import rememberstack.ports.source_handle as source_handle_module
 import rememberstack.ports.telemetry as telemetry_module
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -57,6 +62,7 @@ _PORT_MODULES: tuple[ModuleType, ...] = (
     postgres_read_module,
     queue_module,
     purge_module,
+    source_handle_module,
     telemetry_module,
 )
 _PORT_EXPORTS = {
@@ -70,6 +76,7 @@ _PORT_EXPORTS = {
     "ObjectPurgePort",
     "PostgresReadPoolPort",
     "ProjectionPurgePort",
+    "SourceHandlePort",
     "TaskQueuePort",
     "TelemetryPort",
 }
@@ -91,6 +98,18 @@ class FakeObjectStore:
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         """Return the bytes stored under the requested key."""
         return self.objects[key.root]
+
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[bytes]:
+        """Yield the stored bytes in fixed-size chunks."""
+        content = self.objects[key.root]
+        for offset in range(0, len(content), chunk_bytes):
+            yield content[offset : offset + chunk_bytes]
+
+    def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
+        """Return the half-open byte interval of the stored bytes."""
+        return self.objects[key.root][start:end]
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
@@ -206,6 +225,15 @@ class FakeTaskQueue:
 
 
 _object_store_assignment: ObjectStorePort = FakeObjectStore()
+_source_handle_assignment: SourceHandlePort = ObjectSourceHandle(
+    store=FakeObjectStore(),
+    identity=SourceIdentity(
+        object_key=ObjectKey("raw/example"),
+        content_hash="0" * 64,
+        byte_size=0,
+        mime="video/mp4",
+    ),
+)
 _mount_assignment: MountPublisherPort = FakeMountPublisher()
 _git_assignment: KGitRemotePort = FakeKGitRemote()
 _model_assignment: ModelProviderPort = FakeModelProvider()
@@ -228,11 +256,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_twelve_defined_protocols() -> None:
+def test_inventory_exports_exactly_thirteen_defined_protocols() -> None:
     """Keep D61/D74 seams plus bounded PostgreSQL read admission explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 12
+    assert len(_defined_protocols()) == 13
 
 
 def test_representative_fakes_conform_structurally() -> None:

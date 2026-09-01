@@ -22,9 +22,9 @@ class _Body:
         self._stream = BytesIO(content)
         self.closed = False
 
-    def read(self) -> bytes:
-        """Read all remaining bytes."""
-        return self._stream.read()
+    def read(self, amt: int | None = None) -> bytes:
+        """Read all remaining bytes, or at most ``amt`` when given."""
+        return self._stream.read() if amt is None else self._stream.read(amt)
 
     def close(self) -> None:
         """Record connection release."""
@@ -52,9 +52,15 @@ class _MemoryS3:
         self.buckets.add(Bucket)
         return {}
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
-        """Return one streaming body."""
-        body = _Body(content=self.objects[(Bucket, Key)][0])
+    def get_object(
+        self, *, Bucket: str, Key: str, Range: str | None = None
+    ) -> _GetObjectOutput:
+        """Return one streaming body, honoring an inclusive HTTP byte range."""
+        content = self.objects[(Bucket, Key)][0]
+        if Range is not None:
+            first, _, last = Range.removeprefix("bytes=").partition("-")
+            content = content[int(first) : int(last) + 1]
+        body = _Body(content=content)
         self.last_body = body
         return {"Body": body}
 

@@ -4793,3 +4793,51 @@ unread; fixing only the sort order while keeping the flag.
 rest of D21 (connected-components-to-gather, HAC distance-cut, nDR
 incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
 is unchanged. Does not change D95, D99, or D100.
+## D104. A converter receives a source handle, never the file's bytes
+
+**Decision.** The converter contract takes a **source handle** — a read-only
+capability on one immutable, already-hashed source — in place of the whole file
+as a `bytes` value (amends D65's `convert(bytes, mime, hints)` and, through it,
+D38/D57). The handle offers three reads and deliberately no fourth: **stream**
+the source in bounded chunks, **read a half-open byte range** `[start, end)`,
+or **materialise** it to a temporary local file. There is no operation that
+returns the entire source as bytes. `ObjectStorePort` grows the matching
+`open_stream` and `read_range` so the handle has something to sit on, and the
+existing `read_bytes` stays for the small text objects every shipped route
+converts.
+
+**Context.** A text file fits in memory and a video does not. Under the
+bytes-first contract the client, the HTTP process, the object store, and the
+converter each materialise a complete copy of the same file, so two concurrent
+large ingests can exhaust a worker that would have processed either one alone.
+That is an availability property, not an optimisation. The absence of a
+whole-file read is the load-bearing part of the decision: a contract that
+offers buffering as the convenient option gets buffering, and the failure
+surfaces on the first large file in production rather than in review.
+
+**Bounds live in materialisation**, because that is the operation that can
+exhaust a host. The caller declares what it can afford and an oversized source
+is refused before any byte moves, costing one comparison rather than a filled
+disk. The written bytes are verified against the recorded content hash — an
+immutable object cannot legitimately change, so a mismatch is corruption or a
+wrong key and never retryable, and without the check a truncated read becomes a
+short document that looks complete, which is the silent-loss failure D65's
+coverage rules exist to prevent. The recorded size is a claim rather than a
+guarantee, so the write also counts what it actually writes and refuses a
+source that exceeds both the declaration and the accepted bound. The temporary
+file's lifetime belongs to the handle, so a route that fails mid-decode cannot
+leak the file it asked for.
+
+**Consequences.** One contract serves both deployment shapes: a self-host
+directory tree and a cloud object store present the same three operations, so
+no route branches on where bytes live. Decoders that require a seekable path
+are served by bounded materialisation rather than by reimplementing them.
+Design home: `plan/designs/media_design.md` §2.1. Interacts with D38 (router),
+D57 (Markdown coordinate system), D61 (port boundary), D65 (media routes).
+
+**Alternatives.** *Keep bytes and raise the worker's memory* — rejected: it
+scales the blast radius with source size and solves neither resumability nor
+cancellation. *Hand routes a raw provider object* — rejected: it puts a storage
+SDK type in the converter contract, which D61 exists to prevent. *Give the
+handle a `read_all()` for convenience* — rejected: it becomes the path of least
+resistance and reintroduces exactly the failure this decision removes.

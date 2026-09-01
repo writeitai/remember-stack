@@ -103,7 +103,8 @@ Notes an implementer needs:
   (the route prompt/adapter enforces it), and it is what makes §5's disclosure a property of
   *ranges the converter wrote*, not a per-claim judgment anyone has to make downstream.
 - **The generalized converter contract** (refines D38 a second time):
-  `convert(bytes, mime, hints) → { document.md, source_map, derived_assets[], manifest }` —
+  `convert(source, mime, hints) → { document.md, source_map, derived_assets[], manifest }` —
+  where `source` is a **source handle** (§2.1), not the file's bytes —
   the *page map* generalizes to a **source map** (§4), `derived_assets` are the `media/`
   children with their locators, and the `manifest` is the route's **complete self-account**,
   with required fields (nullable only where a capability is genuinely absent):
@@ -117,6 +118,64 @@ Notes an implementer needs:
   applied to conversion); and **gaps + warnings** (corrupt intervals, unsupported codecs,
   regions the tool could not read) — a conversion that silently drops ten minutes of a
   recording is the same lie as a silent top-k.
+
+
+### 2.1 The source handle — why a converter is not handed bytes
+
+*Decision: D104.*
+
+A text file fits in memory, so the original converter contract took the whole
+file as a `bytes` value. A video does not. If the contract keeps demanding
+bytes, then the client, the HTTP process, the object store, and the converter
+each hold a complete copy of the same multi-gigabyte file, and the host runs
+out of memory before any model work starts. That is a correctness and
+availability property, not an optimisation: two concurrent large ingests can
+take down a worker that would happily have processed either one alone.
+
+So a route receives a **source handle** — a read-only capability on one
+immutable, already-hashed source — and decides for itself how much of it to
+bring into memory. The handle offers exactly three ways to read, and
+deliberately no fourth:
+
+- **stream it** — receive the source in order, one bounded chunk at a time,
+  which is what hashing, copying, and demuxing need;
+- **read a range** — take the half-open byte interval `[start, end)`, which is
+  what container parsing needs to read a header or an index without the body;
+  half-open because every other interval in the system is (§4), so nobody has
+  to remember which end is inclusive; and
+- **materialise it** — write the source to a temporary local file and hand
+  over the path. Decoders like FFmpeg want a seekable file rather than a
+  stream, and refusing to provide one would mean reimplementing them.
+
+There is deliberately **no method that returns the whole source as bytes**.
+The absence is the point: a contract that offers whole-file buffering as the
+convenient option gets whole-file buffering, and the failure only shows up on
+the first large file in production.
+
+Materialisation is where the bounds live, because it is the operation that can
+actually exhaust a host. Three properties are enforced by the handle rather
+than trusted to each route:
+
+- **the caller declares what it can afford**, and a source larger than that is
+  refused before a single byte moves — an oversized source costs one integer
+  comparison, not a filled disk;
+- **the written bytes are verified against the source's content hash.** An
+  immutable object cannot legitimately change, so a mismatch is corruption or
+  a wrong key, never a retryable condition. Without this check a truncated
+  read becomes a short document that looks complete, which is precisely the
+  silent-loss failure the coverage rules in §2 exist to prevent; and
+- **the file is removed when the route is done with it**, whether it returned
+  or raised. A converter that fails mid-decode cannot leak the file it asked
+  for, because it never owned the file's lifetime.
+
+The recorded size is a claim, not a guarantee, so the streaming write also
+counts what it actually writes and refuses if the source turns out to be
+larger than both the declaration and the accepted bound.
+
+One handle contract serves both deployment shapes. A self-host deployment
+reads from a directory tree and a cloud deployment reads from object storage,
+but a route sees the same three operations either way, so no route contains a
+branch on where the bytes live.
 
 ## 3. What "already works" and stays untouched
 

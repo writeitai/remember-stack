@@ -552,6 +552,18 @@ class _TranscriptStore:
         """Return one previously archived session transcript."""
         return self.objects[key.root]
 
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[bytes]:
+        """Yield the stored bytes in fixed-size chunks."""
+        content = self.read_bytes(key=key)
+        for offset in range(0, len(content), chunk_bytes):
+            yield content[offset : offset + chunk_bytes]
+
+    def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
+        """Return the half-open byte interval of the stored bytes."""
+        return self.read_bytes(key=key)[start:end]
+
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
     ) -> None:
