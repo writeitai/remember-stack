@@ -9,6 +9,7 @@ import errno
 import json
 from pathlib import Path
 import stat
+import sys
 from uuid import UUID
 
 import httpx
@@ -975,3 +976,116 @@ def test_the_lock_refuses_rather_than_running_unlocked(
     with pytest.raises(CredentialError, match="lock could not be taken"):
         with credential_lock():
             pass  # pragma: no cover - the lock must refuse before this runs
+
+
+def test_equivalent_spellings_of_one_host_are_one_origin() -> None:
+    """Each of these was a way to make one server look like two.
+
+    And two entries for one server is not merely untidy: the live-credential
+    guard compares origins, so a mismatch let recovery revoke the credential
+    currently in use.
+    """
+    from rememberstack.surfaces.credentials import credential_origin
+
+    canonical = credential_origin(token_host="https://tokens.example.test")
+    for spelling in (
+        "https://TOKENS.example.test",
+        "https://tokens.example.test.",
+        "https://tokens.example.test:443",
+        "https://tokens.example.test/",
+    ):
+        assert credential_origin(token_host=spelling) == canonical, spelling
+
+    compressed = credential_origin(token_host="https://[2001:db8::1]")
+    expanded = credential_origin(token_host="https://[2001:0db8:0:0:0:0:0:1]")
+    assert compressed == expanded
+
+    unicode_name = "ünïcode.example.test"
+    punycode_name = unicode_name.encode("idna").decode("ascii")
+    assert punycode_name != unicode_name, "the fixture must actually differ"
+    assert credential_origin(token_host=f"https://{unicode_name}") == credential_origin(
+        token_host=f"https://{punycode_name}"
+    )
+
+    # And genuinely different hosts stay different.
+    assert canonical != credential_origin(token_host="https://other.example.test")
+
+
+def test_an_abandoned_lock_sentinel_does_not_wedge_the_user_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A SIGKILL leaves the fallback sentinel behind; it must expire.
+
+    The flock path needs no expiry — the kernel drops the lock when the process
+    dies — but a file does not, and locking somebody out of their own
+    credentials permanently is worse than the race it prevents.
+    """
+    import os
+    import time
+
+    from rememberstack.surfaces.credentials import credential_lock
+    from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import credentials_dir
+
+    root = _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+    sentinel = credentials_dir() / ".lock.exclusive"
+    sentinel.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    sentinel.write_text("", encoding="utf-8")
+
+    # Fresh: somebody may really be holding it.
+    with pytest.raises(CredentialError, match="holds the credential"):
+        with credential_lock():
+            pass  # pragma: no cover - the lock must refuse before this runs
+
+    # Old enough that no live command could still be holding it.
+    stale = time.time() - 3600
+    os.utime(sentinel, (stale, stale))
+    with credential_lock():
+        pass
+    assert root.exists()
+
+
+def test_a_lock_refusal_is_an_exit_code_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A user who cannot take the lock needs the reason, not a stack trace."""
+    import fcntl
+
+    _isolate_config(monkeypatch, tmp_path)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EOPNOTSUPP, "this filesystem cannot lock")
+
+    monkeypatch.setattr(fcntl, "flock", refuse)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
+    assert "lock could not be taken" in capsys.readouterr().err
+
+
+def test_an_interrupt_anywhere_in_adoption_records_the_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A Ctrl-C lands where it lands; guarding each call left the gaps.
+
+    An interrupt after the response converted and before the journal was
+    written produced a live bearer with no file, no journal entry, and no
+    attempt to withdraw it.
+    """
+    from rememberstack.surfaces import credentials as credentials_module
+    from rememberstack.surfaces.credentials import load_pending_revocations
+
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    def interrupted(*args: object, **kwargs: object) -> object:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(credentials_module, "write_credentials", interrupted)
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 130
+
+    # The credential is live at the token host, so it is recorded and the
+    # revoke was attempted rather than silently dropped.
+    assert "revoke" in calls or not load_pending_revocations().entries

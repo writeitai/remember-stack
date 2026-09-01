@@ -9,11 +9,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
+from datetime import timedelta
 import errno
+from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
 import stat
+import time
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -245,9 +248,14 @@ def _fsync_directory(directory: Path) -> None:
     finally:
         try:
             os.close(handle)
-        except OSError:
-            # Also after the rename; nothing is undone by a close that failed.
-            pass
+        except OSError as error:
+            # A close that fails can mean buffered metadata never reached the
+            # device, so the rename may not be durable after all. Reported for
+            # the same reason as the fsync itself: unwinding would revoke a
+            # credential the file already names.
+            raise DurabilityUnconfirmed(
+                f"the credential directory could not be closed after syncing ({error})"
+            ) from error
 
 
 def credential_origin(*, token_host: str) -> str:
@@ -275,7 +283,37 @@ def credential_origin(*, token_host: str) -> str:
         port = parsed.port or (80 if scheme == "http" else 443)
     except ValueError:
         return text.rstrip("/").lower()
-    return f"{scheme}://{host}:{port}"
+    return f"{scheme}://{_canonical_host(host=host)}:{port}"
+
+
+def _canonical_host(*, host: str) -> str:
+    """Reduce the ways one host can be spelled to a single form.
+
+    Lowercasing is not enough, and each of these was a real way for two entries
+    naming the same server to look like two different servers — which made
+    recovery revoke the credential currently in use:
+
+    - a **trailing dot** is the DNS root and addresses the same host;
+    - an **IPv6 literal** has many spellings of one address, so it is parsed
+      and re-rendered compressed;
+    - a **Unicode hostname** and its punycode are the same name, so it is
+      IDNA-encoded.
+
+    Anything that fails to normalise is returned as it came: this is used to
+    *compare* entries, and an entry naming a host we cannot parse still has to
+    compare equal to itself.
+    """
+    trimmed = host.rstrip(".")
+    if not trimmed:
+        return host
+    try:
+        return f"[{ip_address(trimmed.strip('[]')).compressed}]"
+    except ValueError:
+        pass
+    try:
+        return trimmed.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        return trimmed
 
 
 class PendingRevocation(BaseModel):
@@ -503,6 +541,36 @@ def clear_pending_revocations(*, settings: TokenHostSettings | None = None) -> N
         path.unlink()
 
 
+#: How long a lock sentinel may sit before it is treated as abandoned.
+#:
+#: The flock path needs no such number — the kernel drops the lock when the
+#: process dies — but the portable fallback is only a file, and a process
+#: killed with SIGKILL leaves it behind. Without an expiry that file locks the
+#: user out of their own credentials permanently, which is a worse failure than
+#: the race it was protecting against.
+_SENTINEL_STALE_AFTER = timedelta(minutes=10)
+
+
+def _claim_sentinel(*, sentinel: Path) -> None:
+    """Create the lock sentinel, reclaiming one left behind by a dead process."""
+    try:
+        os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        return
+    except FileExistsError:
+        pass
+    try:
+        age = time.time() - sentinel.stat().st_mtime
+    except OSError:
+        # It went away between the create and the stat: another process
+        # released it, so try once more and let a real conflict raise.
+        os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        return
+    if age < _SENTINEL_STALE_AFTER.total_seconds():
+        raise FileExistsError(f"{sentinel} is held")
+    sentinel.unlink(missing_ok=True)
+    os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+
+
 @contextmanager
 def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[None]":
     """Serialise credential-replacing commands on this machine.
@@ -553,7 +621,7 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
             # else holds it.
             sentinel = directory / ".lock.exclusive"
             try:
-                os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+                _claim_sentinel(sentinel=sentinel)
             except FileExistsError as error:
                 raise CredentialError(
                     "another `remember login` or `logout` holds the credential "

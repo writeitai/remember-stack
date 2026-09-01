@@ -621,9 +621,16 @@ def _run_login(args: argparse.Namespace) -> int:
     one live credential with nothing on disk naming it.
     """
     from rememberstack.surfaces.credentials import credential_lock
+    from rememberstack.surfaces.credentials import CredentialError
 
-    with credential_lock():
-        return _login_locked(args)
+    try:
+        with credential_lock():
+            return _login_locked(args)
+    except CredentialError as error:
+        # A lock we cannot take is a refusal, not a crash: the user needs the
+        # reason and an exit code, not a traceback.
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 def _login_locked(args: argparse.Namespace) -> int:
@@ -678,29 +685,23 @@ def _login_locked(args: argparse.Namespace) -> int:
                 interval=granted.interval,
                 expires_in=granted.expires_in,
             )
-            # From here the control plane has issued. Every path out of this
-            # block either adopts the credential or hands it back: an exception
-            # while *converting* the response — a malformed expiry, say — used
-            # to escape before any cleanup existed, leaving a live bearer with
-            # nothing naming it.
+            # From here the control plane has issued, so the **whole**
+            # adoption phase is guarded rather than each call in it: a Ctrl-C
+            # lands wherever it lands, and guarding the calls left the gaps
+            # between them — an interrupt after converting the response and
+            # before journalling produced a live bearer with no file, no
+            # journal entry, and no attempt to withdraw it.
+            adopted = False
             try:
                 credential = credential_from_token(
                     token=token, api_url=api_url, token_host=token_host
                 )
-            except BaseException:
-                _discard_raw_token(token_host=token_host, token=token)
-                raise
-            if existing is not None:
-                # Written before the file is overwritten, because overwriting it
-                # destroys the only copy of the predecessor's secret. A crash
-                # after this point leaves a record of what still needs revoking;
-                # a crash before it leaves the old credential intact and in use.
-                #
-                # If this write fails we cannot adopt the new credential — there
-                # would be no record of the one it replaces — so the credential
-                # we just minted is given back rather than left live and
-                # untracked, and the login fails with the old one still working.
-                try:
+                if existing is not None:
+                    # Written before the file is overwritten, because
+                    # overwriting it destroys the only copy of the
+                    # predecessor's secret. A crash after this point leaves a
+                    # record of what still needs revoking; a crash before it
+                    # leaves the old credential intact and in use.
                     append_pending_revocation(
                         pending=PendingRevocation(
                             version=1,
@@ -709,25 +710,21 @@ def _login_locked(args: argparse.Namespace) -> int:
                             token_id=existing.token_id,
                         )
                     )
-                except BaseException:
-                    _discard_unadopted_credential(
-                        token_host=token_host, credential=credential
-                    )
-                    raise
-            try:
-                write_credentials(credential=credential)
-            except DurabilityUnconfirmed as error:
-                # The file *is* written and names the new credential; only the
-                # rename's durability is unconfirmed. Unwinding here would
-                # revoke a credential this machine is now using.
-                print(f"warning: {error}", file=sys.stderr)
+                try:
+                    write_credentials(credential=credential)
+                except DurabilityUnconfirmed as error:
+                    # The file *is* written and names the new credential; only
+                    # the rename's durability is unconfirmed. Unwinding here
+                    # would revoke a credential this machine is now using.
+                    print(f"warning: {error}", file=sys.stderr)
+                adopted = True
             except BaseException:
-                # Same reasoning one step later: the new credential exists at
-                # the control plane but never reached disk, so nothing on this
-                # machine will ever name it again.
-                _discard_unadopted_credential(
-                    token_host=token_host, credential=credential
-                )
+                if not adopted:
+                    _discard_minted_credential(
+                        token_host=token_host,
+                        token_id=getattr(token, "token_id", None),
+                        secret=token.access_token,
+                    )
                 raise
     except KeyboardInterrupt:
         return 130
@@ -752,69 +749,52 @@ def _login_locked(args: argparse.Namespace) -> int:
         return 0
 
 
-def _discard_unadopted_credential(
-    *, token_host: str, credential: CredentialFile
+def _discard_minted_credential(
+    *, token_host: str, token_id: UUID | None, secret: object
 ) -> None:
     """Hand back a credential this machine minted but could not adopt.
 
     Mint-before-revoke means the control plane has already issued by the time
-    persistence can fail. Leaving it would be the same leak the journal exists
-    to prevent, from the other direction: a live credential with nothing on
-    this machine naming it.
+    anything here can fail. Leaving it would be the same leak the journal
+    exists to prevent, from the other direction: a live credential with nothing
+    on this machine naming it.
 
-    **Journalled first, then revoked.** An earlier version revoked and only
-    warned when the server said no — so a network failure, or a Ctrl-C during
-    the call, escaped with the credential live and no record of it anywhere.
-    Writing the record first means every exit from here leaves either a revoked
-    credential or a retryable note about one.
+    **Journalled first, then revoked**, and journalled even when the credential
+    never became a `CredentialFile` — a response that failed to convert still
+    carried a working bearer, and withdrawing it directly lost it whenever that
+    call failed. Writing the record first means every exit from here leaves
+    either a revoked credential or a retryable note about one.
     """
     from rememberstack.surfaces.credentials import append_pending_revocation
     from rememberstack.surfaces.credentials import PendingRevocation
 
+    if secret is None or token_id is None:
+        # Nothing identifiable to record or revoke. Only reachable if the token
+        # host answered 200 with a body missing its own identifiers, which the
+        # response model refuses — belt and braces, not a path.
+        return
     try:
         append_pending_revocation(
             pending=PendingRevocation(
                 version=1,
                 token_host=token_host,
-                access_token=credential.access_token,
-                token_id=credential.token_id,
+                access_token=secret,  # type: ignore[arg-type]
+                token_id=token_id,
             )
         )
     except BaseException as error:
         # The record could not be written — but the credential is live, so the
-        # revoke is still worth attempting rather than skipping. An earlier
-        # version returned here, and a Ctrl-C or an IO error at this point left
-        # a live bearer with no record and no attempt to withdraw it.
-        if _revoke_now(token_host=token_host, secret=credential.access_token):
+        # revoke is still worth attempting rather than skipping.
+        if _revoke_now(token_host=token_host, secret=secret):
             return
         print(
             "warning: a credential was minted but could neither be stored nor "
-            f"recorded (token_id {credential.token_id}: {error}); revoke it in "
-            "the console",
+            f"recorded (token_id {token_id}: {error}); revoke it in the "
+            "console",
             file=sys.stderr,
         )
         return
     _retry_pending_revocation()
-
-
-def _discard_raw_token(*, token_host: str, token: object) -> None:
-    """Hand back a credential that never became a `CredentialFile`.
-
-    The response parsed far enough to carry a bearer and then failed to become
-    a stored credential. There is no `CredentialFile` to journal, so this is a
-    direct best-effort withdrawal — and a loud warning when it does not take.
-    """
-    secret = getattr(token, "access_token", None)
-    if secret is None:
-        return
-    if _revoke_now(token_host=token_host, secret=secret):
-        return
-    token_id = getattr(token, "token_id", "unknown")
-    print(
-        "warning: a credential was minted but could not be stored or "
-        f"withdrawn (token_id {token_id}); revoke it in the console",
-        file=sys.stderr,
-    )
 
 
 def _revoke_now(*, token_host: str, secret: object) -> bool:
@@ -949,10 +929,15 @@ def _revoke_confirmed(*, status: int) -> bool:
 def _run_logout(args: argparse.Namespace) -> int:
     """Revoke the stored bearer, then unlink the file."""
     from rememberstack.surfaces.credentials import credential_lock
+    from rememberstack.surfaces.credentials import CredentialError
 
-    with credential_lock():
-        _retry_pending_revocation()
-        return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+    try:
+        with credential_lock():
+            _retry_pending_revocation()
+            return _logout_existing(token_host=args.token_host, allow_stored_host=True)
+    except CredentialError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
