@@ -2910,7 +2910,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D102 amendment.** The current protocol is `RS-LoCoMo-Full-v18`. It retains
+> **D104 amendment.** The current protocol is `RS-LoCoMo-Full-v19`. It retains
+> v18's surface, dataset, ingestion, models, tools, and budgets while adding the
+> D104 evidence-grounded counterfactual answer instruction.
+>
+> **Historical D102 amendment.** `RS-LoCoMo-Full-v18` retained
 > v17's surface, dataset, models, and budgets while rolling the D102
 > document-local exact-T0 resolver/normalizer generations.
 >
@@ -2925,7 +2929,7 @@ may proceed to its first tagged artifact proof after CLA activation.
 > one bounded content-bearing read is required. Existing malformed-reader retry
 > remains unchanged.
 >
-> **D97 amendment.** The current protocol is `RS-LoCoMo-Full-v15`: it retains
+> **Historical D97 amendment.** `RS-LoCoMo-Full-v15` retained
 > the D98 live-graph 21-tool surface but fingerprints the D97
 > `fact_context@2` / `answer_context@2` neighborhood semantics. V14 and earlier
 > protocol identities are historical.
@@ -4793,3 +4797,51 @@ unread; fixing only the sort order while keeping the flag.
 rest of D21 (connected-components-to-gather, HAC distance-cut, nDR
 incremental re-decision, `merge_events`, `merged_into`, `resolution_exclusions`)
 is unchanged. Does not change D95, D99, or D100.
+
+## D104. Counterfactual answers may follow retrieved causal evidence
+
+**Decision (2026-09-01).** Advance the current benchmark protocol to
+`RS-LoCoMo-Full-v19`. Its answer prompt explicitly permits hypothetical and
+counterfactual answers inferred from causal or motivational relationships in
+retrieved evidence, even when the source does not state the hypothetical
+verbatim. When a question asks whether an outcome would still occur without a
+condition, evidence that the condition caused, enabled, or motivated that
+outcome supports `Likely no`; evidence that the outcome is independent supports
+`Likely yes`; evidence with no direction supports `Unknown`.
+
+This is a prompt-only reasoning contract. It does not permit outside knowledge,
+add a tool or model call, raise reasoning effort, route on LoCoMo category, add
+a hidden item hint, or broaden the existing content-before-`Unknown` harness
+guard. The dataset, rendered documents, ingestion, retrieval surface, P3,
+judge, budgets, and scoring remain those of Full-v18. The adapter version,
+answer-prompt hash, protocol identity, and fingerprint roll.
+
+**Evidence.** The exact Full-v18 conv-26 smoke run scored 7/8. Its only miss,
+`conv-26/qa/0014`, asked whether Caroline would still pursue counseling without
+support growing up. One successful `answer_context` call returned 61 claims,
+including that support made a huge difference, counseling improved her life,
+and those experiences motivated her to help others. The model nevertheless
+answered `Unknown` against `Likely no`. Retrieval had supplied the answer's
+direction; the frozen prompt had not distinguished evidence-grounded causal
+inference from outside knowledge.
+
+**Consequences.** Counterfactual questions can use relationships already
+present in memory without requiring a verbatim hypothetical sentence. Ordinary
+questions incur no new call or effort cost. The prompt may change answers
+beyond the observed item, so Full-v18 and Full-v19 scores are directional, not
+a strict one-variable system comparison. A retained store may be used for an
+answer-and-judge replay only when immutable document and ingest records match;
+prior answers, judges, and evaluator spend are not carried forward.
+
+**Rejected.** Retrieve more evidence when the first result already contains the
+causal chain; add a category-3 or item-specific route; raise reasoning effort
+for the whole benchmark; add a semantic `Unknown` retry before measuring the
+prompt-only response.
+
+**Design.** `plan/designs/locomo_benchmark_design.md` Full-v19 protocol.
+
+**Analysis.** `plan/analysis/locomo_counterfactual_answer_analysis.md`.
+
+**Amends.** Advances D102's Full-v18 benchmark identity only. It does not
+change D98 retrieval, D99's objective content-before-`Unknown` guard, D100 T4,
+D102 document-local T0, or D103 blocking behavior.

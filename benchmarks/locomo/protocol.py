@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v18"
-DEFAULT_PROTOCOL_KEY: Final = "full-v18"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.08-document-t0-v18"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v19"
+DEFAULT_PROTOCOL_KEY: Final = "full-v19"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-counterfactual-v19"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -140,6 +140,15 @@ outside knowledge. If the deployment does not contain the answer, finish with
 "Unknown". The final answer must be the shortest phrase that fully names the
 requested entities/values, no explanations or reasoning.{answer_word_cap_instruction}
 
+For hypothetical or counterfactual questions, reason from causal or
+motivational relationships in the retrieved evidence even when the source does
+not state the hypothetical verbatim. If the question asks whether an outcome
+would still happen without a condition and the evidence says that condition
+caused, enabled, or motivated the outcome, answer "Likely no". If the evidence
+indicates that the outcome is independent of the condition, answer "Likely
+yes". Use "Unknown" only when the evidence gives no direction about that
+dependency.
+
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
 it. Before answering "Unknown", you must have tried at least one
@@ -197,8 +206,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V18 = LoCoMoProtocol(
-    key="full-v18",
+_FULL_V19 = LoCoMoProtocol(
+    key="full-v19",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -220,7 +229,7 @@ _FULL_V18 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V18.key: _FULL_V18}
+    {_FULL_V19.key: _FULL_V19}
 )
 
 
