@@ -182,8 +182,12 @@ Current public release: [`v0.11.0`](https://github.com/writeitai/remember-stack/
 - The derived binding projection is generation-gated as `document-t0-v1`,
   rebuilt before it is enabled for existing deployments, and cleared by normal
   lineage deletion and hard forget.
-- `RS-LoCoMo-Full-v18` pins the binding generation in addition to the v17
+- Historical `RS-LoCoMo-Full-v18` pins the binding generation in addition to the v17
   retrieval, answering, judging, budget, and answer-attempt contracts.
+- The current `RS-LoCoMo-Full-v19` changes only the frozen answer prompt: a
+  hypothetical may follow causal or motivational relationships in retrieved
+  evidence even when no source states the hypothetical verbatim. It adds no
+  retrieval, retry, reasoning-effort, or call-budget work.
 
 ## What landed after v0.6.0 (in v0.7.0; historical resolver generation)
 
