@@ -779,32 +779,31 @@ def _login_locked(args: argparse.Namespace) -> int:
                             token_id=existing.token_id,
                         )
                     )
-                durable = True
+                # Three outcomes, and exactly the rule recovery follows:
+                #
+                #   confirmed      → the rename is durable; drop the record.
+                #   unconfirmable  → this filesystem can never tell us, so
+                #                    retrying achieves nothing and holding the
+                #                    record would occupy a slot forever. Drop
+                #                    it, and say the guarantee is weaker.
+                #   raised         → a real failure; keep the record and let
+                #                    the next command re-attempt the sync.
+                resolved = False
                 try:
-                    # False means this filesystem cannot confirm the rename at
-                    # all. That is not durability, and treating it as such was
-                    # the same bug recovery had: it dropped the only record of
-                    # a live credential on the strength of nothing.
-                    durable = write_credentials(credential=credential)
-                    if not durable:
+                    if not write_credentials(credential=credential):
                         print(
                             "warning: this filesystem cannot confirm that the "
                             "credential file's rename is durable; a crash "
                             "could lose it while the credential stays live",
                             file=sys.stderr,
                         )
+                    resolved = True
                 except DurabilityUnconfirmed as error:
-                    # The file *is* written and names the new credential; only
-                    # the rename's durability is unconfirmed. Unwinding here
-                    # would revoke a credential this machine is now using.
+                    # The file *is* written and names the new credential, so
+                    # unwinding would revoke something the machine is using.
+                    # Only the record's fate differs.
                     print(f"warning: {error}", file=sys.stderr)
-                    durable = False
-                if durable is not False:
-                    # Dropped when the rename landed, and also when this
-                    # filesystem can never confirm one — holding the record
-                    # there would occupy a slot forever without ever resolving.
-                    # A real failure (`DurabilityUnconfirmed`) leaves it, and
-                    # the next command re-attempts the sync.
+                if resolved:
                     drop_pending_revocation(
                         identity=(
                             credential_origin(token_host=token_host),

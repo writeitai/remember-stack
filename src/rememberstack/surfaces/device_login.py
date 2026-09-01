@@ -21,6 +21,7 @@ from pydantic import SecretStr
 from pydantic import ValidationError
 
 from rememberstack.surfaces.credentials import CredentialFile
+from rememberstack.surfaces.credentials import deferred_interrupts
 
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _POLL_FLOOR_SECONDS = 1.0
@@ -181,31 +182,36 @@ def poll_device_token(
         sleep(wait)
         if clock() >= deadline:
             break
-        response = request_same_origin(
-            client=client,
-            method="POST",
-            url="/v1/device/token",
-            json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
-        )
-        if response.status_code == 200:
-            # A credential exists at the token host from this point, so the
-            # whole of the rest — parsing, validating, recording — is guarded.
-            # Guarding only the parse left the gaps between the steps, and an
-            # interrupt in one of them stranded a live credential.
-            try:
-                payload = response.json()
-                minted = DeviceTokenSuccess.model_validate(payload)
-                if on_minted is not None:
-                    on_minted(minted)
-            except (ValidationError, ValueError) as error:
-                _report_orphan(response=response, on_orphan=on_orphan)
-                raise DeviceGrantError(
-                    "token host returned an unusable token response", exit_code=1
-                ) from error
-            except BaseException:
-                _report_orphan(response=response, on_orphan=on_orphan)
-                raise
-            return minted
+        # Ctrl-C is held for the request and everything that follows a `200`,
+        # and released again before the sleep below. From the moment the token
+        # host answers, a credential exists — and no arrangement of `try`
+        # blocks makes the steps that follow safe, because a signal lands
+        # *between* bytecodes and the gaps between statements belong to no
+        # exception region. Deferring the signal is the only thing that closes
+        # them. The waiting a user actually wants to interrupt is the sleep,
+        # which is deliberately outside this.
+        with deferred_interrupts():
+            response = request_same_origin(
+                client=client,
+                method="POST",
+                url="/v1/device/token",
+                json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
+            )
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                    minted = DeviceTokenSuccess.model_validate(payload)
+                    if on_minted is not None:
+                        on_minted(minted)
+                except (ValidationError, ValueError) as error:
+                    _report_orphan(response=response, on_orphan=on_orphan)
+                    raise DeviceGrantError(
+                        "token host returned an unusable token response", exit_code=1
+                    ) from error
+                except BaseException:
+                    _report_orphan(response=response, on_orphan=on_orphan)
+                    raise
+                return minted
         if response.status_code == 400:
             try:
                 body = DeviceTokenErrorBody.model_validate(response.json())

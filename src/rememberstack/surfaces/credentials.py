@@ -14,6 +14,7 @@ from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
+import signal
 import stat
 from typing import Literal
 from urllib.parse import urlsplit
@@ -571,6 +572,40 @@ def clear_pending_revocations(*, settings: TokenHostSettings | None = None) -> N
     path = pending_revocation_path(settings=settings)
     if path.exists():
         path.unlink()
+
+
+@contextmanager
+def deferred_interrupts() -> "Iterator[None]":
+    """Hold Ctrl-C until the block finishes, then deliver it.
+
+    Some sequences cannot be made safe by arranging ``try`` blocks, because a
+    signal lands *between* bytecodes and no exception region covers the gap
+    between two statements. Receiving a credential is one: from the moment the
+    token host answers, the credential exists, and every step from parsing it
+    to writing it down is a place an interrupt could leave it live and unnamed.
+
+    So the signal is deferred rather than caught. The region it covers must be
+    short and must not wait on anything — here it is a parse and a local file
+    write — because Ctrl-C genuinely does nothing until it ends. The waiting a
+    user actually wants to interrupt, the poll's sleep, is deliberately
+    outside.
+
+    A no-op where the platform has no signal mask (Windows), because there the
+    guarantee is unavailable and refusing to log in would be a worse answer
+    than the narrower window.
+    """
+    mask = getattr(signal, "pthread_sigmask", None)
+    if mask is None:  # pragma: no cover - Windows
+        yield
+        return
+    held = {signal.SIGINT, signal.SIGTERM}
+    previous = mask(signal.SIG_BLOCK, held)
+    try:
+        yield
+    finally:
+        # Restores exactly what was blocked before, so a caller that had
+        # already masked something keeps it masked.
+        mask(signal.SIG_SETMASK, previous)
 
 
 @contextmanager

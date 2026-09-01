@@ -1385,3 +1385,77 @@ def test_an_unconfirmable_filesystem_warns_at_login(
     assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
     assert "cannot confirm" in capsys.readouterr().err
     assert load_credentials() is not None
+    # Dropped, not held: this filesystem can never confirm anything, so keeping
+    # the record would occupy a journal slot forever without resolving. The
+    # same rule recovery follows.
+    from rememberstack.surfaces.credentials import load_pending_revocations
+
+    assert not load_pending_revocations().entries
+
+
+def test_ctrl_c_is_held_while_a_credential_is_being_recorded() -> None:
+    """Some sequences cannot be made safe by arranging `try` blocks.
+
+    A signal lands *between* bytecodes, and the gaps between statements belong
+    to no exception region — so the window from "the token host answered" to
+    "the credential is written down" is closed by deferring the signal, not by
+    catching it.
+    """
+    import signal as signal_module
+
+    from rememberstack.surfaces.credentials import deferred_interrupts
+
+    if not hasattr(signal_module, "pthread_sigmask"):  # pragma: no cover
+        pytest.skip("this platform has no signal mask")
+
+    outside = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
+    assert signal_module.SIGINT not in outside
+
+    with deferred_interrupts():
+        held = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
+        assert signal_module.SIGINT in held
+        assert signal_module.SIGTERM in held
+
+    # And the previous mask is restored exactly, not cleared.
+    after = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
+    assert after == outside
+
+
+def test_the_poll_releases_the_hold_between_attempts() -> None:
+    """The sleep is where a user actually waits, so it stays interruptible."""
+    import signal as signal_module
+
+    from rememberstack.surfaces.device_login import poll_device_token
+
+    if not hasattr(signal_module, "pthread_sigmask"):  # pragma: no cover
+        pytest.skip("this platform has no signal mask")
+
+    masked_during_sleep: list[bool] = []
+
+    def observe(_seconds: float) -> None:
+        blocked = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
+        masked_during_sleep.append(signal_module.SIGINT in blocked)
+
+    polls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        polls["n"] += 1
+        if polls["n"] == 1:
+            return httpx.Response(
+                400,
+                json={"error": "authorization_pending", "error_description": "wait"},
+            )
+        return httpx.Response(200, json=_token_body())
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(base_url=_TOKEN_HOST, transport=transport) as client:
+        poll_device_token(
+            client=client,
+            device_code="DEVICE-SECRET",
+            interval=0,
+            expires_in=5,
+            sleep=observe,
+        )
+
+    assert masked_during_sleep, "the poll must have slept at least once"
+    assert not any(masked_during_sleep), "Ctrl-C works while waiting"
