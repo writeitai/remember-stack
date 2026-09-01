@@ -265,8 +265,16 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
 
 
 def test_receipt_shape_is_unchanged_for_old_clients() -> None:
-    """`IngestedVersion` gains no field, so an extra-forbid client still parses."""
-    assert set(IngestedVersion.model_fields) == {
+    """The internal admission hint never reaches an extra-forbid old client."""
+    receipt = IngestedVersion(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=uuid4(),
+        version_id=uuid4(),
+        content_hash="0" * 64,
+        created=True,
+        processing_admission="pending",
+    )
+    assert set(receipt.model_dump(mode="json")) == {
         "deployment_id",
         "doc_id",
         "version_id",

@@ -37,6 +37,7 @@ from rememberstack.ports import TelemetryPort
 import rememberstack.ports.auth as auth_module
 import rememberstack.ports.forget as forget_module
 import rememberstack.ports.git as git_module
+import rememberstack.ports.metering as metering_module
 import rememberstack.ports.model_provider as model_provider_module
 import rememberstack.ports.mounts as mounts_module
 import rememberstack.ports.object_store as object_store_module
@@ -51,6 +52,7 @@ _PORT_MODULES: tuple[ModuleType, ...] = (
     auth_module,
     forget_module,
     git_module,
+    metering_module,
     model_provider_module,
     mounts_module,
     object_store_module,
@@ -65,6 +67,7 @@ _PORT_EXPORTS = {
     "KGitPurgePort",
     "KGitRemotePort",
     "ModelProviderPort",
+    "MeterReceiptPort",
     "MountPublisherPort",
     "ObjectStorePort",
     "ObjectPurgePort",
@@ -228,11 +231,11 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_twelve_defined_protocols() -> None:
+def test_inventory_exports_exactly_thirteen_defined_protocols() -> None:
     """Keep D61/D74 seams plus bounded PostgreSQL read admission explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 12
+    assert len(_defined_protocols()) == 13
 
 
 def test_representative_fakes_conform_structurally() -> None:

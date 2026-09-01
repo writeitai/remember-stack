@@ -78,7 +78,9 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
-    processing_admission: Literal["not_required", "pending"] = "not_required"
+    processing_admission: Literal["not_required", "pending"] = Field(
+        default="not_required", exclude=True
+    )
 
 
 class UploadRecord(BaseModel):
