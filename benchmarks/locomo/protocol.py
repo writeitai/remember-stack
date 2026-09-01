@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v19"
-DEFAULT_PROTOCOL_KEY: Final = "full-v19"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-counterfactual-v19"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v20"
+DEFAULT_PROTOCOL_KEY: Final = "full-v20"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-complete-values-v20"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -149,6 +149,11 @@ indicates that the outcome is independent of the condition, answer "Likely
 yes". Use "Unknown" only when the evidence gives no direction about that
 dependency.
 
+When retrieved evidence supports multiple distinct values that directly
+satisfy the question, include all of them. Do not stop after the first or
+highest-ranked match. Exclude merely related facts that do not satisfy the
+question's requested action or relationship.
+
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
 it. Before answering "Unknown", you must have tried at least one
@@ -206,8 +211,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V19 = LoCoMoProtocol(
-    key="full-v19",
+_FULL_V20 = LoCoMoProtocol(
+    key="full-v20",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -229,7 +234,7 @@ _FULL_V19 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V19.key: _FULL_V19}
+    {_FULL_V20.key: _FULL_V20}
 )
 
 

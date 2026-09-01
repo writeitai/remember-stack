@@ -2910,7 +2910,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D104 amendment.** The current protocol is `RS-LoCoMo-Full-v19`. It retains
+> **D105 amendment.** The current protocol is `RS-LoCoMo-Full-v20`. It retains
+> v19's surface, dataset, ingestion, models, tools, and budgets while adding the
+> D105 complete-direct-values answer instruction.
+>
+> **Historical D104 amendment.** `RS-LoCoMo-Full-v19` retained
 > v18's surface, dataset, ingestion, models, tools, and budgets while adding the
 > D104 evidence-grounded counterfactual answer instruction.
 >
@@ -4845,3 +4849,43 @@ prompt-only response.
 **Amends.** Advances D102's Full-v18 benchmark identity only. It does not
 change D98 retrieval, D99's objective content-before-`Unknown` guard, D100 T4,
 D102 document-local T0, or D103 blocking behavior.
+
+## D105. Complete answers include every directly supported value
+
+**Decision (2026-09-01).** Advance the current benchmark protocol to
+`RS-LoCoMo-Full-v20`. When retrieved evidence supports multiple distinct values
+that directly satisfy the question, the answer prompt requires all of them and
+forbids stopping at the first or highest-ranked match. Merely related facts
+that do not satisfy the requested action or relationship remain excluded.
+
+This clarifies Full-v19's existing shortest-complete-answer rule; “shortest”
+does not permit an incomplete subset. It adds no retrieval call, model call,
+retry, reasoning effort, category route, or benchmark-specific term. The
+dataset, rendered documents, ingestion, retrieval surface, P3, counterfactual
+instruction, judge, budgets, and scoring remain unchanged. The adapter version,
+answer-prompt hash, protocol identity, and fingerprint roll.
+
+**Evidence.** Full-v19 fixed `conv-26/qa/0014` from `Unknown` to the exact
+`Likely no`, but the eight-item score remained 7/8 because `conv-26/qa/0003`
+changed from a complete three-value answer to `Counseling and mental health
+career options`, omitting the gold `Adoption agencies`. The one successful
+`testimony_context` response already included adoption advice and the explicit
+statement that Caroline was looking into an adoption agency at ranks 22 and 23.
+The miss was answer completeness, not retrieval depth.
+
+**Consequences.** Direct multi-value answers may be longer, but only because
+they include additional values that satisfy the question. No new paid call is
+introduced. Full-v19 and Full-v20 scores are directional because changing the
+prompt can also change tool selection under the same model and temperature.
+
+**Rejected.** Force the more expensive combined-context operation; deepen
+retrieval when the evidence is already present; add a semantic incompleteness
+retry; mention research or adoption in the prompt.
+
+**Design.** `plan/designs/locomo_benchmark_design.md` Full-v20 protocol.
+
+**Analysis.** `plan/analysis/locomo_direct_answer_completeness_analysis.md`.
+
+**Amends.** Advances D104's Full-v19 benchmark identity only. It preserves D98
+retrieval, D99's objective content-before-`Unknown` guard, and D104's bounded
+counterfactual instruction.
