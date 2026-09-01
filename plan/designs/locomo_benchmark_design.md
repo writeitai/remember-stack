@@ -1,7 +1,15 @@
 # LoCoMo full-system benchmark design
 
-> **Binding D104 amendment (2026-09-01).** The current protocol is
-> `RS-LoCoMo-Full-v19`. It retains v18's dataset, ingestion, models, tools,
+> **Binding D105 amendment (2026-09-01).** The current protocol is
+> `RS-LoCoMo-Full-v20`. It retains v19's dataset, ingestion, models, tools,
+> budgets, counterfactual instruction, content-before-`Unknown` harness guard,
+> and no-review scoring rule. Its answer prompt now also requires every
+> distinct retrieved value that directly satisfies the question, rather than
+> stopping at the first or highest-ranked match. No retrieval, retry,
+> model-effort, or call-budget behavior changes.
+
+> **Historical D104 amendment (2026-09-01; superseded by D105).** The D104
+> protocol was `RS-LoCoMo-Full-v19`. It retained v18's dataset, ingestion, models, tools,
 > budgets, content-before-`Unknown` harness guard, and no-review scoring rule.
 > Its answer prompt now explicitly permits bounded counterfactual inference
 > from causal or motivational relationships in retrieved evidence and reserves
@@ -45,7 +53,7 @@
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v19 run.
+> paid v20 run.
 
 ## 1. Acceptance boundary
 
@@ -71,7 +79,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v19
+protocol                RS-LoCoMo-Full-v20
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -95,6 +103,17 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v19 → v20 (2026-09-01 — D105 complete direct values):** When retrieved
+evidence supports multiple distinct values that directly satisfy the question,
+the answer must include all of them rather than stop at the first or
+highest-ranked match. Merely related facts that do not satisfy the requested
+action or relationship remain excluded. This clarifies that the existing
+shortest-complete-answer rule does not permit an incomplete subset. It adds no
+tool, model call, retry, reasoning effort, category route, or item-specific
+hint. Dataset, rendered documents, ingestion generations, retrieval surface,
+P3 contents, judge, and scoring are unchanged. The answer-prompt hash, adapter
+version, protocol identity, and fingerprint roll.
 
 **v18 → v19 (2026-09-01 — D104 counterfactual answer instruction):** The
 answer prompt permits causal or motivational inference for hypothetical and
@@ -377,7 +396,7 @@ deliberately incorrect answers with both models and reporting the acceptance rat
 
 V2 through the weak v9 variant deliberately kept the answer agent on
 `openai/gpt-4o-mini` while Luna judged it. V10 and later instead measure the
-owner-selected Luna agent against their pinned surfaces; v19 retains that model
+owner-selected Luna agent against their pinned surfaces; v20 retains that model
 choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
@@ -580,7 +599,7 @@ After the build, the ordinary self-host `mounts` command materializes the latest
 registered P3 snapshot through `LocalMountPublisher`. The operator supplies its
 P3 path to `answer`. The runner requires `.snapshot-version` to equal the P3
 version in the readiness report before any question call. P3 is therefore both
-an integrity requirement and an answer channel in v19; no benchmark-specific
+an integrity requirement and an answer channel in v20; no benchmark-specific
 object-store reader or HTTP endpoint exists.
 
 ### Plane K
@@ -632,7 +651,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v19 requires to be
+- the non-secret `document_binding_generation`, which Full-v20 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -702,7 +721,7 @@ For each question:
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
-   prepared protocol's `answer_word_cap` is set; v19 leaves it unset. If the
+   prepared protocol's `answer_word_cap` is set; v20 leaves it unset. If the
    normalized answer is `Unknown` and no successful content-bearing tool has
    been attempted, reject that step, render bounded guard feedback, and continue
    the same loop. Content-bearing tools are the three context operations;
@@ -735,14 +754,14 @@ filesystem orientation/grep/read. It must inspect graph truncation/work-bound
 fields and respect grain, validity, freshness, typed negatives, and hydration
 drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
 
-Loop guards in the frozen answer prompt (v19): never repeat a tool call with the
+Loop guards in the frozen answer prompt (v20): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
 rather than retrying it; and try at least one content-bearing retrieval path
 before answering "Unknown". The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-For hypothetical and counterfactual questions, the frozen v19 prompt also
+For hypothetical and counterfactual questions, the frozen v20 prompt also
 requires the agent to reason only from causal or motivational relationships in
 the retrieved trace. The source need not state the hypothetical verbatim. A
 condition that caused, enabled, or motivated the questioned outcome supports
@@ -750,6 +769,12 @@ the corresponding `Likely yes`/`Likely no` answer; `Unknown` remains correct
 when the evidence gives no direction. This is prompt discipline only: the
 harness does not infer question type or inspect evidence semantics, so it adds
 no hidden retry or category-specific execution path.
+
+The frozen v20 prompt additionally requires complete direct-value coverage:
+when several retrieved values each satisfy the requested action or
+relationship, include every one, while excluding adjacent facts that do not.
+The harness does not attempt semantic list-completeness classification and
+adds no retry; this remains answer-agent prompt discipline.
 
 The answer agent sees a compact projection of each trace response: all facts,
 claims, chunks, sources, timestamps, freshness, negatives, truncation, and
@@ -772,11 +797,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v19 \
+  --protocol full-v20 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v19`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v20`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

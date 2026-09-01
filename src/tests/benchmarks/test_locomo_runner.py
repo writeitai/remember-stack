@@ -1047,7 +1047,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (("full-v20", "z-ai/glm-5.3-flash", "none", 0, 2),),
+    (("full-v21", "z-ai/glm-5.3-flash", "none", 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1680,7 +1680,7 @@ def test_ingest_refuses_model_binding_drift_before_upload(
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full-v19 cannot silently process with document-local T0 disabled."""
+    """Full-v20 cannot silently process with document-local T0 disabled."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
@@ -1906,8 +1906,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v20","protocol_fingerprint":'
-        '"76ac68117dbddd72a7e1f44734cde043180ad8b720109af9f9a839641c152784",'
+        '{"protocol_name":"RS-LoCoMo-Full-v21","protocol_fingerprint":'
+        '"ba5ab840261a609f1dc2bccfc0936483991e12db34c7b1d96aebd5ed49925e09",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2126,7 +2126,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v20"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v21"
     assert prepared.answer_agent_model == "z-ai/glm-5.3-flash"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2

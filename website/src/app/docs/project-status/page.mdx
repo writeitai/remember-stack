@@ -184,10 +184,12 @@ Current public release: [`v0.11.0`](https://github.com/writeitai/remember-stack/
   lineage deletion and hard forget.
 - Historical `RS-LoCoMo-Full-v18` pins the binding generation in addition to the v17
   retrieval, answering, judging, budget, and answer-attempt contracts.
-- The current `RS-LoCoMo-Full-v19` changes only the frozen answer prompt: a
+- Historical `RS-LoCoMo-Full-v19` changed only the frozen answer prompt: a
   hypothetical may follow causal or motivational relationships in retrieved
   evidence even when no source states the hypothetical verbatim. It adds no
   retrieval, retry, reasoning-effort, or call-budget work.
+- The current `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
+  that directly satisfies the question. It does not add a retrieval or retry.
 
 ## What landed after v0.6.0 (in v0.7.0; historical resolver generation)
 
