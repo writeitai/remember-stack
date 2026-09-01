@@ -4803,9 +4803,17 @@ in bounded chunks, **read a half-open byte range** `[start, end)`,
 **materialise** it to a temporary local file, or **read it bounded** into
 memory after naming the limit. There is no operation that reads a source of
 unknown size — the hazard was never bytes in memory, it was bytes in memory
-without anyone having decided how many. Reads never come back short: a range
-returns exactly what was asked for or raises, because a parser handed a
-truncated header cannot tell it from a valid one. `ObjectStorePort` grows the matching
+without anyone having decided how many. Because naming a large limit is still
+naming one, a handle may carry a **read ceiling** that refuses any single read
+above it; without a ceiling the property is friction rather than a guarantee,
+and the decision says so rather than overclaiming. A stream is opened for the
+duration of a block and released at its end, since the resource underneath is a
+descriptor or a connection and garbage-collection timing is not a lifetime
+contract. Reads never come back short: a range returns exactly what was asked
+for or raises, because a parser handed a truncated header cannot tell it from a
+valid one. Recorded length is verified alongside recorded hash — bytes can hash
+correctly and still be described by a wrong size, which would let two access
+paths disagree about one source. `ObjectStorePort` grows the matching
 `open_stream` and `read_range` so the handle has something to sit on, and the
 existing `read_bytes` stays for the small text objects every shipped route
 converts.
@@ -4831,6 +4839,11 @@ guarantee, so the write also counts what it actually writes and refuses a
 source that exceeds both the declaration and the accepted bound. The temporary
 file's lifetime belongs to the handle, so a route that fails mid-decode cannot
 leak the file it asked for.
+
+**Not solved here.** Nothing reserves worker-wide temporary disk, so two
+concurrent materialisations of one source each pass their own bound and can
+together exceed the volume. Aggregate admission belongs to whatever schedules
+the work; this is a stated boundary, not an oversight.
 
 **Consequences.** One contract serves both deployment shapes: a self-host
 directory tree and a cloud object store present the same three operations, so

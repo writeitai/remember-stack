@@ -1,6 +1,7 @@
 """Inventory tests for D61 substrate seams plus D74 store capabilities."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -99,13 +100,19 @@ class FakeObjectStore:
         """Return the bytes stored under the requested key."""
         return self.objects[key.root]
 
+    @contextmanager
     def open_stream(
         self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
-    ) -> Iterator[bytes]:
-        """Yield the stored bytes in fixed-size chunks."""
-        content = self.objects[key.root]
-        for offset in range(0, len(content), chunk_bytes):
-            yield content[offset : offset + chunk_bytes]
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read over the stored bytes."""
+        content = self.read_bytes(key=key)
+
+        def chunks() -> Iterator[bytes]:
+            """Yield successive fixed-size slices of the stored bytes."""
+            for offset in range(0, len(content), chunk_bytes):
+                yield content[offset : offset + chunk_bytes]
+
+        yield chunks()
 
     def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
         """Return the half-open byte interval of the stored bytes."""
@@ -228,10 +235,7 @@ _object_store_assignment: ObjectStorePort = FakeObjectStore()
 _source_handle_assignment: SourceHandlePort = ObjectSourceHandle(
     store=FakeObjectStore(),
     identity=SourceIdentity(
-        object_key=ObjectKey("raw/example"),
-        content_hash="0" * 64,
-        byte_size=0,
-        mime="video/mp4",
+        object_key=ObjectKey("raw/example"), content_hash="0" * 64, byte_size=0
     ),
 )
 _mount_assignment: MountPublisherPort = FakeMountPublisher()

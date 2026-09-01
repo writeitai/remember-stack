@@ -1,6 +1,7 @@
 """D61 byte/object-key seam for immutable raw inputs, artifacts, and snapshots."""
 
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -22,12 +23,22 @@ class ObjectStorePort(Protocol):
 
     def open_stream(
         self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
-    ) -> Iterator[bytes]:
-        """Yield one object in order, holding at most one chunk at a time."""
+    ) -> AbstractContextManager[Iterator[bytes]]:
+        """Open an ordered chunked read, released when the block exits.
+
+        A context manager rather than a bare iterator because the underlying
+        resource is a file descriptor or an HTTP body. A caller that stops
+        iterating early would otherwise hold it until garbage collection, and
+        collection timing is not a resource-lifetime contract — enough
+        abandoned reads exhaust the descriptor limit or the connection pool.
+        """
         ...
 
     def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
-        """Read the half-open byte interval ``[start, end)`` of one object."""
+        """Read the half-open byte interval ``[start, end)`` of one object.
+
+        Returns exactly ``end - start`` bytes or raises `SourceRangeError`.
+        """
         ...
 
     def write_bytes(

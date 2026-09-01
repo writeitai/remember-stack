@@ -30,8 +30,16 @@ class SourceHandlePort(Protocol):
         """The source's recorded key, content hash, size, and declared type."""
         ...
 
-    def open_stream(self, *, chunk_bytes: int = 1024 * 1024) -> Iterator[bytes]:
-        """Yield the source in order, holding at most one chunk at a time."""
+    def open_stream(
+        self, *, chunk_bytes: int = 1024 * 1024
+    ) -> AbstractContextManager[Iterator[bytes]]:
+        """Open an ordered chunked read, released when the block exits.
+
+        A context manager rather than a bare iterator: the resource underneath
+        is a file descriptor or an HTTP body, and a caller that stops early
+        would otherwise hold it until garbage collection. Collection timing is
+        not a resource-lifetime contract.
+        """
         ...
 
     def read_range(self, *, start: int, end: int) -> bytes:

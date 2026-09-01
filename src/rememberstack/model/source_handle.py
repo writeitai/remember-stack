@@ -20,9 +20,13 @@ class SourceIdentity(BaseModel):
     """What a converter may know about a source without reading it.
 
     The hash and size are the E0 facts recorded when the raw object was
-    written, not values a converter or a caller supplies. `mime` is the
-    caller's declared type and stays an untrusted hint: routing and rating
-    belong to a structural probe of the actual bytes, never to this field.
+    written, not values a converter or a caller supplies.
+
+    Deliberately no MIME field. The converter contract already carries the
+    declared type as its own argument (`convert(source, mime, hints)`), and
+    holding it in two places invites the two copies to disagree — a route
+    would then have to know which one routing used. One authority, and it is
+    not this object.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -30,7 +34,6 @@ class SourceIdentity(BaseModel):
     object_key: ObjectKey
     content_hash: Sha256Hex
     byte_size: int = Field(ge=0)
-    mime: str = Field(min_length=1)
 
 
 class SourceTooLargeError(Exception):
@@ -51,4 +54,13 @@ class SourceHashMismatchError(Exception):
 
 
 class SourceRangeError(Exception):
-    """A byte range that is empty, reversed, or outside the source."""
+    """A byte range that is empty, reversed, outside the source, or short."""
+
+
+class SourceSizeMismatchError(Exception):
+    """The stored object's real length is not the length recorded for it.
+
+    Distinct from a hash mismatch: the bytes may hash correctly and still be
+    described by a wrong size, which would let materialization and range reads
+    disagree about how long the same source is.
+    """

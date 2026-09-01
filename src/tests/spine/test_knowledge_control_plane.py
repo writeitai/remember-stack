@@ -1,6 +1,7 @@
 """WP-6.1 acceptance: live K control plane, routing, and exact staleness."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import UTC
 from decimal import Decimal
@@ -552,13 +553,19 @@ class _TranscriptStore:
         """Return one previously archived session transcript."""
         return self.objects[key.root]
 
+    @contextmanager
     def open_stream(
         self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
-    ) -> Iterator[bytes]:
-        """Yield the stored bytes in fixed-size chunks."""
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read over the stored bytes."""
         content = self.read_bytes(key=key)
-        for offset in range(0, len(content), chunk_bytes):
-            yield content[offset : offset + chunk_bytes]
+
+        def chunks() -> Iterator[bytes]:
+            """Yield successive fixed-size slices of the stored bytes."""
+            for offset in range(0, len(content), chunk_bytes):
+                yield content[offset : offset + chunk_bytes]
+
+        yield chunks()
 
     def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
         """Return the half-open byte interval of the stored bytes."""

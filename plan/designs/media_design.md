@@ -159,11 +159,38 @@ many*. A contract that offers an unbounded whole-file read as the convenient
 option gets unbounded whole-file reads, and the failure only shows up on the
 first large file in production.
 
+Naming a limit is not by itself a guarantee, because a caller can name a large
+one — asking for the range `[0, size)` is a whole-file read with extra steps.
+A handle can therefore carry a **read ceiling**: the largest single range,
+chunk, or bounded read it will serve, refused above that regardless of what the
+caller asks for. Without a ceiling the property is ergonomic friction; with one
+it is enforced. Deployments handling media set it; the small-text routes that
+have no size problem do not need it.
+
+Reading is also a **resource**, not just bytes. Underneath a stream is a file
+descriptor or an HTTP connection, so a stream is opened for the duration of a
+block and released when the block ends. Returning a bare iterator would leave a
+caller who stops early holding that resource until garbage collection, and
+collection timing is not a lifetime contract — enough abandoned reads exhaust
+the descriptor limit or the connection pool.
+
 Reads never come back short. A range returns exactly the bytes it was asked
 for or it raises — a container parser handed a truncated header cannot tell it
 from a valid one, and will produce confident nonsense rather than an error.
 That check belongs here rather than in each route, because every route would
 otherwise have to remember to write it.
+
+The recorded **length** is checked as well as the recorded hash, and they catch
+different lies. Bytes can hash correctly while being described by a wrong size;
+if only the hash were verified, materialisation would happily produce 5,000
+bytes for a source recorded as 10 while a range read past byte 10 was refused —
+two access paths disagreeing about the length of one source.
+
+**Not solved here:** nothing reserves worker-wide temporary disk. Two
+concurrent materialisations of one 6 GiB source each pass a 6 GiB bound and
+together need 12 GiB. Aggregate admission belongs to whatever schedules the
+work; the handle bounds one read at a time, and says so rather than implying
+otherwise.
 
 Materialisation is where the bounds live, because it is the operation that can
 actually exhaust a host. Three properties are enforced by the handle rather

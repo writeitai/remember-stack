@@ -349,6 +349,7 @@ from rememberstack.model.sections import StructureRouteTag
 from rememberstack.model.source_handle import SourceHashMismatchError
 from rememberstack.model.source_handle import SourceIdentity
 from rememberstack.model.source_handle import SourceRangeError
+from rememberstack.model.source_handle import SourceSizeMismatchError
 from rememberstack.model.source_handle import SourceTooLargeError
 from rememberstack.model.spend_lease import SpendLeaseRefused
 from rememberstack.model.spend_lease import SpendLeaseUnavailable
@@ -506,6 +507,7 @@ __all__ = (
     "SourceHashMismatchError",
     "SourceIdentity",
     "SourceRangeError",
+    "SourceSizeMismatchError",
     "SourceTooLargeError",
     "ObservationAssertion",
     "ObservationCandidate",

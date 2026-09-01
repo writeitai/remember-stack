@@ -16,6 +16,7 @@ import tempfile
 from rememberstack.model import SourceHashMismatchError
 from rememberstack.model import SourceIdentity
 from rememberstack.model import SourceRangeError
+from rememberstack.model import SourceSizeMismatchError
 from rememberstack.model import SourceTooLargeError
 from rememberstack.ports import ObjectStorePort
 
@@ -31,27 +32,60 @@ class ObjectSourceHandle:
         store: ObjectStorePort,
         identity: SourceIdentity,
         temp_root: Path | None = None,
+        max_read_bytes: int | None = None,
     ) -> None:
         """Bind the handle to one source and the store that holds its bytes.
 
         `temp_root` is where `materialize_seekable` writes. Leaving it None
-        uses the platform temporary directory; a deployment that bounds
-        worker disk points it at the volume it actually sized.
+        uses the platform temporary directory; a deployment that bounds worker
+        disk points it at the volume it actually sized.
+
+        `max_read_bytes` is the ceiling on any single in-memory read — the
+        largest range or chunk this handle will serve. Without it, asking for
+        the range ``[0, byte_size)`` is a whole-file read with extra steps, so
+        the "no unbounded read" property is only ergonomic friction. With it,
+        the property is enforced. Left None the handle keeps the friction and
+        not the guarantee, which is the right default for the small-text routes
+        that have no size problem.
+
+        **Concurrency.** Each call reads independently; nothing here reserves
+        worker-wide temporary disk, so two concurrent materializations of a
+        6 GiB source can both pass a 6 GiB bound and together need 12 GiB.
+        Aggregate admission belongs to whatever schedules the work, and is a
+        documented non-goal of this port rather than an oversight.
         """
+        if max_read_bytes is not None and max_read_bytes <= 0:
+            raise ValueError(
+                f"max_read_bytes must be positive when set, got {max_read_bytes}"
+            )
         self._store = store
         self._identity = identity
         self._temp_root = temp_root
+        self._max_read_bytes = max_read_bytes
 
     @property
     def identity(self) -> SourceIdentity:
         """The source's recorded key, content hash, size, and declared type."""
         return self._identity
 
-    def open_stream(self, *, chunk_bytes: int = _HASH_CHUNK_BYTES) -> Iterator[bytes]:
-        """Yield the source in order, holding at most one chunk at a time."""
-        return self._store.open_stream(
+    @contextmanager
+    def open_stream(
+        self, *, chunk_bytes: int = _HASH_CHUNK_BYTES
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read, released when the block exits."""
+        self._check_read_ceiling(requested=chunk_bytes, what="chunk")
+        with self._store.open_stream(
             key=self._identity.object_key, chunk_bytes=chunk_bytes
-        )
+        ) as chunks:
+            yield chunks
+
+    def _check_read_ceiling(self, *, requested: int, what: str) -> None:
+        """Refuse a single read larger than this handle's configured ceiling."""
+        if self._max_read_bytes is not None and requested > self._max_read_bytes:
+            raise SourceTooLargeError(
+                f"{what} of {requested} bytes exceeds this handle's "
+                f"{self._max_read_bytes}-byte read ceiling"
+            )
 
     def read_range(self, *, start: int, end: int) -> bytes:
         """Read the half-open byte interval ``[start, end)`` of the source.
@@ -69,6 +103,7 @@ class ObjectSourceHandle:
                 f"range [{start}, {end}) extends past the recorded source size "
                 f"{self._identity.byte_size}"
             )
+        self._check_read_ceiling(requested=end - start, what="range")
         content = self._store.read_range(
             key=self._identity.object_key, start=start, end=end
         )
@@ -96,7 +131,14 @@ class ObjectSourceHandle:
                 f"source {self._identity.object_key.root!r} is "
                 f"{self._identity.byte_size} bytes, over the {max_bytes} accepted"
             )
-        return self._store.read_bytes(key=self._identity.object_key)
+        self._check_read_ceiling(requested=self._identity.byte_size, what="read")
+        content = self._store.read_bytes(key=self._identity.object_key)
+        if len(content) != self._identity.byte_size:
+            raise SourceSizeMismatchError(
+                f"source {self._identity.object_key.root!r} holds {len(content)} "
+                f"bytes, not the {self._identity.byte_size} recorded"
+            )
+        return content
 
     @contextmanager
     def materialize_seekable(self, *, max_bytes: int) -> Iterator[Path]:
@@ -132,17 +174,33 @@ class ObjectSourceHandle:
         try:
             digest = hashlib.sha256()
             written = 0
+            # Read at most the remaining allowance plus one byte, so an object
+            # whose real length exceeds its recorded size cannot move a whole
+            # default chunk before the guard notices. The extra byte is what
+            # makes "too large" detectable at all: a read that exactly fills
+            # the allowance is indistinguishable from one that stops there.
+            chunk_bytes = min(_HASH_CHUNK_BYTES, max_bytes + 1)
             with path.open(mode="wb") as handle:
-                for chunk in self.open_stream():
-                    written += len(chunk)
-                    if written > max_bytes:
-                        raise SourceTooLargeError(
-                            f"source {self._identity.object_key.root!r} exceeded the "
-                            f"{max_bytes} accepted while streaming; the recorded size "
-                            f"{self._identity.byte_size} was wrong"
-                        )
-                    digest.update(chunk)
-                    handle.write(chunk)
+                with self.open_stream(chunk_bytes=chunk_bytes) as chunks:
+                    for chunk in chunks:
+                        written += len(chunk)
+                        if written > max_bytes:
+                            raise SourceTooLargeError(
+                                f"source {self._identity.object_key.root!r} exceeded "
+                                f"the {max_bytes} accepted while streaming; the "
+                                f"recorded size {self._identity.byte_size} was wrong"
+                            )
+                        digest.update(chunk)
+                        handle.write(chunk)
+            if written != self._identity.byte_size:
+                # Caught separately from the hash: bytes can hash correctly and
+                # still be described by a wrong length, which would let
+                # materialization and range reads disagree about how long the
+                # same source is.
+                raise SourceSizeMismatchError(
+                    f"source {self._identity.object_key.root!r} holds {written} "
+                    f"bytes, not the {self._identity.byte_size} recorded"
+                )
             if digest.hexdigest() != self._identity.content_hash:
                 raise SourceHashMismatchError(
                     f"source {self._identity.object_key.root!r} hashed to "

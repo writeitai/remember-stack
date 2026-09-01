@@ -1,6 +1,7 @@
 """Local-filesystem object store adapter: immutable bytes under one root (D61/D62)."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from rememberstack.model import ObjectAlreadyExistsError
@@ -21,15 +22,21 @@ class LocalFSObjectStore:
         """Read all bytes stored under an existing object key."""
         return self._path_for(key=key).read_bytes()
 
+    @contextmanager
     def open_stream(
         self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
-    ) -> Iterator[bytes]:
-        """Yield one object in order, holding at most one chunk at a time."""
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read, closing the file when the block exits."""
         if chunk_bytes <= 0:
             raise SourceRangeError(f"chunk_bytes must be positive, got {chunk_bytes}")
         with self._path_for(key=key).open(mode="rb") as handle:
-            while chunk := handle.read(chunk_bytes):
-                yield chunk
+
+            def chunks() -> Iterator[bytes]:
+                """Yield successive fixed-size reads until the file is spent."""
+                while chunk := handle.read(chunk_bytes):
+                    yield chunk
+
+            yield chunks()
 
     def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
         """Read the half-open byte interval ``[start, end)`` of one object."""

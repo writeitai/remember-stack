@@ -174,7 +174,8 @@ def test_stream_reassembles_and_releases_the_connection() -> None:
     content = bytes(range(256)) * 8
     store.write_bytes(key=ObjectKey("clip.mp4"), content=content)
 
-    chunks = list(store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=100))
+    with store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=100) as parts:
+        chunks = list(parts)
 
     assert b"".join(chunks) == content
     assert max(len(chunk) for chunk in chunks) <= 100
@@ -224,4 +225,5 @@ def test_nonpositive_chunk_size_is_refused() -> None:
     store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
 
     with pytest.raises(SourceRangeError):
-        list(store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=0))
+        with store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=0):
+            pytest.fail("a non-positive chunk must be refused before any read")

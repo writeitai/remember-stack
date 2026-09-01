@@ -1,6 +1,7 @@
 """S3-compatible MinIO object storage for the self-host profile."""
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -158,10 +159,11 @@ class MinIOObjectStore:
         finally:
             body.close()
 
+    @contextmanager
     def open_stream(
         self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
-    ) -> Iterator[bytes]:
-        """Yield one object in order, holding at most one chunk at a time."""
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read, releasing the HTTP body on exit."""
         if chunk_bytes <= 0:
             raise SourceRangeError(f"chunk_bytes must be positive, got {chunk_bytes}")
         response = self._client.get_object(
@@ -169,8 +171,13 @@ class MinIOObjectStore:
         )
         body = response["Body"]
         try:
-            while chunk := body.read(chunk_bytes):
-                yield chunk
+
+            def chunks() -> Iterator[bytes]:
+                """Yield successive reads until the body is exhausted."""
+                while chunk := body.read(chunk_bytes):
+                    yield chunk
+
+            yield chunks()
         finally:
             body.close()
 

@@ -1,5 +1,7 @@
 """Bounded source reads: streaming, ranges, size refusal, and hash verification."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import hashlib
 from pathlib import Path
 
@@ -11,9 +13,34 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import SourceHashMismatchError
 from rememberstack.model import SourceIdentity
 from rememberstack.model import SourceRangeError
+from rememberstack.model import SourceSizeMismatchError
 from rememberstack.model import SourceTooLargeError
 
 _KEY = ObjectKey("raw/recording.mp4")
+
+
+class _CountingStore(LocalFSObjectStore):
+    """A local store that records how many bytes it actually handed out."""
+
+    def __init__(self, *, root: Path) -> None:
+        """Start with an empty byte counter over the given root."""
+        super().__init__(root=root)
+        self.bytes_served = 0
+
+    @contextmanager
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[Iterator[bytes]]:
+        """Count every byte yielded so a test can assert what actually moved."""
+        with super().open_stream(key=key, chunk_bytes=chunk_bytes) as parts:
+
+            def counted() -> Iterator[bytes]:
+                """Pass chunks through, adding each to the running total."""
+                for chunk in parts:
+                    self.bytes_served += len(chunk)
+                    yield chunk
+
+            yield counted()
 
 
 def _handle(
@@ -28,7 +55,6 @@ def _handle(
             object_key=_KEY,
             content_hash=hashlib.sha256(content).hexdigest(),
             byte_size=len(content) if declared_size is None else declared_size,
-            mime="video/mp4",
         ),
         temp_root=tmp_path / "work",
     )
@@ -41,7 +67,8 @@ def test_stream_reassembles_the_source_without_whole_file_chunks(
     content = bytes(range(256)) * 40
     handle = _handle(tmp_path=tmp_path, content=content)
 
-    chunks = list(handle.open_stream(chunk_bytes=1024))
+    with handle.open_stream(chunk_bytes=1024) as parts:
+        chunks = list(parts)
 
     assert b"".join(chunks) == content
     assert max(len(chunk) for chunk in chunks) <= 1024
@@ -109,24 +136,57 @@ def test_materialize_removes_the_file_even_when_the_caller_raises(
 
 
 def test_oversized_source_is_refused_before_any_bytes_move(tmp_path: Path) -> None:
-    """The bound is checked against the recorded size, so refusal costs nothing."""
-    handle = _handle(tmp_path=tmp_path, content=b"x" * 5000)
+    """The bound is checked against the recorded size, so refusal costs nothing.
+
+    Asserted by counting what the store was asked for: the point is not merely
+    that no file survives, but that the store was never touched at all.
+    """
+    store = _CountingStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=b"x" * 5000)
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(b"x" * 5000).hexdigest(),
+            byte_size=5000,
+        ),
+        temp_root=tmp_path / "work",
+    )
 
     with pytest.raises(SourceTooLargeError):
         with handle.materialize_seekable(max_bytes=100):
             pytest.fail("an oversized source must never be materialized")
 
+    assert store.bytes_served == 0, "refusal must precede any read"
     assert not (tmp_path / "work").exists() or not any((tmp_path / "work").iterdir())
 
 
 def test_understated_size_is_still_caught_while_streaming(tmp_path: Path) -> None:
-    """A wrong recorded size cannot be used to smuggle past the accepted bound."""
-    content = b"y" * 5000
-    handle = _handle(tmp_path=tmp_path, content=content, declared_size=10)
+    """A wrong recorded size cannot be used to smuggle past the accepted bound.
+
+    The guard must also fire *promptly*: reading a full default chunk before
+    noticing would move a megabyte for a hundred-byte allowance, so the read is
+    sized to the remaining allowance plus the one byte that makes "over" visible.
+    """
+    store = _CountingStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=b"y" * 5000)
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(b"y" * 5000).hexdigest(),
+            byte_size=10,
+        ),
+        temp_root=tmp_path / "work",
+    )
 
     with pytest.raises(SourceTooLargeError):
         with handle.materialize_seekable(max_bytes=100):
             pytest.fail("the streaming guard must fire when the size was wrong")
+
+    assert store.bytes_served <= 101, (
+        f"moved {store.bytes_served} bytes for a 100-byte allowance"
+    )
 
 
 def test_corrupted_bytes_fail_the_hash_check(tmp_path: Path) -> None:
@@ -139,7 +199,6 @@ def test_corrupted_bytes_fail_the_hash_check(tmp_path: Path) -> None:
             object_key=_KEY,
             content_hash=hashlib.sha256(b"different-content").hexdigest(),
             byte_size=len(b"actual-content"),
-            mime="video/mp4",
         ),
         temp_root=tmp_path / "work",
     )
@@ -154,7 +213,8 @@ def test_nonpositive_chunk_size_is_refused(tmp_path: Path) -> None:
     handle = _handle(tmp_path=tmp_path, content=b"data")
 
     with pytest.raises(SourceRangeError):
-        list(handle.open_stream(chunk_bytes=0))
+        with handle.open_stream(chunk_bytes=0):
+            pytest.fail("a non-positive chunk must be refused before any read")
 
 
 def test_zero_byte_source_materializes_under_a_zero_bound(tmp_path: Path) -> None:
@@ -210,7 +270,6 @@ def test_materialize_without_a_temp_root_uses_the_platform_default(
             object_key=_KEY,
             content_hash=hashlib.sha256(b"payload").hexdigest(),
             byte_size=len(b"payload"),
-            mime="video/mp4",
         ),
     )
 
@@ -235,7 +294,6 @@ def test_truncated_object_fails_the_range_read(tmp_path: Path) -> None:
             object_key=_KEY,
             content_hash=hashlib.sha256(b"short").hexdigest(),
             byte_size=100,
-            mime="video/mp4",
         ),
         temp_root=tmp_path / "work",
     )
@@ -271,3 +329,69 @@ def test_concurrent_materializations_do_not_share_a_directory(tmp_path: Path) ->
             inner = second.parent
         assert not inner.exists()
         assert first.exists(), "the outer materialization must survive the inner"
+
+
+def test_read_ceiling_refuses_a_whole_file_range(tmp_path: Path) -> None:
+    """With a ceiling set, `[0, byte_size)` stops being a whole-file read.
+
+    Without one the "no unbounded read" property is only friction: a caller
+    can always ask for the entire range. The ceiling turns it into a rule.
+    """
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=b"z" * 5000)
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(b"z" * 5000).hexdigest(),
+            byte_size=5000,
+        ),
+        temp_root=tmp_path / "work",
+        max_read_bytes=1024,
+    )
+
+    with pytest.raises(SourceTooLargeError):
+        handle.read_range(start=0, end=5000)
+    with pytest.raises(SourceTooLargeError):
+        handle.read_bounded(max_bytes=10_000)
+    with pytest.raises(SourceTooLargeError):
+        with handle.open_stream(chunk_bytes=4096):
+            pytest.fail("a chunk over the ceiling must be refused")
+
+    assert handle.read_range(start=0, end=1024) == b"z" * 1024
+
+
+def test_recorded_size_must_match_what_was_actually_stored(tmp_path: Path) -> None:
+    """Bytes can hash correctly and still be described by a wrong length.
+
+    Left unchecked, materialization would succeed with 5000 bytes while a range
+    read past 10 was refused — two access paths disagreeing about one source.
+    """
+    content = b"w" * 5000
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=content)
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(content).hexdigest(),
+            byte_size=10,
+        ),
+        temp_root=tmp_path / "work",
+    )
+
+    with pytest.raises(SourceSizeMismatchError):
+        with handle.materialize_seekable(max_bytes=10_000):
+            pytest.fail("a size mismatch must not reach the converter")
+
+
+def test_abandoning_a_stream_still_releases_the_file(tmp_path: Path) -> None:
+    """Stopping early must release the descriptor at block exit, not at GC."""
+    handle = _handle(tmp_path=tmp_path, content=b"a" * 4096)
+
+    with handle.open_stream(chunk_bytes=16) as chunks:
+        first = next(iter(chunks))
+        assert first == b"a" * 16
+
+    # Exiting the block closed the underlying file; the source stays readable.
+    assert handle.read_range(start=0, end=4) == b"aaaa"
