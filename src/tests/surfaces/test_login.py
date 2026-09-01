@@ -1011,39 +1011,27 @@ def test_equivalent_spellings_of_one_host_are_one_origin() -> None:
     assert canonical != credential_origin(token_host="https://other.example.test")
 
 
-def test_an_abandoned_lock_sentinel_does_not_wedge_the_user_out(
+def test_a_platform_without_file_locking_refuses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A SIGKILL leaves the fallback sentinel behind; it must expire.
+    """A sentinel file is not a lock, so there is no file-based fallback.
 
-    The flock path needs no expiry — the kernel drops the lock when the process
-    dies — but a file does not, and locking somebody out of their own
-    credentials permanently is worse than the race it prevents.
+    It cannot tell a live owner from one that was killed, so it either wedges
+    the user out permanently or reclaims a lock somebody is holding — and
+    reclaiming by age did the second. An OS lock is released when the process
+    dies, which is the property that makes it a lock at all; without one, the
+    honest answer is to refuse.
     """
-    import os
-    import time
-
     from rememberstack.surfaces.credentials import credential_lock
     from rememberstack.surfaces.credentials import CredentialError
-    from rememberstack.surfaces.credentials import credentials_dir
 
-    root = _isolate_config(monkeypatch, tmp_path)
+    _isolate_config(monkeypatch, tmp_path)
     monkeypatch.setitem(sys.modules, "fcntl", None)
-    sentinel = credentials_dir() / ".lock.exclusive"
-    sentinel.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    sentinel.write_text("", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "msvcrt", None)
 
-    # Fresh: somebody may really be holding it.
-    with pytest.raises(CredentialError, match="holds the credential"):
+    with pytest.raises(CredentialError, match="no file locking"):
         with credential_lock():
             pass  # pragma: no cover - the lock must refuse before this runs
-
-    # Old enough that no live command could still be holding it.
-    stale = time.time() - 3600
-    os.utime(sentinel, (stale, stale))
-    with credential_lock():
-        pass
-    assert root.exists()
 
 
 def test_a_lock_refusal_is_an_exit_code_not_a_traceback(
@@ -1086,6 +1074,63 @@ def test_an_interrupt_anywhere_in_adoption_records_the_credential(
 
     assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 130
 
-    # The credential is live at the token host, so it is recorded and the
-    # revoke was attempted rather than silently dropped.
-    assert "revoke" in calls or not load_pending_revocations().entries
+    # The credential is live at the token host, so it is named in the journal
+    # — the earlier assertion here was inverted and passed when *nothing*
+    # happened, which is exactly the failure it was supposed to catch.
+    outstanding = {entry.token_id for entry in load_pending_revocations().entries}
+    assert _NEW_TOKEN_ID in outstanding
+
+
+def test_idna2008_equivalent_hosts_compare_equal() -> None:
+    """Canonicalisation must agree with the HTTP client, not with Python's codec.
+
+    Python's built-in `encode("idna")` is IDNA2003 and maps `ß` to `ss`, which
+    both merges two hosts httpx treats as different and splits one it treats as
+    the same. The split is the dangerous direction: it made the live-credential
+    guard miss, and recovery revoked the credential in use.
+    """
+    from rememberstack.surfaces.credentials import credential_origin
+
+    assert httpx.URL("https://faß.de").host == httpx.URL("https://xn--fa-hia.de").host
+    assert credential_origin(token_host="https://faß.de") == credential_origin(
+        token_host="https://xn--fa-hia.de"
+    )
+    # And two hosts httpx keeps apart must stay apart.
+    assert httpx.URL("https://faß.de").host != httpx.URL("https://fass.de").host
+    assert credential_origin(token_host="https://faß.de") != credential_origin(
+        token_host="https://fass.de"
+    )
+
+
+def test_the_mint_is_recorded_before_the_caller_can_see_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The window between minting and recording is closed at its source.
+
+    A caller cannot guard the boundary between `poll_device_token` returning
+    and its own next statement — CPython leaves it outside any exception
+    region — so the record is written inside that function, before the value is
+    visible to anyone.
+    """
+    from rememberstack.surfaces.credentials import load_pending_revocations
+    from rememberstack.surfaces.device_login import poll_device_token
+
+    _isolate_config(monkeypatch, tmp_path)
+    seen: list[object] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_token_body())
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(base_url=_TOKEN_HOST, transport=transport) as client:
+        token = poll_device_token(
+            client=client,
+            device_code="DEVICE-SECRET",
+            interval=0,
+            expires_in=5,
+            sleep=lambda _seconds: None,
+            on_minted=seen.append,
+        )
+
+    assert seen == [token], "the callback runs before the value is returned"
+    assert not load_pending_revocations().entries, "the callback is the caller's"

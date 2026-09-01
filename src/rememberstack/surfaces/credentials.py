@@ -9,14 +9,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from datetime import timedelta
 import errno
 from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
 import stat
-import time
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -311,8 +309,17 @@ def _canonical_host(*, host: str) -> str:
     except ValueError:
         pass
     try:
-        return trimmed.encode("idna").decode("ascii").lower()
-    except (UnicodeError, ValueError):
+        # `idna`, not `str.encode("idna")`. The built-in codec is IDNA2003 and
+        # maps `ß` to `ss`, so it both *merges* two hosts httpx treats as
+        # different (`faß.de`, `fass.de`) and *splits* one it treats as the
+        # same (`faß.de`, `xn--fa-hia.de`). The second is the dangerous
+        # direction: a split made the live-credential guard miss, and recovery
+        # revoked the credential in use. Canonicalising with the library the
+        # HTTP client itself uses is the only way these agree.
+        import idna
+
+        return idna.encode(trimmed, uts46=True).decode("ascii").lower()
+    except Exception:  # noqa: BLE001 - idna raises several types
         return trimmed
 
 
@@ -541,36 +548,6 @@ def clear_pending_revocations(*, settings: TokenHostSettings | None = None) -> N
         path.unlink()
 
 
-#: How long a lock sentinel may sit before it is treated as abandoned.
-#:
-#: The flock path needs no such number — the kernel drops the lock when the
-#: process dies — but the portable fallback is only a file, and a process
-#: killed with SIGKILL leaves it behind. Without an expiry that file locks the
-#: user out of their own credentials permanently, which is a worse failure than
-#: the race it was protecting against.
-_SENTINEL_STALE_AFTER = timedelta(minutes=10)
-
-
-def _claim_sentinel(*, sentinel: Path) -> None:
-    """Create the lock sentinel, reclaiming one left behind by a dead process."""
-    try:
-        os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-        return
-    except FileExistsError:
-        pass
-    try:
-        age = time.time() - sentinel.stat().st_mtime
-    except OSError:
-        # It went away between the create and the stat: another process
-        # released it, so try once more and let a real conflict raise.
-        os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-        return
-    if age < _SENTINEL_STALE_AFTER.total_seconds():
-        raise FileExistsError(f"{sentinel} is held")
-    sentinel.unlink(missing_ok=True)
-    os.close(os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-
-
 @contextmanager
 def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[None]":
     """Serialise credential-replacing commands on this machine.
@@ -590,7 +567,7 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
     lock_path = directory / ".lock"
     handle = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
     locked = False
-    portable_sentinel: Path | None = None
+    locked_msvcrt = False
     try:
         # A pre-existing lock file may have been created with a wider mode; it
         # holds nothing secret, but leaving it group-writable would let another
@@ -616,26 +593,38 @@ def credential_lock(*, settings: TokenHostSettings | None = None) -> "Iterator[N
                     "another `remember login` or `logout` may be running"
                 ) from error
         else:
-            # No flock on this platform. An exclusive-create sentinel is the
-            # portable equivalent and fails the same way: if it exists, someone
-            # else holds it.
-            sentinel = directory / ".lock.exclusive"
             try:
-                _claim_sentinel(sentinel=sentinel)
-            except FileExistsError as error:
+                import msvcrt
+            except ImportError as error:
+                # **No file-based fallback.** A sentinel file is not a lock: it
+                # cannot tell a live owner from one that was killed, so it
+                # either wedges the user out permanently or reclaims a lock
+                # somebody is holding — and an earlier version, reclaiming by
+                # age, did the second. An OS lock is released when the process
+                # dies, which is the property that makes it a lock at all.
                 raise CredentialError(
-                    "another `remember login` or `logout` holds the credential "
-                    f"lock ({sentinel}); remove it if no such command is running"
+                    "this platform offers no file locking, so `remember login` "
+                    "and `logout` cannot be serialised safely"
                 ) from error
-            portable_sentinel = sentinel
+            try:
+                msvcrt.locking(handle, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+                locked_msvcrt = True
+            except OSError as error:
+                raise CredentialError(
+                    f"the credential lock could not be taken ({error}); "
+                    "another `remember login` or `logout` may be running"
+                ) from error
         yield
     finally:
         if locked:
             import fcntl
 
             fcntl.flock(handle, fcntl.LOCK_UN)
-        if portable_sentinel is not None and portable_sentinel.exists():
-            portable_sentinel.unlink()
+        if locked_msvcrt:
+            import msvcrt
+
+            os.lseek(handle, 0, os.SEEK_SET)
+            msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
         os.close(handle)
 
 

@@ -132,8 +132,20 @@ def poll_device_token(
     expires_in: int,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    on_minted: Callable[[DeviceTokenSuccess], None] | None = None,
 ) -> DeviceTokenSuccess:
-    """Poll ``/v1/device/token`` until 200, a terminal error, or TTL expiry."""
+    """Poll ``/v1/device/token`` until 200, a terminal error, or TTL expiry.
+
+    ``on_minted`` is called with the parsed token **before this function
+    returns**, and is where a caller records that a credential now exists.
+
+    That placement is the point. A caller cannot guard the moment between this
+    returning and its own next statement — CPython leaves that boundary outside
+    any exception region, so a Ctrl-C landing there produced a live credential
+    with nothing on the machine naming it, and no possible cleanup. Recording
+    it here removes the window instead of narrowing it: by the time the value
+    is visible to a caller, it has already been written down.
+    """
     deadline = clock() + expires_in
     wait = _clamp_poll_wait(seconds=float(interval))
     while clock() < deadline:
@@ -148,11 +160,14 @@ def poll_device_token(
         )
         if response.status_code == 200:
             try:
-                return DeviceTokenSuccess.model_validate(response.json())
+                minted = DeviceTokenSuccess.model_validate(response.json())
             except (ValidationError, ValueError) as error:
                 raise DeviceGrantError(
                     "token host returned an unusable token response", exit_code=1
                 ) from error
+            if on_minted is not None:
+                on_minted(minted)
+            return minted
         if response.status_code == 400:
             try:
                 body = DeviceTokenErrorBody.model_validate(response.json())

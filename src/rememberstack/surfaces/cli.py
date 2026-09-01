@@ -638,7 +638,9 @@ def _login_locked(args: argparse.Namespace) -> int:
     from rememberstack.surfaces.credentials import append_pending_revocation
     from rememberstack.surfaces.credentials import assert_revocation_capacity
     from rememberstack.surfaces.credentials import CliClientEnv
+    from rememberstack.surfaces.credentials import credential_origin
     from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import drop_pending_revocation
     from rememberstack.surfaces.credentials import DurabilityUnconfirmed
     from rememberstack.surfaces.credentials import load_credentials
     from rememberstack.surfaces.credentials import PendingRevocation
@@ -679,11 +681,34 @@ def _login_locked(args: argparse.Namespace) -> int:
             print(f"verification_uri: {granted.verification_uri}")
             print(f"verification_uri_complete: {granted.verification_uri_complete}")
             print(f"user_code: {granted.user_code}")
+
+            def record(minted: object) -> None:
+                """Write the credential down the instant it exists.
+
+                Called from inside ``poll_device_token``, before the value is
+                visible here, because the boundary between that function
+                returning and this frame's next statement cannot be guarded —
+                an interrupt landing there left a live credential with nothing
+                naming it and no cleanup possible.
+
+                The entry is removed once the credential is adopted, so the
+                journal describes only credentials that still need retiring.
+                """
+                append_pending_revocation(
+                    pending=PendingRevocation(
+                        version=1,
+                        token_host=token_host,
+                        access_token=minted.access_token,  # type: ignore[attr-defined]
+                        token_id=minted.token_id,  # type: ignore[attr-defined]
+                    )
+                )
+
             token = poll_device_token(
                 client=client,
                 device_code=granted.device_code.get_secret_value(),
                 interval=granted.interval,
                 expires_in=granted.expires_in,
+                on_minted=record,
             )
             # From here the control plane has issued, so the **whole**
             # adoption phase is guarded rather than each call in it: a Ctrl-C
@@ -691,7 +716,10 @@ def _login_locked(args: argparse.Namespace) -> int:
             # between them — an interrupt after converting the response and
             # before journalling produced a live bearer with no file, no
             # journal entry, and no attempt to withdraw it.
-            adopted = False
+            # The new credential is already journalled by `record` above, so
+            # nothing below can lose it. What remains is to adopt it and, on
+            # success, take it back out of the journal — it is the current
+            # credential now, not one awaiting revocation.
             try:
                 credential = credential_from_token(
                     token=token, api_url=api_url, token_host=token_host
@@ -717,14 +745,13 @@ def _login_locked(args: argparse.Namespace) -> int:
                     # the rename's durability is unconfirmed. Unwinding here
                     # would revoke a credential this machine is now using.
                     print(f"warning: {error}", file=sys.stderr)
-                adopted = True
+                drop_pending_revocation(
+                    identity=(credential_origin(token_host=token_host), token.token_id)
+                )
             except BaseException:
-                if not adopted:
-                    _discard_minted_credential(
-                        token_host=token_host,
-                        token_id=getattr(token, "token_id", None),
-                        secret=token.access_token,
-                    )
+                # The journal entry stays: whatever went wrong, the credential
+                # exists at the token host and the next login or logout will
+                # retire it. Nothing here has to succeed for that to hold.
                 raise
     except KeyboardInterrupt:
         return 130
