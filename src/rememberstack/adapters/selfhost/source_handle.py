@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
 from pathlib import Path
+import shutil
 import tempfile
 
 from rememberstack.model import SourceHashMismatchError
@@ -68,9 +69,34 @@ class ObjectSourceHandle:
                 f"range [{start}, {end}) extends past the recorded source size "
                 f"{self._identity.byte_size}"
             )
-        return self._store.read_range(
+        content = self._store.read_range(
             key=self._identity.object_key, start=start, end=end
         )
+        if len(content) != end - start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) of {self._identity.object_key.root!r} "
+                f"returned {len(content)} bytes, not the {end - start} requested; "
+                "the stored object is shorter than its recorded size"
+            )
+        return content
+
+    def read_bounded(self, *, max_bytes: int) -> bytes:
+        """Read the whole source into memory, refusing anything over the bound.
+
+        Small routes legitimately want every byte — a Markdown passthrough has
+        no use for a stream. This exists so they are not driven to write
+        ``b"".join(handle.open_stream())``, which is an unbounded read wearing
+        a bounded read's clothes. Naming the bound is the whole point: there is
+        still no way to ask for a source of unknown size.
+        """
+        if max_bytes < 0:
+            raise ValueError(f"max_bytes must be non-negative, got {max_bytes}")
+        if self._identity.byte_size > max_bytes:
+            raise SourceTooLargeError(
+                f"source {self._identity.object_key.root!r} is "
+                f"{self._identity.byte_size} bytes, over the {max_bytes} accepted"
+            )
+        return self._store.read_bytes(key=self._identity.object_key)
 
     @contextmanager
     def materialize_seekable(self, *, max_bytes: int) -> Iterator[Path]:
@@ -86,8 +112,8 @@ class ObjectSourceHandle:
           converted into a plausible-looking short document; and
         * the file is removed on the way out whether the body raised or not.
         """
-        if max_bytes <= 0:
-            raise SourceTooLargeError(f"max_bytes must be positive, got {max_bytes}")
+        if max_bytes < 0:
+            raise ValueError(f"max_bytes must be non-negative, got {max_bytes}")
         if self._identity.byte_size > max_bytes:
             raise SourceTooLargeError(
                 f"source {self._identity.object_key.root!r} is "
@@ -99,7 +125,10 @@ class ObjectSourceHandle:
             prefix="rememberstack-source-",
             dir=None if self._temp_root is None else str(self._temp_root),
         )
-        path = Path(directory) / "source"
+        # Demuxers routinely sniff the container from the extension before
+        # falling back to probing, so carrying the source's own suffix across
+        # costs nothing and avoids a class of "decoder cannot open it" bug.
+        path = Path(directory) / f"source{Path(self._identity.object_key.root).suffix}"
         try:
             digest = hashlib.sha256()
             written = 0
@@ -122,5 +151,8 @@ class ObjectSourceHandle:
                 )
             yield path
         finally:
-            path.unlink(missing_ok=True)
-            Path(directory).rmdir()
+            # rmtree, not unlink plus rmdir: a decoder handed a path routinely
+            # writes beside it (indexes, sidecars, split tracks), and a
+            # directory-not-empty error here would both leak the directory and
+            # mask whatever the route was already raising.
+            shutil.rmtree(directory, ignore_errors=True)

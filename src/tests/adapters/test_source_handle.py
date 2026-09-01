@@ -155,3 +155,119 @@ def test_nonpositive_chunk_size_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(SourceRangeError):
         list(handle.open_stream(chunk_bytes=0))
+
+
+def test_zero_byte_source_materializes_under_a_zero_bound(tmp_path: Path) -> None:
+    """An empty file is a valid source; `max_bytes=0` is enough room for it."""
+    handle = _handle(tmp_path=tmp_path, content=b"")
+
+    with handle.materialize_seekable(max_bytes=0) as path:
+        assert path.read_bytes() == b""
+
+
+def test_negative_bound_is_a_caller_bug_not_an_oversized_source(tmp_path: Path) -> None:
+    """A negative bound is nonsense, and must not be reported as size refusal."""
+    handle = _handle(tmp_path=tmp_path, content=b"data")
+
+    with pytest.raises(ValueError):
+        with handle.materialize_seekable(max_bytes=-1):
+            pytest.fail("a negative bound must never materialize anything")
+
+
+def test_materialized_name_keeps_the_source_suffix(tmp_path: Path) -> None:
+    """Demuxers sniff the container from the extension before probing."""
+    handle = _handle(tmp_path=tmp_path, content=b"video")
+
+    with handle.materialize_seekable(max_bytes=1024) as path:
+        assert path.suffix == ".mp4"
+
+
+def test_cleanup_survives_files_written_beside_the_source(tmp_path: Path) -> None:
+    """A decoder writing an index or sidecar must not break teardown.
+
+    Removing only the source file and then the directory would raise
+    "directory not empty" here, leaking the directory and masking whatever the
+    route itself was raising.
+    """
+    handle = _handle(tmp_path=tmp_path, content=b"video")
+
+    with handle.materialize_seekable(max_bytes=1024) as path:
+        (path.parent / "sidecar.idx").write_bytes(b"index")
+        directory = path.parent
+
+    assert not directory.exists()
+
+
+def test_materialize_without_a_temp_root_uses_the_platform_default(
+    tmp_path: Path,
+) -> None:
+    """A deployment that has not sized a work volume still gets cleanup."""
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=b"payload")
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(b"payload").hexdigest(),
+            byte_size=len(b"payload"),
+            mime="video/mp4",
+        ),
+    )
+
+    with handle.materialize_seekable(max_bytes=1024) as path:
+        assert path.read_bytes() == b"payload"
+        directory = path.parent
+
+    assert not directory.exists()
+
+
+def test_truncated_object_fails_the_range_read(tmp_path: Path) -> None:
+    """A stored object shorter than its record must not yield a short read.
+
+    A container parser cannot distinguish a truncated header from a valid one,
+    so it would produce confident nonsense rather than an error.
+    """
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    store.write_bytes(key=_KEY, content=b"short")
+    handle = ObjectSourceHandle(
+        store=store,
+        identity=SourceIdentity(
+            object_key=_KEY,
+            content_hash=hashlib.sha256(b"short").hexdigest(),
+            byte_size=100,
+            mime="video/mp4",
+        ),
+        temp_root=tmp_path / "work",
+    )
+
+    with pytest.raises(SourceRangeError):
+        handle.read_range(start=0, end=50)
+
+
+def test_read_bounded_returns_everything_under_the_bound(tmp_path: Path) -> None:
+    """Small routes get every byte without writing their own unbounded join."""
+    handle = _handle(tmp_path=tmp_path, content=b"# heading\n")
+
+    assert handle.read_bounded(max_bytes=1024) == b"# heading\n"
+
+
+def test_read_bounded_refuses_an_oversized_source(tmp_path: Path) -> None:
+    """The bound is the point: this is not a whole-file read in disguise."""
+    handle = _handle(tmp_path=tmp_path, content=b"x" * 5000)
+
+    with pytest.raises(SourceTooLargeError):
+        handle.read_bounded(max_bytes=100)
+
+
+def test_concurrent_materializations_do_not_share_a_directory(tmp_path: Path) -> None:
+    """Two live materializations of one handle must not collide or co-delete."""
+    handle = _handle(tmp_path=tmp_path, content=b"payload")
+
+    with handle.materialize_seekable(max_bytes=1024) as first:
+        with handle.materialize_seekable(max_bytes=1024) as second:
+            assert first != second
+            assert first.parent != second.parent
+            assert first.read_bytes() == second.read_bytes() == b"payload"
+            inner = second.parent
+        assert not inner.exists()
+        assert first.exists(), "the outer materialization must survive the inner"

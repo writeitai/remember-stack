@@ -4798,10 +4798,14 @@ is unchanged. Does not change D95, D99, or D100.
 **Decision.** The converter contract takes a **source handle** — a read-only
 capability on one immutable, already-hashed source — in place of the whole file
 as a `bytes` value (amends D65's `convert(bytes, mime, hints)` and, through it,
-D38/D57). The handle offers three reads and deliberately no fourth: **stream**
-the source in bounded chunks, **read a half-open byte range** `[start, end)`,
-or **materialise** it to a temporary local file. There is no operation that
-returns the entire source as bytes. `ObjectStorePort` grows the matching
+D38/D57). The handle offers four reads, every one of them bounded: **stream** the source
+in bounded chunks, **read a half-open byte range** `[start, end)`,
+**materialise** it to a temporary local file, or **read it bounded** into
+memory after naming the limit. There is no operation that reads a source of
+unknown size — the hazard was never bytes in memory, it was bytes in memory
+without anyone having decided how many. Reads never come back short: a range
+returns exactly what was asked for or raises, because a parser handed a
+truncated header cannot tell it from a valid one. `ObjectStorePort` grows the matching
 `open_stream` and `read_range` so the handle has something to sit on, and the
 existing `read_bytes` stays for the small text objects every shipped route
 converts.
@@ -4810,10 +4814,10 @@ converts.
 bytes-first contract the client, the HTTP process, the object store, and the
 converter each materialise a complete copy of the same file, so two concurrent
 large ingests can exhaust a worker that would have processed either one alone.
-That is an availability property, not an optimisation. The absence of a
-whole-file read is the load-bearing part of the decision: a contract that
-offers buffering as the convenient option gets buffering, and the failure
-surfaces on the first large file in production rather than in review.
+That is an availability property, not an optimisation. Requiring every read to
+carry a bound is the load-bearing part of the decision: a contract that offers
+an unbounded read as the convenient option gets unbounded reads, and the
+failure surfaces on the first large file in production rather than in review.
 
 **Bounds live in materialisation**, because that is the operation that can
 exhaust a host. The caller declares what it can afford and an oversized source
@@ -4839,5 +4843,7 @@ D57 (Markdown coordinate system), D61 (port boundary), D65 (media routes).
 scales the blast radius with source size and solves neither resumability nor
 cancellation. *Hand routes a raw provider object* — rejected: it puts a storage
 SDK type in the converter contract, which D61 exists to prevent. *Give the
-handle a `read_all()` for convenience* — rejected: it becomes the path of least
-resistance and reintroduces exactly the failure this decision removes.
+handle an unbounded `read_all()` for convenience* — rejected: it becomes the
+path of least resistance and reintroduces exactly the failure this decision
+removes. `read_bounded(max_bytes=...)` serves the same routes while forcing the
+caller to state a limit, which is the property that actually matters.

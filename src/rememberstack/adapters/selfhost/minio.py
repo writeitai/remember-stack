@@ -185,16 +185,34 @@ class MinIOObjectStore:
             raise SourceRangeError(
                 f"range [{start}, {end}) is empty, reversed, or negative"
             )
-        response = self._client.get_object(
-            Bucket=self._bucket,
-            Key=_validated_key(key=key),
-            Range=f"bytes={start}-{end - 1}",
-        )
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket,
+                Key=_validated_key(key=key),
+                Range=f"bytes={start}-{end - 1}",
+            )
+        except ClientError as error:
+            # A range past the end is a 416 from S3. Letting botocore's
+            # exception escape would put a provider type in the port contract
+            # that D61 exists to keep provider-free.
+            code = error.response.get("Error", {}).get("Code", "")
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in {"InvalidRange", "416"} or status == 416:
+                raise SourceRangeError(
+                    f"range [{start}, {end}) is outside {key.root!r}"
+                ) from error
+            raise
         body = response["Body"]
         try:
-            return body.read()
+            content = body.read()
         finally:
             body.close()
+        if len(content) != end - start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) of {key.root!r} returned {len(content)} "
+                f"bytes, not the {end - start} requested"
+            )
+        return content
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None

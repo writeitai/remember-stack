@@ -39,7 +39,13 @@ class LocalFSObjectStore:
             )
         with self._path_for(key=key).open(mode="rb") as handle:
             handle.seek(start)
-            return handle.read(end - start)
+            content = handle.read(end - start)
+        if len(content) != end - start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) of {key.root!r} returned {len(content)} "
+                f"bytes, not the {end - start} requested"
+            )
+        return content
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None

@@ -134,8 +134,8 @@ take down a worker that would happily have processed either one alone.
 
 So a route receives a **source handle** — a read-only capability on one
 immutable, already-hashed source — and decides for itself how much of it to
-bring into memory. The handle offers exactly three ways to read, and
-deliberately no fourth:
+bring into memory. The handle offers four ways to read, every one of them
+bounded:
 
 - **stream it** — receive the source in order, one bounded chunk at a time,
   which is what hashing, copying, and demuxing need;
@@ -145,12 +145,25 @@ deliberately no fourth:
   to remember which end is inclusive; and
 - **materialise it** — write the source to a temporary local file and hand
   over the path. Decoders like FFmpeg want a seekable file rather than a
-  stream, and refusing to provide one would mean reimplementing them.
+  stream, and refusing to provide one would mean reimplementing them; and
+- **read it bounded** — take the whole source into memory, having first said
+  how much memory that is allowed to be. A Markdown passthrough has no use for
+  a stream, and pretending otherwise would push every small route into writing
+  its own accumulation loop.
 
-There is deliberately **no method that returns the whole source as bytes**.
-The absence is the point: a contract that offers whole-file buffering as the
-convenient option gets whole-file buffering, and the failure only shows up on
-the first large file in production.
+There is deliberately **no method that reads a source of unknown size**. Every
+read either bounds itself structurally (a chunk, a range) or requires the
+caller to name a limit up front. The distinction matters: the hazard was never
+"bytes in memory", it was *bytes in memory without anyone having decided how
+many*. A contract that offers an unbounded whole-file read as the convenient
+option gets unbounded whole-file reads, and the failure only shows up on the
+first large file in production.
+
+Reads never come back short. A range returns exactly the bytes it was asked
+for or it raises — a container parser handed a truncated header cannot tell it
+from a valid one, and will produce confident nonsense rather than an error.
+That check belongs here rather than in each route, because every route would
+otherwise have to remember to write it.
 
 Materialisation is where the bounds live, because it is the operation that can
 actually exhaust a host. Three properties are enforced by the handle rather

@@ -39,6 +39,20 @@ class SourceHandlePort(Protocol):
 
         Half-open to match every other interval in the system (D65 locators),
         so a caller never has to remember which end is inclusive.
+
+        Returns exactly ``end - start`` bytes or raises. A short read is never
+        returned: a container parser that receives a truncated header cannot
+        tell it from a valid one and will produce confident nonsense.
+        """
+        ...
+
+    def read_bounded(self, *, max_bytes: int) -> bytes:
+        """Read the whole source into memory, refusing anything over the bound.
+
+        For routes that legitimately want every byte — a Markdown passthrough
+        has no use for a stream. The bound must be named, so this is still not
+        a way to read a source of unknown size; it exists so small routes are
+        not driven to write their own unbounded ``join`` over `open_stream`.
         """
         ...
 
