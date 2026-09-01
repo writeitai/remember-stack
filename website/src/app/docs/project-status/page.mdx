@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.12.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.12.0) on [PyPI](https://pypi.org/project/rememberstack/0.12.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.13.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.13.0) on [PyPI](https://pypi.org/project/rememberstack/0.13.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -47,6 +47,9 @@ Current public release: [`v0.12.0`](https://github.com/writeitai/remember-stack/
 - PostgreSQL-native P1 search indexes; no separate search-store maintenance process
 - Work ledger with retries, dead-letter queue, optional spend ceilings
 - Request-path surface metering plus a content-free `v_cost_receipts` export (`remember ops cost-export` and optional second-bind HTTP)
+- Optional managed-hosting ingest metering under the Compose `managed` profile:
+  exact normalized document-text receipts, durable replay and outcome handling,
+  and hard-forget cancellation. Default self-host Compose does not start it.
 - `remember login` / `logout` via a token-host device grant (CLI credential file only)
 - Machine-verifiable readiness; projection rebuilds; hard-forget; portable restore order
 - Optional observability exporters (off until configured)
@@ -179,7 +182,7 @@ Current public release: [`v0.12.0`](https://github.com/writeitai/remember-stack/
   v16's read surface, answer/judge seats, budgets, and content-before-`Unknown`
   guard.
 
-## Document-local exact T0 (current release behavior in v0.12.0)
+## Document-local exact T0 (current release behavior in v0.13.0)
 
 - Resolver `resolver-2026.08f` can replay an exact canonical-name match at T0
   only inside the same document and only after a T4 match established one
