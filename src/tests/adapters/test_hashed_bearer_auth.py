@@ -58,7 +58,9 @@ def test_unknown_secret_raises() -> None:
 def test_require_api_auth_without_bind_refuses_to_start() -> None:
     """Managed mode must not boot an open API when BIND is missing."""
     settings = SelfHostSettings(deployment_id=_DEPLOYMENT_B, require_api_auth=True)
-    with pytest.raises(RuntimeError, match="API_BEARER_BIND is missing"):
+    # The check now asks whether there is a perimeter at all, not whether
+    # there is a BIND specifically: signing keys alone are enough (D59).
+    with pytest.raises(RuntimeError, match="REQUIRE_API_AUTH"):
         resolve_selfhost_api_auth(settings=settings)
 
 
@@ -95,7 +97,9 @@ def test_token_only_binds_this_process_deployment() -> None:
         deployment_id=_DEPLOYMENT_B, api_bearer_token=SecretStr(_SECRET)
     )
     auth = resolve_selfhost_api_auth(settings=settings)
-    assert auth is not None
+    # The resolver may now return a signature adapter or a composite, so a test
+    # that wants the digest adapter says so rather than assuming.
+    assert isinstance(auth, HashedBearerAuth)
     assert auth.issued_deployment_id == _DEPLOYMENT_B
     context = auth.authenticate(credential=_credential(secret=_SECRET))
     assert context.deployment_id == _DEPLOYMENT_B

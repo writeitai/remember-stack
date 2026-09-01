@@ -1106,7 +1106,10 @@ def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
         # read from a write on this API (`POST /graph/path` reads,
         # `POST /ingest` does not). See ``route_scope``.
         required = required_scope(method=request.method, path=request.url.path)
-        if not context.scope.covers(required=required):
+        # ``None`` means the route decides for itself, because its authority is
+        # a property of registry data rather than of the path. Today that is
+        # only ``POST /operations/{name}``, whose handler asks the descriptor.
+        if required is not None and not context.scope.covers(required=required):
             raise HTTPException(
                 status_code=403, detail="credential may not perform this operation"
             )

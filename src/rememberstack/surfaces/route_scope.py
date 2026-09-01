@@ -67,18 +67,41 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 )
 
 
-def required_scope(*, method: str, path: str) -> PerimeterScope:
+#: Routes whose scope cannot be decided from the path, and which enforce it
+#: themselves. Exactly one today: an assured operation's authority is a
+#: property of the operation, and operations are registry data.
+#:
+#: A route listed here **must** perform its own check — the perimeter has
+#: deliberately stood aside. That is a real hazard, so the set is closed, tiny,
+#: and asserted on in tests rather than left as a convention.
+_ROUTE_DECIDES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("POST", re.compile(r"^/operations/[^/]+$")),
+)
+
+
+def required_scope(*, method: str, path: str) -> PerimeterScope | None:
     """The scope a caller needs for this route.
+
+    ``None`` means the route decides for itself (see :data:`_ROUTE_DECIDES`);
+    the perimeter enforces nothing and the handler must.
 
     Unenumerated routes require :attr:`PerimeterScope.WRITE`, so a route added
     without a decision here is closed to read-only callers rather than open.
     """
     normalised = path.rstrip("/") or "/"
     upper = method.upper()
+    for route_method, pattern in _ROUTE_DECIDES:
+        if route_method == upper and pattern.match(normalised):
+            return None
     for route_method, pattern in _READ_ROUTES:
         if route_method == upper and pattern.match(normalised):
             return PerimeterScope.READ
     return PerimeterScope.WRITE
+
+
+def routes_that_decide_for_themselves() -> tuple[tuple[str, str], ...]:
+    """The deferring routes, for tests that pin the set to exactly what is intended."""
+    return tuple((method, pattern.pattern) for method, pattern in _ROUTE_DECIDES)
 
 
 def operation_scope(*, mutates: bool | None) -> PerimeterScope:

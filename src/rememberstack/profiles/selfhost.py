@@ -43,6 +43,7 @@ from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
 from rememberstack.model import ReviewDecisionError
+from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
@@ -149,6 +150,12 @@ class SelfHostSettings(BaseSettings):
     worker_fallback_poll_s: float = Field(default=5.0, gt=0)
     worker_session_s: float = Field(default=3_600.0, gt=0)
     api_bearer_bind: str | None = None
+    #: A JWKS document of public keys that verify signed credentials (D59).
+    #: Absent for self-host, which has no issuer to trust.
+    api_signing_keys: str | None = None
+    #: Credential ids refused despite a good signature. Comma-separated,
+    #: bounded by revocation rate times credential lifetime.
+    api_revoked_credential_ids: str | None = None
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
     spend_lease_url: str | None = None
@@ -220,11 +227,20 @@ class SelfHostSettings(BaseSettings):
         return value
 
 
-def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth | None:
+def resolve_selfhost_api_auth(
+    *, settings: SelfHostSettings
+) -> AuthPerimeterPort | None:
     """Return the perimeter adapter, or None for the open quickstart.
 
-    ``require_api_auth`` without a well-formed BIND refuses to start so a
-    managed host cannot silently serve memory routes open.
+    A deployment may be reached by a shared secret, by signed credentials, or
+    by both; when both are configured they are composed rather than chosen
+    between, because they serve different callers on the same routes.
+
+    ``require_api_auth`` refuses to start when **no** adapter has usable
+    material, so a managed host cannot silently serve memory routes open. It
+    asks whether there is a perimeter at all, not whether there is a particular
+    one — a host configured with signing keys and no shared secret is properly
+    protected.
     """
     from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
     from rememberstack.adapters.selfhost.hashed_bearer_auth import parse_bearer_bind
@@ -235,13 +251,16 @@ def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth
         raw = settings.api_bearer_token.get_secret_value().strip()
         token_value = raw or None
 
-    if settings.require_api_auth and not bind_text:
+    signed = _resolve_signed_auth(settings=settings)
+
+    if settings.require_api_auth and not bind_text and signed is None:
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
-            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND is missing"
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but neither "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND nor "
+            "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is usable"
         )
     if bind_text is None and token_value is None:
-        return None
+        return signed
 
     bind_auth: HashedBearerAuth | None = None
     if bind_text is not None:
@@ -254,14 +273,53 @@ def resolve_selfhost_api_auth(*, settings: SelfHostSettings) -> HashedBearerAuth
             digest=digest_bearer_secret(secret=token_value),
         )
         if bind_auth is None:
-            return token_auth
+            return _compose(digest=token_auth, signed=signed)
         if not token_auth.same_binding(other=bind_auth):
             raise RuntimeError(
                 "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN does not match "
                 "REMEMBERSTACK_SELFHOST_API_BEARER_BIND"
             )
-        return bind_auth
-    return bind_auth
+        return _compose(digest=bind_auth, signed=signed)
+    return _compose(digest=bind_auth, signed=signed)
+
+
+def _resolve_signed_auth(*, settings: SelfHostSettings) -> AuthPerimeterPort | None:
+    """Build the signature adapter when keys are configured, else None."""
+    jwks = (settings.api_signing_keys or "").strip()
+    if not jwks:
+        return None
+
+    from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
+    from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
+
+    try:
+        keys = load_verification_keys(jwks=jwks)
+    except ValueError as error:
+        # Refuse to start rather than run with a key set that half loaded: a
+        # deployment that silently drops a key is a rotation that half works.
+        raise RuntimeError(
+            f"REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is unusable: {error}"
+        ) from error
+
+    revoked = [
+        item.strip()
+        for item in (settings.api_revoked_credential_ids or "").split(",")
+        if item.strip()
+    ]
+    return SignedTokenAuth(
+        deployment_id=settings.deployment_id, keys=keys, revoked_ids=revoked
+    )
+
+
+def _compose(
+    *, digest: HashedBearerAuth | None, signed: AuthPerimeterPort | None
+) -> AuthPerimeterPort | None:
+    """One adapter, or both behind a composite. Cheapest check first."""
+    from rememberstack.adapters.managed.composite_auth import CompositeAuth
+
+    if digest is not None and signed is not None:
+        return CompositeAuth(adapters=(digest, signed))
+    return digest or signed
 
 
 def resolve_selfhost_spend_lease(

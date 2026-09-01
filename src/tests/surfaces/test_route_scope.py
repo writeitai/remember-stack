@@ -12,6 +12,7 @@ import pytest
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.surfaces.route_scope import operation_scope
 from rememberstack.surfaces.route_scope import required_scope
+from rememberstack.surfaces.route_scope import routes_that_decide_for_themselves
 
 
 @pytest.mark.parametrize(
@@ -70,6 +71,19 @@ def test_matching_is_anchored() -> None:
 def test_a_trailing_slash_does_not_change_the_answer() -> None:
     """Otherwise `/search/claims/` would quietly require write."""
     assert required_scope(method="GET", path="/search/claims/") is PerimeterScope.READ
+
+
+def test_operations_defers_to_the_route_and_nothing_else_does() -> None:
+    """Exactly one route decides for itself, and the perimeter stands aside.
+
+    A route that defers has no perimeter check at all, so the set must stay
+    tiny and deliberate. Pinning it here means adding a second one is a visible
+    decision rather than a quiet loosening.
+    """
+    assert required_scope(method="POST", path="/operations/answer_context") is None
+    assert routes_that_decide_for_themselves() == (("POST", r"^/operations/[^/]+$"),)
+    # The listing route is an ordinary read; only running one defers.
+    assert required_scope(method="GET", path="/operations") is PerimeterScope.READ
 
 
 def test_an_undeclared_operation_requires_write() -> None:
