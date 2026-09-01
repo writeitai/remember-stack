@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 import sys
+import time
 from typing import Annotated
 from typing import Self
 from typing import TYPE_CHECKING
@@ -159,6 +160,13 @@ class SelfHostSettings(BaseSettings):
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
     spend_lease_url: str | None = None
+    meter_ingest_url: str | None = None
+    meter_ingest_token: SecretStr | None = None
+    meter_org_id: UUID | None = None
+    meter_project_id: UUID | None = None
+    require_metering: bool = False
+    meter_receipt_timeout_s: float = Field(default=10.0, gt=0, le=60)
+    meter_receipt_poll_s: float = Field(default=2.0, gt=0, le=300)
     graph_pool_size: int = Field(default=4, ge=1, le=32)
     graph_pool_timeout_s: float = Field(default=1.0, gt=0, le=30)
     graph_max_concurrency: int = Field(default=2, ge=1, le=32)
@@ -181,6 +189,34 @@ class SelfHostSettings(BaseSettings):
             raise ValueError(
                 "retrieval_max_concurrency must not exceed retrieval_pool_size"
             )
+        return self
+
+    @model_validator(mode="after")
+    def managed_metering_is_complete(self) -> Self:
+        """Make the managed four-field scope/token contract all-or-nothing."""
+        token = (
+            None
+            if self.meter_ingest_token is None
+            else self.meter_ingest_token.get_secret_value().strip() or None
+        )
+        values = (
+            self.meter_ingest_url,
+            token,
+            self.meter_org_id,
+            self.meter_project_id,
+        )
+        if any(value is not None for value in values) and not all(
+            value is not None for value in values
+        ):
+            raise ValueError(
+                "managed metering requires URL, token, org_id, and project_id"
+            )
+        if self.require_metering and not all(value is not None for value in values):
+            raise ValueError(
+                "require_metering is set but managed metering is incomplete"
+            )
+        if token is not None and not token.startswith("umc_mi_"):
+            raise ValueError("meter_ingest_token must use the umc_mi_ prefix")
         return self
 
     @field_validator("ingest_body_max_bytes", mode="before")
@@ -222,6 +258,14 @@ class SelfHostSettings(BaseSettings):
     @classmethod
     def _blank_spend_lease_is_unset(cls, value: object) -> object:
         """Treat empty SPEND_LEASE_URL env as omitted."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("meter_ingest_url", mode="before")
+    @classmethod
+    def _blank_meter_ingest_is_unset(cls, value: object) -> object:
+        """Treat an empty Compose interpolation as no managed meter endpoint."""
         if isinstance(value, str) and not value.strip():
             return None
         return value
@@ -865,6 +909,7 @@ class SelfHostProfile:
                 catalog=DocumentCatalog(engine=self._engine),
                 raw_store=self._raw_store,
                 admission=ForgetCatalog(engine=self._engine),
+                meter_scope=self._managed_meter_scope(),
             ),
             pipeline_readiness=PipelineReadinessCatalog(
                 engine=self._engine,
@@ -910,6 +955,62 @@ class SelfHostProfile:
             settings=CostExportSettings.model_validate({}),
         )
         return app
+
+    def _managed_meter_scope(self):  # noqa: ANN202
+        """Return the fleet-authored commercial scope, or None for OSS self-host."""
+        if self._settings.meter_ingest_url is None:
+            return None
+        from rememberstack.model import ManagedMeterScope
+
+        assert self._settings.meter_org_id is not None
+        assert self._settings.meter_project_id is not None
+        return ManagedMeterScope(
+            org_id=self._settings.meter_org_id,
+            project_id=self._settings.meter_project_id,
+        )
+
+    def meter_catalog(self):  # noqa: ANN202
+        """Compose the durable local outbox with its authenticated CP adapter."""
+        from rememberstack.adapters.selfhost import ControlPlaneMeterReceipts
+        from rememberstack.spine import ManagedMeterCatalog
+        from rememberstack.spine import PipelineReadinessCatalog
+        from rememberstack.spine import ProjectionCatalog
+
+        settings = self._settings
+        if settings.meter_ingest_url is None or settings.meter_ingest_token is None:
+            raise RuntimeError("managed metering is not configured")
+        return ManagedMeterCatalog(
+            engine=self._engine,
+            receipts=ControlPlaneMeterReceipts(
+                base_url=settings.meter_ingest_url,
+                token=settings.meter_ingest_token,
+                timeout_s=settings.meter_receipt_timeout_s,
+            ),
+            readiness=PipelineReadinessCatalog(
+                engine=self._engine,
+                expected_components=_expected_components(),
+                projections=ProjectionCatalog(engine=self._engine),
+                model_bindings=_model_bindings(),
+                build_revision=_build_revision(),
+            ),
+        )
+
+    def run_meter_receipts(self, *, once: bool = False, limit: int = 100) -> None:
+        """Replay receipt outboxes continuously, or execute one bounded pass."""
+        catalog = self.meter_catalog()
+        while True:
+            result = catalog.drain_once(limit=limit)
+            _logger.info(
+                "managed meter drain measurements_accepted=%s parked=%s "
+                "outcomes_created=%s outcomes_accepted=%s",
+                result.measurements_accepted,
+                result.measurements_parked,
+                result.outcomes_created,
+                result.outcomes_accepted,
+            )
+            if once:
+                return
+            time.sleep(self._settings.meter_receipt_poll_s)
 
     def worker_loop(self, *, stage: PipelineStage) -> SelfHostWorkerLoop:
         """Build one continuous route's ordinary LISTEN/NOTIFY worker loop."""
@@ -1243,6 +1344,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=tuple(stage.value for stage in _SUPPORTED_WORKER_STAGES),
         required=True,
     )
+    meter = subparsers.add_parser(
+        "meter-receipts", help="replay managed ingest measurement/outcome receipts"
+    )
+    meter.add_argument("--once", action="store_true")
+    meter.add_argument("--limit", type=int, default=100)
     projection = subparsers.add_parser(
         "project", help="build aggregate projections once"
     )
@@ -1277,6 +1383,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "mounts":
             print(profile.publish_mounts(root=args.root).model_dump_json())
             return 0
+        if args.command == "meter-receipts":
+            profile.run_meter_receipts(once=args.once, limit=args.limit)
+            return 0
         profile.run_worker(stage=PipelineStage(args.stage))
         return 0
     finally:
@@ -1287,7 +1396,7 @@ def _initialize_error_tracking(
     *, command: str, deployment_slug: str
 ) -> TelemetryPort | None:
     """Initialize the optional Sentry sink only for long-lived profile entrypoints."""
-    if command not in {"api", "setup", "worker"}:
+    if command not in {"api", "setup", "worker", "meter-receipts"}:
         return None
     settings = SentrySettings.model_validate({})
     dsn = settings.configured_dsn()

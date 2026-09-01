@@ -3,6 +3,7 @@
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.forget import ForgetManifestPort
 from rememberstack.ports.git import KGitRemotePort
+from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.mounts import MountPublisherPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -19,6 +20,7 @@ __all__ = (
     "KGitPurgePort",
     "KGitRemotePort",
     "ModelProviderPort",
+    "MeterReceiptPort",
     "MountPublisherPort",
     "ObjectStorePort",
     "PostgresReadPoolPort",

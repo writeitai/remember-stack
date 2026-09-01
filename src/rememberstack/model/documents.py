@@ -7,6 +7,7 @@ the composing profile binds one `ObjectStorePort` per bucket.
 
 from enum import StrEnum
 from typing import Annotated
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -77,6 +78,7 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    processing_admission: Literal["not_required", "pending"] = "not_required"
 
 
 class UploadRecord(BaseModel):
