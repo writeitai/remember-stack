@@ -44,6 +44,7 @@ Investigate at least:
 - LongMemEval, LongMemEval-V2, and their S/M/oracle or public tiers;
 - MemoryAgentBench, especially FactConsolidation-SH/MH;
 - MultiHop-RAG and reasonable multi-hop alternatives such as HotpotQA or MuSiQue;
+- Workspace-Bench and other benchmarks that test dependency-aware work over heterogeneous files;
 - DMR;
 - STATE-Bench;
 - MemoryArena;
@@ -53,7 +54,7 @@ Investigate at least:
 - any newer benchmark that materially supersedes these.
 
 Do not assume this list is correct. Find stronger replacements when evidence supports them.
-Treat the draft four-surface portfolio as a hypothesis to attack: recommend fewer benchmarks if
+Treat the draft five-surface portfolio as a hypothesis to attack: recommend fewer benchmarks if
 the evidence shows redundancy, and recommend replacements only when they add a missing capability
 or materially improve comparability.
 
@@ -81,11 +82,16 @@ hosted Zep product, and distinguish reproduced results from vendor-reported numb
      updates, conflicting facts, abstention, provenance, source edits/retractions/deletions,
      selective forgetting, privacy deletion, or memory-guided action?
    - Does it evaluate memory incrementally, or merely pass a long context to a model?
+   - If it evaluates a whole artifact-producing agent, is there a matched native control that can
+     isolate the incremental memory surface, and which metrics remain irreducibly agent-level?
 
 3. **Scale and cost**
    - Number of corpora/histories, source tokens, sessions/turns, questions, and repeated runs.
    - Whether histories are shared across questions (inject once/query many).
    - Required embedding, ingestion, reader, controller, simulator, and judge calls.
+   - For heterogeneous-file suites: file counts and bytes by format, whether full noisy
+     workspaces must be indexed, deterministic versus provider-backed conversion, and whether
+     ingestion can be amortized across tasks without cross-task contamination.
    - Hardware requirements and hosted-provider dependencies.
    - A transparent cost formula plus a current-price estimate for:
      - an adapter smoke run;
