@@ -346,6 +346,11 @@ from rememberstack.model.sections import SkeletonStats
 from rememberstack.model.sections import SkeletonVerdict
 from rememberstack.model.sections import SnappedSection
 from rememberstack.model.sections import StructureRouteTag
+from rememberstack.model.source_handle import SourceHashMismatchError
+from rememberstack.model.source_handle import SourceIdentity
+from rememberstack.model.source_handle import SourceRangeError
+from rememberstack.model.source_handle import SourceSizeMismatchError
+from rememberstack.model.source_handle import SourceTooLargeError
 from rememberstack.model.spend_lease import SpendLeaseRefused
 from rememberstack.model.spend_lease import SpendLeaseUnavailable
 from rememberstack.model.telemetry import TelemetryAttribute
@@ -499,6 +504,11 @@ __all__ = (
     "ObjectAlreadyExistsError",
     "ObjectKey",
     "ObjectKeyEscapesRootError",
+    "SourceHashMismatchError",
+    "SourceIdentity",
+    "SourceRangeError",
+    "SourceSizeMismatchError",
+    "SourceTooLargeError",
     "ObservationAssertion",
     "ObservationCandidate",
     "ObservationForEmbedding",

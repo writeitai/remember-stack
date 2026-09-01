@@ -1,5 +1,7 @@
 """S3-compatible MinIO object storage for the self-host profile."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import cast
 from typing import NotRequired
 from typing import Protocol
@@ -15,6 +17,7 @@ from pydantic_settings import SettingsConfigDict
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
+from rememberstack.model import SourceRangeError
 
 
 class MinIOSettings(BaseSettings):
@@ -31,8 +34,8 @@ class MinIOSettings(BaseSettings):
 class _StreamingBody(Protocol):
     """The two response-body operations used by this adapter."""
 
-    def read(self) -> bytes:
-        """Read the complete response body."""
+    def read(self, amt: int | None = None) -> bytes:
+        """Read the whole body, or at most ``amt`` bytes when given."""
         ...
 
     def close(self) -> None:
@@ -77,8 +80,10 @@ class _S3Client(Protocol):
         """Create one bucket."""
         ...
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
-        """Read one object."""
+    def get_object(
+        self, *, Bucket: str, Key: str, Range: str | None = None
+    ) -> _GetObjectOutput:
+        """Read one object, optionally restricted to an HTTP byte range."""
         ...
 
     def put_object(
@@ -153,6 +158,68 @@ class MinIOObjectStore:
             return body.read()
         finally:
             body.close()
+
+    @contextmanager
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read, releasing the HTTP body on exit."""
+        if chunk_bytes <= 0:
+            raise SourceRangeError(f"chunk_bytes must be positive, got {chunk_bytes}")
+        response = self._client.get_object(
+            Bucket=self._bucket, Key=_validated_key(key=key)
+        )
+        body = response["Body"]
+        try:
+
+            def chunks() -> Iterator[bytes]:
+                """Yield successive reads until the body is exhausted."""
+                while chunk := body.read(chunk_bytes):
+                    yield chunk
+
+            yield chunks()
+        finally:
+            body.close()
+
+    def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
+        """Read the half-open byte interval ``[start, end)`` of one object.
+
+        S3 ranges are inclusive on both ends, so the exclusive `end` becomes
+        ``end - 1`` on the wire. Converting here keeps every interval in the
+        system half-open (D65) regardless of the provider behind the port.
+        """
+        if start < 0 or end <= start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) is empty, reversed, or negative"
+            )
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket,
+                Key=_validated_key(key=key),
+                Range=f"bytes={start}-{end - 1}",
+            )
+        except ClientError as error:
+            # A range past the end is a 416 from S3. Letting botocore's
+            # exception escape would put a provider type in the port contract
+            # that D61 exists to keep provider-free.
+            code = error.response.get("Error", {}).get("Code", "")
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in {"InvalidRange", "416"} or status == 416:
+                raise SourceRangeError(
+                    f"range [{start}, {end}) is outside {key.root!r}"
+                ) from error
+            raise
+        body = response["Body"]
+        try:
+            content = body.read()
+        finally:
+            body.close()
+        if len(content) != end - start:
+            raise SourceRangeError(
+                f"range [{start}, {end}) of {key.root!r} returned {len(content)} "
+                f"bytes, not the {end - start} requested"
+            )
+        return content
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None

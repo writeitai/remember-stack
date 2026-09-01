@@ -1,5 +1,7 @@
 """Fast D74 proof that ingest checks admission before persisting bytes."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -55,6 +57,24 @@ class RecordingStore:
 
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         raise AssertionError(f"unexpected read of {key.root}")
+
+    @contextmanager
+    def open_stream(
+        self, *, key: ObjectKey, chunk_bytes: int = 1024 * 1024
+    ) -> Iterator[Iterator[bytes]]:
+        """Open an ordered chunked read over the stored bytes."""
+        content = self.read_bytes(key=key)
+
+        def chunks() -> Iterator[bytes]:
+            """Yield successive fixed-size slices of the stored bytes."""
+            for offset in range(0, len(content), chunk_bytes):
+                yield content[offset : offset + chunk_bytes]
+
+        yield chunks()
+
+    def read_range(self, *, key: ObjectKey, start: int, end: int) -> bytes:
+        """Return the half-open byte interval of the stored bytes."""
+        return self.read_bytes(key=key)[start:end]
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None

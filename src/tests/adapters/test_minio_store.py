@@ -12,6 +12,7 @@ from rememberstack.adapters.selfhost.minio import _ListObjectsOutput
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
+from rememberstack.model import SourceRangeError
 
 
 class _Body:
@@ -22,9 +23,9 @@ class _Body:
         self._stream = BytesIO(content)
         self.closed = False
 
-    def read(self) -> bytes:
-        """Read all remaining bytes."""
-        return self._stream.read()
+    def read(self, amt: int | None = None) -> bytes:
+        """Read all remaining bytes, or at most ``amt`` when given."""
+        return self._stream.read() if amt is None else self._stream.read(amt)
 
     def close(self) -> None:
         """Record connection release."""
@@ -52,9 +53,15 @@ class _MemoryS3:
         self.buckets.add(Bucket)
         return {}
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
-        """Return one streaming body."""
-        body = _Body(content=self.objects[(Bucket, Key)][0])
+    def get_object(
+        self, *, Bucket: str, Key: str, Range: str | None = None
+    ) -> _GetObjectOutput:
+        """Return one streaming body, honoring an inclusive HTTP byte range."""
+        content = self.objects[(Bucket, Key)][0]
+        if Range is not None:
+            first, _, last = Range.removeprefix("bytes=").partition("-")
+            content = content[int(first) : int(last) + 1]
+        body = _Body(content=content)
         self.last_body = body
         return {"Body": body}
 
@@ -157,3 +164,66 @@ def _client_error(*, code: str, operation: str) -> ClientError:
         error_response={"Error": {"Code": code, "Message": code}},
         operation_name=operation,
     )
+
+
+def test_stream_reassembles_and_releases_the_connection() -> None:
+    """Chunked reads cover the object and still close the HTTP body."""
+    client = _MemoryS3()
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.ensure_bucket()
+    content = bytes(range(256)) * 8
+    store.write_bytes(key=ObjectKey("clip.mp4"), content=content)
+
+    with store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=100) as parts:
+        chunks = list(parts)
+
+    assert b"".join(chunks) == content
+    assert max(len(chunk) for chunk in chunks) <= 100
+    assert client.last_body is not None and client.last_body.closed
+
+
+def test_range_translates_half_open_to_the_inclusive_wire_form() -> None:
+    """``[2, 5)`` must reach S3 as ``bytes=2-4``, not ``bytes=2-5``."""
+    client = _MemoryS3()
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("clip.mp4"), content=b"0123456789")
+
+    assert store.read_range(key=ObjectKey("clip.mp4"), start=2, end=5) == b"234"
+    assert client.last_body is not None and client.last_body.closed
+
+
+def test_range_past_the_object_end_raises_a_domain_error() -> None:
+    """A short provider response must not reach the caller as valid bytes."""
+    client = _MemoryS3()
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("clip.mp4"), content=b"01234")
+
+    with pytest.raises(SourceRangeError):
+        store.read_range(key=ObjectKey("clip.mp4"), start=2, end=99)
+
+
+@pytest.mark.parametrize(
+    ("start", "end"), [(5, 5), (5, 2), (-1, 4)], ids=["empty", "reversed", "negative"]
+)
+def test_degenerate_ranges_are_refused_before_any_request(start: int, end: int) -> None:
+    """A malformed range is a caller bug and never becomes a wire request."""
+    client = _MemoryS3()
+    store = MinIOObjectStore(bucket="raw", client=client)
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("clip.mp4"), content=b"01234")
+    client.last_body = None
+
+    with pytest.raises(SourceRangeError):
+        store.read_range(key=ObjectKey("clip.mp4"), start=start, end=end)
+    assert client.last_body is None, "a refused range must not reach the provider"
+
+
+def test_nonpositive_chunk_size_is_refused() -> None:
+    """A zero chunk would never advance; a negative one is meaningless."""
+    store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
+
+    with pytest.raises(SourceRangeError):
+        with store.open_stream(key=ObjectKey("clip.mp4"), chunk_bytes=0):
+            pytest.fail("a non-positive chunk must be refused before any read")

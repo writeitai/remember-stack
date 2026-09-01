@@ -103,7 +103,8 @@ Notes an implementer needs:
   (the route prompt/adapter enforces it), and it is what makes §5's disclosure a property of
   *ranges the converter wrote*, not a per-claim judgment anyone has to make downstream.
 - **The generalized converter contract** (refines D38 a second time):
-  `convert(bytes, mime, hints) → { document.md, source_map, derived_assets[], manifest }` —
+  `convert(source, mime, hints) → { document.md, source_map, derived_assets[], manifest }` —
+  where `source` is a **source handle** (§2.1), not the file's bytes —
   the *page map* generalizes to a **source map** (§4), `derived_assets` are the `media/`
   children with their locators, and the `manifest` is the route's **complete self-account**,
   with required fields (nullable only where a capability is genuinely absent):
@@ -117,6 +118,104 @@ Notes an implementer needs:
   applied to conversion); and **gaps + warnings** (corrupt intervals, unsupported codecs,
   regions the tool could not read) — a conversion that silently drops ten minutes of a
   recording is the same lie as a silent top-k.
+
+
+### 2.1 The source handle — why a converter is not handed bytes
+
+*Decision: D104.*
+
+A text file fits in memory, so the original converter contract took the whole
+file as a `bytes` value. A video does not. If the contract keeps demanding
+bytes, then the client, the HTTP process, the object store, and the converter
+each hold a complete copy of the same multi-gigabyte file, and the host runs
+out of memory before any model work starts. That is a correctness and
+availability property, not an optimisation: two concurrent large ingests can
+take down a worker that would happily have processed either one alone.
+
+So a route receives a **source handle** — a read-only capability on one
+immutable, already-hashed source — and decides for itself how much of it to
+bring into memory. The handle offers four ways to read, every one of them
+bounded:
+
+- **stream it** — receive the source in order, one bounded chunk at a time,
+  which is what hashing, copying, and demuxing need;
+- **read a range** — take the half-open byte interval `[start, end)`, which is
+  what container parsing needs to read a header or an index without the body;
+  half-open because every other interval in the system is (§4), so nobody has
+  to remember which end is inclusive; and
+- **materialise it** — write the source to a temporary local file and hand
+  over the path. Decoders like FFmpeg want a seekable file rather than a
+  stream, and refusing to provide one would mean reimplementing them; and
+- **read it bounded** — take the whole source into memory, having first said
+  how much memory that is allowed to be. A Markdown passthrough has no use for
+  a stream, and pretending otherwise would push every small route into writing
+  its own accumulation loop.
+
+There is deliberately **no method that reads a source of unknown size**. Every
+read either bounds itself structurally (a chunk, a range) or requires the
+caller to name a limit up front. The distinction matters: the hazard was never
+"bytes in memory", it was *bytes in memory without anyone having decided how
+many*. A contract that offers an unbounded whole-file read as the convenient
+option gets unbounded whole-file reads, and the failure only shows up on the
+first large file in production.
+
+Naming a limit is not by itself a guarantee, because a caller can name a large
+one — asking for the range `[0, size)` is a whole-file read with extra steps.
+A handle can therefore carry a **read ceiling**: the largest single range,
+chunk, or bounded read it will serve, refused above that regardless of what the
+caller asks for. Without a ceiling the property is ergonomic friction; with one
+it is enforced. Deployments handling media set it; the small-text routes that
+have no size problem do not need it.
+
+Reading is also a **resource**, not just bytes. Underneath a stream is a file
+descriptor or an HTTP connection, so a stream is opened for the duration of a
+block and released when the block ends. Returning a bare iterator would leave a
+caller who stops early holding that resource until garbage collection, and
+collection timing is not a lifetime contract — enough abandoned reads exhaust
+the descriptor limit or the connection pool.
+
+Reads never come back short. A range returns exactly the bytes it was asked
+for or it raises — a container parser handed a truncated header cannot tell it
+from a valid one, and will produce confident nonsense rather than an error.
+That check belongs here rather than in each route, because every route would
+otherwise have to remember to write it.
+
+The recorded **length** is checked as well as the recorded hash, and they catch
+different lies. Bytes can hash correctly while being described by a wrong size;
+if only the hash were verified, materialisation would happily produce 5,000
+bytes for a source recorded as 10 while a range read past byte 10 was refused —
+two access paths disagreeing about the length of one source.
+
+**Not solved here:** nothing reserves worker-wide temporary disk. Two
+concurrent materialisations of one 6 GiB source each pass a 6 GiB bound and
+together need 12 GiB. Aggregate admission belongs to whatever schedules the
+work; the handle bounds one read at a time, and says so rather than implying
+otherwise.
+
+Materialisation is where the bounds live, because it is the operation that can
+actually exhaust a host. Three properties are enforced by the handle rather
+than trusted to each route:
+
+- **the caller declares what it can afford**, and a source larger than that is
+  refused before a single byte moves — an oversized source costs one integer
+  comparison, not a filled disk;
+- **the written bytes are verified against the source's content hash.** An
+  immutable object cannot legitimately change, so a mismatch is corruption or
+  a wrong key, never a retryable condition. Without this check a truncated
+  read becomes a short document that looks complete, which is precisely the
+  silent-loss failure the coverage rules in §2 exist to prevent; and
+- **the file is removed when the route is done with it**, whether it returned
+  or raised. A converter that fails mid-decode cannot leak the file it asked
+  for, because it never owned the file's lifetime.
+
+The recorded size is a claim, not a guarantee, so the streaming write also
+counts what it actually writes and refuses if the source turns out to be
+larger than both the declaration and the accepted bound.
+
+One handle contract serves both deployment shapes. A self-host deployment
+reads from a directory tree and a cloud deployment reads from object storage,
+but a route sees the same three operations either way, so no route contains a
+branch on where the bytes live.
 
 ## 3. What "already works" and stays untouched
 
