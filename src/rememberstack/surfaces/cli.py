@@ -930,12 +930,13 @@ def _run_logout(args: argparse.Namespace) -> int:
     """Revoke the stored bearer, then unlink the file."""
     from rememberstack.surfaces.credentials import credential_lock
     from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
 
     try:
         with credential_lock():
             _retry_pending_revocation()
             return _logout_existing(token_host=args.token_host, allow_stored_host=True)
-    except CredentialError as error:
+    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
