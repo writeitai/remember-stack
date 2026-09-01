@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextlib import suppress
 from datetime import datetime
 import errno
 from ipaddress import ip_address
@@ -574,9 +575,8 @@ def clear_pending_revocations(*, settings: TokenHostSettings | None = None) -> N
         path.unlink()
 
 
-@contextmanager
-def deferred_interrupts() -> "Iterator[None]":
-    """Hold Ctrl-C until the block finishes, then deliver it.
+class DeferredInterrupts:
+    """Hold termination signals until a critical region finishes.
 
     Some sequences cannot be made safe by arranging ``try`` blocks, because a
     signal lands *between* bytecodes and no exception region covers the gap
@@ -584,28 +584,85 @@ def deferred_interrupts() -> "Iterator[None]":
     token host answers, the credential exists, and every step from parsing it
     to writing it down is a place an interrupt could leave it live and unnamed.
 
-    So the signal is deferred rather than caught. The region it covers must be
-    short and must not wait on anything — here it is a parse and a local file
-    write — because Ctrl-C genuinely does nothing until it ends. The waiting a
-    user actually wants to interrupt, the poll's sleep, is deliberately
-    outside.
+    **Handlers, not a signal mask.** ``pthread_sigmask`` blocks only the
+    calling thread, so a process-directed signal delivered to any other thread
+    — one belonging to an HTTP library, or to an application embedding this CLI
+    — would still terminate the process mid-record. Python runs signal handlers
+    on the main thread whichever thread the OS picked, so replacing the handler
+    covers the whole process.
 
-    A no-op where the platform has no signal mask (Windows), because there the
-    guarantee is unavailable and refusing to log in would be a worse answer
-    than the narrower window.
+    The deferral is also **released as early as it is safe to release it**:
+    :meth:`deliver_if_pending` lets a caller honour a pending signal at a point
+    where nothing has been issued yet, so a user pressing Ctrl-C while waiting
+    is not made to wait for a network call to finish.
     """
-    mask = getattr(signal, "pthread_sigmask", None)
-    if mask is None:  # pragma: no cover - Windows
-        yield
-        return
-    held = {signal.SIGINT, signal.SIGTERM}
-    previous = mask(signal.SIG_BLOCK, held)
-    try:
-        yield
-    finally:
-        # Restores exactly what was blocked before, so a caller that had
-        # already masked something keeps it masked.
-        mask(signal.SIG_SETMASK, previous)
+
+    __slots__ = ("_pending", "_previous", "_signals")
+
+    def __init__(self, *signals: int) -> None:
+        """Defer the given signals; defaults to the routine terminations."""
+        self._signals = signals or _DEFERRED_SIGNALS
+        self._pending: int | None = None
+        self._previous: dict[int, object] = {}
+
+    def __enter__(self) -> "DeferredInterrupts":
+        """Install the recording handlers, remembering what they replaced."""
+        for number in self._signals:
+            try:
+                self._previous[number] = signal.signal(number, self._record)
+            except (OSError, ValueError):
+                # Not the main thread, or a signal this platform does not have.
+                # Nothing is deferred, which is the same weaker guarantee as a
+                # platform without signals at all.
+                continue
+        return self
+
+    def __exit__(self, *_exc: object) -> Literal[False]:
+        """Restore the previous handlers, then deliver anything we held."""
+        for number, handler in self._previous.items():
+            with suppress(OSError, ValueError):
+                signal.signal(number, handler)  # type: ignore[arg-type]
+        self._previous.clear()
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            self._raise(pending)
+        return False
+
+    def deliver_if_pending(self) -> None:
+        """Honour a held signal now, if one arrived.
+
+        For the point where a caller knows nothing has been issued yet: waiting
+        any longer would only make Ctrl-C feel broken.
+        """
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            self._raise(pending)
+
+    def _record(self, number: int, _frame: object) -> None:
+        """Remember the first signal rather than acting on it."""
+        if self._pending is None:
+            self._pending = number
+
+    @staticmethod
+    def _raise(number: int) -> None:
+        """Deliver a held signal as the exception it would have raised."""
+        if number == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + number)
+
+
+#: Signals a routine ``kill`` or Ctrl-C sends. SIGHUP is included because a
+#: closed terminal is an ordinary way for a CLI to die, and dying mid-record is
+#: what this exists to prevent.
+_DEFERRED_SIGNALS: tuple[int, ...] = tuple(
+    number
+    for number in (
+        getattr(signal, "SIGINT", None),
+        getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGHUP", None),
+    )
+    if number is not None
+)
 
 
 @contextmanager

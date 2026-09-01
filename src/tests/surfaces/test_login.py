@@ -1393,32 +1393,57 @@ def test_an_unconfirmable_filesystem_warns_at_login(
     assert not load_pending_revocations().entries
 
 
-def test_ctrl_c_is_held_while_a_credential_is_being_recorded() -> None:
+def test_signals_are_held_process_wide_while_a_credential_is_recorded() -> None:
     """Some sequences cannot be made safe by arranging `try` blocks.
 
     A signal lands *between* bytecodes, and the gaps between statements belong
     to no exception region — so the window from "the token host answered" to
-    "the credential is written down" is closed by deferring the signal, not by
-    catching it.
+    "the credential is written down" is closed by deferring the signal.
+
+    Handlers, not a mask: `pthread_sigmask` blocks only the calling thread, so
+    a process-directed signal delivered to any other thread would still have
+    killed the process mid-record.
     """
+    import os as os_module
     import signal as signal_module
 
-    from rememberstack.surfaces.credentials import deferred_interrupts
+    from rememberstack.surfaces.credentials import DeferredInterrupts
 
-    if not hasattr(signal_module, "pthread_sigmask"):  # pragma: no cover
-        pytest.skip("this platform has no signal mask")
+    if not hasattr(signal_module, "SIGUSR1"):  # pragma: no cover - Windows
+        pytest.skip("this platform has no POSIX signals")
 
-    outside = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
-    assert signal_module.SIGINT not in outside
+    original = signal_module.getsignal(signal_module.SIGINT)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with DeferredInterrupts() as deferred:
+                os_module.kill(os_module.getpid(), signal_module.SIGINT)
+                # Held: the region completes rather than unwinding here.
+                assert deferred is not None
+        # And the previous handler is back.
+        assert signal_module.getsignal(signal_module.SIGINT) is original
+    finally:
+        signal_module.signal(signal_module.SIGINT, original)
 
-    with deferred_interrupts():
-        held = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
-        assert signal_module.SIGINT in held
-        assert signal_module.SIGTERM in held
 
-    # And the previous mask is restored exactly, not cleared.
-    after = signal_module.pthread_sigmask(signal_module.SIG_BLOCK, set())
-    assert after == outside
+def test_a_held_signal_is_delivered_as_soon_as_nothing_is_at_stake() -> None:
+    """Waiting longer than necessary would only make Ctrl-C feel broken."""
+    import os as os_module
+    import signal as signal_module
+
+    from rememberstack.surfaces.credentials import DeferredInterrupts
+
+    if not hasattr(signal_module, "SIGUSR1"):  # pragma: no cover - Windows
+        pytest.skip("this platform has no POSIX signals")
+
+    original = signal_module.getsignal(signal_module.SIGINT)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with DeferredInterrupts() as deferred:
+                os_module.kill(os_module.getpid(), signal_module.SIGINT)
+                deferred.deliver_if_pending()
+                raise AssertionError("the held signal should have arrived")
+    finally:
+        signal_module.signal(signal_module.SIGINT, original)
 
 
 def test_the_poll_releases_the_hold_between_attempts() -> None:

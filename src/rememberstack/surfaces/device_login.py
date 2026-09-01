@@ -21,7 +21,7 @@ from pydantic import SecretStr
 from pydantic import ValidationError
 
 from rememberstack.surfaces.credentials import CredentialFile
-from rememberstack.surfaces.credentials import deferred_interrupts
+from rememberstack.surfaces.credentials import DeferredInterrupts
 
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _POLL_FLOOR_SECONDS = 1.0
@@ -126,6 +126,15 @@ def authorize_device(*, client: httpx.Client) -> DeviceAuthorizeResponse:
         ) from error
 
 
+#: The token poll's own request timeout.
+#:
+#: Short and explicit, because signals are deferred across this call: whatever
+#: this number is, it is the longest a user's Ctrl-C can go unanswered. A
+#: device-token response is a few hundred bytes, so a generous client-wide
+#: timeout would only mean a longer silence.
+_POLL_TIMEOUT_SECONDS = 10.0
+
+
 def _report_orphan(
     *,
     response: httpx.Response,
@@ -182,21 +191,29 @@ def poll_device_token(
         sleep(wait)
         if clock() >= deadline:
             break
-        # Ctrl-C is held for the request and everything that follows a `200`,
-        # and released again before the sleep below. From the moment the token
-        # host answers, a credential exists — and no arrangement of `try`
-        # blocks makes the steps that follow safe, because a signal lands
-        # *between* bytecodes and the gaps between statements belong to no
-        # exception region. Deferring the signal is the only thing that closes
-        # them. The waiting a user actually wants to interrupt is the sleep,
-        # which is deliberately outside this.
-        with deferred_interrupts():
+        # Signals are held for the request and everything that follows a
+        # `200`. From the moment the token host answers, a credential exists —
+        # and no arrangement of `try` blocks makes the steps that follow safe,
+        # because a signal lands *between* bytecodes and the gaps between
+        # statements belong to no exception region. Deferring is what closes
+        # them.
+        #
+        # The hold starts *before* the request, because a `200` that arrives
+        # while a signal is in flight must still be recorded — but it is
+        # released the instant the answer turns out not to be a credential, so
+        # a user who pressed Ctrl-C while waiting is not made to sit through
+        # the rest of the poll.
+        with DeferredInterrupts() as deferred:
             response = request_same_origin(
                 client=client,
                 method="POST",
                 url="/v1/device/token",
                 json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
+                timeout=_POLL_TIMEOUT_SECONDS,
             )
+            if response.status_code != 200:
+                # Nothing was issued, so nothing has to be protected.
+                deferred.deliver_if_pending()
             if response.status_code == 200:
                 try:
                     payload = response.json()
