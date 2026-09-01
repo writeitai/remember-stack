@@ -126,13 +126,22 @@ def authorize_device(*, client: httpx.Client) -> DeviceAuthorizeResponse:
         ) from error
 
 
-#: The token poll's own request timeout.
+#: The token poll's own per-operation timeout.
 #:
-#: Short and explicit, because signals are deferred across this call: whatever
-#: this number is, it is the longest a user's Ctrl-C can go unanswered. A
-#: device-token response is a few hundred bytes, so a generous client-wide
-#: timeout would only mean a longer silence.
+#: Short and explicit, because signals are deferred across this call. It is
+#: **not** an absolute deadline: HTTP timeouts here are per-operation, so a
+#: response that trickles a byte at a time resets it, and no client-side
+#: setting bounds that without a watchdog. What it does bound is the ordinary
+#: case — a slow or unresponsive token host — and, with the redirect limit
+#: below, the pathological-redirect case too.
+#:
+#: A device-token response is a few hundred bytes, so a generous client-wide
+#: timeout would only mean a longer silence for no benefit.
 _POLL_TIMEOUT_SECONDS = 10.0
+
+#: Redirects the token poll will follow. One is generosity; five was the shared
+#: default, and five sends at the timeout above is five times the silence.
+_POLL_MAX_REDIRECTS = 1
 
 
 def _report_orphan(
@@ -210,6 +219,7 @@ def poll_device_token(
                 url="/v1/device/token",
                 json={"grant_type": DEVICE_GRANT_TYPE, "device_code": device_code},
                 timeout=_POLL_TIMEOUT_SECONDS,
+                max_redirects=_POLL_MAX_REDIRECTS,
             )
             if response.status_code != 200:
                 # Nothing was issued, so nothing has to be protected.
@@ -292,11 +302,21 @@ def credential_from_token(
 
 
 def request_same_origin(
-    *, client: httpx.Client, method: str, url: str, **kwargs: object
+    *,
+    client: httpx.Client,
+    method: str,
+    url: str,
+    max_redirects: int | None = None,
+    **kwargs: object,
 ) -> httpx.Response:
-    """Send one request; follow only host-preserving redirects."""
+    """Send one request; follow only host-preserving redirects.
+
+    ``max_redirects`` narrows the budget for a caller that pays for each hop.
+    The token poll does, because signals are deferred across the whole call:
+    every redirect it follows is another timeout a user's Ctrl-C waits behind.
+    """
     current = client.build_request(method, url, **kwargs)  # type: ignore[arg-type]
-    for _ in range(_MAX_REDIRECTS):
+    for _ in range(max_redirects if max_redirects is not None else _MAX_REDIRECTS):
         response = client.send(current)
         if response.is_redirect:
             location = response.headers.get("location")

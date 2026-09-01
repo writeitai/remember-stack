@@ -597,13 +597,17 @@ class DeferredInterrupts:
     is not made to wait for a network call to finish.
     """
 
-    __slots__ = ("_pending", "_previous", "_signals")
+    __slots__ = ("_pending", "_previous", "_signals", "installed")
 
     def __init__(self, *signals: int) -> None:
         """Defer the given signals; defaults to the routine terminations."""
         self._signals = signals or _DEFERRED_SIGNALS
         self._pending: int | None = None
         self._previous: dict[int, object] = {}
+        #: Whether anything is actually being deferred. False off the main
+        #: thread, where ``signal.signal`` refuses — the guarantee is simply
+        #: unavailable there, and a caller that needs to say so can.
+        self.installed = False
 
     def __enter__(self) -> "DeferredInterrupts":
         """Install the recording handlers, remembering what they replaced."""
@@ -612,20 +616,22 @@ class DeferredInterrupts:
                 self._previous[number] = signal.signal(number, self._record)
             except (OSError, ValueError):
                 # Not the main thread, or a signal this platform does not have.
-                # Nothing is deferred, which is the same weaker guarantee as a
-                # platform without signals at all.
                 continue
+            self.installed = True
         return self
 
     def __exit__(self, *_exc: object) -> Literal[False]:
         """Restore the previous handlers, then deliver anything we held."""
-        for number, handler in self._previous.items():
+        restored = dict(self._previous)
+        for number, handler in restored.items():
             with suppress(OSError, ValueError):
                 signal.signal(number, handler)  # type: ignore[arg-type]
         self._previous.clear()
         pending, self._pending = self._pending, None
         if pending is not None:
-            self._raise(pending)
+            # From the copy: clearing first left delivery believing nothing had
+            # been installed, so a caller's own handler was replaced by a raise.
+            self._deliver(pending, previous=restored.get(pending, signal.SIG_DFL))
         return False
 
     def deliver_if_pending(self) -> None:
@@ -636,16 +642,35 @@ class DeferredInterrupts:
         """
         pending, self._pending = self._pending, None
         if pending is not None:
-            self._raise(pending)
+            self._deliver(pending, previous=self._previous_of(pending))
 
     def _record(self, number: int, _frame: object) -> None:
         """Remember the first signal rather than acting on it."""
         if self._pending is None:
             self._pending = number
 
+    def _previous_of(self, number: int) -> object:
+        """What was installed for this signal before we replaced it."""
+        return self._previous.get(number, signal.SIG_DFL)
+
     @staticmethod
-    def _raise(number: int) -> None:
-        """Deliver a held signal as the exception it would have raised."""
+    def _deliver(number: int, *, previous: object) -> None:
+        """Deliver a held signal the way it would have been delivered.
+
+        A program that installed its own handler — an application embedding
+        this CLI, a test harness — expects that handler to run. Raising in its
+        place would take a decision that was never ours: the deferral exists to
+        change *when* a signal is honoured, not *how*.
+
+        Only where nothing was installed does this fall back to the
+        interpreter's own behaviour: ``KeyboardInterrupt`` for an interrupt, and
+        the conventional ``128 + signal`` exit for a termination.
+        """
+        if previous is signal.SIG_IGN:
+            return
+        if callable(previous) and previous is not signal.default_int_handler:
+            previous(number, None)  # type: ignore[operator]
+            return
         if number == signal.SIGINT:
             raise KeyboardInterrupt
         raise SystemExit(128 + number)

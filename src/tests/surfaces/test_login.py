@@ -1484,3 +1484,60 @@ def test_the_poll_releases_the_hold_between_attempts() -> None:
 
     assert masked_during_sleep, "the poll must have slept at least once"
     assert not any(masked_during_sleep), "Ctrl-C works while waiting"
+
+
+def test_a_previously_installed_handler_is_honoured_not_replaced() -> None:
+    """Deferral changes *when* a signal is honoured, not *how*.
+
+    A program that installed its own handler — an application embedding this
+    CLI, a test harness — expects that handler to run. Raising in its place
+    would take a decision that was never ours.
+    """
+    import os as os_module
+    import signal as signal_module
+
+    from rememberstack.surfaces.credentials import DeferredInterrupts
+
+    if not hasattr(signal_module, "SIGUSR1"):  # pragma: no cover - Windows
+        pytest.skip("this platform has no POSIX signals")
+
+    seen: list[int] = []
+    original = signal_module.getsignal(signal_module.SIGTERM)
+    try:
+        signal_module.signal(
+            signal_module.SIGTERM, lambda number, _frame: seen.append(number)
+        )
+        with DeferredInterrupts(signal_module.SIGTERM):
+            os_module.kill(os_module.getpid(), signal_module.SIGTERM)
+            assert seen == [], "held, not delivered"
+        assert seen == [signal_module.SIGTERM], "the caller's handler ran"
+    finally:
+        signal_module.signal(signal_module.SIGTERM, original)
+
+
+def test_an_ignored_signal_stays_ignored() -> None:
+    """`SIG_IGN` is a decision too, and deferral must not overrule it."""
+    import os as os_module
+    import signal as signal_module
+
+    from rememberstack.surfaces.credentials import DeferredInterrupts
+
+    if not hasattr(signal_module, "SIGUSR1"):  # pragma: no cover - Windows
+        pytest.skip("this platform has no POSIX signals")
+
+    original = signal_module.getsignal(signal_module.SIGTERM)
+    try:
+        signal_module.signal(signal_module.SIGTERM, signal_module.SIG_IGN)
+        with DeferredInterrupts(signal_module.SIGTERM):
+            os_module.kill(os_module.getpid(), signal_module.SIGTERM)
+        # No SystemExit: the program had already said to ignore this.
+    finally:
+        signal_module.signal(signal_module.SIGTERM, original)
+
+
+def test_the_poll_follows_fewer_redirects_than_the_shared_default() -> None:
+    """Every redirect the poll follows is another timeout Ctrl-C waits behind."""
+    from rememberstack.surfaces.device_login import _MAX_REDIRECTS
+    from rememberstack.surfaces.device_login import _POLL_MAX_REDIRECTS
+
+    assert _POLL_MAX_REDIRECTS < _MAX_REDIRECTS
