@@ -622,13 +622,16 @@ def _run_login(args: argparse.Namespace) -> int:
     """
     from rememberstack.surfaces.credentials import credential_lock
     from rememberstack.surfaces.credentials import CredentialError
+    from rememberstack.surfaces.credentials import DurabilityUnconfirmed
 
     try:
         with credential_lock():
             return _login_locked(args)
-    except CredentialError as error:
-        # A lock we cannot take is a refusal, not a crash: the user needs the
-        # reason and an exit code, not a traceback.
+    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
+        # A lock we cannot take, a disk we cannot write, a sync we cannot
+        # confirm: all refusals, none of them crashes. These arise outside the
+        # login body — in the lock itself and in journal recovery — so the
+        # body's own catch never sees them, and the user got a traceback.
         print(f"error: {error}", file=sys.stderr)
         return 1
 
@@ -699,26 +702,24 @@ def _login_locked(args: argparse.Namespace) -> int:
                 anything knows the secret and can act on it: an interrupt or an
                 IO failure inside this function used to escape with the mint
                 untracked, and there was no later opportunity to notice.
+
+                The ``try`` is the **first** statement, and the attributes are
+                read inside it as arguments to the call it protects. Reading
+                them beforehand put three more bytecode boundaries outside the
+                protected region, and an interrupt at any of them escaped.
                 """
-                secret = minted.access_token  # type: ignore[attr-defined]
-                token_id = minted.token_id  # type: ignore[attr-defined]
                 try:
                     append_pending_revocation(
                         pending=PendingRevocation(
                             version=1,
                             token_host=token_host,
-                            access_token=secret,
-                            token_id=token_id,
+                            access_token=minted.access_token,  # type: ignore[attr-defined]
+                            token_id=minted.token_id,  # type: ignore[attr-defined]
                         )
                     )
                 except BaseException:
-                    if not _revoke_now(token_host=token_host, secret=secret):
-                        print(
-                            "warning: a credential was minted but could "
-                            f"neither be recorded nor withdrawn (token_id "
-                            f"{token_id}); revoke it in the console",
-                            file=sys.stderr,
-                        )
+                    # The handler's first statement, for the same reason.
+                    _withdraw_or_warn(token_host=token_host, minted=minted)
                     raise
 
             token = poll_device_token(
@@ -776,7 +777,13 @@ def _login_locked(args: argparse.Namespace) -> int:
     except DeviceGrantError as error:
         print(f"error: {error}", file=sys.stderr)
         return error.exit_code
-    except (httpx.HTTPError, CredentialError, ValueError, OSError):
+    except (
+        httpx.HTTPError,
+        CredentialError,
+        ValueError,
+        OSError,
+        DurabilityUnconfirmed,
+    ):
         # OSError included deliberately: a disk that cannot be written to
         # during login is a failed login, not a crash. The credential has
         # already been withdrawn or recorded by the time we get here.
@@ -795,6 +802,23 @@ def _login_locked(args: argparse.Namespace) -> int:
         if credential.expires_at is not None:
             print(f"expires_at: {credential.expires_at.isoformat()}")
         return 0
+
+
+def _withdraw_or_warn(*, token_host: str, minted: object) -> None:
+    """Give a credential back, and say so loudly when that fails.
+
+    The failure handler's first statement, so as little as possible sits
+    between something going wrong and the attempt to undo it.
+    """
+    secret = getattr(minted, "access_token", None)
+    if secret is not None and _revoke_now(token_host=token_host, secret=secret):
+        return
+    print(
+        "warning: a credential was minted but could neither be recorded nor "
+        f"withdrawn (token_id {getattr(minted, 'token_id', 'unknown')}); "
+        "revoke it in the console",
+        file=sys.stderr,
+    )
 
 
 def _revoke_now(*, token_host: str, secret: object) -> bool:
