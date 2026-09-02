@@ -122,14 +122,10 @@ A port is part of an origin and may be included:
 `https://localhost:3000` are accepted, so a self-hoster can develop against a
 local https listener.
 
-Validation is not a list of banned shapes: the value is parsed and
-re-serialized the way a browser serializes an origin, and it must come back
-identical. Anything non-canonical fails that comparison without anyone having
-had to think of it first — an uppercase host, a trailing slash, a default port
-written out. What parsing cannot decide, such as whether the host is a real
-host rather than `*` or a broken IPv6 literal, is checked on top. Several origins are comma-separated, and the
-whole list is validated together — a stray comma is a refusal, not a silently
-skipped entry.
+Several origins are comma-separated, and the whole list is validated together
+— a stray comma is a refusal, not a silently skipped entry, because a list
+that starts with fewer origins than you wrote hides the missing one until
+somebody's browser is turned away.
 
 ```bash
 REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.remember.dev
