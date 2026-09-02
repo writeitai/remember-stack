@@ -124,6 +124,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_22_0043",
         "p9_23_0044",
         "p9_24_0045",
+        "p9_25_0046",
     )
     assert len(script.get_heads()) == 1
 
@@ -662,7 +663,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_24_0045"
+    assert head_before_noop == head_after_noop == "p9_25_0046"
     assert _inventory(database_url=database_url) == restored_inventory
 
 

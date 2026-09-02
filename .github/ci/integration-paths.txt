@@ -8,6 +8,7 @@ src/tests/spine/test_backfill.py
 src/tests/spine/test_clustering.py
 src/tests/spine/test_component_versions.py
 src/tests/spine/test_deployment_bootstrap.py
+src/tests/spine/test_document_inventory.py
 src/tests/spine/test_forget_catalog.py
 src/tests/spine/test_governance.py
 src/tests/spine/test_knowledge_commit_driver.py

@@ -13,6 +13,7 @@ from rememberstack.spine.consumption import ConsumptionCatalog
 from rememberstack.spine.consumption import ConsumptionDeploymentNotFoundError
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.document_catalog import DocumentCatalog
+from rememberstack.spine.document_inventory import DocumentInventory
 from rememberstack.spine.entity_registry import EntityRegistry
 from rememberstack.spine.entity_registry import T0_RESOLVER_VERSION
 from rememberstack.spine.extension_packs import install_pack
@@ -103,6 +104,7 @@ __all__ = (
     "ConsumptionDeploymentNotFoundError",
     "EntityClusterer",
     "DocumentCatalog",
+    "DocumentInventory",
     "DeploymentBootstrapper",
     "WorkLedger",
     "WorkLedgerSettings",

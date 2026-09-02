@@ -47,6 +47,10 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"^/hydrate/relation/[^/]+$"),
         ("GET", r"^/search/claims$"),
         ("GET", r"^/search/chunks$"),
+        # The body-carrying forms of the same two reads. A search does not
+        # become a write by moving its terms out of the request line (D59).
+        ("POST", r"^/search/claims$"),
+        ("POST", r"^/search/chunks$"),
         # POST, and still a read: the argument shape does not fit a query
         # string. This is exactly the case the method-based rule gets wrong.
         ("POST", r"^/graph/neighborhood$"),
@@ -63,6 +67,10 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"^/operations$"),
         ("GET", r"^/connectors$"),
         ("GET", r"^/connectors/[^/]+$"),
+        # The inventory of what the deployment holds. A read, and the one a
+        # browser credential needs most: without it the app can show counts
+        # but never which document they refer to.
+        ("GET", r"^/documents$"),
     )
 )
 

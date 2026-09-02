@@ -269,6 +269,90 @@ The 18 former stock query patterns are shipped only as discoverable
 `examples.*` saved queries. They are not operation tools and have no deprecation
 or migration surface.
 
+## Document inventory
+
+### `GET /documents`
+
+Lists the document lineages this deployment holds, **newest first by when the
+lineage was first seen**. Note what that is not: re-ingesting a document does
+not move it up. See the ordering note below for why the key is immutable.
+Composed like the other optional capabilities: absent means an ordinary 404,
+never a fallback.
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | page size, 1–200 (default 50) |
+| `cursor` | opaque position from the previous page; absent on the last page |
+| `status` | filter on the newest version's state: `ingesting`, `converting`, `structuring`, `ready`, `failed` |
+
+Each row carries the lineage (`doc_id`, `title`, `source_kind`, `source_uri`,
+`first_seen_at`), the newest version observed (`latest`: `version_id`,
+`version_no`, `status`, `ingested_at`, and `error` when it failed), and
+`serving`.
+
+**`latest` is the newest version, not the current one — and that distinction is
+the point of this endpoint.** A lineage's *current* version is the snapshot
+that finished processing and is being served. The two differ exactly when
+something is unfinished or broken: a document uploaded a minute ago and still
+converting has no current version at all, and a document whose newest upload
+failed still points at the older working one. Listing by the current pointer
+would hide precisely the documents somebody is looking for, so this reports
+the highest `version_no` in the lineage.
+
+`serving` is the separate question — whether *any* ready snapshot exists to
+answer queries from. That keeps "the newest upload failed" and "there is
+nothing here to search" apart, which are different problems with different
+fixes.
+
+A version the deployment has been asked to delete is not the document's
+current state, so `latest` falls back to the newest version that still
+exists. Deleting a version sets its tombstone and leaves `status` alone — a
+deleted snapshot still reads `ready` — so a listing that simply took the
+highest version number would show somebody a document they had removed,
+labelled as fine. A lineage with no surviving version is not listed at all.
+
+Lineages the deployment has been asked to forget are not listed. The tombstone
+remains in the spine so an audit can tell "forgotten" from "never existed",
+but a customer's inventory is what they still hold.
+
+**Order.** Newest *document* first, by `first_seen_at` — when the lineage was
+created — with `doc_id` breaking ties. A document ingested a moment ago is at
+the top; one **re-ingested** a moment ago keeps its place, because it is the
+same document.
+
+That is deliberate, and the alternative is broken rather than merely
+different. Ordering by most-recent-activity gives a key that moves: a document
+below the cursor that gains a version jumps above it and is returned on no
+page at all, and one already returned whose newest version is deleted falls
+back below the cursor and is returned twice. Neither is visible to the reader.
+An immutable key has neither failure, and it is servable by an index, so a
+page costs the page size rather than a scan of the corpus.
+
+A **malformed** cursor is a 400 rather than a silent restart, because
+restarting would re-serve a page already seen and read as duplicated
+documents. Note what that does and does not check: the cursor is verified to
+*parse*, not to have been issued by this deployment. It is not a capability —
+the query is scoped to the caller's own deployment either way — so the worst a
+hand-written but well-formed cursor can do is start somebody at an odd place
+in their own corpus.
+
+One cost worth knowing: `status` filters on the **newest version**, which is
+resolved per lineage after the index has chosen the candidate. Paging without
+a filter is an index seek — the cursor predicate is pushed into the index
+condition, so a page costs the page size whatever the corpus holds. Filtering
+on a rare status walks further, because the engine must resolve each
+candidate's newest version before it can tell whether it matches. That is
+inherent to filtering on a joined value, not a defect, and it is bounded by
+the corpus rather than by the page.
+
+`deleted` is not an accepted `status` filter. The listing only reports
+versions that are not tombstoned, and a hard forget sets the tombstone
+alongside the status, so filtering on it could only ever return nothing —
+which the reader would take as "no deleted documents" rather than "this
+question cannot be asked here".
+
+A read-only credential may call this endpoint.
+
 ## Client writes
 
 These endpoints exist only when the deployment composes the corresponding
@@ -362,8 +446,27 @@ plans. Each returns the envelope.
 | `GET /lookup/observations?entity_id=&property_query=&k=` | live observations on one entity, semantic over statements |
 | `GET /search/claims?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked claim search — **evidence** grain, never a current-fact answer; `k` is 1–400 |
 | `GET /search/chunks?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked search over live source passages; returns `chunks[]` as separately typed **evidence**, never claims or facts; `k` is 1–400 |
+| `POST /search/claims` | the same claim search with `{query, k, channel}` in the body, so the terms never reach the request line |
+| `POST /search/chunks` | the same chunk search with `{query, k, channel}` in the body |
 | `GET /hydrate/relation/{relation_id}` | the audit chain: a relation → its evidence claims → source documents |
 | `GET /transcript/relation/{relation_id}` | the decision history: why the system believes what it believes |
+
+#### Searching from a browser
+
+Both searches also accept a **POST** with `{query, k, channel}` in the body.
+It is the same search — same ranking, same spend accounting, same read scope —
+and the only difference is where the terms travel.
+
+A query is usually the most sensitive string in the exchange: a person's name,
+a diagnosis, an unannounced deal. A URL is not a private place. It is written
+to access logs, kept by proxies, retained in browser history and attached to
+outgoing referrers. The `GET` forms are fine for a client on a private path to
+its own deployment, and they are unchanged; anything reaching a deployment
+from a browser should use the body form (D59).
+
+The body is closed: an unknown key is a **422** rather than a silently ignored
+parameter, so passing `limit` instead of `k` tells you rather than quietly
+returning ten results.
 
 Evidence rows returned by claim search and relation hydration include
 `asserted_at`, `claim_valid_from`, `claim_valid_until`,

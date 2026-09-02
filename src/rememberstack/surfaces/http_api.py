@@ -45,6 +45,8 @@ from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV1
+from rememberstack.model import DocumentPage
+from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
@@ -56,6 +58,7 @@ from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ReadinessRequirements
+from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
@@ -169,6 +172,19 @@ class PipelineReadinessPort(Protocol):
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
     ) -> PipelineReadinessReport: ...
+
+
+class DocumentInventoryPort(Protocol):
+    """List the document lineages this deployment holds."""
+
+    def list_documents(
+        self,
+        *,
+        deployment_id: UUID,
+        limit: int = 50,
+        cursor: str | None = None,
+        status: DocumentStatusFilter | None = None,
+    ) -> DocumentPage: ...
 
 
 class GraphQueryPort(Protocol):
@@ -311,6 +327,7 @@ def build_api(
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
+    documents: DocumentInventoryPort | None = None,
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
@@ -436,6 +453,31 @@ def build_api(
             deployment_id=deployment_id, query=query, k=k, channel=channel
         )
 
+    # The same two searches, with the terms in a body instead of the request
+    # line. A query is the customer's own words, and a URL is written to
+    # access logs, kept by proxies and retained in browser history — so the
+    # surface a browser uses must not put it there (D59). The GET forms stay
+    # for existing clients, which reach the deployment over a private path.
+    @app.post("/search/claims", response_model=Envelope)
+    def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
+        """Claim search — evidence grain, never current-fact truth."""
+        return engine.search_claims(
+            deployment_id=deployment_id,
+            query=body.query,
+            k=body.k,
+            channel=body.channel,
+        )
+
+    @app.post("/search/chunks", response_model=Envelope)
+    def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
+        """Search live source chunks as separately typed evidence."""
+        return engine.search_chunks(
+            deployment_id=deployment_id,
+            query=body.query,
+            k=body.k,
+            channel=body.channel,
+        )
+
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
     def hydrate_relation(relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents."""
@@ -462,6 +504,10 @@ def build_api(
     if pipeline_readiness is not None:
         _mount_pipeline_readiness(
             app=app, readiness=pipeline_readiness, deployment_id=deployment_id
+        )
+    if documents is not None:
+        _mount_document_inventory(
+            app=app, documents=documents, deployment_id=deployment_id
         )
     if graph is not None:
         _mount_graph(app=app, graph=graph)
@@ -895,6 +941,37 @@ def _mount_pipeline_readiness(
         )
 
 
+def _mount_document_inventory(
+    *, app: FastAPI, documents: DocumentInventoryPort, deployment_id: UUID
+) -> None:
+    """Expose the read-only inventory of what this deployment holds."""
+
+    @app.get("/documents", response_model=DocumentPage)
+    def list_documents(
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        cursor: Annotated[str | None, Query()] = None,
+        status: Annotated[DocumentStatusFilter | None, Query()] = None,
+    ) -> DocumentPage:
+        """One page of documents, newest lineage first.
+
+        Ordered by when each document was *first seen*, which never changes —
+        re-ingesting one does not move it up. An activity order would, and a
+        keyset cursor against a moving key drops and repeats rows.
+
+        `status` filters on the *newest* version's state, which is what makes
+        "show me what failed" answerable in one call rather than by paging the
+        whole corpus and filtering client-side.
+        """
+        try:
+            return documents.list_documents(
+                deployment_id=deployment_id, limit=limit, cursor=cursor, status=status
+            )
+        except ValueError as error:
+            # A cursor that does not parse. 400 rather than a silent restart:
+            # returning page one would look like the corpus repeating itself.
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
@@ -1282,7 +1359,10 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     normalized = path.rstrip("/") or "/"
     if method == "POST" and normalized == "/ingest":
         return ("ingest", None)
-    if method == "GET" and normalized in {"/search/claims", "/search/chunks"}:
+    # Both methods. A POST search costs exactly what the GET does, and a new
+    # route missing from this map would be a search nobody is charged for and
+    # no ceiling can stop.
+    if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
         return ("search", None)
     if method == "POST" and normalized.startswith("/operations/"):
         name = normalized.removeprefix("/operations/")
