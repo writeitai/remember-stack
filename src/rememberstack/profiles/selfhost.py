@@ -118,6 +118,16 @@ class SelfHostSettings(BaseSettings):
     managed host sets its published bound here so it is enforced where the
     body is actually received."""
     trusted_principal_source: bool = False
+    #: Browser origins allowed to call this deployment (D59).
+    #:
+    #: Empty by default, which is the self-host answer: nothing is advertised
+    #: and no origin is granted anything. A managed deployment is told the one
+    #: origin its product app is served from, because a browser refuses a
+    #: cross-origin request before it ever presents its credential — so
+    #: without this a perfectly valid credential still cannot reach anything.
+    #:
+    #: Comma-separated in the environment; each must be an exact https origin.
+    browser_origins: str = ""
     """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
 
     Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
@@ -909,6 +919,11 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
             trusted_principal_source=self._settings.trusted_principal_source,
+            browser_origins=tuple(
+                origin.strip()
+                for origin in self._settings.browser_origins.split(",")
+                if origin.strip()
+            ),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),

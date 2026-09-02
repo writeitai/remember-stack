@@ -21,6 +21,7 @@ from typing import Final
 from typing import Literal
 from typing import Protocol
 from typing import Self
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import Body
@@ -30,6 +31,7 @@ from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -308,6 +310,7 @@ def build_api(
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
+    browser_origins: tuple[str, ...] = (),
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -357,6 +360,7 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
+    _install_browser_origins(app=app, origins=browser_origins)
 
     @app.get("/resolve", response_model=Envelope)
     def resolve(
@@ -463,6 +467,60 @@ def build_api(
         _install_spend_lease(app=app, spend_lease=spend_lease)
 
     return app
+
+
+def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
+    """Allow named browser origins to call this deployment (D59).
+
+    A browser holding a valid credential still cannot reach a deployment
+    without this: the app is served from one origin and the deployment answers
+    on its own, so every request is cross-origin and the browser refuses it
+    before the credential is ever examined. Authentication was never the
+    obstacle; the absence of these headers was.
+
+    **Empty by default, and that is the self-host answer.** A self-hosted
+    deployment has no browser app pointed at it, so it advertises nothing and
+    no origin is granted anything — adding a permissive default here would
+    hand every website on the internet the ability to make authenticated
+    requests from a visitor's browser.
+
+    Never `*`: credentials are sent, and the wildcard is invalid with
+    credentials in any case. Only the exact origins a deployment was told
+    about.
+    """
+    if not origins:
+        return
+    for origin in origins:
+        parsed = urlparse(origin)
+        exact = (
+            parsed.scheme == "https"
+            and bool(parsed.netloc)
+            and not parsed.path
+            and not parsed.query
+            and not parsed.fragment
+            # A comma or a space is a caller that forgot to split its
+            # configuration, which would otherwise widen the perimeter to a
+            # single nonsense origin that matches nothing — or, worse, to
+            # whatever a permissive parser makes of it.
+            and "," not in origin
+            and not any(character.isspace() for character in origin)
+        )
+        if not exact:
+            raise ValueError(
+                "browser origins must each be an exact https origin "
+                f"(scheme, host, optional port, nothing else); refusing {origin!r}"
+            )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_credentials=False,
+        # The credential travels in `Authorization`, not a cookie, so the
+        # browser needs no credentialed mode — and turning it on would let a
+        # named origin ride a session cookie it should never see.
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        max_age=600,
+    )
 
 
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
