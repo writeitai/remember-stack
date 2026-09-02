@@ -136,15 +136,6 @@ class DocumentSummary(BaseModel):
     latest: DocumentVersionSummary
     #: True when some version of this lineage is ``ready`` to be searched.
     serving: bool
-    #: Stages the pipeline deliberately did not run for the newest version.
-    #:
-    #: A skip is not a failure and not a success — it is work that was
-    #: considered and declined, and it changes what the document can answer.
-    #: A version whose extraction was skipped is `ready` and searchable as
-    #: text while contributing no claims, so a screen that reported only the
-    #: status would call it fine and leave somebody wondering why it never
-    #: shows up in answers. Empty for the overwhelming majority of documents.
-    skipped_stages: tuple[str, ...] = ()
 
 
 class DocumentPage(BaseModel):

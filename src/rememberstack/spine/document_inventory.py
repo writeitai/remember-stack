@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime
+from datetime import UTC
 from uuid import UUID
 
 from sqlalchemy import text
@@ -52,19 +53,6 @@ _PAGE = text(
            v.status::text AS status,
            v.ingested_at,
            v.error,
-           -- Stages the pipeline declined to run for this version. Reported
-           -- because a skip is neither a failure nor a success: an extraction
-           -- that was skipped leaves a document `ready` and searchable as
-           -- text while contributing no claims, and only saying "ready" would
-           -- hide why it never appears in answers.
-           COALESCE((
-             SELECT array_agg(DISTINCT ps.stage::text ORDER BY ps.stage::text)
-             FROM processing_state ps
-             WHERE ps.deployment_id = d.deployment_id
-               AND ps.target_kind = 'document_version'
-               AND ps.target_id = v.version_id
-               AND ps.status = 'skipped'
-           ), ARRAY[]::text[]) AS skipped_stages,
            EXISTS (
              SELECT 1 FROM document_versions ready
              WHERE ready.deployment_id = d.deployment_id
@@ -78,6 +66,17 @@ _PAGE = text(
       FROM document_versions dv
       WHERE dv.deployment_id = d.deployment_id
         AND dv.doc_id = d.doc_id
+        -- Tombstoned versions are not the document's current state. Deleting
+        -- a version sets `deleted_at` and leaves `status` alone, so a deleted
+        -- snapshot still reads `ready` — reporting it as the newest version
+        -- would show somebody a document they had asked to have removed,
+        -- labelled as fine.
+        AND dv.deleted_at IS NULL
+        -- Frozen at the caller's watermark. `ingested_at` belongs to the
+        -- newest version and moves when a document is re-ingested, so
+        -- without this a document sitting below the cursor could jump above
+        -- it mid-scroll and never be returned on any page.
+        AND dv.ingested_at <= CAST(:as_of AS timestamptz)
       ORDER BY dv.version_no DESC
       LIMIT 1
     ) v ON TRUE
@@ -112,6 +111,7 @@ class DocumentInventory:
         limit: int = DEFAULT_PAGE_SIZE,
         cursor: str | None = None,
         status: DocumentStatus | None = None,
+        now: datetime | None = None,
     ) -> DocumentPage:
         """One page of documents, ordered by when their newest version landed.
 
@@ -122,7 +122,13 @@ class DocumentInventory:
         between pages, dropping one and repeating the other.
         """
         size = max(1, min(int(limit), MAX_PAGE_SIZE))
-        cursor_at, cursor_doc = _decode_cursor(cursor)
+        as_of, cursor_at, cursor_doc = _decode_cursor(cursor)
+        # The first page fixes the watermark; every later page carries it back
+        # in the cursor. Without a frozen instant the listing is a moving
+        # target: a document re-ingested mid-scroll moves to the top, above a
+        # cursor already passed, and is never returned at all.
+        if as_of is None:
+            as_of = now or datetime.now(tz=UTC)
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -131,6 +137,7 @@ class DocumentInventory:
                         "deployment_id": deployment_id,
                         "limit": size + 1,
                         "status": status,
+                        "as_of": as_of,
                         "cursor_at": cursor_at,
                         "cursor_doc": cursor_doc,
                     },
@@ -158,42 +165,55 @@ class DocumentInventory:
                     error=row["error"],
                 ),
                 serving=bool(row["serving"]),
-                skipped_stages=tuple(row["skipped_stages"] or ()),
             )
             for row in page
         )
         next_cursor = (
-            _encode_cursor(page[-1]["ingested_at"], page[-1]["doc_id"])
+            _encode_cursor(as_of, page[-1]["ingested_at"], page[-1]["doc_id"])
             if more and page
             else None
         )
         return DocumentPage(documents=documents, cursor=next_cursor)
 
 
-def _encode_cursor(ingested_at: datetime, doc_id: UUID) -> str:
-    """Opaque keyset position: the sort key, not an offset.
+def _encode_cursor(as_of: datetime, ingested_at: datetime, doc_id: UUID) -> str:
+    """Opaque position: the watermark plus the sort key, never an offset.
 
-    An offset would re-read rows that shifted while somebody was paging, so a
-    document ingested mid-scroll could push another off the end of a page and
-    out of the listing entirely.
+    An offset would re-read rows that shifted while somebody was paging. The
+    watermark is what makes the sort key stable enough to page against at all:
+    it pins the listing to one instant, so re-ingesting a document during a
+    scroll cannot move it out from under the reader.
     """
-    raw = f"{ingested_at.isoformat()}|{doc_id}".encode()
+    raw = f"{as_of.isoformat()}|{ingested_at.isoformat()}|{doc_id}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str | None) -> tuple[datetime | None, UUID | None]:
-    """Read a cursor back, or refuse it.
+def _decode_cursor(
+    cursor: str | None,
+) -> tuple[datetime | None, datetime | None, UUID | None]:
+    """Read a cursor back, or refuse a malformed one.
 
-    A malformed cursor is rejected rather than treated as "start from the
-    beginning": silently restarting would hand the caller a page they have
-    already seen and look like duplicate documents.
+    Rejecting beats silently restarting: handing back page one to somebody who
+    asked for page three would repeat documents they have already seen and
+    read as duplicates in the corpus.
+
+    This checks that a cursor *parses*, not that this deployment issued it.
+    The values are a timestamp pair and a document id, all of which the caller
+    could have written; nothing here is a permission. That is acceptable only
+    because the cursor is not a capability — the query is already scoped to
+    the caller's own deployment, so the worst a forged one can do is start
+    somebody at an odd place in their own corpus.
     """
     if cursor is None:
-        return None, None
+        return None, None, None
     padding = "=" * (-len(cursor) % 4)
     try:
         raw = base64.urlsafe_b64decode(cursor + padding).decode()
-        at_text, _, doc_text = raw.partition("|")
-        return datetime.fromisoformat(at_text), UUID(doc_text)
+        as_of_text, at_text, doc_text = raw.split("|")
+        return (
+            datetime.fromisoformat(as_of_text),
+            datetime.fromisoformat(at_text),
+            UUID(doc_text),
+        )
     except (ValueError, UnicodeDecodeError) as error:
         raise ValueError("cursor is not one this API issued") from error

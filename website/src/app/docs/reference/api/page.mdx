@@ -285,8 +285,8 @@ never a fallback.
 
 Each row carries the lineage (`doc_id`, `title`, `source_kind`, `source_uri`,
 `first_seen_at`), the newest version observed (`latest`: `version_id`,
-`version_no`, `status`, `ingested_at`, and `error` when it failed),
-`serving`, and `skipped_stages`.
+`version_no`, `status`, `ingested_at`, and `error` when it failed), and
+`serving`.
 
 **`latest` is the newest version, not the current one — and that distinction is
 the point of this endpoint.** A lineage's *current* version is the snapshot
@@ -302,25 +302,39 @@ answer queries from. That keeps "the newest upload failed" and "there is
 nothing here to search" apart, which are different problems with different
 fixes.
 
-`skipped_stages` names the pipeline stages that were deliberately **not run**
-for that version, and is empty for almost every document. A skip is neither a
-failure nor a success — it is work that was considered and declined — and it
-changes what the document can answer. A version whose `extract_claims` was
-skipped is `ready` and searchable as text while contributing nothing to claim
-search, so a caller reporting only `status` would present it as fine and leave
-somebody wondering why it never appears in answers. The skips reported are the
-newest version's own; one recorded against a superseded snapshot is not
-attributed to it.
+A version the deployment has been asked to delete is not the document's
+current state, so `latest` falls back to the newest version that still
+exists. Deleting a version sets its tombstone and leaves `status` alone — a
+deleted snapshot still reads `ready` — so a listing that simply took the
+highest version number would show somebody a document they had removed,
+labelled as fine. A lineage with no surviving version is not listed at all.
 
 Lineages the deployment has been asked to forget are not listed. The tombstone
 remains in the spine so an audit can tell "forgotten" from "never existed",
 but a customer's inventory is what they still hold.
 
-The cursor is a keyset position, not an offset, so a document ingested while
-somebody is paging cannot push another off the end of a page and out of the
-listing. It is opaque: a value this API did not issue is a **400** rather than
-a silent restart, because restarting would re-serve a page the caller has
-already seen and read as duplicated documents.
+The cursor carries a **watermark** — the instant the listing began — as well
+as the sort position, and every page describes each document as of that
+instant. Ordering by "newest activity" means the sort key is mutable: without
+the watermark, a document below the cursor that is re-ingested mid-scroll
+jumps above it, past a place the reader has already been, and is returned on
+no page at all. They finish the list believing they saw everything.
+
+A **malformed** cursor is a 400 rather than a silent restart, because
+restarting would re-serve a page already seen and read as duplicated
+documents. Note what that does and does not check: the cursor is verified to
+*parse*, not to have been issued by this deployment. It is not a capability —
+the query is scoped to the caller's own deployment either way — so the worst a
+hand-written but well-formed cursor can do is start somebody at an odd place
+in their own corpus.
+
+**Scale.** The order is computed from the newest version's `ingested_at`,
+which is derived rather than stored on the lineage, so no index serves the
+final sort: each page costs a scan of the deployment's live documents. That is
+fine for the corpus sizes deployments hold today and is *not* fine at the
+million-document scale this system targets. Closing it needs a durable
+latest-activity sort key on `documents`, maintained on the write path and
+indexed — a schema change, tracked separately rather than bolted on here.
 
 A read-only credential may call this endpoint.
 

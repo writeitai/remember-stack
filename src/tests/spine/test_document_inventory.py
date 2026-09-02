@@ -175,132 +175,131 @@ def _version(
     return version_id
 
 
-def _skip_stage(
-    *, connection: Connection, version_id: UUID, stage: str, content_hash: str
-) -> None:
-    """Record that the pipeline declined to run one stage for this version."""
-    connection.execute(
-        text(
-            "INSERT INTO processing_state (processing_id, deployment_id,"
-            " target_kind, target_id, stage, component_version, content_hash,"
-            " status, finished_at) VALUES (:pid, :deployment,"
-            " 'document_version', :target, :stage, 'v1', :hash, 'skipped', :at)"
-        ),
-        {
-            "pid": uuid4(),
-            "deployment": _DEPLOYMENT_ID,
-            "target": version_id,
-            "stage": stage,
-            "hash": content_hash,
-            "at": _NOW,
-        },
-    )
-
-
-def test_a_stage_the_pipeline_declined_to_run_is_reported(
+def test_a_deleted_version_is_not_reported_as_the_current_state(
     database_engine: Engine,
 ) -> None:
-    """A skip is neither a failure nor a success, and it changes the answer.
+    """Deleting a version leaves its status alone, so the query must not.
 
-    A version whose claim extraction was skipped is `ready` and searchable as
-    text while contributing nothing to what the memory can answer. Reporting
-    only the status would call that document fine and leave somebody
-    wondering why it never turns up in results.
+    `LifecycleCatalog.delete_version` sets `deleted_at` and nothing else — a
+    tombstoned snapshot still says `ready`. Taking the highest version number
+    without excluding tombstones therefore shows somebody a document they
+    asked to have removed, labelled as fine. The document falls back to the
+    newest version it actually still has.
     """
     with database_engine.begin() as connection:
-        doc_id = _document(connection=connection, title="scanned-appendix.pdf")
-        version_id = _version(
-            connection=connection, doc_id=doc_id, version_no=1, status="ready", at=_NOW
-        )
-        content_hash = connection.execute(
-            text(
-                "SELECT content_hash FROM document_versions WHERE version_id = :version"
-            ),
-            {"version": version_id},
-        ).scalar_one()
-        _skip_stage(
-            connection=connection,
-            version_id=version_id,
-            stage="extract_claims",
-            content_hash=content_hash,
-        )
-        _skip_stage(
-            connection=connection,
-            version_id=version_id,
-            stage="embed_claim",
-            content_hash=content_hash,
-        )
-
-    page = DocumentInventory(engine=database_engine).list_documents(
-        deployment_id=_DEPLOYMENT_ID
-    )
-
-    only = page.documents[0]
-    assert only.latest.status == "ready"
-    assert only.serving is True
-    assert only.skipped_stages == ("embed_claim", "extract_claims")
-
-
-def test_a_document_with_nothing_skipped_says_so_with_an_empty_tuple(
-    database_engine: Engine,
-) -> None:
-    """The ordinary case must not carry a phantom skip.
-
-    `array_agg` over no rows is NULL, not an empty array, and a NULL reaching
-    the model would be a validation error on every healthy document.
-    """
-    with database_engine.begin() as connection:
-        doc_id = _document(connection=connection, title="ordinary.md")
+        doc_id = _document(connection=connection, title="redacted.pdf")
         _version(
-            connection=connection, doc_id=doc_id, version_no=1, status="ready", at=_NOW
-        )
-
-    page = DocumentInventory(engine=database_engine).list_documents(
-        deployment_id=_DEPLOYMENT_ID
-    )
-
-    assert page.documents[0].skipped_stages == ()
-
-
-def test_a_skip_on_an_older_version_is_not_attributed_to_the_newest(
-    database_engine: Engine,
-) -> None:
-    """The row describes the newest version, so the skips must be its own.
-
-    Otherwise re-uploading a document would keep reporting a stage that was
-    skipped on a snapshot nobody is serving any more.
-    """
-    with database_engine.begin() as connection:
-        doc_id = _document(connection=connection, title="revised.md")
-        old_version = _version(
             connection=connection,
             doc_id=doc_id,
             version_no=1,
             status="ready",
             at=_NOW - timedelta(days=1),
         )
-        old_hash = connection.execute(
-            text(
-                "SELECT content_hash FROM document_versions WHERE version_id = :version"
-            ),
-            {"version": old_version},
-        ).scalar_one()
-        _skip_stage(
-            connection=connection,
-            version_id=old_version,
-            stage="extract_claims",
-            content_hash=old_hash,
-        )
-        _version(
+        removed = _version(
             connection=connection, doc_id=doc_id, version_no=2, status="ready", at=_NOW
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = :at"
+                " WHERE version_id = :version"
+            ),
+            {"at": _NOW, "version": removed},
         )
 
     page = DocumentInventory(engine=database_engine).list_documents(
         deployment_id=_DEPLOYMENT_ID
     )
 
-    assert page.documents[0].latest.version_no == 2
-    assert page.documents[0].skipped_stages == ()
+    assert page.documents[0].latest.version_no == 1
+
+
+def test_a_lineage_whose_versions_are_all_deleted_is_not_listed(
+    database_engine: Engine,
+) -> None:
+    """Nothing left to describe, so no row rather than a misleading one."""
+    with database_engine.begin() as connection:
+        doc_id = _document(connection=connection, title="all-gone.pdf")
+        only = _version(
+            connection=connection, doc_id=doc_id, version_no=1, status="ready", at=_NOW
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = :at"
+                " WHERE version_id = :version"
+            ),
+            {"at": _NOW, "version": only},
+        )
+
+    page = DocumentInventory(engine=database_engine).list_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )
+
+    assert page.documents == ()
+
+
+def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
+    database_engine: Engine,
+) -> None:
+    """The failure this watermark exists to stop.
+
+    Order by "newest activity" and the sort key is mutable. A document sitting
+    below the cursor that gains a new version jumps above it — past a place
+    the reader has already been — and is returned on no page at all. They
+    finish the list believing they have seen everything.
+
+    The cursor carries the instant the listing started, and each document is
+    described as of that instant, so the set being paged cannot change
+    underneath it.
+    """
+    inventory = DocumentInventory(engine=database_engine)
+    with database_engine.begin() as connection:
+        for index, title in enumerate(("a.md", "b.md", "c.md")):
+            doc_id = _document(connection=connection, title=title)
+            _version(
+                connection=connection,
+                doc_id=doc_id,
+                version_no=1,
+                status="ready",
+                # a.md newest, then b.md, then c.md
+                at=_NOW - timedelta(hours=index),
+            )
+
+    first = inventory.list_documents(
+        deployment_id=_DEPLOYMENT_ID, limit=1, now=_NOW + timedelta(minutes=1)
+    )
+    assert [d.title for d in first.documents] == ["a.md"]
+    assert first.cursor is not None
+
+    # b.md is re-ingested between pages, which without the watermark moves it
+    # above the cursor and out of the listing entirely.
+    with database_engine.begin() as connection:
+        b_doc = connection.execute(
+            text(
+                "SELECT doc_id FROM documents WHERE title = 'b.md'"
+                " AND deployment_id = :deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        ).scalar_one()
+        _version(
+            connection=connection,
+            doc_id=b_doc,
+            version_no=2,
+            status="ready",
+            at=_NOW + timedelta(hours=1),
+        )
+
+    seen: list[str] = [d.title or "" for d in first.documents]
+    cursor = first.cursor
+    for _ in range(5):
+        page = inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
+        )
+        seen.extend(d.title or "" for d in page.documents)
+        cursor = page.cursor
+        if cursor is None:
+            break
+
+    assert sorted(seen) == ["a.md", "b.md", "c.md"], seen
 
 
 def test_a_document_still_processing_is_listed(database_engine: Engine) -> None:
