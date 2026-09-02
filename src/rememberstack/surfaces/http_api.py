@@ -528,8 +528,16 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # The credential travels in `Authorization`, not a cookie, so the
         # browser needs no credentialed mode — and turning it on would let a
         # named origin ride a session cookie it should never see.
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        # OPTIONS is absent deliberately: the middleware answers preflight
+        # itself, so listing it would only advertise a method no route serves.
+        allow_methods=["GET", "POST"],
+        # Exactly the two headers a browser client sends. `Idempotency-Key`
+        # was here for a contract nothing implements — advertising a header no
+        # route reads invites a client to rely on it.
+        allow_headers=["Authorization", "Content-Type"],
+        # Starlette's default. Worth knowing that removing an origin leaves a
+        # browser's cached preflight usable for up to this long, so revoking
+        # the credential is what stops access immediately, not this list.
         max_age=600,
     )
 

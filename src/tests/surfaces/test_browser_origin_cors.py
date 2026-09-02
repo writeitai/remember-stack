@@ -139,3 +139,48 @@ def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:
     _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
     assert app.installed[0]["allow_origins"] == [origin]
+
+
+def test_a_stray_comma_is_refused_rather_than_skipped() -> None:
+    """A list the operator wrote deliberately is validated as a whole.
+
+    Quietly dropping an empty segment makes `https://a.example,,https://b.example`
+    start cleanly with two of the three things the operator thought they
+    configured — and the missing one is invisible until somebody's browser is
+    refused. Startup failure is only a guarantee if it covers the whole list.
+    """
+    from rememberstack.profiles.selfhost import _browser_origins
+
+    assert _browser_origins("") == ()
+    assert _browser_origins("   ") == ()
+    assert _browser_origins("https://a.example") == ("https://a.example",)
+
+    # The typo survives the split so validation can refuse it.
+    assert "" in _browser_origins("https://a.example,,https://b.example")
+    assert "" in _browser_origins("https://a.example,")
+
+    app = _App()
+    with pytest.raises(ValueError, match="exact https origin"):
+        _install_browser_origins(
+            app=app,  # type: ignore[arg-type]
+            origins=_browser_origins("https://a.example,"),
+        )
+    assert app.installed == []
+
+
+def test_only_the_headers_a_browser_client_sends_are_advertised() -> None:
+    """A header no route reads is an invitation to depend on one.
+
+    `OPTIONS` is absent because the middleware answers preflight itself, so
+    advertising it names a method no route serves.
+    """
+    app = _App()
+
+    _install_browser_origins(
+        app=app,  # type: ignore[arg-type]
+        origins=("https://app.example.com",),
+    )
+
+    installed = app.installed[0]
+    assert installed["allow_headers"] == ["Authorization", "Content-Type"]
+    assert installed["allow_methods"] == ["GET", "POST"]

@@ -301,6 +301,22 @@ class SelfHostSettings(BaseSettings):
         return value
 
 
+def _browser_origins(configured: str) -> tuple[str, ...]:
+    """Split the configured origins without quietly dropping a broken one.
+
+    An empty setting means no origins, which is the default and the whole
+    self-host answer. Anything else is a list the operator wrote deliberately,
+    so an empty segment — `https://a.example,,https://b.example`, or a
+    trailing comma — is a typo in that list rather than something to skip. It
+    is passed through as an empty string so validation refuses it and the
+    deployment says so at startup, which is the same atomicity every other
+    malformed entry gets.
+    """
+    if not configured.strip():
+        return ()
+    return tuple(origin.strip() for origin in configured.split(","))
+
+
 def resolve_selfhost_api_auth(
     *, settings: SelfHostSettings
 ) -> AuthPerimeterPort | None:
@@ -919,11 +935,7 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
             trusted_principal_source=self._settings.trusted_principal_source,
-            browser_origins=tuple(
-                origin.strip()
-                for origin in self._settings.browser_origins.split(",")
-                if origin.strip()
-            ),
+            browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),

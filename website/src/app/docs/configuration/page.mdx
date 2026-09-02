@@ -82,13 +82,30 @@ have granted a subdomain tree; they have granted nothing, and will go looking
 for the fault in their app. Refusing at startup is the only place that
 mistake is visible.
 
-Cookies are never permitted on these requests. The browser credential travels
-in the `Authorization` header, so credentialed mode would only let a named
-origin ride a session cookie it should never see.
+Credentialed CORS is disabled (`allow_credentials` is off), so the browser
+will not attach cookies or TLS client certificates to these requests and will
+reject a response that tries to use them. The browser credential travels in
+the `Authorization` header instead. This is a statement about what CORS
+negotiates, not a claim that cookies can never exist — same-origin requests
+are unaffected.
+
+Only `GET` and `POST` are advertised, with `Authorization` and `Content-Type`.
+Preflight responses are cached for ten minutes, which is worth knowing when
+you remove an origin: a browser that has already been told "yes" may keep that
+answer for up to that long, so revoking the credential is what ends access
+immediately, not editing this list.
+
+A port is part of an origin and may be included:
+`https://app.example.com:8443`. Several origins are comma-separated, and the
+whole list is validated together — a stray comma is a refusal, not a silently
+skipped entry.
 
 ```bash
 REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.remember.dev
 ```
+
+Compose passes this through, so it can be set in `.env` beside the other
+deployment settings.
 
 ### Stores (Compose local defaults)
 
