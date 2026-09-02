@@ -77,6 +77,81 @@ class VersionPipelineReadiness(BaseModel):
     stages: tuple[PipelineStageReadiness, ...]
 
 
+#: The processing states a document version can be in (`document_status`).
+#:
+#: Named once, here, because the HTTP port, the read model and the filter all
+#: have to agree on it: a port that said `str` while the implementation said
+#: this would be a type error at the seam, and widening the port to `str`
+#: would let an unvalidated status reach the query.
+DocumentStatus = Literal[
+    "ingesting", "converting", "structuring", "ready", "failed", "deleted"
+]
+
+
+class DocumentVersionSummary(BaseModel):
+    """The state of one observed snapshot of a document.
+
+    ``status`` is the version's own processing state, not a judgement about
+    the document: a lineage whose newest version is ``failed`` may still be
+    serving an older one that is ``ready``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version_id: UUID
+    version_no: int
+    status: DocumentStatus
+    ingested_at: datetime
+    #: Present only on ``failed``. The engine's own message, not a paraphrase.
+    error: str | None = None
+
+
+class DocumentSummary(BaseModel):
+    """One document lineage, with the newest snapshot the engine has observed.
+
+    ``latest`` is the highest ``version_no`` in the lineage, which is
+    deliberately not the same as the lineage's *current* version. The current
+    pointer only moves once a snapshot finishes processing, so a document
+    whose first version is still converting — or whose newest version failed —
+    has no current version at all. Keying this on the current pointer would
+    make exactly the documents somebody is worried about disappear from the
+    list, which is the opposite of what an intake view is for.
+
+    ``serving`` says whether a *ready* snapshot exists to answer questions
+    from, so the two facts stay separable: "the newest upload failed" and
+    "there is nothing here to search" are different situations and a customer
+    needs to tell them apart.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    doc_id: UUID
+    #: Best-effort human name. May be absent for sources that never supplied one.
+    title: str | None = None
+    #: Connector kind: ``upload``, ``google_drive``, ``url``, ….
+    source_kind: str
+    #: Where it came from, when the source has a location worth showing.
+    source_uri: str | None = None
+    first_seen_at: datetime
+    latest: DocumentVersionSummary
+    #: True when some version of this lineage is ``ready`` to be searched.
+    serving: bool
+
+
+class DocumentPage(BaseModel):
+    """One page of the document inventory.
+
+    ``cursor`` is opaque and absent on the last page. Callers must not
+    construct one: it encodes the sort position, and an invented value would
+    silently skip or repeat documents rather than fail.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    documents: tuple[DocumentSummary, ...]
+    cursor: str | None = None
+
+
 class ReadinessRequirements(BaseModel):
     """The exhaustive capability set a readiness caller may require."""
 

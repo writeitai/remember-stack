@@ -269,6 +269,51 @@ The 18 former stock query patterns are shipped only as discoverable
 `examples.*` saved queries. They are not operation tools and have no deprecation
 or migration surface.
 
+## Document inventory
+
+### `GET /documents`
+
+Lists the document lineages this deployment holds, most recent activity first.
+Composed like the other optional capabilities: absent means an ordinary 404,
+never a fallback.
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | page size, 1–200 (default 50) |
+| `cursor` | opaque position from the previous page; absent on the last page |
+| `status` | filter on the newest version's state: `ingesting`, `converting`, `structuring`, `ready`, `failed`, `deleted` |
+
+Each row carries the lineage (`doc_id`, `title`, `source_kind`, `source_uri`,
+`first_seen_at`), the newest version observed (`latest`: `version_id`,
+`version_no`, `status`, `ingested_at`, and `error` when it failed), and
+`serving`.
+
+**`latest` is the newest version, not the current one — and that distinction is
+the point of this endpoint.** A lineage's *current* version is the snapshot
+that finished processing and is being served. The two differ exactly when
+something is unfinished or broken: a document uploaded a minute ago and still
+converting has no current version at all, and a document whose newest upload
+failed still points at the older working one. Listing by the current pointer
+would hide precisely the documents somebody is looking for, so this reports
+the highest `version_no` in the lineage.
+
+`serving` is the separate question — whether *any* ready snapshot exists to
+answer queries from. That keeps "the newest upload failed" and "there is
+nothing here to search" apart, which are different problems with different
+fixes.
+
+Lineages the deployment has been asked to forget are not listed. The tombstone
+remains in the spine so an audit can tell "forgotten" from "never existed",
+but a customer's inventory is what they still hold.
+
+The cursor is a keyset position, not an offset, so a document ingested while
+somebody is paging cannot push another off the end of a page and out of the
+listing. It is opaque: a value this API did not issue is a **400** rather than
+a silent restart, because restarting would re-serve a page the caller has
+already seen and read as duplicated documents.
+
+A read-only credential may call this endpoint.
+
 ## Client writes
 
 These endpoints exist only when the deployment composes the corresponding

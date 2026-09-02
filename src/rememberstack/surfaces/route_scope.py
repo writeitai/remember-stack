@@ -63,6 +63,10 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"^/operations$"),
         ("GET", r"^/connectors$"),
         ("GET", r"^/connectors/[^/]+$"),
+        # The inventory of what the deployment holds. A read, and the one a
+        # browser credential needs most: without it the app can show counts
+        # but never which document they refer to.
+        ("GET", r"^/documents$"),
     )
 )
 

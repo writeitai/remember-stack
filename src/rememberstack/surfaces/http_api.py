@@ -45,6 +45,8 @@ from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV1
+from rememberstack.model import DocumentPage
+from rememberstack.model import DocumentStatus
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
@@ -169,6 +171,19 @@ class PipelineReadinessPort(Protocol):
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
     ) -> PipelineReadinessReport: ...
+
+
+class DocumentInventoryPort(Protocol):
+    """List the document lineages this deployment holds."""
+
+    def list_documents(
+        self,
+        *,
+        deployment_id: UUID,
+        limit: int = 50,
+        cursor: str | None = None,
+        status: DocumentStatus | None = None,
+    ) -> DocumentPage: ...
 
 
 class GraphQueryPort(Protocol):
@@ -311,6 +326,7 @@ def build_api(
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
+    documents: DocumentInventoryPort | None = None,
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
@@ -462,6 +478,10 @@ def build_api(
     if pipeline_readiness is not None:
         _mount_pipeline_readiness(
             app=app, readiness=pipeline_readiness, deployment_id=deployment_id
+        )
+    if documents is not None:
+        _mount_document_inventory(
+            app=app, documents=documents, deployment_id=deployment_id
         )
     if graph is not None:
         _mount_graph(app=app, graph=graph)
@@ -893,6 +913,33 @@ def _mount_pipeline_readiness(
             version_ids=tuple(request.version_ids),
             require=request.require,
         )
+
+
+def _mount_document_inventory(
+    *, app: FastAPI, documents: DocumentInventoryPort, deployment_id: UUID
+) -> None:
+    """Expose the read-only inventory of what this deployment holds."""
+
+    @app.get("/documents", response_model=DocumentPage)
+    def list_documents(
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        cursor: Annotated[str | None, Query()] = None,
+        status: Annotated[DocumentStatus | None, Query()] = None,
+    ) -> DocumentPage:
+        """One page of documents, newest activity first.
+
+        `status` filters on the *newest* version's state, which is what makes
+        "show me what failed" answerable in one call rather than by paging the
+        whole corpus and filtering client-side.
+        """
+        try:
+            return documents.list_documents(
+                deployment_id=deployment_id, limit=limit, cursor=cursor, status=status
+            )
+        except ValueError as error:
+            # A cursor we did not issue. 400 rather than a silent restart:
+            # returning page one would look like the corpus repeating itself.
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:

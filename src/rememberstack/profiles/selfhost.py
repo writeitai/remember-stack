@@ -851,6 +851,7 @@ class SelfHostProfile:
         """Build the existing HTTP surface over this self-host dependency graph."""
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
+        from rememberstack.spine import DocumentInventory
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
@@ -965,6 +966,7 @@ class SelfHostProfile:
                 model_bindings=_model_bindings(),
                 build_revision=_build_revision(),
             ),
+            documents=DocumentInventory(engine=self._engine),
             graph=graph_queries,
         )
 
