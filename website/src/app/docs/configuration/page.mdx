@@ -49,11 +49,38 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | Optional JWKS (Ed25519 public keys only) this deployment verifies signed credentials against. Set beside or instead of `API_BEARER_BIND`: a caller may present a shared secret, a signed credential, or either. Refused at startup if it carries private key material, a non-Ed25519 key, or a key that half loads |
 | `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | Optional comma-separated credential ids to refuse. A signature is verified by arithmetic, so its issuer cannot withdraw one — this is how a revoked but unexpired credential is refused. Meaningless without `API_SIGNING_KEYS`, and rejected if set alone |
 | `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | When `true`, the API process refuses to start unless it has a perimeter — `API_BEARER_BIND`, `API_SIGNING_KEYS`, or both. Default `false` (open quickstart) |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | Optional comma-separated `https://` origins allowed to call this deployment from a browser. Empty by default, which advertises no CORS at all. Each entry must be an exact scheme-and-host origin — no wildcard, no path, no `http://` |
 | `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
 | `REMEMBERSTACK_TOKEN_HOST` | Device-grant host for `remember login` (required unless `--token-host` is passed). Never derived from the query API URL |
 | `REMEMBERSTACK_CONFIG_DIR` | Optional override for the CLI credential directory. Holds `credentials.json` and, while a replaced credential is still awaiting revocation, `pending-revocation.json` — both `0600` inside a `0700` directory |
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Optional second listen address for HTTP cost export (`127.0.0.1:8001`, `[::1]:8001`, or `unix:/path`). Unset = no HTTP export |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | Bearer for the export listener. Required and ≥32 bytes when the bind is set |
+
+#### Calling a deployment from a browser
+
+A browser refuses a cross-origin request *before it is sent* unless the server
+says the origin is allowed. The credential is never examined and the perimeter
+never runs, so the failure looks like the deployment being down — which is why
+this is configuration rather than something that can be worked around in a
+client.
+
+`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` names the origins permitted to do
+that. It is empty by default: a deployment nobody told about an app should not
+advertise anything, and a permissive default would hand every website on the
+internet the ability to make authenticated requests from a visitor's browser.
+
+Each entry must be an **exact** `https://` origin — `https://app.example.com`,
+not `https://*.example.com`, not a path, not `http://`. Anything else is
+refused at startup rather than narrowed silently, because a wildcard that
+looks accepted is worse than one that fails loudly.
+
+Cookies are never permitted on these requests. The browser credential travels
+in the `Authorization` header, so credentialed mode would only let a named
+origin ride a session cookie it should never see.
+
+```bash
+REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.remember.dev
+```
 
 ### Stores (Compose local defaults)
 
