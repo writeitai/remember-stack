@@ -1004,6 +1004,75 @@ def test_chat_provider_only_restricts_generation_to_the_allowlist(
     assert response.output.answer == "Prague"
 
 
+def test_chat_provider_sort_moves_load_off_the_cheapest_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: price-first routing sent every retry to one overloaded host.
+
+    A conv-48 ingestion dead-lettered 28 items, all with
+    provider_error_code=engine_overloaded from the single CHEAPEST allowed
+    provider. OpenRouter's default routing weights price, so it was chosen
+    first on every call and on all three engine retries; `allow_fallbacks`
+    did not help because a provider-returned 429 arrives as "Provider
+    returned error" rather than as the provider being unavailable.
+    Sorting by throughput spreads load off whichever host is congested.
+    """
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_only=["z-ai", "novita", "deepinfra", "gmicloud"],
+            chat_provider_sort="throughput",
+        )
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert payload["provider"] == {
+            "allow_fallbacks": True,
+            "only": ["z-ai", "novita", "deepinfra", "gmicloud"],
+            "sort": "throughput",
+        }
+        return {
+            "model": "z-ai/glm-5.3-flash",
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+
+def test_chat_provider_sort_applies_without_an_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sorting is useful on its own; it must not require pinning providers."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key", chat_provider_sort="throughput")
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert payload["provider"] == {"allow_fallbacks": True, "sort": "throughput"}
+        return {
+            "model": "z-ai/glm-5.3-flash",
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "cost": "0"},
+            "choices": [{"message": {"content": '{"answer":"Prague"}'}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+
 def test_chat_provider_only_is_absent_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

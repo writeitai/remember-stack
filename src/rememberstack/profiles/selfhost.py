@@ -1349,6 +1349,7 @@ def _model_bindings() -> dict[str, str]:
             if openrouter.chat_provider_only
             else "unset"
         ),
+        "openrouter_chat_provider_sort": openrouter.chat_provider_sort or "default",
         "openrouter_reasoning_effort": openrouter.reasoning_effort or "auto",
         # Canonical (sorted-key) form so the effective per-model effort policy
         # is part of measurement provenance, not hidden behind the global pin.

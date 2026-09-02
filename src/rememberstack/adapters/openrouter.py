@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 from typing import Any
 from typing import Final
+from typing import Literal
 from typing import TypeVar
 
 import httpx
@@ -131,6 +132,22 @@ class OpenRouterSettings(BaseSettings):
     Unset means OpenRouter's ordinary marketplace routing, which is the shipped
     default and the behaviour every existing deployment keeps.
     """
+    chat_provider_sort: Literal["price", "throughput", "latency"] | None = None
+    """How OpenRouter orders the allowed CHAT providers (``provider.sort``).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_SORT``.
+
+    Unset uses OpenRouter's default routing, which weights price heavily. That
+    default is a trap for long ingestion runs: the cheapest endpoint is also
+    the most contended, so every call AND every retry lands on the same host
+    and dead-letters together when it is overloaded. ``allow_fallbacks`` does
+    not save you -- a provider-returned 429 is surfaced as "Provider returned
+    error", not treated as the provider being unavailable.
+
+    ``throughput`` prefers the fastest endpoint instead, which moves load off
+    whichever host is congested at the time rather than hard-coding today's
+    slowest one into a denylist.
+    """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
@@ -150,6 +167,7 @@ class OpenRouterSettings(BaseSettings):
 
     @field_validator(
         "embedding_provider",
+        "chat_provider_sort",
         "reasoning_effort",
         "invalid_completion_capture_dir",
         mode="before",
@@ -468,9 +486,15 @@ class OpenRouterModelProvider:
         outside the allowlist.
         """
         allowed = self._settings.chat_provider_only
-        if not allowed:
+        sort = self._settings.chat_provider_sort
+        if not allowed and sort is None:
             return None
-        return {"only": list(allowed), "allow_fallbacks": True}
+        payload: dict[str, object] = {"allow_fallbacks": True}
+        if allowed:
+            payload["only"] = list(allowed)
+        if sort is not None:
+            payload["sort"] = sort
+        return payload
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.

@@ -96,6 +96,7 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "observation_frontier": "z-ai/glm-5.3-flash",
         "observation_small": "z-ai/glm-5.3-flash",
         "openrouter_chat_provider_only": "z-ai,novita,deepinfra,gmicloud",
+        "openrouter_chat_provider_sort": "throughput",
         "openrouter_embedding_provider": "nebius",
         "openrouter_embedding_provider_order": "unset",
         "openrouter_max_completion_tokens": "32000",
