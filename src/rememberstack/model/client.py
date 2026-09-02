@@ -152,6 +152,26 @@ class DocumentPage(BaseModel):
     cursor: str | None = None
 
 
+class SearchRequest(BaseModel):
+    """A search, with the terms in the body rather than the request line.
+
+    The query is the customer's own words — often the most sensitive string in
+    the whole exchange. A URL is not a private place: it is written to access
+    logs, kept by proxies, retained in browser history, and attached to
+    referrers. So the search surface takes a body, and the terms never appear
+    in a request line (D59).
+
+    The ``GET`` forms remain for existing clients, which reach the deployment
+    over a private path. A browser does not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=4096)
+    k: int = Field(default=10, ge=1, le=400)
+    channel: Literal["semantic", "bm25"] = "semantic"
+
+
 class ReadinessRequirements(BaseModel):
     """The exhaustive capability set a readiness caller may require."""
 

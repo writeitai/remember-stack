@@ -64,6 +64,7 @@ from rememberstack.model.client import DocumentVersionSummary
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import PipelineStageReadiness
 from rememberstack.model.client import ReadinessRequirements
+from rememberstack.model.client import SearchRequest
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.clustering import ClusterConfig
@@ -546,6 +547,7 @@ __all__ = (
     "PipelineComponent",
     "DocumentPage",
     "DocumentStatus",
+    "SearchRequest",
     "DocumentSummary",
     "DocumentVersionSummary",
     "PipelineReadinessReport",

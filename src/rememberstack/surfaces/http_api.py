@@ -58,6 +58,7 @@ from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ReadinessRequirements
+from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
@@ -450,6 +451,31 @@ def build_api(
         """Search live source chunks as separately typed evidence."""
         return engine.search_chunks(
             deployment_id=deployment_id, query=query, k=k, channel=channel
+        )
+
+    # The same two searches, with the terms in a body instead of the request
+    # line. A query is the customer's own words, and a URL is written to
+    # access logs, kept by proxies and retained in browser history — so the
+    # surface a browser uses must not put it there (D59). The GET forms stay
+    # for existing clients, which reach the deployment over a private path.
+    @app.post("/search/claims", response_model=Envelope)
+    def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
+        """Claim search — evidence grain, never current-fact truth."""
+        return engine.search_claims(
+            deployment_id=deployment_id,
+            query=body.query,
+            k=body.k,
+            channel=body.channel,
+        )
+
+    @app.post("/search/chunks", response_model=Envelope)
+    def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
+        """Search live source chunks as separately typed evidence."""
+        return engine.search_chunks(
+            deployment_id=deployment_id,
+            query=body.query,
+            k=body.k,
+            channel=body.channel,
         )
 
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
@@ -1329,7 +1355,10 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     normalized = path.rstrip("/") or "/"
     if method == "POST" and normalized == "/ingest":
         return ("ingest", None)
-    if method == "GET" and normalized in {"/search/claims", "/search/chunks"}:
+    # Both methods. A POST search costs exactly what the GET does, and a new
+    # route missing from this map would be a search nobody is charged for and
+    # no ceiling can stop.
+    if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
         return ("search", None)
     if method == "POST" and normalized.startswith("/operations/"):
         name = normalized.removeprefix("/operations/")

@@ -407,8 +407,27 @@ plans. Each returns the envelope.
 | `GET /lookup/observations?entity_id=&property_query=&k=` | live observations on one entity, semantic over statements |
 | `GET /search/claims?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked claim search — **evidence** grain, never a current-fact answer; `k` is 1–400 |
 | `GET /search/chunks?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked search over live source passages; returns `chunks[]` as separately typed **evidence**, never claims or facts; `k` is 1–400 |
+| `POST /search/claims` | the same claim search with `{query, k, channel}` in the body, so the terms never reach the request line |
+| `POST /search/chunks` | the same chunk search with `{query, k, channel}` in the body |
 | `GET /hydrate/relation/{relation_id}` | the audit chain: a relation → its evidence claims → source documents |
 | `GET /transcript/relation/{relation_id}` | the decision history: why the system believes what it believes |
+
+#### Searching from a browser
+
+Both searches also accept a **POST** with `{query, k, channel}` in the body.
+It is the same search — same ranking, same spend accounting, same read scope —
+and the only difference is where the terms travel.
+
+A query is usually the most sensitive string in the exchange: a person's name,
+a diagnosis, an unannounced deal. A URL is not a private place. It is written
+to access logs, kept by proxies, retained in browser history and attached to
+outgoing referrers. The `GET` forms are fine for a client on a private path to
+its own deployment, and they are unchanged; anything reaching a deployment
+from a browser should use the body form (D59).
+
+The body is closed: an unknown key is a **422** rather than a silently ignored
+parameter, so passing `limit` instead of `k` tells you rather than quietly
+returning ten results.
 
 Evidence rows returned by claim search and relation hydration include
 `asserted_at`, `claim_valid_from`, `claim_valid_until`,
