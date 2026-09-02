@@ -89,7 +89,16 @@ CREATE INDEX ix_documents_inventory_order
   WHERE deleted_at IS NULL;
 ```
 
-A page is then an index-only scan whose cost is the page size. The alternative
+A page is then an index scan whose cost is the page size, and the cursor
+predicate is pushed into the index condition — `ROW(first_seen_at, doc_id) <
+ROW(…)` — so a later page is a seek rather than a scan that discards a prefix.
+
+Filtering by `status` is the one shape that is not bounded by the page. The
+status belongs to the newest version, which is resolved per lineage after the
+index has chosen a candidate, so a rare status walks further before it fills a
+page. That is inherent to filtering on a joined value; the alternative is a
+second derived key on the lineage, which §3 rules out for the same reason it
+rules out an activity order. The alternative
 — ordering on the newest version's ingest time — cannot be indexed at all:
 "each document's newest version, ordered by that version's time" is a
 group-wise maximum followed by a sort, and no index over `document_versions`

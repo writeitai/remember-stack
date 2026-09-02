@@ -334,6 +334,15 @@ the query is scoped to the caller's own deployment either way — so the worst a
 hand-written but well-formed cursor can do is start somebody at an odd place
 in their own corpus.
 
+One cost worth knowing: `status` filters on the **newest version**, which is
+resolved per lineage after the index has chosen the candidate. Paging without
+a filter is an index seek — the cursor predicate is pushed into the index
+condition, so a page costs the page size whatever the corpus holds. Filtering
+on a rare status walks further, because the engine must resolve each
+candidate's newest version before it can tell whether it matches. That is
+inherent to filtering on a joined value, not a defect, and it is bounded by
+the corpus rather than by the page.
+
 `deleted` is not an accepted `status` filter. The listing only reports
 versions that are not tombstoned, and a hard forget sets the tombstone
 alongside the status, so filtering on it could only ever return nothing —
