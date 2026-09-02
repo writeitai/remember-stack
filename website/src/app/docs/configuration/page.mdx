@@ -82,12 +82,18 @@ have granted a subdomain tree; they have granted nothing, and will go looking
 for the fault in their app. Refusing at startup is the only place that
 mistake is visible.
 
-Credentialed CORS is disabled (`allow_credentials` is off), so the browser
-will not attach cookies or TLS client certificates to these requests and will
-reject a response that tries to use them. The browser credential travels in
-the `Authorization` header instead. This is a statement about what CORS
-negotiates, not a claim that cookies can never exist — same-origin requests
-are unaffected.
+Credentialed CORS is disabled (`allow_credentials` is off). Be precise about
+what that does: it stops the *response* being shared with a page that asked
+for credentials, which means an authenticated call is refused before it
+reaches a route — a request carrying `Authorization` needs a preflight, and
+the preflight fails. It does not reach into the browser and stop a page
+attaching cookies to a simple cross-origin request in the first place; that
+request may still be sent, and only its response is withheld.
+
+So the honest statement is that no credentialed cross-origin call can succeed
+here, not that cookies can never leave the browser. The credential this
+surface expects travels in `Authorization`, and same-origin traffic is
+unaffected by any of it.
 
 Only `GET` and `POST` are advertised, with `Authorization` and `Content-Type`.
 Preflight responses are cached for ten minutes, which is worth knowing when
@@ -98,7 +104,14 @@ immediately, not editing this list.
 A port is part of an origin and may be included:
 `https://app.example.com:8443` (1–65535). `https://localhost` and
 `https://localhost:3000` are accepted, so a self-hoster can develop against a
-local https listener. Several origins are comma-separated, and the
+local https listener.
+
+Validation is not a list of banned shapes: the value is parsed and
+re-serialized the way a browser serializes an origin, and it must come back
+identical. Anything non-canonical fails that comparison without anyone having
+had to think of it first — an uppercase host, a trailing slash, a default port
+written out. What parsing cannot decide, such as whether the host is a real
+host rather than `*` or a broken IPv6 literal, is checked on top. Several origins are comma-separated, and the
 whole list is validated together — a stray comma is a refusal, not a silently
 skipped entry.
 

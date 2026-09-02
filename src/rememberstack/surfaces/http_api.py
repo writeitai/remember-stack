@@ -14,6 +14,8 @@ itself never touches adapters.
 
 from datetime import datetime
 from datetime import timedelta
+from ipaddress import AddressValueError
+from ipaddress import IPv6Address
 import json
 import re
 from typing import Annotated
@@ -22,6 +24,7 @@ from typing import Final
 from typing import Literal
 from typing import Protocol
 from typing import Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import Body
@@ -469,31 +472,76 @@ def build_api(
     return app
 
 
-#: An origin exactly as a browser puts it in the `Origin` header.
-#:
-#: Matching is a string comparison, so anything that is not byte-for-byte what
-#: a browser sends can never match — and the operator gets a deployment that
-#: silently refuses every cross-origin request while its configuration looks
-#: correct. That failure is worse than a rejected value, so the shapes that
-#: cannot match are rejected at startup rather than accepted and ignored:
-#:
-#:   `https://*.example.com`  a wildcard; browsers never send one
-#:   `https://user@example.com`  userinfo; never appears in `Origin`
-#:   `HTTPS://Example.com`  browsers lowercase the scheme and host
-#:   `https://example.com.`  a trailing dot is a different string
-#:
-#: A bracketed IPv6 literal is allowed because a browser does send that form.
-_BROWSER_ORIGIN = re.compile(
-    r"https://"
-    r"(?:"
-    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
-    r"|\[[0-9a-f:]+\]"
-    r")"
-    r"(?::(?P<port>[0-9]{1,5}))?"
-)
+#: The 253 characters DNS allows a hostname.
+_HOST_MAX_LENGTH = 253
 
-#: `https://` plus the 253 characters DNS allows a hostname, plus `:65535`.
-_ORIGIN_MAX_LENGTH = 8 + 253 + 6
+#: One hostname label. Underscore is permitted because browsers do serialize
+#: it, even though RFC 1123 does not; a hyphen may not lead or trail.
+_LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
+
+
+def _canonical_browser_origin(value: str) -> str | None:
+    """The origin a browser would send for ``value``, or ``None`` if there is none.
+
+    Checking the *shape* of an origin with a pattern was the first attempt and
+    it kept being wrong in both directions — it admitted `https://[::::]` and
+    malformed punycode, while refusing hosts a browser will happily serialize.
+
+    So this parses instead, rebuilds the origin the way a browser serializes
+    one, and requires the result to equal the input. Anything non-canonical
+    fails that comparison without needing to be enumerated: an uppercase host,
+    a default port written out, a stray slash. What parsing cannot decide —
+    whether the host is a *real* host rather than `*` or a broken IPv6 literal
+    — is checked explicitly.
+    """
+    try:
+        split = urlsplit(value)
+    except ValueError:
+        # `urlsplit` itself refuses a malformed bracketed host such as
+        # `https://[::::]`, which is a verdict, not an error to propagate.
+        return None
+    if split.scheme != "https" or split.path or split.query or split.fragment:
+        return None
+    if split.username is not None or split.password is not None:
+        return None
+    try:
+        host, port = split.hostname, split.port
+    except ValueError:
+        # `urlsplit` raises for a port outside 1-65535, which is exactly the
+        # judgement wanted here.
+        return None
+    if not host:
+        return None
+    # `urlsplit` refuses a port above 65535 but accepts 0, which is not a port
+    # anything can listen on and so cannot appear in a real origin.
+    if port == 0:
+        return None
+
+    if value.startswith("https://["):
+        try:
+            IPv6Address(host)
+        except AddressValueError:
+            return None
+        rendered = f"[{host}]"
+    else:
+        if len(host) > _HOST_MAX_LENGTH:
+            return None
+        labels = host.split(".")
+        # A trailing dot is a legitimate absolute name, so one empty final
+        # label is allowed; any other empty label is a typo like `a..b`.
+        if labels and labels[-1] == "":
+            labels = labels[:-1]
+        if not labels or not all(_LABEL.match(label) for label in labels):
+            return None
+        for label in labels:
+            if label.startswith("xn--"):
+                try:
+                    label.encode("ascii").decode("idna")
+                except (UnicodeError, ValueError):
+                    return None
+        rendered = host
+
+    return f"https://{rendered}" + (f":{port}" if port is not None else "")
 
 
 def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
@@ -518,21 +566,11 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     if not origins:
         return
     for origin in origins:
-        matched = _BROWSER_ORIGIN.fullmatch(origin)
-        port = matched.group("port") if matched else None
-        # A port outside the range, or a host longer than DNS permits, cannot
-        # appear in a real `Origin` header either — same silent failure as a
-        # wildcard, so the same refusal.
-        valid = (
-            matched is not None
-            and len(origin) <= _ORIGIN_MAX_LENGTH
-            and (port is None or 1 <= int(port) <= 65535)
-        )
-        if not valid:
+        if _canonical_browser_origin(origin) != origin:
             raise ValueError(
-                "browser origins must each be an exact https origin as a "
-                "browser sends it — lowercase scheme and host, optional port "
-                f"in 1-65535, nothing else; refusing {origin!r}"
+                "browser origins must each be an https origin exactly as a "
+                "browser serializes it — lowercase scheme and host, optional "
+                f"port, nothing else; refusing {origin!r}"
             )
     app.add_middleware(
         CORSMiddleware,

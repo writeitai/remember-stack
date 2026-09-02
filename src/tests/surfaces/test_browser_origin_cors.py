@@ -67,7 +67,7 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
     split — each would silently widen the perimeter.
     """
     app = _App()
-    with pytest.raises(ValueError, match="exact https origin"):
+    with pytest.raises(ValueError, match="exactly as a browser serializes"):
         _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
 
@@ -82,8 +82,6 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         "https://evil.example.com@app.example.com",
         # Browsers lowercase the scheme and host before sending.
         "HTTPS://App.Example.com",
-        # A trailing dot is a different string to a byte comparison.
-        "https://app.example.com.",
         # Not a secure origin.
         "http://app.example.com",
         # Not an origin at all.
@@ -99,8 +97,11 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         "https://app.example.com:0",
         "https://app.example.com:99999",
         "https://" + "a" * 300 + ".example.com",
-        # An underscore is not legal in a hostname.
-        "https://my_app.example.com",
+        # A malformed bracketed literal, and malformed punycode. Both were
+        # accepted by an earlier shape-matching check that could only refuse
+        # what it had thought to enumerate.
+        "https://[::::]",
+        "https://xn--a",
     ],
 )
 def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
@@ -118,7 +119,7 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
     """
     app = _App()
 
-    with pytest.raises(ValueError, match="exact https origin"):
+    with pytest.raises(ValueError, match="exactly as a browser serializes"):
         _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
     assert app.installed == []
@@ -141,6 +142,11 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
         "https://localhost:3000",
         # Punycode is what a browser sends for an internationalised domain.
         "https://xn--bcher-kva.example",
+        # Browsers do serialize an underscore and a trailing dot, whatever
+        # RFC 1123 says about hostnames, so refusing them would reject an
+        # origin a real browser sends.
+        "https://my_app.example.com",
+        "https://app.example.com.",
     ],
 )
 def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:
@@ -175,7 +181,7 @@ def test_a_stray_comma_is_refused_rather_than_skipped() -> None:
     assert "" in _browser_origins("https://a.example,")
 
     app = _App()
-    with pytest.raises(ValueError, match="exact https origin"):
+    with pytest.raises(ValueError, match="exactly as a browser serializes"):
         _install_browser_origins(
             app=app,  # type: ignore[arg-type]
             origins=_browser_origins("https://a.example,"),
