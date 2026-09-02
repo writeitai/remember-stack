@@ -49,11 +49,93 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | Optional JWKS (Ed25519 public keys only) this deployment verifies signed credentials against. Set beside or instead of `API_BEARER_BIND`: a caller may present a shared secret, a signed credential, or either. Refused at startup if it carries private key material, a non-Ed25519 key, or a key that half loads |
 | `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | Optional comma-separated credential ids to refuse. A signature is verified by arithmetic, so its issuer cannot withdraw one — this is how a revoked but unexpired credential is refused. Meaningless without `API_SIGNING_KEYS`, and rejected if set alone |
 | `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | When `true`, the API process refuses to start unless it has a perimeter — `API_BEARER_BIND`, `API_SIGNING_KEYS`, or both. Default `false` (open quickstart) |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | Optional comma-separated `https://` origins allowed to call this deployment from a browser. Empty by default, which advertises no CORS at all. Each entry must be an exact scheme-and-host origin — no wildcard, no path, no `http://` |
 | `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
 | `REMEMBERSTACK_TOKEN_HOST` | Device-grant host for `remember login` (required unless `--token-host` is passed). Never derived from the query API URL |
 | `REMEMBERSTACK_CONFIG_DIR` | Optional override for the CLI credential directory. Holds `credentials.json` and, while a replaced credential is still awaiting revocation, `pending-revocation.json` — both `0600` inside a `0700` directory |
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Optional second listen address for HTTP cost export (`127.0.0.1:8001`, `[::1]:8001`, or `unix:/path`). Unset = no HTTP export |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | Bearer for the export listener. Required and ≥32 bytes when the bind is set |
+
+#### Calling a deployment from a browser
+
+A browser refuses a cross-origin request *before it is sent* unless the server
+says the origin is allowed. The credential is never examined and the perimeter
+never runs, so the failure looks like the deployment being down — which is why
+this is configuration rather than something that can be worked around in a
+client.
+
+`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` names the origins permitted to do
+that. It is empty by default: a deployment nobody told about an app should not
+advertise anything, and a permissive default would hand every website on the
+internet the ability to make authenticated requests from a visitor's browser.
+
+Each entry must be an origin **exactly as a browser sends it**:
+`https://app.example.com`, optionally with a port, and nothing else — lowercase
+scheme and host, no path, no query, no userinfo, no wildcard.
+
+The reason is worth knowing. The match is a byte comparison against the
+request's `Origin` header, so a value that is not exactly what a browser sends
+can never match — it does not widen the perimeter, it silently closes it. An
+operator who writes `https://*.example.com` and watches the deployment start
+cleanly believes they have granted a subdomain tree; they have granted
+nothing, and will go looking for the fault in their app.
+
+Validation is deliberately small: scheme, structure, case and port, and no
+finer judgement of hostname syntax than that. A rule strict enough to catch
+every impossible name also refuses real ones — underscores, trailing dots and
+IDNA2008 labels are all things browsers send and naive checks reject. DNS
+fails loudly and specifically for a name that does not exist, which is a
+better error than a startup refusal for a host that does. The origins actually
+installed are logged when the API starts, so a typo is something you can see
+rather than infer.
+
+Credentialed CORS is disabled (`allow_credentials` is off). Be precise about
+what that does: it stops the *response* being shared with a page that made the
+request in `credentials: "include"` mode. It does **not** block an ordinary
+bearer call — a request carrying `Authorization` is preflighted, and that
+preflight succeeds because the header is on the allowlist. What is refused is
+a page trying to have cookies or client certificates count as authentication
+across the origin boundary. It does not reach into the browser and stop a page
+attaching cookies to a simple cross-origin request in the first place; that
+request may still be sent, and only its response is withheld.
+
+So the honest statement is that no credentialed cross-origin call can succeed
+here, not that cookies can never leave the browser. The credential this
+surface expects travels in `Authorization`, and same-origin traffic is
+unaffected by any of it.
+
+Only `GET` and `POST` are advertised, with `Authorization` and `Content-Type`.
+Sending `Authorization` makes the request preflighted, and that preflight
+succeeds because the header is on the allowlist — it is the browser's
+`credentials: "include"` mode, not the presence of a bearer header, that would
+need credentialed CORS.
+
+Preflight responses are cached for ten minutes, which is worth knowing when
+you remove an origin: a browser that has already been told "yes" may keep that
+answer for up to that long, so revoking the credential is what ends access
+immediately, not editing this list.
+
+The CORS layer is installed outermost, so refusals raised by other layers —
+an oversize body, an exhausted spend ceiling — reach the browser as the errors
+they are rather than as opaque network failures.
+
+A non-default port is part of an origin and may be included:
+`https://app.example.com:8443` (1–65535, but not 443 — a browser omits the
+default port from `Origin`, so writing it out matches nothing). `https://localhost` and
+`https://localhost:3000` are accepted, so a self-hoster can develop against a
+local https listener.
+
+Several origins are comma-separated, and the whole list is validated together
+— a stray comma is a refusal, not a silently skipped entry, because a list
+that starts with fewer origins than you wrote hides the missing one until
+somebody's browser is turned away.
+
+```bash
+REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.remember.dev
+```
+
+Compose passes this through, so it can be set in `.env` beside the other
+deployment settings.
 
 ### Stores (Compose local defaults)
 

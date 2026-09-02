@@ -118,6 +118,16 @@ class SelfHostSettings(BaseSettings):
     managed host sets its published bound here so it is enforced where the
     body is actually received."""
     trusted_principal_source: bool = False
+    #: Browser origins allowed to call this deployment (D59).
+    #:
+    #: Empty by default, which is the self-host answer: nothing is advertised
+    #: and no origin is granted anything. A managed deployment is told the one
+    #: origin its product app is served from, because a browser refuses a
+    #: cross-origin request before it ever presents its credential — so
+    #: without this a perfectly valid credential still cannot reach anything.
+    #:
+    #: Comma-separated in the environment; each must be an exact https origin.
+    browser_origins: str = ""
     """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
 
     Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
@@ -289,6 +299,22 @@ class SelfHostSettings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+
+def _browser_origins(configured: str) -> tuple[str, ...]:
+    """Split the configured origins without quietly dropping a broken one.
+
+    An empty setting means no origins, which is the default and the whole
+    self-host answer. Anything else is a list the operator wrote deliberately,
+    so an empty segment — `https://a.example,,https://b.example`, or a
+    trailing comma — is a typo in that list rather than something to skip. It
+    is passed through as an empty string so validation refuses it and the
+    deployment says so at startup, which is the same atomicity every other
+    malformed entry gets.
+    """
+    if not configured.strip():
+        return ()
+    return tuple(origin.strip() for origin in configured.split(","))
 
 
 def resolve_selfhost_api_auth(
@@ -909,6 +935,7 @@ class SelfHostProfile:
             deployment_id=self._settings.deployment_id,
             ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
             trusted_principal_source=self._settings.trusted_principal_source,
+            browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),

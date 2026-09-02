@@ -15,12 +15,14 @@ itself never touches adapters.
 from datetime import datetime
 from datetime import timedelta
 import json
+import logging
 from typing import Annotated
 from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Protocol
 from typing import Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import Body
@@ -30,6 +32,7 @@ from fastapi import Header
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -292,6 +295,9 @@ class RunSavedQueryRequest(BaseModel):
     max_rows: int | None = Field(default=None, ge=0)
 
 
+logger = logging.getLogger(__name__)
+
+
 def build_api(
     *,
     engine: QueryEngine,
@@ -308,6 +314,7 @@ def build_api(
     graph: GraphQueryPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
+    browser_origins: tuple[str, ...] = (),
 ) -> FastAPI:
     """Build one deployment's query API over a composed engine.
 
@@ -462,7 +469,126 @@ def build_api(
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
 
+    # Last, so it is outermost. Starlette runs middleware in reverse order of
+    # addition, and a CORS layer installed early sits *inside* everything
+    # added after it — so the body limiter's 413 and the spend lease's 503
+    # would return without CORS headers, and a browser would report them as
+    # opaque network failures. The whole point of naming an origin is that its
+    # errors are legible, and a refusal nobody can read is the one this screen
+    # was built to avoid.
+    _install_browser_origins(app=app, origins=browser_origins)
+
     return app
+
+
+#: The 253 characters DNS allows a hostname.
+_HOST_MAX_LENGTH = 253
+
+
+def _canonical_browser_origin(value: str) -> str | None:
+    """The origin a browser would send for ``value``, or ``None`` if there is none.
+
+    Deliberately a *small* rule, arrived at after two larger ones were wrong in
+    both directions. A pattern enumerating valid hosts kept refusing things
+    browsers do send — underscores, trailing dots, IDNA2008 labels the stdlib's
+    legacy `idna` codec rejects — while still missing malformed input nobody
+    had thought of.
+
+    What this actually guards is a *misconfiguration*: matching is a byte
+    comparison, so a non-canonical value grants nothing and silently refuses
+    every request while the deployment looks correctly configured. It is not a
+    security boundary — a wrong value is closed, never open.
+
+    So the rule checks the things that are unambiguous and cheap: the scheme,
+    that nothing but host and port is present, that the value is already
+    lowercase as a browser sends it, and that the port is real. Judging
+    hostname syntax more finely than that is a job for the DNS resolver, which
+    will fail loudly and specifically. The origins actually installed are
+    logged at startup so a typo is visible rather than inferred.
+    """
+    try:
+        split = urlsplit(value)
+    except ValueError:
+        # A malformed bracketed host such as `https://[::::]` — a verdict, not
+        # an error to propagate.
+        return None
+    if split.scheme != "https" or split.path or split.query or split.fragment:
+        return None
+    if split.username is not None or split.password is not None:
+        return None
+    try:
+        host, port = split.hostname, split.port
+    except ValueError:
+        # `urlsplit` refuses a port outside 1-65535.
+        return None
+    if not host or len(host) > _HOST_MAX_LENGTH or port == 0:
+        return None
+    # Browsers omit the default port from `Origin`, so `https://host:443`
+    # never matches what arrives — the same silent close as a wildcard.
+    if port == 443:
+        return None
+    # A wildcard is the one shape worth naming: an operator who writes it
+    # believes they granted a subdomain tree, and they granted nothing.
+    if "*" in host:
+        return None
+
+    rendered = f"[{host}]" if value.startswith("https://[") else host
+    return f"https://{rendered}" + (f":{port}" if port is not None else "")
+
+
+def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
+    """Allow named browser origins to call this deployment (D59).
+
+    A browser holding a valid credential still cannot reach a deployment
+    without this: the app is served from one origin and the deployment answers
+    on its own, so every request is cross-origin and the browser refuses it
+    before the credential is ever examined. Authentication was never the
+    obstacle; the absence of these headers was.
+
+    **Empty by default, and that is the self-host answer.** A self-hosted
+    deployment has no browser app pointed at it, so it advertises nothing and
+    no origin is granted anything — adding a permissive default here would
+    hand every website on the internet the ability to make authenticated
+    requests from a visitor's browser.
+
+    Never `*`: credentials are sent, and the wildcard is invalid with
+    credentials in any case. Only the exact origins a deployment was told
+    about.
+    """
+    if not origins:
+        return
+    for origin in origins:
+        if _canonical_browser_origin(origin) != origin:
+            raise ValueError(
+                "browser origins must each be an https origin exactly as a "
+                "browser serializes it — lowercase scheme and host, optional "
+                f"port, nothing else; refusing {origin!r}"
+            )
+    # Said out loud at startup. The validation above is deliberately small, so
+    # the operator's own eyes are the last check that the list is what they
+    # meant — and a configuration nobody ever sees is one nobody corrects.
+    logger.info(
+        "browser origins allowed to call this deployment: %s", ", ".join(origins)
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_credentials=False,
+        # The credential travels in `Authorization`, not a cookie, so the
+        # browser needs no credentialed mode — and turning it on would let a
+        # named origin ride a session cookie it should never see.
+        # OPTIONS is absent deliberately: the middleware answers preflight
+        # itself, so listing it would only advertise a method no route serves.
+        allow_methods=["GET", "POST"],
+        # Exactly the two headers a browser client sends. `Idempotency-Key`
+        # was here for a contract nothing implements — advertising a header no
+        # route reads invites a client to rely on it.
+        allow_headers=["Authorization", "Content-Type"],
+        # Starlette's default. Worth knowing that removing an origin leaves a
+        # browser's cached preflight usable for up to this long, so revoking
+        # the credential is what stops access immediately, not this list.
+        max_age=600,
+    )
 
 
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
