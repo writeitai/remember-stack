@@ -70,17 +70,24 @@ advertise anything, and a permissive default would hand every website on the
 internet the ability to make authenticated requests from a visitor's browser.
 
 Each entry must be an origin **exactly as a browser sends it**:
-`https://app.example.com`, optionally with a port, and nothing else. Lowercase
-scheme and host, no path, no wildcard, no userinfo, no trailing dot.
+`https://app.example.com`, optionally with a port, and nothing else — lowercase
+scheme and host, no path, no query, no userinfo, no wildcard.
 
-Anything else is refused at startup, and the reason is worth knowing. The
-match is a byte comparison against the request's `Origin` header, so a value
-that is not exactly what a browser sends can never match — it does not widen
-the perimeter, it silently closes it. An operator who writes
-`https://*.example.com` and watches the deployment start cleanly believes they
-have granted a subdomain tree; they have granted nothing, and will go looking
-for the fault in their app. Refusing at startup is the only place that
-mistake is visible.
+The reason is worth knowing. The match is a byte comparison against the
+request's `Origin` header, so a value that is not exactly what a browser sends
+can never match — it does not widen the perimeter, it silently closes it. An
+operator who writes `https://*.example.com` and watches the deployment start
+cleanly believes they have granted a subdomain tree; they have granted
+nothing, and will go looking for the fault in their app.
+
+Validation is deliberately small: scheme, structure, case and port, and no
+finer judgement of hostname syntax than that. A rule strict enough to catch
+every impossible name also refuses real ones — underscores, trailing dots and
+IDNA2008 labels are all things browsers send and naive checks reject. DNS
+fails loudly and specifically for a name that does not exist, which is a
+better error than a startup refusal for a host that does. The origins actually
+installed are logged when the API starts, so a typo is something you can see
+rather than infer.
 
 Credentialed CORS is disabled (`allow_credentials` is off). Be precise about
 what that does: it stops the *response* being shared with a page that asked
@@ -96,10 +103,19 @@ surface expects travels in `Authorization`, and same-origin traffic is
 unaffected by any of it.
 
 Only `GET` and `POST` are advertised, with `Authorization` and `Content-Type`.
+Sending `Authorization` makes the request preflighted, and that preflight
+succeeds because the header is on the allowlist — it is the browser's
+`credentials: "include"` mode, not the presence of a bearer header, that would
+need credentialed CORS.
+
 Preflight responses are cached for ten minutes, which is worth knowing when
 you remove an origin: a browser that has already been told "yes" may keep that
 answer for up to that long, so revoking the credential is what ends access
 immediately, not editing this list.
+
+The CORS layer is installed outermost, so refusals raised by other layers —
+an oversize body, an exhausted spend ceiling — reach the browser as the errors
+they are rather than as opaque network failures.
 
 A port is part of an origin and may be included:
 `https://app.example.com:8443` (1–65535). `https://localhost` and

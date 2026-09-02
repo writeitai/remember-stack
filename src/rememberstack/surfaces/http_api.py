@@ -14,10 +14,8 @@ itself never touches adapters.
 
 from datetime import datetime
 from datetime import timedelta
-from ipaddress import AddressValueError
-from ipaddress import IPv6Address
 import json
-import re
+import logging
 from typing import Annotated
 from typing import Any
 from typing import Final
@@ -297,6 +295,9 @@ class RunSavedQueryRequest(BaseModel):
     max_rows: int | None = Field(default=None, ge=0)
 
 
+logger = logging.getLogger(__name__)
+
+
 def build_api(
     *,
     engine: QueryEngine,
@@ -363,7 +364,6 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
-    _install_browser_origins(app=app, origins=browser_origins)
 
     @app.get("/resolve", response_model=Envelope)
     def resolve(
@@ -469,36 +469,48 @@ def build_api(
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
 
+    # Last, so it is outermost. Starlette runs middleware in reverse order of
+    # addition, and a CORS layer installed early sits *inside* everything
+    # added after it — so the body limiter's 413 and the spend lease's 503
+    # would return without CORS headers, and a browser would report them as
+    # opaque network failures. The whole point of naming an origin is that its
+    # errors are legible, and a refusal nobody can read is the one this screen
+    # was built to avoid.
+    _install_browser_origins(app=app, origins=browser_origins)
+
     return app
 
 
 #: The 253 characters DNS allows a hostname.
 _HOST_MAX_LENGTH = 253
 
-#: One hostname label. Underscore is permitted because browsers do serialize
-#: it, even though RFC 1123 does not; a hyphen may not lead or trail.
-_LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
-
 
 def _canonical_browser_origin(value: str) -> str | None:
     """The origin a browser would send for ``value``, or ``None`` if there is none.
 
-    Checking the *shape* of an origin with a pattern was the first attempt and
-    it kept being wrong in both directions — it admitted `https://[::::]` and
-    malformed punycode, while refusing hosts a browser will happily serialize.
+    Deliberately a *small* rule, arrived at after two larger ones were wrong in
+    both directions. A pattern enumerating valid hosts kept refusing things
+    browsers do send — underscores, trailing dots, IDNA2008 labels the stdlib's
+    legacy `idna` codec rejects — while still missing malformed input nobody
+    had thought of.
 
-    So this parses instead, rebuilds the origin the way a browser serializes
-    one, and requires the result to equal the input. Anything non-canonical
-    fails that comparison without needing to be enumerated: an uppercase host,
-    a default port written out, a stray slash. What parsing cannot decide —
-    whether the host is a *real* host rather than `*` or a broken IPv6 literal
-    — is checked explicitly.
+    What this actually guards is a *misconfiguration*: matching is a byte
+    comparison, so a non-canonical value grants nothing and silently refuses
+    every request while the deployment looks correctly configured. It is not a
+    security boundary — a wrong value is closed, never open.
+
+    So the rule checks the things that are unambiguous and cheap: the scheme,
+    that nothing but host and port is present, that the value is already
+    lowercase as a browser sends it, and that the port is real. Judging
+    hostname syntax more finely than that is a job for the DNS resolver, which
+    will fail loudly and specifically. The origins actually installed are
+    logged at startup so a typo is visible rather than inferred.
     """
     try:
         split = urlsplit(value)
     except ValueError:
-        # `urlsplit` itself refuses a malformed bracketed host such as
-        # `https://[::::]`, which is a verdict, not an error to propagate.
+        # A malformed bracketed host such as `https://[::::]` — a verdict, not
+        # an error to propagate.
         return None
     if split.scheme != "https" or split.path or split.query or split.fragment:
         return None
@@ -507,40 +519,16 @@ def _canonical_browser_origin(value: str) -> str | None:
     try:
         host, port = split.hostname, split.port
     except ValueError:
-        # `urlsplit` raises for a port outside 1-65535, which is exactly the
-        # judgement wanted here.
+        # `urlsplit` refuses a port outside 1-65535.
         return None
-    if not host:
+    if not host or len(host) > _HOST_MAX_LENGTH or port == 0:
         return None
-    # `urlsplit` refuses a port above 65535 but accepts 0, which is not a port
-    # anything can listen on and so cannot appear in a real origin.
-    if port == 0:
+    # A wildcard is the one shape worth naming: an operator who writes it
+    # believes they granted a subdomain tree, and they granted nothing.
+    if "*" in host:
         return None
 
-    if value.startswith("https://["):
-        try:
-            IPv6Address(host)
-        except AddressValueError:
-            return None
-        rendered = f"[{host}]"
-    else:
-        if len(host) > _HOST_MAX_LENGTH:
-            return None
-        labels = host.split(".")
-        # A trailing dot is a legitimate absolute name, so one empty final
-        # label is allowed; any other empty label is a typo like `a..b`.
-        if labels and labels[-1] == "":
-            labels = labels[:-1]
-        if not labels or not all(_LABEL.match(label) for label in labels):
-            return None
-        for label in labels:
-            if label.startswith("xn--"):
-                try:
-                    label.encode("ascii").decode("idna")
-                except (UnicodeError, ValueError):
-                    return None
-        rendered = host
-
+    rendered = f"[{host}]" if value.startswith("https://[") else host
     return f"https://{rendered}" + (f":{port}" if port is not None else "")
 
 
@@ -572,6 +560,12 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
                 "browser serializes it — lowercase scheme and host, optional "
                 f"port, nothing else; refusing {origin!r}"
             )
+    # Said out loud at startup. The validation above is deliberately small, so
+    # the operator's own eyes are the last check that the list is what they
+    # meant — and a configuration nobody ever sees is one nobody corrects.
+    logger.info(
+        "browser origins allowed to call this deployment: %s", ", ".join(origins)
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(origins),

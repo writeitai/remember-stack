@@ -11,6 +11,8 @@ deployment was told about an origin, and what is advertised is exact.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
 from rememberstack.surfaces.http_api import _install_browser_origins
@@ -97,11 +99,8 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         "https://app.example.com:0",
         "https://app.example.com:99999",
         "https://" + "a" * 300 + ".example.com",
-        # A malformed bracketed literal, and malformed punycode. Both were
-        # accepted by an earlier shape-matching check that could only refuse
-        # what it had thought to enumerate.
+        # A malformed bracketed literal.
         "https://[::::]",
-        "https://xn--a",
     ],
 )
 def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
@@ -147,6 +146,11 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
         # origin a real browser sends.
         "https://my_app.example.com",
         "https://app.example.com.",
+        # A valid IDNA2008 label. The stdlib's legacy `idna` codec rejects
+        # this, which is why hostname syntax is left to the resolver: a check
+        # that refuses real origins is worse than one that admits a name DNS
+        # will simply fail to resolve.
+        "https://xn--fa-hia.de",
     ],
 )
 def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:
@@ -205,3 +209,34 @@ def test_only_the_headers_a_browser_client_sends_are_advertised() -> None:
     installed = app.installed[0]
     assert installed["allow_headers"] == ["Authorization", "Content-Type"]
     assert installed["allow_methods"] == ["GET", "POST"]
+
+
+def test_cors_is_installed_outermost() -> None:
+    """Otherwise the errors a browser most needs to read are unreadable.
+
+    Starlette runs middleware in reverse order of addition, so a CORS layer
+    installed early sits *inside* everything added after it. The ingest body
+    limiter's 413 and the spend lease's 503 would then return without CORS
+    headers, and the browser would surface them as opaque network failures —
+    the app would show "could not reach the deployment" for a deployment that
+    answered clearly.
+    """
+    from unittest.mock import MagicMock
+
+    from rememberstack.surfaces.http_api import build_api
+
+    boundary = MagicMock()
+    boundary.ensure_ready.return_value = ()
+    app = build_api(
+        engine=MagicMock(),
+        deployment_id=UUID("11111111-1111-1111-1111-111111111111"),
+        admission=boundary,
+        readiness=boundary,
+        ingest_body_max_bytes=1_000,
+        browser_origins=("https://app.example.com",),
+    )
+
+    classes = [getattr(m.cls, "__name__", str(m.cls)) for m in app.user_middleware]
+    # `user_middleware` is in reverse execution order: the last added is first
+    # in the list and outermost at runtime.
+    assert classes[0] == "CORSMiddleware", classes
