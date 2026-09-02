@@ -523,6 +523,10 @@ def _canonical_browser_origin(value: str) -> str | None:
         return None
     if not host or len(host) > _HOST_MAX_LENGTH or port == 0:
         return None
+    # Browsers omit the default port from `Origin`, so `https://host:443`
+    # never matches what arrives — the same silent close as a wildcard.
+    if port == 443:
+        return None
     # A wildcard is the one shape worth naming: an operator who writes it
     # believes they granted a subdomain tree, and they granted nothing.
     if "*" in host:

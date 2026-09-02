@@ -101,6 +101,9 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         "https://" + "a" * 300 + ".example.com",
         # A malformed bracketed literal.
         "https://[::::]",
+        # The default port written out. A browser omits it from `Origin`, so
+        # this matches nothing while looking deliberate.
+        "https://app.example.com:443",
     ],
 )
 def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
@@ -232,6 +235,10 @@ def test_cors_is_installed_outermost() -> None:
         deployment_id=UUID("11111111-1111-1111-1111-111111111111"),
         admission=boundary,
         readiness=boundary,
+        # The body limiter is only installed when ingest is composed, so
+        # without this stub the test asserts an order between CORS and nothing
+        # — it passed with the bug present.
+        ingest=MagicMock(),
         ingest_body_max_bytes=1_000,
         browser_origins=("https://app.example.com",),
     )
@@ -239,4 +246,5 @@ def test_cors_is_installed_outermost() -> None:
     classes = [getattr(m.cls, "__name__", str(m.cls)) for m in app.user_middleware]
     # `user_middleware` is in reverse execution order: the last added is first
     # in the list and outermost at runtime.
-    assert classes[0] == "CORSMiddleware", classes
+    assert "_IngestBodyLimit" in classes, classes
+    assert classes.index("CORSMiddleware") < classes.index("_IngestBodyLimit"), classes

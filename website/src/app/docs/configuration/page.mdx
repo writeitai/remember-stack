@@ -90,10 +90,12 @@ installed are logged when the API starts, so a typo is something you can see
 rather than infer.
 
 Credentialed CORS is disabled (`allow_credentials` is off). Be precise about
-what that does: it stops the *response* being shared with a page that asked
-for credentials, which means an authenticated call is refused before it
-reaches a route — a request carrying `Authorization` needs a preflight, and
-the preflight fails. It does not reach into the browser and stop a page
+what that does: it stops the *response* being shared with a page that made the
+request in `credentials: "include"` mode. It does **not** block an ordinary
+bearer call — a request carrying `Authorization` is preflighted, and that
+preflight succeeds because the header is on the allowlist. What is refused is
+a page trying to have cookies or client certificates count as authentication
+across the origin boundary. It does not reach into the browser and stop a page
 attaching cookies to a simple cross-origin request in the first place; that
 request may still be sent, and only its response is withheld.
 
@@ -117,8 +119,9 @@ The CORS layer is installed outermost, so refusals raised by other layers —
 an oversize body, an exhausted spend ceiling — reach the browser as the errors
 they are rather than as opaque network failures.
 
-A port is part of an origin and may be included:
-`https://app.example.com:8443` (1–65535). `https://localhost` and
+A non-default port is part of an origin and may be included:
+`https://app.example.com:8443` (1–65535, but not 443 — a browser omits the
+default port from `Origin`, so writing it out matches nothing). `https://localhost` and
 `https://localhost:3000` are accepted, so a self-hoster can develop against a
 local https listener.
 
