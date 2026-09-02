@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.14.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.14.0) on [PyPI](https://pypi.org/project/rememberstack/0.14.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.15.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.15.0) on [PyPI](https://pypi.org/project/rememberstack/0.15.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -149,6 +149,30 @@ Current public release: [`v0.14.0`](https://github.com/writeitai/remember-stack/
   `lock_timeout` so it fails fast rather than queueing behind a long read.
   The resolver generation moves to `resolver-2026.08g`, so evaluation curves
   measured under `08f` are not comparable and a fresh run is required.
+
+## What landed after v0.14.0 (in v0.15.0)
+
+**A deployment can tell you what it holds.** `GET /documents` lists document
+lineages — title, source, when each was ingested, the newest version's
+processing state, and the engine's own error when one failed. It is what lets
+an app show somebody *which* file arrived rather than only how many.
+
+The ordering is `first_seen_at` and never moves. "Most recently touched" is
+the tempting order and the wrong one: re-ingesting a document would raise it
+and tombstoning a version would lower it, and a keyset cursor against a moving
+key silently drops rows a reader never sees and repeats ones they already
+have.
+
+**Search without putting the query in the URL.** `POST /search/claims` and
+`POST /search/chunks` take the terms in a body. A query is usually the most
+sensitive string in the exchange, and a URL is written to access logs, kept by
+proxies and retained in browser history. The `GET` forms are unchanged for
+clients on a private path.
+
+**A deployment can name the browser origins allowed to call it.**
+`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, empty by default. Without it a
+browser refuses every cross-origin request before the credential is even
+examined, and the failure looks like the deployment being down.
 
 ## What landed after v0.13.0 (in v0.14.0)
 
