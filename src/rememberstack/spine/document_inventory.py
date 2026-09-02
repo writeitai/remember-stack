@@ -107,7 +107,7 @@ _PAGE = text(
 
 
 class DocumentInventory:
-    """Read the document lineages a deployment holds, newest activity first."""
+    """Read the document lineages a deployment holds, newest lineage first."""
 
     def __init__(self, *, engine: Engine) -> None:
         """Bind the spine this inventory reads."""
@@ -121,7 +121,7 @@ class DocumentInventory:
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
     ) -> DocumentPage:
-        """One page of documents, ordered by when their newest version landed.
+        """One page of documents, ordered by when each lineage was first seen.
 
         Ordered by when the lineage was first seen, so a document ingested a
         moment ago is at the top — and one re-ingested a moment ago keeps its
