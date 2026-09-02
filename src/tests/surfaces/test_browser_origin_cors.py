@@ -69,3 +69,73 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
     app = _App()
     with pytest.raises(ValueError, match="exact https origin"):
         _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        # A wildcard. Browsers never send one, so this could only ever match
+        # nothing — and the operator who wrote it would believe they had
+        # granted a whole subdomain tree.
+        "https://*.example.com",
+        # Userinfo. Never appears in an `Origin` header.
+        "https://evil.example.com@app.example.com",
+        # Browsers lowercase the scheme and host before sending.
+        "HTTPS://App.Example.com",
+        # A trailing dot is a different string to a byte comparison.
+        "https://app.example.com.",
+        # Not a secure origin.
+        "http://app.example.com",
+        # Not an origin at all.
+        "*",
+        "null",
+        "https://",
+        # A caller that forgot to split its configuration.
+        "https://a.example.com,https://b.example.com",
+        " https://app.example.com",
+    ],
+)
+def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
+    """Rejected at startup, because the alternative fails silently.
+
+    Matching is a byte comparison against the `Origin` header. Anything that
+    is not exactly what a browser sends can never match, so accepting it
+    produces a deployment that refuses every cross-origin request while its
+    configuration looks correct — and nobody goes back to check a setting they
+    watched start cleanly.
+
+    The wildcard is the one that matters most: an operator who writes
+    `https://*.example.com` and sees it accepted believes they have granted a
+    subdomain tree. They have granted nothing, and will debug the app instead.
+    """
+    app = _App()
+
+    with pytest.raises(ValueError, match="exact https origin"):
+        _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+
+    assert app.installed == []
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://app.example.com",
+        "https://app.remember.dev",
+        # A port is part of the origin and browsers send it.
+        "https://app.example.com:8443",
+        # A bracketed IPv6 literal is a form a browser does send.
+        "https://[::1]",
+        "https://a-b.example.co.uk",
+    ],
+)
+def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:
+    """The validator must not be so strict it refuses legitimate origins.
+
+    A rule tight enough to reject every impossible form is only useful if it
+    still admits the ordinary ones; otherwise it just moves the outage.
+    """
+    app = _App()
+
+    _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+
+    assert app.installed[0]["allow_origins"] == [origin]

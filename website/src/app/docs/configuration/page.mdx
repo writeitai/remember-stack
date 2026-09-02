@@ -69,10 +69,18 @@ that. It is empty by default: a deployment nobody told about an app should not
 advertise anything, and a permissive default would hand every website on the
 internet the ability to make authenticated requests from a visitor's browser.
 
-Each entry must be an **exact** `https://` origin — `https://app.example.com`,
-not `https://*.example.com`, not a path, not `http://`. Anything else is
-refused at startup rather than narrowed silently, because a wildcard that
-looks accepted is worse than one that fails loudly.
+Each entry must be an origin **exactly as a browser sends it**:
+`https://app.example.com`, optionally with a port, and nothing else. Lowercase
+scheme and host, no path, no wildcard, no userinfo, no trailing dot.
+
+Anything else is refused at startup, and the reason is worth knowing. The
+match is a byte comparison against the request's `Origin` header, so a value
+that is not exactly what a browser sends can never match — it does not widen
+the perimeter, it silently closes it. An operator who writes
+`https://*.example.com` and watches the deployment start cleanly believes they
+have granted a subdomain tree; they have granted nothing, and will go looking
+for the fault in their app. Refusing at startup is the only place that
+mistake is visible.
 
 Cookies are never permitted on these requests. The browser credential travels
 in the `Authorization` header, so credentialed mode would only let a named

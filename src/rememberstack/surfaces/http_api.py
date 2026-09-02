@@ -15,13 +15,13 @@ itself never touches adapters.
 from datetime import datetime
 from datetime import timedelta
 import json
+import re
 from typing import Annotated
 from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Protocol
 from typing import Self
-from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import Body
@@ -469,6 +469,30 @@ def build_api(
     return app
 
 
+#: An origin exactly as a browser puts it in the `Origin` header.
+#:
+#: Matching is a string comparison, so anything that is not byte-for-byte what
+#: a browser sends can never match — and the operator gets a deployment that
+#: silently refuses every cross-origin request while its configuration looks
+#: correct. That failure is worse than a rejected value, so the shapes that
+#: cannot match are rejected at startup rather than accepted and ignored:
+#:
+#:   `https://*.example.com`  a wildcard; browsers never send one
+#:   `https://user@example.com`  userinfo; never appears in `Origin`
+#:   `HTTPS://Example.com`  browsers lowercase the scheme and host
+#:   `https://example.com.`  a trailing dot is a different string
+#:
+#: A bracketed IPv6 literal is allowed because a browser does send that form.
+_BROWSER_ORIGIN = re.compile(
+    r"https://"
+    r"(?:"
+    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+    r"|\[[0-9a-f:]+\]"
+    r")"
+    r"(?::[0-9]{1,5})?"
+)
+
+
 def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     """Allow named browser origins to call this deployment (D59).
 
@@ -491,24 +515,11 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     if not origins:
         return
     for origin in origins:
-        parsed = urlparse(origin)
-        exact = (
-            parsed.scheme == "https"
-            and bool(parsed.netloc)
-            and not parsed.path
-            and not parsed.query
-            and not parsed.fragment
-            # A comma or a space is a caller that forgot to split its
-            # configuration, which would otherwise widen the perimeter to a
-            # single nonsense origin that matches nothing — or, worse, to
-            # whatever a permissive parser makes of it.
-            and "," not in origin
-            and not any(character.isspace() for character in origin)
-        )
-        if not exact:
+        if not _BROWSER_ORIGIN.fullmatch(origin):
             raise ValueError(
-                "browser origins must each be an exact https origin "
-                f"(scheme, host, optional port, nothing else); refusing {origin!r}"
+                "browser origins must each be an exact https origin as a "
+                "browser sends it — lowercase scheme and host, optional port, "
+                f"nothing else; refusing {origin!r}"
             )
     app.add_middleware(
         CORSMiddleware,
