@@ -103,14 +103,23 @@ def _document(
     title: str,
     deleted: bool = False,
     source_uri: str | None = None,
+    first_seen_at: datetime | None = None,
 ) -> UUID:
-    """A lineage with no versions yet."""
+    """A lineage with no versions yet.
+
+    `first_seen_at` is explicit rather than left to the column default,
+    because that default is `now()` — which in PostgreSQL is *transaction*
+    start time, identical for every row a test inserts in one block. Relying
+    on it made an ordering assertion fall through to the `doc_id` tie-break
+    and pass or fail on which random UUID happened to sort higher.
+    """
     doc_id = uuid4()
     connection.execute(
         text(
             "INSERT INTO documents (doc_id, deployment_id, source_kind,"
-            " source_ref, source_uri, title, deleted_at) VALUES (:doc,"
-            " :deployment, 'upload', :ref, :uri, :title, :deleted)"
+            " source_ref, source_uri, title, deleted_at, first_seen_at)"
+            " VALUES (:doc, :deployment, 'upload', :ref, :uri, :title,"
+            " :deleted, coalesce(:seen, now()))"
         ),
         {
             "doc": doc_id,
@@ -119,6 +128,7 @@ def _document(
             "uri": source_uri,
             "title": title,
             "deleted": _NOW if deleted else None,
+            "seen": first_seen_at,
         },
     )
     return doc_id
@@ -427,7 +437,11 @@ def test_the_newest_document_comes_first(database_engine: Engine) -> None:
     was.
     """
     with database_engine.begin() as connection:
-        older = _document(connection=connection, title="first.md")
+        older = _document(
+            connection=connection,
+            title="first.md",
+            first_seen_at=_NOW - timedelta(days=500),
+        )
         _version(
             connection=connection,
             doc_id=older,
@@ -439,7 +453,11 @@ def test_the_newest_document_comes_first(database_engine: Engine) -> None:
         _version(
             connection=connection, doc_id=older, version_no=2, status="ready", at=_NOW
         )
-        newer = _document(connection=connection, title="second.md")
+        newer = _document(
+            connection=connection,
+            title="second.md",
+            first_seen_at=_NOW - timedelta(days=400),
+        )
         _version(
             connection=connection,
             doc_id=newer,
