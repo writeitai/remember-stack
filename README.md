@@ -11,13 +11,17 @@
 | src/rememberstack/adapters/converters/\_\_init\_\_.py                                         |       27 |        0 |        6 |        0 |    100.0% |           |
 | src/rememberstack/adapters/converters/markitdown.py                                           |       29 |        2 |        0 |        0 |     93.1% |     46-47 |
 | src/rememberstack/adapters/converters/mistral\_ocr.py                                         |      263 |       21 |       90 |       20 |     87.8% |188-189, 204, 252-\>262, 278, 296-\>308, 320-\>323, 371-\>373, 389, 406, 409, 434, 439-440, 447-\>449, 479, 484, 508, 518, 521-522, 524-525, 554-\>553, 556-\>555, 577-579 |
+| src/rememberstack/adapters/managed/\_\_init\_\_.py                                            |        0 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/adapters/managed/composite\_auth.py                                         |       19 |        0 |        4 |        0 |    100.0% |           |
+| src/rememberstack/adapters/managed/signed\_token\_auth.py                                     |      113 |       10 |       42 |        9 |     87.7% |136, 207, 262-263, 265, 268, 288, 298, 325, 336, 347-\>exit |
 | src/rememberstack/adapters/openrouter.py                                                      |      341 |       30 |      114 |       13 |     90.1% |64-65, 71, 153, 349-352, 412, 474-477, 481, 500-506, 516, 521-522, 526, 574-575, 596-597, 599, 603-\>605, 606-\>615, 619, 644-645, 647, 717 |
 | src/rememberstack/adapters/postgres\_p1.py                                                    |      435 |       79 |      138 |       38 |     76.8% |147, 187, 201, 233, 262, 295, 327, 361, 408, 496-497, 545, 553-563, 565-566, 617-\>629, 630-631, 688-698, 700-701, 743, 763, 772, 797, 812, 860, 907, 930, 1033, 1056, 1121-1133, 1225, 1230, 1237-1241, 1342-1344, 1361, 1378-1399, 1419, 1439-1445, 1477-1492, 1521, 1529, 1543 |
-| src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       22 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       23 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/selfhost/control\_plane\_spend\_lease.py                           |       60 |       20 |       20 |        9 |     63.8% |40, 42, 44, 48-49, 55, 63, 75, 82-85, 92, 94, 97-98, 100, 108-109, 114 |
 | src/rememberstack/adapters/selfhost/forget.py                                                 |       43 |        1 |       10 |        1 |     96.2% |        19 |
 | src/rememberstack/adapters/selfhost/git.py                                                    |       98 |        6 |       32 |        8 |     89.2% |55, 75-\>127, 154, 184-185, 199-\>227, 263, 307, 331-\>329 |
 | src/rememberstack/adapters/selfhost/hashed\_bearer\_auth.py                                   |       47 |        8 |       12 |        4 |     79.7% |27, 46, 64-65, 70, 73-74, 76 |
+| src/rememberstack/adapters/selfhost/managed\_metering.py                                      |       45 |        8 |       12 |        3 |     80.7% |42-43, 52-\>exit, 59, 66-67, 78-79, 81 |
 | src/rememberstack/adapters/selfhost/minio.py                                                  |      113 |       14 |       30 |        7 |     82.5% |123, 125, 136, 139-144, 177, 207, 219, 223, 245-247, 254 |
 | src/rememberstack/adapters/selfhost/mounts.py                                                 |       94 |        3 |       16 |        2 |     95.5% |150-\>173, 171-172, 239 |
 | src/rememberstack/adapters/selfhost/object\_store.py                                          |       60 |        2 |       26 |        2 |     95.3% |  102, 104 |
@@ -56,6 +60,7 @@
 | src/rememberstack/core/section\_snap.py                                                       |       63 |        3 |       26 |        3 |     93.3% |122, 177, 203 |
 | src/rememberstack/core/storage\_routing.py                                                    |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/core/structure\_skeleton.py                                                 |      261 |        7 |       90 |        8 |     95.7% |341, 343, 345, 450, 533-\>532, 601, 603, 666 |
+| src/rememberstack/core/text\_metering.py                                                      |       51 |        2 |       20 |        2 |     94.4% |    72, 92 |
 | src/rememberstack/eval/\_\_init\_\_.py                                                        |       17 |        2 |        2 |        1 |     84.2% |  147, 156 |
 | src/rememberstack/eval/consumption.py                                                         |       43 |        2 |        8 |        2 |     92.2% |    76, 79 |
 | src/rememberstack/eval/contradiction.py                                                       |       45 |        1 |       10 |        1 |     96.4% |       111 |
@@ -66,20 +71,20 @@
 | src/rememberstack/eval/retrieval\_spikes.py                                                   |       16 |       16 |        0 |        0 |      0.0% |      3-41 |
 | src/rememberstack/eval/skeleton.py                                                            |       73 |        7 |       26 |        7 |     85.9% |96, 105, 124, 147, 181, 184, 215 |
 | src/rememberstack/llm/\_\_init\_\_.py                                                         |        0 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/model/\_\_init\_\_.py                                                       |      351 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/model/\_\_init\_\_.py                                                       |      362 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/adjudication.py                                                       |       29 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/assured\_operations.py                                                |       70 |        1 |        6 |        1 |     97.4% |       130 |
-| src/rememberstack/model/auth.py                                                               |       10 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/model/auth.py                                                               |       35 |        1 |        6 |        1 |     95.1% |       116 |
 | src/rememberstack/model/blocks.py                                                             |       28 |        2 |        4 |        2 |     87.5% |    41, 47 |
 | src/rememberstack/model/chunks.py                                                             |       81 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/claims.py                                                             |      109 |        0 |        6 |        0 |    100.0% |           |
-| src/rememberstack/model/client.py                                                             |       70 |        4 |       16 |        1 |     89.5% |   212-215 |
+| src/rememberstack/model/client.py                                                             |       71 |        4 |       16 |        1 |     89.7% |   219-222 |
 | src/rememberstack/model/clustering.py                                                         |       22 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/component\_version.py                                                 |       65 |        0 |        4 |        0 |    100.0% |           |
 | src/rememberstack/model/consumption.py                                                        |       29 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/conversion.py                                                         |      159 |       11 |       22 |        2 |     89.5% |95, 187, 280-282, 309-311, 329-331 |
 | src/rememberstack/model/deployment.py                                                         |       16 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/model/documents.py                                                          |       51 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/model/documents.py                                                          |       53 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/envelope.py                                                           |      193 |        2 |        8 |        2 |     98.0% |  103, 587 |
 | src/rememberstack/model/evaluation.py                                                         |       27 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/forget.py                                                             |       63 |        0 |        6 |        0 |    100.0% |           |
@@ -88,6 +93,7 @@
 | src/rememberstack/model/knowledge\_authored.py                                                |      135 |        4 |        8 |        3 |     95.1% |29, 101, 112, 192 |
 | src/rememberstack/model/knowledge\_planner.py                                                 |      212 |       15 |       32 |       11 |     88.5% |47, 106, 139, 145, 160, 189, 194, 196, 238, 275-277, 291, 312, 379 |
 | src/rememberstack/model/lifecycle.py                                                          |       15 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/model/metering.py                                                           |       89 |        2 |        6 |        2 |     95.8% |   82, 133 |
 | src/rememberstack/model/model\_provider.py                                                    |       45 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/model/mounts.py                                                             |        9 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/object\_store.py                                                      |        8 |        0 |        0 |        0 |    100.0% |           |
@@ -101,12 +107,13 @@
 | src/rememberstack/model/sections.py                                                           |      183 |        3 |       10 |        3 |     96.9% |278, 282, 288 |
 | src/rememberstack/model/spend\_lease.py                                                       |        6 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/model/telemetry.py                                                          |       10 |        0 |        0 |        0 |    100.0% |           |
-| src/rememberstack/ports/\_\_init\_\_.py                                                       |       13 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/ports/\_\_init\_\_.py                                                       |       14 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/auth.py                                                               |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/connector.py                                                          |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/cost\_meter.py                                                        |        6 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/forget.py                                                             |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/git.py                                                                |        8 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/ports/metering.py                                                           |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/model\_provider.py                                                    |       13 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/mounts.py                                                             |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/object\_store.py                                                      |        7 |        0 |        0 |        0 |    100.0% |           |
@@ -117,10 +124,10 @@
 | src/rememberstack/ports/queue.py                                                              |        8 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/ports/telemetry.py                                                          |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/profiles/\_\_init\_\_.py                                                    |       10 |        7 |        4 |        0 |     21.4% |     14-22 |
-| src/rememberstack/profiles/selfhost.py                                                        |      578 |      241 |       96 |       14 |     55.9% |167, 184, 203, 263-264, 294, 311, 332, 363, 373, 381, 389-405, 428, 456-486, 499-509, 546-549, 584, 586, 591-698, 824-832, 841-843, 858-880, 900-902, 906-921, 925-929, 938-1128, 1171-1173, 1178-1225, 1233, 1237, 1248-1249, 1356 |
+| src/rememberstack/profiles/selfhost.py                                                        |      665 |      271 |      120 |       19 |     56.9% |183, 218, 223, 227, 231, 239, 258, 346-347, 416, 433, 454, 485, 495, 503, 511-527, 550, 578-608, 621-631, 668-671, 706, 708, 713-820, 947-955, 964-966, 983-988, 996-1004, 1023-1036, 1040-1062, 1082-1084, 1088-1103, 1107-1111, 1120-1310, 1353-1355, 1360-1415, 1423, 1427, 1438-1439, 1546 |
 | src/rememberstack/profiles/selfhost\_forget.py                                                |       64 |       64 |        2 |        0 |      0.0% |     3-176 |
 | src/rememberstack/profiles/selfhost\_operations.py                                            |       39 |        4 |        0 |        0 |     89.7% | 47, 61-63 |
-| src/rememberstack/spine/\_\_init\_\_.py                                                       |       51 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/spine/\_\_init\_\_.py                                                       |       53 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/admission.py                                                          |        7 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/assured\_operations.py                                                |       83 |        3 |        8 |        1 |     95.6% | 37-38, 90 |
 | src/rememberstack/spine/backfill.py                                                           |       28 |        0 |        2 |        0 |    100.0% |           |
@@ -133,7 +140,7 @@
 | src/rememberstack/spine/cost\_export.py                                                       |      212 |       15 |       40 |        8 |     90.9% |96, 192, 283, 302-303, 336, 344-345, 359, 377, 387-388, 390, 397, 430 |
 | src/rememberstack/spine/deployment\_bootstrap.py                                              |       76 |        0 |       14 |        0 |    100.0% |           |
 | src/rememberstack/spine/document\_bindings.py                                                 |      103 |        7 |       34 |        7 |     89.8% |91-\>109, 112-\>114, 118, 152, 162, 169, 174-175, 194 |
-| src/rememberstack/spine/document\_catalog.py                                                  |      167 |        4 |       26 |        5 |     95.3% |190, 260, 289, 494, 505-\>531 |
+| src/rememberstack/spine/document\_catalog.py                                                  |      171 |        4 |       28 |        5 |     95.5% |209, 279, 308, 513, 524-\>550 |
 | src/rememberstack/spine/entity\_eligibility.py                                                |       16 |        2 |        6 |        2 |     81.8% |    44, 56 |
 | src/rememberstack/spine/entity\_registry.py                                                   |       49 |        6 |        4 |        1 |     83.0% |64-\>84, 121, 125-131 |
 | src/rememberstack/spine/extension\_packs.py                                                   |       40 |        1 |       16 |        1 |     96.4% |       119 |
@@ -142,6 +149,7 @@
 | src/rememberstack/spine/graph\_catalog.py                                                     |      117 |       12 |       40 |       10 |     86.0% |369-372, 384, 524, 528-\>530, 533, 592, 629-630, 633, 650-651, 663 |
 | src/rememberstack/spine/knowledge.py                                                          |     1261 |      117 |      462 |       98 |     86.8% |153, 168, 239, 249, 277, 283-\>exit, 296, 307, 319, 323, 377, 419, 453, 514-519, 542, 610-619, 634, 653, 681-\>677, 748, 762, 873, 914, 944, 1035, 1069, 1171, 1222, 1258, 1267, 1322, 1342, 1373, 1426-1429, 1456, 1461, 1463, 1465, 1521, 1523, 1525, 1527, 1529, 1546, 1553, 1557, 1588, 1599, 1601-\>1619, 1658, 1774, 1803, 1821, 1846-1852, 1958-1961, 2070, 2094, 2117, 2158, 2165, 2167-2168, 2175, 2188, 2213-2226, 2287, 2321, 2339, 2349, 2376, 2378, 2382, 2391, 2416, 2444, 2573, 2584, 2588, 2605, 2608, 2680, 2711, 2728, 2756, 2780, 2786-\>2797, 2797-\>2808, 2833, 2849, 2926-\>2931, 2955-2959, 3074, 3078-\>3091, 3091-\>3103, 3103-\>3110, 3146, 3169-3175, 3216-\>3226, 3226-\>3239, 3354-3358, 3419-3428, 3538, 3557 |
 | src/rememberstack/spine/lifecycle.py                                                          |      168 |        6 |       22 |        2 |     94.7% |427, 455-461 |
+| src/rememberstack/spine/managed\_metering.py                                                  |      216 |       26 |       40 |        8 |     86.7% |153, 188-201, 216-221, 231, 233, 239-265, 268, 277-278, 414-\>344, 443-458, 463-\>439 |
 | src/rememberstack/spine/migrations/\_\_init\_\_.py                                            |        0 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/\_helpers.py                                               |      151 |        9 |       88 |        5 |     93.3% |163-168, 189-191, 198-\>202, 204-\>206, 211 |
 | src/rememberstack/spine/migrations/env.py                                                     |       29 |        5 |        6 |        3 |     77.1% |13-\>16, 24, 29-37, 56 |
@@ -190,6 +198,7 @@
 | src/rememberstack/spine/migrations/versions/p9\_21\_0042\_ingest\_principal.py                |       19 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p9\_22\_0043\_document\_entity\_bindings.py       |       20 |        0 |        2 |        0 |    100.0% |           |
 | src/rememberstack/spine/migrations/versions/p9\_23\_0044\_drop\_generic\_identifier\_guard.py |       16 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/spine/migrations/versions/p9\_24\_0045\_managed\_text\_metering.py          |       12 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/observation\_adjudication.py                                          |      246 |       44 |       72 |       19 |     77.7% |148, 162-163, 165, 239, 346-367, 375-396, 448-474, 538-586, 645-\>435, 681-702, 721, 729-741, 802-821, 1038, 1043, 1057-1058, 1076, 1078, 1085-1089 |
 | src/rememberstack/spine/operations.py                                                         |       76 |        1 |        4 |        1 |     97.5% |       151 |
 | src/rememberstack/spine/postgres\_graph\_sql.py                                               |       12 |        0 |        2 |        0 |    100.0% |           |
@@ -214,13 +223,13 @@
 | src/rememberstack/spine/sync.py                                                               |       26 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/spine/work\_ledger.py                                                       |      365 |       32 |      122 |       34 |     86.4% |70, 177, 241, 265, 267, 281, 327, 329, 361, 371, 393, 439, 441, 451, 464, 476, 478, 548, 550, 560, 574-\>589, 651, 655, 729, 740, 758, 803, 865, 966, 1009, 1020, 1174, 1209, 1322-\>1326 |
 | src/rememberstack/surfaces/\_\_init\_\_.py                                                    |       14 |        2 |        0 |        0 |     85.7% |   121-122 |
-| src/rememberstack/surfaces/cli.py                                                             |      518 |       99 |       92 |       16 |     80.8% |58, 66-67, 82-87, 128-133, 154-159, 167-169, 171-179, 187-189, 201-206, 224-226, 241-246, 252-254, 265-270, 288, 290-300, 320-328, 341-346, 348-356, 358-366, 381-385, 394, 413-414, 444-447, 454-455, 463-465, 480-482, 508-509, 567-569, 574-\>580, 599, 603-605, 627-629, 637-639, 648-649, 652-654, 726-736 |
+| src/rememberstack/surfaces/cli.py                                                             |      662 |      113 |      124 |       18 |     83.1% |63, 71-72, 87-92, 133-138, 159-164, 172-174, 176-184, 192-194, 206-211, 229-231, 246-251, 257-259, 270-275, 293, 295-305, 325-333, 346-351, 353-361, 363-371, 386-390, 399, 418-419, 449-452, 459-460, 468-470, 485-487, 513-514, 562, 592-594, 677-679, 737, 740, 859, 881-882, 914-916, 921-930, 991-992, 1032-1034, 1046-1048, 1056-1058, 1074-1076, 1148-1158 |
 | src/rememberstack/surfaces/consumption\_skill.py                                              |       42 |        3 |        8 |        2 |     90.0% |35, 67, 86 |
 | src/rememberstack/surfaces/cost\_export\_api.py                                               |      112 |       37 |       24 |        1 |     63.2% |121-125, 146-162, 167-192, 201 |
-| src/rememberstack/surfaces/credentials.py                                                     |      112 |       13 |       24 |        7 |     82.4% |82, 97-\>99, 106-108, 114, 119-120, 135, 147-150, 158, 159-\>exit |
-| src/rememberstack/surfaces/device\_login.py                                                   |      123 |       25 |       30 |        9 |     73.9% |89, 115, 125-126, 132-133, 141-155, 167-168, 201, 205-206, 208, 234-235, 237-\>239 |
+| src/rememberstack/surfaces/credentials.py                                                     |      350 |       44 |       80 |       15 |     84.0% |130, 145-\>147, 154-156, 162, 167-168, 190, 202-209, 243-247, 272-276, 333, 349-350, 441, 460, 477-480, 520-\>522, 526-531, 562, 617-619, 649-\>exit, 676, 759-763, 774-777, 803, 804-\>exit |
+| src/rememberstack/surfaces/device\_login.py                                                   |      152 |       20 |       38 |        8 |     82.1% |159, 162-163, 164-\>exit, 202, 245-246, 254-268, 331, 364-365, 367-\>369 |
 | src/rememberstack/surfaces/graph\_queries.py                                                  |      358 |       34 |      114 |       29 |     86.2% |66, 84, 86, 88, 117, 169-176, 247, 278, 306, 317, 366, 368, 415-416, 426-\>431, 429, 432, 441, 475-\>478, 629, 635, 730, 734, 743, 792-794, 820, 858, 883, 906, 998, 1000, 1026-1027 |
-| src/rememberstack/surfaces/http\_api.py                                                       |      399 |       51 |       84 |       10 |     85.3% |229, 336, 391, 502-508, 519-525, 609-612, 633-638, 708-714, 721-749, 827, 833-834, 955, 957, 987, 1029-1030, 1105, 1107-1109, 1117, 1120-1121, 1134, 1154-1158, 1164-1172 |
+| src/rememberstack/surfaces/http\_api.py                                                       |      423 |       64 |       92 |       12 |     82.5% |232, 339, 394, 505-511, 522-528, 612-615, 636-641, 711-717, 724-752, 796-803, 851, 857-858, 916-919, 987, 989, 1019, 1030-1031, 1044-1045, 1067-1068, 1128, 1160, 1162-1164, 1172, 1175-1176, 1189, 1209-1213, 1219-1227 |
 | src/rememberstack/surfaces/mcp.py                                                             |       72 |        2 |       18 |        2 |     95.6% |   70, 171 |
 | src/rememberstack/surfaces/mcp\_memory\_tools.py                                              |      383 |       55 |      160 |       33 |     82.0% |292, 294-302, 305, 372, 417, 484, 488, 498, 509, 517, 672, 730, 751, 762, 884-885, 946, 961-964, 981, 995, 1003, 1015-1016, 1026, 1037, 1048, 1140, 1152, 1159-1160, 1166, 1227, 1351, 1373, 1389-1399, 1406-\>1418, 1458, 1473, 1477, 1481, 1495 |
 | src/rememberstack/surfaces/operation\_executor.py                                             |       39 |        2 |        8 |        2 |     91.5% |   75, 118 |
@@ -241,10 +250,11 @@
 | src/rememberstack/surfaces/query\_sandbox/result.py                                           |       70 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/query\_sandbox/saved\_queries.py                                   |      585 |       64 |      240 |       56 |     84.7% |205, 223, 286, 447, 497, 503, 508, 545, 590, 601, 609, 649, 737, 803, 809, 825, 875-\>885, 943, 964, 1048, 1078, 1101, 1274, 1360, 1547-\>1549, 1662, 1667, 1751, 1919, 1925, 1945, 1958, 1963, 1972-1983, 1990, 2000, 2006, 2016, 2023, 2040, 2046-2051, 2057, 2078, 2080, 2083, 2103, 2153, 2158, 2175-2180, 2183, 2187, 2191, 2201, 2236, 2253-\>2257, 2268, 2296-2298 |
 | src/rememberstack/surfaces/remote\_mcp.py                                                     |      127 |       14 |       40 |        9 |     86.2% |189, 198, 212-213, 220, 226-227, 243, 253, 262, 268, 271, 276, 284 |
+| src/rememberstack/surfaces/route\_scope.py                                                    |       21 |        0 |       10 |        0 |    100.0% |           |
 | src/rememberstack/surfaces/sdk.py                                                             |      297 |       49 |      102 |       25 |     77.4% |139, 182, 198, 240, 262, 264, 276-290, 306, 308, 333-375, 401-\>403, 404, 406, 407-\>409, 428-\>430, 444, 462, 474, 575, 630, 632, 666, 727-728, 747-\>749, 754-755, 766, 773, 775, 778, 804, 815 |
 | src/rememberstack/workers/\_\_init\_\_.py                                                     |       80 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/workers/base.py                                                             |      142 |        3 |       30 |        1 |     97.7% |203, 409-410 |
-| src/rememberstack/workers/e0.py                                                               |      471 |       24 |      100 |       14 |     93.0% |829, 955-972, 1032, 1116-\>1115, 1122, 1125, 1221, 1258-1259, 1300, 1365, 1447, 1482, 1543, 1561, 1582-\>1587, 1588, 1595, 1603 |
+| src/rememberstack/workers/e0.py                                                               |      491 |       24 |      106 |       15 |     93.1% |283-\>294, 873, 999-1016, 1076, 1160-\>1159, 1166, 1169, 1265, 1302-1303, 1344, 1409, 1491, 1526, 1587, 1605, 1626-\>1631, 1632, 1639, 1647 |
 | src/rememberstack/workers/e0\_summary.py                                                      |      392 |       43 |      118 |       22 |     85.3% |351-352, 354-358, 425, 482, 503, 521, 530, 552, 554-556, 570-571, 576, 587, 609, 628, 636, 651, 662, 666-682, 694-697, 707, 717, 906, 917, 928, 945, 957-967 |
 | src/rememberstack/workers/e1.py                                                               |      226 |       31 |       76 |       14 |     81.1% |214, 240, 246-\>241, 266-\>250, 310, 324, 344, 370, 381-412, 443, 445, 480-\>482, 482-\>exit, 496-518, 545-548, 693 |
 | src/rememberstack/workers/e2.py                                                               |      329 |       18 |      124 |       14 |     92.5% |259, 296, 360-364, 658, 700, 704, 816-817, 818-\>850, 820-\>850, 824, 829, 843, 845-\>850, 952, 971, 1071-1073, 1142 |
@@ -261,7 +271,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      166 |       10 |       40 |       12 |     89.3% |125, 206-207, 214, 261, 266, 300-\>292, 302, 336, 337-\>342, 346, 424-\>435, 461-\>465, 567 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **24542** | **2405** | **6128** | **1128** | **87.2%** |           |
+| **TOTAL**                                                                                     | **25704** | **2537** | **6404** | **1170** | **87.2%** |           |
 
 
 ## Setup coverage badge
