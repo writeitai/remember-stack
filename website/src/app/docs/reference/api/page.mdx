@@ -273,7 +273,9 @@ or migration surface.
 
 ### `GET /documents`
 
-Lists the document lineages this deployment holds, most recent activity first.
+Lists the document lineages this deployment holds, **newest first by when the
+lineage was first seen**. Note what that is not: re-ingesting a document does
+not move it up. See the ordering note below for why the key is immutable.
 Composed like the other optional capabilities: absent means an ordinary 404,
 never a fallback.
 

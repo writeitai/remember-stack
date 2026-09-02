@@ -952,7 +952,11 @@ def _mount_document_inventory(
         cursor: Annotated[str | None, Query()] = None,
         status: Annotated[DocumentStatusFilter | None, Query()] = None,
     ) -> DocumentPage:
-        """One page of documents, newest activity first.
+        """One page of documents, newest lineage first.
+
+        Ordered by when each document was *first seen*, which never changes —
+        re-ingesting one does not move it up. An activity order would, and a
+        keyset cursor against a moving key drops and repeats rows.
 
         `status` filters on the *newest* version's state, which is what makes
         "show me what failed" answerable in one call rather than by paging the
