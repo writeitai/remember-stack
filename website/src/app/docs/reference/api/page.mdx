@@ -281,7 +281,7 @@ never a fallback.
 | --- | --- |
 | `limit` | page size, 1–200 (default 50) |
 | `cursor` | opaque position from the previous page; absent on the last page |
-| `status` | filter on the newest version's state: `ingesting`, `converting`, `structuring`, `ready`, `failed`, `deleted` |
+| `status` | filter on the newest version's state: `ingesting`, `converting`, `structuring`, `ready`, `failed` |
 
 Each row carries the lineage (`doc_id`, `title`, `source_kind`, `source_uri`,
 `first_seen_at`), the newest version observed (`latest`: `version_id`,
@@ -313,12 +313,18 @@ Lineages the deployment has been asked to forget are not listed. The tombstone
 remains in the spine so an audit can tell "forgotten" from "never existed",
 but a customer's inventory is what they still hold.
 
-The cursor carries a **watermark** — the instant the listing began — as well
-as the sort position, and every page describes each document as of that
-instant. Ordering by "newest activity" means the sort key is mutable: without
-the watermark, a document below the cursor that is re-ingested mid-scroll
-jumps above it, past a place the reader has already been, and is returned on
-no page at all. They finish the list believing they saw everything.
+**Order.** Newest *document* first, by `first_seen_at` — when the lineage was
+created — with `doc_id` breaking ties. A document ingested a moment ago is at
+the top; one **re-ingested** a moment ago keeps its place, because it is the
+same document.
+
+That is deliberate, and the alternative is broken rather than merely
+different. Ordering by most-recent-activity gives a key that moves: a document
+below the cursor that gains a version jumps above it and is returned on no
+page at all, and one already returned whose newest version is deleted falls
+back below the cursor and is returned twice. Neither is visible to the reader.
+An immutable key has neither failure, and it is servable by an index, so a
+page costs the page size rather than a scan of the corpus.
 
 A **malformed** cursor is a 400 rather than a silent restart, because
 restarting would re-serve a page already seen and read as duplicated
@@ -328,13 +334,11 @@ the query is scoped to the caller's own deployment either way — so the worst a
 hand-written but well-formed cursor can do is start somebody at an odd place
 in their own corpus.
 
-**Scale.** The order is computed from the newest version's `ingested_at`,
-which is derived rather than stored on the lineage, so no index serves the
-final sort: each page costs a scan of the deployment's live documents. That is
-fine for the corpus sizes deployments hold today and is *not* fine at the
-million-document scale this system targets. Closing it needs a durable
-latest-activity sort key on `documents`, maintained on the write path and
-indexed — a schema change, tracked separately rather than bolted on here.
+`deleted` is not an accepted `status` filter. The listing only reports
+versions that are not tombstoned, and a hard forget sets the tombstone
+alongside the status, so filtering on it could only ever return nothing —
+which the reader would take as "no deleted documents" rather than "this
+question cannot be asked here".
 
 A read-only credential may call this endpoint.
 

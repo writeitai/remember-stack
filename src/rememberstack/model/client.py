@@ -87,6 +87,18 @@ DocumentStatus = Literal[
     "ingesting", "converting", "structuring", "ready", "failed", "deleted"
 ]
 
+#: The subset a caller may filter the inventory on.
+#:
+#: `deleted` is deliberately absent. The listing only ever reports versions
+#: that are not tombstoned, and a hard forget sets the tombstone alongside the
+#: status, so filtering on it could only ever return nothing. Advertising a
+#: filter that always comes back empty invites the reader to conclude their
+#: corpus holds no deleted documents, which is a different statement from the
+#: one the data supports.
+DocumentStatusFilter = Literal[
+    "ingesting", "converting", "structuring", "ready", "failed"
+]
+
 
 class DocumentVersionSummary(BaseModel):
     """The state of one observed snapshot of a document.

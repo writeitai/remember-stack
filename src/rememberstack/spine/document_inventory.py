@@ -6,32 +6,42 @@ where it got to cannot: metering is deliberately content-free. Only the
 deployment knows the names, so this read model lives here and is served from
 the deployment's own hostname (D33).
 
-## The one thing this must not get wrong
+## Two things this must not get wrong
 
-A lineage's `current_version_id` points at the snapshot that finished
-processing and is being served. It is **not** the newest snapshot. A document
-uploaded five minutes ago and still converting has no current version at all;
-a document whose newest upload failed still points at the older, working one.
+**The newest version is not the current one.** A lineage's
+`current_version_id` points at the snapshot that finished processing and is
+being served. A document uploaded five minutes ago and still converting has no
+current version at all; a document whose newest upload failed still points at
+the older, working one. Listing by the current pointer hides precisely the
+documents somebody opens this screen to find, so a row reports the newest
+surviving version and carries a separate `serving` flag.
 
-Listing by the current pointer would therefore hide precisely the documents
-somebody opens this screen to find. The newest version is `MAX(version_no)`
-within the lineage, and that is what a row reports — with a separate
-`serving` flag saying whether *any* ready snapshot exists, so "the newest
-upload failed" and "there is nothing here to search" stay distinguishable.
+**The order has to be immutable.** The obvious order is "most recently
+touched", but that key moves: re-ingesting a document changes it, and
+tombstoning a version changes it back. Paging against a moving key silently
+drops and repeats rows — a document below the cursor that gains a version
+jumps above it and is never returned, and one whose newest version is deleted
+falls below a cursor it already passed and is returned twice.
+
+So the order is `first_seen_at`, stamped once when the lineage is created and
+never updated. A newly ingested document still appears at the top, because its
+lineage is new. A *re-ingested* one keeps its place, which is the truthful
+answer for an inventory: it is the same document, first seen when it was first
+seen. `ix_documents_inventory_order` covers exactly this order, so a page
+costs the page size rather than a scan of the corpus.
 """
 
 from __future__ import annotations
 
 import base64
 from datetime import datetime
-from datetime import UTC
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import DocumentPage
-from rememberstack.model import DocumentStatus
+from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
 
@@ -53,6 +63,10 @@ _PAGE = text(
            v.status::text AS status,
            v.ingested_at,
            v.error,
+           -- Read in the same statement as `latest`, so the two describe one
+           -- snapshot. An earlier build bounded `latest` by a watermark and
+           -- left this unbounded, which reported a document as failed and
+           -- serving at once because a later version had become ready.
            EXISTS (
              SELECT 1 FROM document_versions ready
              WHERE ready.deployment_id = d.deployment_id
@@ -72,11 +86,6 @@ _PAGE = text(
         -- would show somebody a document they had asked to have removed,
         -- labelled as fine.
         AND dv.deleted_at IS NULL
-        -- Frozen at the caller's watermark. `ingested_at` belongs to the
-        -- newest version and moves when a document is re-ingested, so
-        -- without this a document sitting below the cursor could jump above
-        -- it mid-scroll and never be returned on any page.
-        AND dv.ingested_at <= CAST(:as_of AS timestamptz)
       ORDER BY dv.version_no DESC
       LIMIT 1
     ) v ON TRUE
@@ -88,10 +97,10 @@ _PAGE = text(
       AND (CAST(:status AS text) IS NULL OR v.status::text = CAST(:status AS text))
       AND (
         CAST(:cursor_at AS timestamptz) IS NULL
-        OR (v.ingested_at, d.doc_id)
+        OR (d.first_seen_at, d.doc_id)
              < (CAST(:cursor_at AS timestamptz), CAST(:cursor_doc AS uuid))
       )
-    ORDER BY v.ingested_at DESC, d.doc_id DESC
+    ORDER BY d.first_seen_at DESC, d.doc_id DESC
     LIMIT :limit
     """
 )
@@ -110,25 +119,19 @@ class DocumentInventory:
         deployment_id: UUID,
         limit: int = DEFAULT_PAGE_SIZE,
         cursor: str | None = None,
-        status: DocumentStatus | None = None,
-        now: datetime | None = None,
+        status: DocumentStatusFilter | None = None,
     ) -> DocumentPage:
         """One page of documents, ordered by when their newest version landed.
 
-        Ordering by the newest version's `ingested_at` puts the thing somebody
-        just uploaded at the top, which is where they will look for it. The tie
-        break on `doc_id` is what makes the cursor total: two documents
-        ingested in the same microsecond would otherwise be able to swap places
-        between pages, dropping one and repeating the other.
+        Ordered by when the lineage was first seen, so a document ingested a
+        moment ago is at the top — and one re-ingested a moment ago keeps its
+        place, because it is the same document. The tie break on `doc_id` is
+        what makes the cursor total: a bulk import gives many lineages one
+        `first_seen_at`, and without it two of them can swap places between
+        pages, dropping one and repeating the other.
         """
         size = max(1, min(int(limit), MAX_PAGE_SIZE))
-        as_of, cursor_at, cursor_doc = _decode_cursor(cursor)
-        # The first page fixes the watermark; every later page carries it back
-        # in the cursor. Without a frozen instant the listing is a moving
-        # target: a document re-ingested mid-scroll moves to the top, above a
-        # cursor already passed, and is never returned at all.
-        if as_of is None:
-            as_of = now or datetime.now(tz=UTC)
+        cursor_at, cursor_doc = _decode_cursor(cursor)
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -137,7 +140,6 @@ class DocumentInventory:
                         "deployment_id": deployment_id,
                         "limit": size + 1,
                         "status": status,
-                        "as_of": as_of,
                         "cursor_at": cursor_at,
                         "cursor_doc": cursor_doc,
                     },
@@ -169,51 +171,44 @@ class DocumentInventory:
             for row in page
         )
         next_cursor = (
-            _encode_cursor(as_of, page[-1]["ingested_at"], page[-1]["doc_id"])
+            _encode_cursor(page[-1]["first_seen_at"], page[-1]["doc_id"])
             if more and page
             else None
         )
         return DocumentPage(documents=documents, cursor=next_cursor)
 
 
-def _encode_cursor(as_of: datetime, ingested_at: datetime, doc_id: UUID) -> str:
-    """Opaque position: the watermark plus the sort key, never an offset.
+def _encode_cursor(first_seen_at: datetime, doc_id: UUID) -> str:
+    """Opaque keyset position: the sort key, never an offset.
 
-    An offset would re-read rows that shifted while somebody was paging. The
-    watermark is what makes the sort key stable enough to page against at all:
-    it pins the listing to one instant, so re-ingesting a document during a
-    scroll cannot move it out from under the reader.
+    An offset re-reads rows that shifted while somebody was paging. This
+    carries the sort key itself, and because that key never changes, the
+    position it names stays meaningful for as long as the reader takes.
     """
-    raw = f"{as_of.isoformat()}|{ingested_at.isoformat()}|{doc_id}".encode()
+    raw = f"{first_seen_at.isoformat()}|{doc_id}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_cursor(
-    cursor: str | None,
-) -> tuple[datetime | None, datetime | None, UUID | None]:
-    """Read a cursor back, or refuse a malformed one.
+def _decode_cursor(cursor: str | None) -> tuple[datetime | None, UUID | None]:
+    """Read a cursor back, or refuse one that does not parse.
 
-    Rejecting beats silently restarting: handing back page one to somebody who
-    asked for page three would repeat documents they have already seen and
-    read as duplicates in the corpus.
+    Rejecting beats silently restarting: handing page one to somebody who
+    asked for page three repeats documents they have already seen and reads as
+    duplicates in the corpus rather than as the bug it is.
 
-    This checks that a cursor *parses*, not that this deployment issued it.
-    The values are a timestamp pair and a document id, all of which the caller
-    could have written; nothing here is a permission. That is acceptable only
-    because the cursor is not a capability — the query is already scoped to
-    the caller's own deployment, so the worst a forged one can do is start
-    somebody at an odd place in their own corpus.
+    This checks that a cursor *parses*, not that this deployment issued it —
+    the values are a timestamp and a document id, both of which a caller could
+    write. That is acceptable because the cursor is not a capability: the query
+    is scoped to the caller's own deployment either way, so the worst a
+    hand-written one can do is start somebody at an odd place in their own
+    corpus.
     """
     if cursor is None:
-        return None, None, None
+        return None, None
     padding = "=" * (-len(cursor) % 4)
     try:
         raw = base64.urlsafe_b64decode(cursor + padding).decode()
-        as_of_text, at_text, doc_text = raw.split("|")
-        return (
-            datetime.fromisoformat(as_of_text),
-            datetime.fromisoformat(at_text),
-            UUID(doc_text),
-        )
+        at_text, doc_text = raw.split("|")
+        return datetime.fromisoformat(at_text), UUID(doc_text)
     except (ValueError, UnicodeDecodeError) as error:
-        raise ValueError("cursor is not one this API issued") from error
+        raise ValueError("cursor is malformed") from error

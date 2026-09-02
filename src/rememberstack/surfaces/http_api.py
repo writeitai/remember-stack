@@ -46,7 +46,7 @@ from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import DocumentPage
-from rememberstack.model import DocumentStatus
+from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
@@ -183,7 +183,7 @@ class DocumentInventoryPort(Protocol):
         deployment_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
-        status: DocumentStatus | None = None,
+        status: DocumentStatusFilter | None = None,
     ) -> DocumentPage: ...
 
 
@@ -950,7 +950,7 @@ def _mount_document_inventory(
     def list_documents(
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
         cursor: Annotated[str | None, Query()] = None,
-        status: Annotated[DocumentStatus | None, Query()] = None,
+        status: Annotated[DocumentStatusFilter | None, Query()] = None,
     ) -> DocumentPage:
         """One page of documents, newest activity first.
 
@@ -963,7 +963,7 @@ def _mount_document_inventory(
                 deployment_id=deployment_id, limit=limit, cursor=cursor, status=status
             )
         except ValueError as error:
-            # A cursor we did not issue. 400 rather than a silent restart:
+            # A cursor that does not parse. 400 rather than a silent restart:
             # returning page one would look like the corpus repeating itself.
             raise HTTPException(status_code=400, detail=str(error)) from error
 

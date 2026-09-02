@@ -39,53 +39,64 @@ version is not listed; a lineage the customer asked to forget is not listed,
 though its tombstone stays in the spine so an audit can tell "forgotten" from
 "never existed".
 
-## 3. The listing is a snapshot, and it has to be
+## 3. The order must be immutable
 
-Ordering by "newest activity" makes the sort key **mutable**: it is the newest
-version's `ingested_at`, and re-ingesting a document moves it.
+The tempting order is "most recently touched" — newest activity first. It is
+the wrong one, and the reason is worth stating carefully because the failure
+is invisible to the reader.
 
-Left alone, that breaks paging in a way no reader can detect. A document
-sitting below the cursor that gains a new version jumps *above* the cursor —
-past a place the reader has already been — and is returned on no page at all.
-They reach the end of the list believing they have seen everything.
+That key **moves**. Re-ingesting a document raises it; tombstoning its newest
+version lowers it again. Paging with a keyset cursor against a moving key
+fails in both directions:
 
-So a listing is pinned to an instant. The cursor carries a **watermark** (the
-moment the first page was requested) alongside the sort position, and every
-page describes each document as of that instant. A document whose activity
-postdates the watermark belongs to the *next* listing, not this one, and that
-is a stated rule rather than an accident of ordering.
+- a document below the cursor that gains a version jumps **above** it, past a
+  place the reader has already been, and is returned on no page at all — they
+  reach the end believing they saw everything;
+- a document already returned whose newest version is deleted falls **below**
+  the cursor and is returned a second time, so the same document appears twice
+  in one scroll.
+
+Neither announces itself. Both were reproduced against real PostgreSQL.
+
+Pinning the listing to an instant — carrying a watermark in the cursor and
+describing every document as of that moment — looks like the fix and is not.
+It stops the first failure and not the second, because a tombstone is not a
+new version; it makes `serving` disagree with `latest` unless it is threaded
+through every subquery; and it silently excludes documents first ingested
+after the listing began.
+
+**So the order is `documents.first_seen_at`**, stamped once when the lineage
+is created and never updated, with `doc_id` breaking ties. A newly ingested
+document is still at the top, because its lineage is new. A *re-ingested* one
+keeps its place — which is the truthful answer for an inventory: it is the
+same document, and it was first seen when it was first seen. Immutability
+removes both failures rather than compensating for them, and `latest` and
+`serving` are read in one statement, so a row describes one coherent instant
+without any extra machinery.
 
 ## 4. The sort key at scale
 
 This system targets millions of documents, so the ordering has to be servable
 by an index rather than by sorting the corpus on every page.
 
-It is not enough to index the versions. "Each document's newest version,
-ordered by that version's time" is a group-wise maximum followed by a sort,
-and no single index over `document_versions` serves both halves: an index
-ordered by time cannot deduplicate by lineage, and one ordered by lineage
-cannot produce recency order.
+An immutable key on the lineage is what makes that possible. `first_seen_at`
+already lives on `documents`, so the covering order is an index and nothing
+else:
 
-**The lineage therefore carries the ordering key.** `documents` holds a
-durable `latest_activity_at` — the `ingested_at` of its newest surviving
-version — maintained transactionally wherever a version is written or
-tombstoned, and indexed as
-`(deployment_id, latest_activity_at DESC, doc_id DESC) WHERE deleted_at IS
-NULL`. A page is then an index range scan whose cost is the page size, not the
-corpus size.
+```
+CREATE INDEX ix_documents_inventory_order
+  ON documents (deployment_id, first_seen_at DESC, doc_id DESC)
+  WHERE deleted_at IS NULL;
+```
 
-The tension worth naming, because it is not obvious: a denormalised key holds
-the *current* newest activity, while §3 asks for the newest activity **as of
-the watermark**. These disagree for exactly the documents re-ingested during a
-scroll. The resolution is that the watermark filters on the same indexed
-column — a document whose `latest_activity_at` is newer than the watermark is
-outside this listing pass entirely, and appears when the reader refreshes.
-That is the snapshot rule of §3 applied consistently, rather than a second
-mechanism: one column both orders and bounds the listing.
-
-Maintenance is a spine responsibility, not a caller's. A denormalised column
-that any write path can forget to update is a column that drifts, and a drifted
-sort key reorders somebody's documents silently.
+A page is then an index-only scan whose cost is the page size. The alternative
+— ordering on the newest version's ingest time — cannot be indexed at all:
+"each document's newest version, ordered by that version's time" is a
+group-wise maximum followed by a sort, and no index over `document_versions`
+serves both halves. An index ordered by time cannot deduplicate by lineage,
+and one ordered by lineage cannot produce recency order. Denormalising that
+derived value onto the lineage would restore an index and reintroduce a
+mutable key, which is where §3 started.
 
 ## 5. What this surface deliberately does not report
 

@@ -240,16 +240,16 @@ def test_a_lineage_whose_versions_are_all_deleted_is_not_listed(
 def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
     database_engine: Engine,
 ) -> None:
-    """The failure this watermark exists to stop.
+    """The failure an activity-ordered listing produces, and this one does not.
 
-    Order by "newest activity" and the sort key is mutable. A document sitting
+    Order by "most recently touched" and the sort key is mutable. A document
     below the cursor that gains a new version jumps above it — past a place
     the reader has already been — and is returned on no page at all. They
     finish the list believing they have seen everything.
 
-    The cursor carries the instant the listing started, and each document is
-    described as of that instant, so the set being paged cannot change
-    underneath it.
+    Ordering on `first_seen_at` removes the failure rather than compensating
+    for it: re-ingesting does not move a document, because it is the same
+    document and it was first seen when it was first seen.
     """
     inventory = DocumentInventory(engine=database_engine)
     with database_engine.begin() as connection:
@@ -264,10 +264,8 @@ def test_re_ingesting_mid_scroll_cannot_hide_an_unseen_document(
                 at=_NOW - timedelta(hours=index),
             )
 
-    first = inventory.list_documents(
-        deployment_id=_DEPLOYMENT_ID, limit=1, now=_NOW + timedelta(minutes=1)
-    )
-    assert [d.title for d in first.documents] == ["a.md"]
+    first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
+    assert len(first.documents) == 1
     assert first.cursor is not None
 
     # b.md is re-ingested between pages, which without the watermark moves it
@@ -419,38 +417,99 @@ def test_a_forgotten_lineage_is_not_listed(database_engine: Engine) -> None:
     assert [d.title for d in page.documents] == ["kept.md"]
 
 
-def test_the_newest_activity_comes_first(database_engine: Engine) -> None:
-    """Ordered by when the newest version landed, not when the lineage began.
+def test_the_newest_document_comes_first(database_engine: Engine) -> None:
+    """Ordered by when the lineage was first seen, which never changes.
 
-    A document first seen a year ago and re-ingested this morning is this
-    morning's news.
+    "Most recently touched" is the tempting order and the wrong one: it moves
+    when a document is re-ingested or a version is tombstoned, and paging
+    against a moving key drops and repeats rows. An inventory answers "what do
+    I have", and a document re-ingested this morning is the document it always
+    was.
     """
     with database_engine.begin() as connection:
-        old = _document(connection=connection, title="old.md")
+        older = _document(connection=connection, title="first.md")
         _version(
             connection=connection,
-            doc_id=old,
-            version_no=1,
-            status="ready",
-            at=_NOW - timedelta(days=365),
-        )
-        revived = _document(connection=connection, title="revived.md")
-        _version(
-            connection=connection,
-            doc_id=revived,
+            doc_id=older,
             version_no=1,
             status="ready",
             at=_NOW - timedelta(days=400),
         )
+        # Touched far more recently than the lineage created after it.
         _version(
-            connection=connection, doc_id=revived, version_no=2, status="ready", at=_NOW
+            connection=connection, doc_id=older, version_no=2, status="ready", at=_NOW
+        )
+        newer = _document(connection=connection, title="second.md")
+        _version(
+            connection=connection,
+            doc_id=newer,
+            version_no=1,
+            status="ready",
+            at=_NOW - timedelta(days=365),
         )
 
     page = DocumentInventory(engine=database_engine).list_documents(
         deployment_id=_DEPLOYMENT_ID
     )
 
-    assert [d.title for d in page.documents] == ["revived.md", "old.md"]
+    assert [d.title for d in page.documents] == ["second.md", "first.md"]
+
+
+def test_tombstoning_a_version_mid_scroll_cannot_repeat_a_document(
+    database_engine: Engine,
+) -> None:
+    """The mirror of the re-ingest failure, and the reason the key is immutable.
+
+    With an activity order, deleting a document's newest version drops it back
+    to an older, earlier timestamp — below a cursor the reader has already
+    passed — so it is returned a second time. Review reproduced a full scroll
+    reading a, b, c, a.
+    """
+    inventory = DocumentInventory(engine=database_engine)
+    with database_engine.begin() as connection:
+        for index, title in enumerate(("a.md", "b.md", "c.md")):
+            doc_id = _document(connection=connection, title=title)
+            _version(
+                connection=connection,
+                doc_id=doc_id,
+                version_no=1,
+                status="ready",
+                at=_NOW - timedelta(hours=index + 5),
+            )
+            if title == "c.md":
+                _version(
+                    connection=connection,
+                    doc_id=doc_id,
+                    version_no=2,
+                    status="ready",
+                    at=_NOW,
+                )
+
+    first = inventory.list_documents(deployment_id=_DEPLOYMENT_ID, limit=1)
+    seen: list[str] = [d.title or "" for d in first.documents]
+
+    # The document just returned loses its newest version between pages.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = :at"
+                " WHERE deployment_id = :deployment AND version_no = 2"
+            ),
+            {"at": _NOW, "deployment": _DEPLOYMENT_ID},
+        )
+
+    cursor = first.cursor
+    for _ in range(5):
+        if cursor is None:
+            break
+        page = inventory.list_documents(
+            deployment_id=_DEPLOYMENT_ID, limit=1, cursor=cursor
+        )
+        seen.extend(d.title or "" for d in page.documents)
+        cursor = page.cursor
+
+    assert sorted(seen) == ["a.md", "b.md", "c.md"], seen
+    assert len(seen) == len(set(seen)), f"a document repeated: {seen}"
 
 
 def test_paging_returns_every_document_exactly_once(database_engine: Engine) -> None:
