@@ -93,6 +93,14 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         # A caller that forgot to split its configuration.
         "https://a.example.com,https://b.example.com",
         " https://app.example.com",
+        # Ports outside the range, and a host longer than DNS allows. Neither
+        # can appear in a real `Origin`, so both are the same silent failure
+        # as a wildcard: accepted, matching nothing, and invisible.
+        "https://app.example.com:0",
+        "https://app.example.com:99999",
+        "https://" + "a" * 300 + ".example.com",
+        # An underscore is not legal in a hostname.
+        "https://my_app.example.com",
     ],
 )
 def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
@@ -126,6 +134,13 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
         # A bracketed IPv6 literal is a form a browser does send.
         "https://[::1]",
         "https://a-b.example.co.uk",
+        # A self-hoster developing against a local https listener. A single
+        # label is a legitimate host and refusing it would push people to
+        # weaken the scheme check instead.
+        "https://localhost",
+        "https://localhost:3000",
+        # Punycode is what a browser sends for an internationalised domain.
+        "https://xn--bcher-kva.example",
     ],
 )
 def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:

@@ -489,8 +489,11 @@ _BROWSER_ORIGIN = re.compile(
     r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
     r"|\[[0-9a-f:]+\]"
     r")"
-    r"(?::[0-9]{1,5})?"
+    r"(?::(?P<port>[0-9]{1,5}))?"
 )
+
+#: `https://` plus the 253 characters DNS allows a hostname, plus `:65535`.
+_ORIGIN_MAX_LENGTH = 8 + 253 + 6
 
 
 def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
@@ -515,11 +518,21 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     if not origins:
         return
     for origin in origins:
-        if not _BROWSER_ORIGIN.fullmatch(origin):
+        matched = _BROWSER_ORIGIN.fullmatch(origin)
+        port = matched.group("port") if matched else None
+        # A port outside the range, or a host longer than DNS permits, cannot
+        # appear in a real `Origin` header either — same silent failure as a
+        # wildcard, so the same refusal.
+        valid = (
+            matched is not None
+            and len(origin) <= _ORIGIN_MAX_LENGTH
+            and (port is None or 1 <= int(port) <= 65535)
+        )
+        if not valid:
             raise ValueError(
                 "browser origins must each be an exact https origin as a "
-                "browser sends it — lowercase scheme and host, optional port, "
-                f"nothing else; refusing {origin!r}"
+                "browser sends it — lowercase scheme and host, optional port "
+                f"in 1-65535, nothing else; refusing {origin!r}"
             )
     app.add_middleware(
         CORSMiddleware,

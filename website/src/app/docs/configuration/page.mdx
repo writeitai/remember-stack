@@ -96,7 +96,9 @@ answer for up to that long, so revoking the credential is what ends access
 immediately, not editing this list.
 
 A port is part of an origin and may be included:
-`https://app.example.com:8443`. Several origins are comma-separated, and the
+`https://app.example.com:8443` (1–65535). `https://localhost` and
+`https://localhost:3000` are accepted, so a self-hoster can develop against a
+local https listener. Several origins are comma-separated, and the
 whole list is validated together — a stray comma is a refusal, not a silently
 skipped entry.
 
