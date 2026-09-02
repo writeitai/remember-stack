@@ -87,6 +87,10 @@ def _clean(database_engine: Engine) -> Iterator[None]:
             ),
             scope,
         )
+        connection.execute(
+            text("DELETE FROM processing_state WHERE deployment_id = :deployment"),
+            scope,
+        )
         for table in ("document_versions", "documents", "content_objects"):
             connection.execute(
                 text(f"DELETE FROM {table} WHERE deployment_id = :deployment"), scope
@@ -169,6 +173,134 @@ def _version(
             {"version": version_id, "doc": doc_id},
         )
     return version_id
+
+
+def _skip_stage(
+    *, connection: Connection, version_id: UUID, stage: str, content_hash: str
+) -> None:
+    """Record that the pipeline declined to run one stage for this version."""
+    connection.execute(
+        text(
+            "INSERT INTO processing_state (processing_id, deployment_id,"
+            " target_kind, target_id, stage, component_version, content_hash,"
+            " status, finished_at) VALUES (:pid, :deployment,"
+            " 'document_version', :target, :stage, 'v1', :hash, 'skipped', :at)"
+        ),
+        {
+            "pid": uuid4(),
+            "deployment": _DEPLOYMENT_ID,
+            "target": version_id,
+            "stage": stage,
+            "hash": content_hash,
+            "at": _NOW,
+        },
+    )
+
+
+def test_a_stage_the_pipeline_declined_to_run_is_reported(
+    database_engine: Engine,
+) -> None:
+    """A skip is neither a failure nor a success, and it changes the answer.
+
+    A version whose claim extraction was skipped is `ready` and searchable as
+    text while contributing nothing to what the memory can answer. Reporting
+    only the status would call that document fine and leave somebody
+    wondering why it never turns up in results.
+    """
+    with database_engine.begin() as connection:
+        doc_id = _document(connection=connection, title="scanned-appendix.pdf")
+        version_id = _version(
+            connection=connection, doc_id=doc_id, version_no=1, status="ready", at=_NOW
+        )
+        content_hash = connection.execute(
+            text(
+                "SELECT content_hash FROM document_versions WHERE version_id = :version"
+            ),
+            {"version": version_id},
+        ).scalar_one()
+        _skip_stage(
+            connection=connection,
+            version_id=version_id,
+            stage="extract_claims",
+            content_hash=content_hash,
+        )
+        _skip_stage(
+            connection=connection,
+            version_id=version_id,
+            stage="embed_claim",
+            content_hash=content_hash,
+        )
+
+    page = DocumentInventory(engine=database_engine).list_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )
+
+    only = page.documents[0]
+    assert only.latest.status == "ready"
+    assert only.serving is True
+    assert only.skipped_stages == ("embed_claim", "extract_claims")
+
+
+def test_a_document_with_nothing_skipped_says_so_with_an_empty_tuple(
+    database_engine: Engine,
+) -> None:
+    """The ordinary case must not carry a phantom skip.
+
+    `array_agg` over no rows is NULL, not an empty array, and a NULL reaching
+    the model would be a validation error on every healthy document.
+    """
+    with database_engine.begin() as connection:
+        doc_id = _document(connection=connection, title="ordinary.md")
+        _version(
+            connection=connection, doc_id=doc_id, version_no=1, status="ready", at=_NOW
+        )
+
+    page = DocumentInventory(engine=database_engine).list_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )
+
+    assert page.documents[0].skipped_stages == ()
+
+
+def test_a_skip_on_an_older_version_is_not_attributed_to_the_newest(
+    database_engine: Engine,
+) -> None:
+    """The row describes the newest version, so the skips must be its own.
+
+    Otherwise re-uploading a document would keep reporting a stage that was
+    skipped on a snapshot nobody is serving any more.
+    """
+    with database_engine.begin() as connection:
+        doc_id = _document(connection=connection, title="revised.md")
+        old_version = _version(
+            connection=connection,
+            doc_id=doc_id,
+            version_no=1,
+            status="ready",
+            at=_NOW - timedelta(days=1),
+        )
+        old_hash = connection.execute(
+            text(
+                "SELECT content_hash FROM document_versions WHERE version_id = :version"
+            ),
+            {"version": old_version},
+        ).scalar_one()
+        _skip_stage(
+            connection=connection,
+            version_id=old_version,
+            stage="extract_claims",
+            content_hash=old_hash,
+        )
+        _version(
+            connection=connection, doc_id=doc_id, version_no=2, status="ready", at=_NOW
+        )
+
+    page = DocumentInventory(engine=database_engine).list_documents(
+        deployment_id=_DEPLOYMENT_ID
+    )
+
+    assert page.documents[0].latest.version_no == 2
+    assert page.documents[0].skipped_stages == ()
 
 
 def test_a_document_still_processing_is_listed(database_engine: Engine) -> None:

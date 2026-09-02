@@ -285,8 +285,8 @@ never a fallback.
 
 Each row carries the lineage (`doc_id`, `title`, `source_kind`, `source_uri`,
 `first_seen_at`), the newest version observed (`latest`: `version_id`,
-`version_no`, `status`, `ingested_at`, and `error` when it failed), and
-`serving`.
+`version_no`, `status`, `ingested_at`, and `error` when it failed),
+`serving`, and `skipped_stages`.
 
 **`latest` is the newest version, not the current one — and that distinction is
 the point of this endpoint.** A lineage's *current* version is the snapshot
@@ -301,6 +301,16 @@ the highest `version_no` in the lineage.
 answer queries from. That keeps "the newest upload failed" and "there is
 nothing here to search" apart, which are different problems with different
 fixes.
+
+`skipped_stages` names the pipeline stages that were deliberately **not run**
+for that version, and is empty for almost every document. A skip is neither a
+failure nor a success — it is work that was considered and declined — and it
+changes what the document can answer. A version whose `extract_claims` was
+skipped is `ready` and searchable as text while contributing nothing to claim
+search, so a caller reporting only `status` would present it as fine and leave
+somebody wondering why it never appears in answers. The skips reported are the
+newest version's own; one recorded against a superseded snapshot is not
+attributed to it.
 
 Lineages the deployment has been asked to forget are not listed. The tombstone
 remains in the spine so an audit can tell "forgotten" from "never existed",

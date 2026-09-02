@@ -52,6 +52,19 @@ _PAGE = text(
            v.status::text AS status,
            v.ingested_at,
            v.error,
+           -- Stages the pipeline declined to run for this version. Reported
+           -- because a skip is neither a failure nor a success: an extraction
+           -- that was skipped leaves a document `ready` and searchable as
+           -- text while contributing no claims, and only saying "ready" would
+           -- hide why it never appears in answers.
+           COALESCE((
+             SELECT array_agg(DISTINCT ps.stage::text ORDER BY ps.stage::text)
+             FROM processing_state ps
+             WHERE ps.deployment_id = d.deployment_id
+               AND ps.target_kind = 'document_version'
+               AND ps.target_id = v.version_id
+               AND ps.status = 'skipped'
+           ), ARRAY[]::text[]) AS skipped_stages,
            EXISTS (
              SELECT 1 FROM document_versions ready
              WHERE ready.deployment_id = d.deployment_id
@@ -145,6 +158,7 @@ class DocumentInventory:
                     error=row["error"],
                 ),
                 serving=bool(row["serving"]),
+                skipped_stages=tuple(row["skipped_stages"] or ()),
             )
             for row in page
         )
