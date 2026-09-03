@@ -133,13 +133,12 @@ class SelfHostSettings(BaseSettings):
     Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
     class carries the `REMEMBERSTACK_SELFHOST_` prefix).
 
-    Off by default. The perimeter credential authenticates a *deployment*,
-    not a caller, so on an ordinary or public perimeter any client could
-    assert it was a person; attribution there is ignored. Set this **only**
-    when the deployment is reachable solely by a control plane that has
-    already authenticated the actor it names — e.g. a managed data plane
-    behind a private transit gateway. Enabling it on a publicly reachable
-    deployment makes attribution meaningless, not merely permissive."""
+    Off by default. The network perimeter must authenticate the asserted actor.
+    When API auth is configured, only a full ``write`` credential may supply
+    attribution; narrow browser credentials are ignored even when this flag is
+    on. Without API auth, this setting trusts the network perimeter by itself.
+    Enabling it on an ordinarily reachable deployment makes attribution
+    meaningless, not merely permissive."""
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )

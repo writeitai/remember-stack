@@ -63,13 +63,18 @@ exactly one of three scopes:
 
 | Scope | What it reaches |
 | --- | --- |
-| `read` | Retrieval, search, inventory, readiness, and other non-mutating routes. It cannot ingest or change configuration |
+| `read` | The enumerated retrieval, search, inventory, and readiness routes. It cannot ingest or change configuration |
 | `ingest` | Only `POST /ingest`. It cannot search or inspect memory, run an assured operation, or create a connector that keeps pulling after the caller leaves |
 | `write` | The complete deployment API, including `POST /ingest`; it also satisfies every `read` requirement |
 
 Unlisted routes require `write`. A new route therefore stays unavailable to
 narrow credentials until it is classified deliberately, and an unknown scope
 on a signed credential is refused rather than downgraded.
+
+An `ingest` credential also cannot assert `X-Ingest-Principal-Kind` or
+`X-Ingest-Principal-Ref`. Those immutable attribution headers are ignored
+unless the deployment trusts their network source and the API credential has
+full `write` scope.
 
 #### Calling a deployment from a browser
 

@@ -30,6 +30,7 @@ from rememberstack.adapters.managed.signed_token_auth import SignedTokenUnusable
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
+from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.surfaces.http_api import build_api
@@ -121,6 +122,7 @@ class _RecordingIngest:
         """Bind the receipt to the served deployment."""
         self.deployment_id = deployment_id
         self.calls = 0
+        self.last_principal: IngestPrincipal | None = None
 
     def ingest(
         self,
@@ -132,8 +134,8 @@ class _RecordingIngest:
         """Record one accepted upload."""
         assert deployment_id == self.deployment_id
         assert upload.content == b"memory"
-        assert ingested_by is None
         self.calls += 1
+        self.last_principal = ingested_by
         return IngestedVersion(
             deployment_id=deployment_id,
             doc_id=uuid4(),
@@ -212,6 +214,7 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
         ingest=ingest,
         connectors=object(),  # type: ignore[arg-type]
         auth=auth,
+        trusted_principal_source=True,
     )
     client = TestClient(app)
     ingest_token = _token(
@@ -222,10 +225,16 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     accepted = client.post(
         "/ingest?filename=memory.md&mime=text/markdown",
         content=b"memory",
-        headers={**ingest_headers, "Content-Type": "application/octet-stream"},
+        headers={
+            **ingest_headers,
+            "Content-Type": "application/octet-stream",
+            "X-Ingest-Principal-Kind": "user",
+            "X-Ingest-Principal-Ref": "user:forged",
+        },
     )
     assert accepted.status_code == 200, accepted.text
     assert ingest.calls == 1
+    assert ingest.last_principal is None
 
     refused = (
         client.post(
@@ -245,6 +254,20 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     assert [response.status_code for response in refused] == [403] * len(refused)
     assert ingest.calls == 1
 
+    read_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="read"
+    )
+    read_response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {read_token}",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    assert read_response.status_code == 403
+    assert ingest.calls == 1
+
     write_token = _token(
         private=private, kid="k1", audience=str(deployment_id), scope="write"
     )
@@ -254,10 +277,15 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
         headers={
             "Authorization": f"Bearer {write_token}",
             "Content-Type": "application/octet-stream",
+            "X-Ingest-Principal-Kind": "user",
+            "X-Ingest-Principal-Ref": "user:trusted-control-plane",
         },
     )
     assert write_response.status_code == 200, write_response.text
     assert ingest.calls == 2
+    assert ingest.last_principal == IngestPrincipal(
+        kind=IngestPrincipalKind.USER, external_ref="user:trusted-control-plane"
+    )
 
 
 def test_a_credential_for_another_deployment_is_refused() -> None:
