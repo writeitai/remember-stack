@@ -6,8 +6,9 @@ The obvious rule — "GET reads, POST writes" — is wrong about this API, and
 believing it would hand a read-only credential the ability to ingest.
 ``POST /graph/neighborhood``, ``POST /graph/path``, ``POST /query/sql`` and
 ``POST /readiness`` are reads that use POST because their arguments do not fit
-in a query string. ``POST /ingest`` and ``POST /connectors`` change the
-memory. The method tells you nothing about which is which.
+in a query string. ``POST /ingest`` and ``POST /connectors`` change the memory,
+but D62 permits a browser to do only the first. The method tells you nothing
+about which is which.
 
 So the mapping is enumerated by hand, and the default for anything not
 enumerated is ``WRITE``.
@@ -75,6 +76,16 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 )
 
 
+#: The single route a narrow D62 browser ingest credential may reach.
+#:
+#: Kept separate from reads because an ingest credential cannot read memory,
+#: and separate from the WRITE fallback because it must not create standing
+#: connectors or perform any other mutation.
+_INGEST_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("POST", re.compile(r"^/ingest$")),
+)
+
+
 #: Routes whose scope cannot be decided from the path, and which enforce it
 #: themselves. Exactly one today: an assured operation's authority is a
 #: property of the operation, and operations are registry data.
@@ -94,13 +105,16 @@ def required_scope(*, method: str, path: str) -> PerimeterScope | None:
     the perimeter enforces nothing and the handler must.
 
     Unenumerated routes require :attr:`PerimeterScope.WRITE`, so a route added
-    without a decision here is closed to read-only callers rather than open.
+    without a decision here is closed to narrow credentials rather than open.
     """
     normalised = path.rstrip("/") or "/"
     upper = method.upper()
     for route_method, pattern in _ROUTE_DECIDES:
         if route_method == upper and pattern.match(normalised):
             return None
+    for route_method, pattern in _INGEST_ROUTES:
+        if route_method == upper and pattern.match(normalised):
+            return PerimeterScope.INGEST
     for route_method, pattern in _READ_ROUTES:
         if route_method == upper and pattern.match(normalised):
             return PerimeterScope.READ

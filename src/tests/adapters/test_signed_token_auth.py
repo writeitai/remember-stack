@@ -13,9 +13,12 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 import json
+from typing import Any
+from uuid import UUID
 from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 import jwt
 from jwt.algorithms import OKPAlgorithm
 from pydantic import SecretBytes
@@ -24,8 +27,12 @@ import pytest
 from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenUnusable
+from rememberstack.model import DocumentUpload
+from rememberstack.model import IngestedVersion
+from rememberstack.model import IngestPrincipal
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.surfaces.http_api import build_api
 
 
 def _keypair(*, kid: str) -> tuple[Ed25519PrivateKey, str]:
@@ -72,6 +79,86 @@ def _present(auth: SignedTokenAuth, token: str):  # noqa: ANN202
     )
 
 
+class _OpenBoundary:
+    """Admission and readiness for the perimeter-only HTTP proof."""
+
+    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """Admit the configured deployment while the API composes."""
+        return ()
+
+    def assert_available(self, *, deployment_id: UUID) -> None:
+        """Leave request admission open."""
+
+
+class _UnusedEngine:
+    """A query engine that a refused request must never reach."""
+
+    def __getattr__(self, name: str) -> Any:
+        """Turn an accidental handler call into a precise test failure."""
+        raise AssertionError(f"ingest-scope request reached query engine method {name}")
+
+
+class _EmptyOperations:
+    """An operation surface where every unknown operation fails closed."""
+
+    def __init__(self, *, deployment_id: UUID) -> None:
+        """Bind the deployment identity checked during composition."""
+        self.deployment_id = deployment_id
+
+    def descriptors(self) -> tuple[object, ...]:
+        """No descriptor means an operation requires WRITE."""
+        return ()
+
+    def run(self, **_kwargs: object) -> Any:
+        """The ingest credential must be refused before dispatch."""
+        raise AssertionError("ingest-scope request reached an assured operation")
+
+
+class _RecordingIngest:
+    """A real endpoint result with a counter proving the handler ran."""
+
+    def __init__(self, *, deployment_id: UUID) -> None:
+        """Bind the receipt to the served deployment."""
+        self.deployment_id = deployment_id
+        self.calls = 0
+
+    def ingest(
+        self,
+        *,
+        deployment_id: UUID,
+        upload: DocumentUpload,
+        ingested_by: IngestPrincipal | None = None,
+    ) -> IngestedVersion:
+        """Record one accepted upload."""
+        assert deployment_id == self.deployment_id
+        assert upload.content == b"memory"
+        assert ingested_by is None
+        self.calls += 1
+        return IngestedVersion(
+            deployment_id=deployment_id,
+            doc_id=uuid4(),
+            version_id=uuid4(),
+            content_hash="0" * 64,
+            created=True,
+        )
+
+    def ingest_observed(
+        self,
+        *,
+        deployment_id: UUID,
+        source_kind: str,
+        source_ref: str,
+        upload: DocumentUpload,
+        versioning_mode: str,
+        source_modified_at: datetime | None,
+        source_version_ref: str | None,
+        sync_cycle_id: UUID | None,
+        ingested_by: IngestPrincipal | None = None,
+    ) -> IngestedVersion:
+        """This proof exercises only the one-shot browser upload path."""
+        raise AssertionError("unexpected observed-source ingest")
+
+
 def test_a_valid_credential_names_its_subject_and_scope() -> None:
     """The whole point: a person's browser reaches the deployment as itself."""
     deployment_id = uuid4()
@@ -89,6 +176,88 @@ def test_a_valid_credential_names_its_subject_and_scope() -> None:
     assert context.scope is PerimeterScope.READ
     # Machine traffic is recorded as machine traffic; the person rides alongside.
     assert context.principal == "signed-bearer"
+
+
+def test_an_ingest_credential_uses_the_closed_ingest_scope() -> None:
+    """D62's browser credential is recognised without widening its authority."""
+    deployment_id = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
+    )
+
+    context = _present(
+        auth,
+        _token(private=private, kid="k1", audience=str(deployment_id), scope="ingest"),
+    )
+
+    assert context.scope is PerimeterScope.INGEST
+
+
+def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
+    """The signed D62 credential uploads, but cannot read or configure memory."""
+    deployment_id = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
+    )
+    ingest = _RecordingIngest(deployment_id=deployment_id)
+    boundary = _OpenBoundary()
+    app = build_api(
+        engine=_UnusedEngine(),  # type: ignore[arg-type]
+        deployment_id=deployment_id,
+        admission=boundary,  # type: ignore[arg-type]
+        readiness=boundary,  # type: ignore[arg-type]
+        surface=_EmptyOperations(deployment_id=deployment_id),  # type: ignore[arg-type]
+        ingest=ingest,
+        connectors=object(),  # type: ignore[arg-type]
+        auth=auth,
+    )
+    client = TestClient(app)
+    ingest_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="ingest"
+    )
+    ingest_headers = {"Authorization": f"Bearer {ingest_token}"}
+
+    accepted = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={**ingest_headers, "Content-Type": "application/octet-stream"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert ingest.calls == 1
+
+    refused = (
+        client.post(
+            "/connectors",
+            json={"kind": "watched-directory", "name": "standing pull"},
+            headers=ingest_headers,
+        ),
+        client.post(f"/connectors/{uuid4()}/pause", headers=ingest_headers),
+        client.get(
+            "/search/claims", params={"query": "secret"}, headers=ingest_headers
+        ),
+        client.get(
+            "/search/chunks", params={"query": "secret"}, headers=ingest_headers
+        ),
+        client.post("/operations/anything", json={}, headers=ingest_headers),
+    )
+    assert [response.status_code for response in refused] == [403] * len(refused)
+    assert ingest.calls == 1
+
+    write_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="write"
+    )
+    write_response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {write_token}",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    assert write_response.status_code == 200, write_response.text
+    assert ingest.calls == 2
 
 
 def test_a_credential_for_another_deployment_is_refused() -> None:

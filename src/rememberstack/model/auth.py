@@ -13,23 +13,28 @@ from pydantic import SecretBytes
 class PerimeterScope(StrEnum):
     """What an authenticated caller may do, as a closed vocabulary.
 
-    Two values, deliberately. A scope vocabulary that grows by string
-    concatenation fails open the first time somebody adds a route, and the
-    perimeter is not the place to build a permission language: it exists to
-    answer one narrow question cheaply, in front of every request.
+    Three values, deliberately. ``INGEST`` exists for D62: a browser that may
+    add one document must not also be able to create a connector — standing
+    configuration that keeps pulling from a third-party system after the tab
+    closes. A scope vocabulary that grows by string concatenation fails open
+    the first time somebody adds a route, and the perimeter is not the place
+    to build a permission language: it exists to answer one narrow question
+    cheaply, in front of every request.
 
-    ``WRITE`` includes everything ``READ`` allows. A credential that may change
-    the memory may obviously also look at it.
+    ``WRITE`` includes everything. ``READ`` and ``INGEST`` are disjoint: an
+    ingest credential may reach only the one ingest route, not retrieval or
+    any other mutation.
     """
 
     READ = "read"
+    INGEST = "ingest"
     WRITE = "write"
 
     def covers(self, *, required: "PerimeterScope") -> bool:
         """True when this scope satisfies ``required``."""
         if self is PerimeterScope.WRITE:
             return True
-        return required is PerimeterScope.READ
+        return self is required
 
 
 class CredentialKind(StrEnum):

@@ -56,6 +56,21 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Optional second listen address for HTTP cost export (`127.0.0.1:8001`, `[::1]:8001`, or `unix:/path`). Unset = no HTTP export |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | Bearer for the export listener. Required and ≥32 bytes when the bind is set |
 
+#### Signed credential scopes
+
+A credential verified through `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` names
+exactly one of three scopes:
+
+| Scope | What it reaches |
+| --- | --- |
+| `read` | Retrieval, search, inventory, readiness, and other non-mutating routes. It cannot ingest or change configuration |
+| `ingest` | Only `POST /ingest`. It cannot search or inspect memory, run an assured operation, or create a connector that keeps pulling after the caller leaves |
+| `write` | The complete deployment API, including `POST /ingest`; it also satisfies every `read` requirement |
+
+Unlisted routes require `write`. A new route therefore stays unavailable to
+narrow credentials until it is classified deliberately, and an unknown scope
+on a signed credential is refused rather than downgraded.
+
 #### Calling a deployment from a browser
 
 A browser refuses a cross-origin request *before it is sent* unless the server
