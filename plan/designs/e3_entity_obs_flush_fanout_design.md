@@ -261,8 +261,10 @@ attached evidence is never re-split. (Before D107 this rule compared
 2. Later materialize/apply unit B `{t2:B}`.  
 3. Final slices must still be `A[t1,t2), B[t2,t3), A[t3,∞)`.
 
-Impl may walk evidence claim `asserted_at` on O after cap, or rebuild open
-history for E from durable adjudications + claim times. This is a D43 co-requisite
+Impl may walk the evidence claims attached to O after the cap, testing each
+state claim's canonical occurrence start against T (never `asserted_at`,
+D107), or rebuild open history for E from durable adjudications + claim
+windows. This is a D43 co-requisite
 of multi-version continuous flush under D90.
 
 ### 5.6 LLM and locking (binding)
