@@ -33,9 +33,10 @@ are starting points to measure (CLAUDE.md).
 >   Markdown — the immutable coordinate system all offsets point into, D57) via a versioned
 >   **converter** (D38); the **blockizer** derives blocks; PageIndex draws sections; E2
 >   extracts **claims** whose `source_span` offsets point into document.md (grounding, D32);
->   the **raw mount** (D51) serves immutable originals read-only, *off* the navigation path,
->   via explicit pointers; `media/` in the artifacts bucket holds *derived* media on the
->   browse path; facts count **distinct source lineages** (D54).
+>   the **raw mount** (D51/D108) serves immutable originals read-only, on the navigation path
+>   at `<doc_id>/<content_hash>/original.<ext>` — above the representation directory, so every
+>   representation of the same bytes shares one copy; `media/` in the artifacts bucket holds
+>   *derived* media; facts count **distinct source lineages** (D54).
 
 ## 1. The conceptual model (confirmed, now bound against media)
 
@@ -76,15 +77,23 @@ The router gains three media routes, each a versioned converter like every other
 |---|---|---|---|
 | **Audio** (`audio/*`) | **diarized ASR** | the transcript, one block per speaker turn, speakers resolved to entities where possible ("**Bob:** …"), unresolved speakers kept as stable labels ("**Speaker 2:** …"); an optional **Acoustic events** section (non-speech sounds the tool detects — alarms, applause — capability-dependent) | optional `.vtt` interchange copy |
 | **Video** (`video/*`) | ASR (audio track) + **adaptive keyframes** + optional VLM shot notes | the transcript as the document spine, keyframe references at their time positions (exactly like figures in a paper), shot notes as clearly-sectioned blocks; optional Acoustic events as for audio | keyframes (adaptive: per shot, not per frame — coverage is a measured knob), thumbnails |
-| **Standalone image** (`image/*` that is a *picture*) | **VLM description** (+ OCR of any visible text) | the description + a "Visible text" section, clearly sectioned; region-grain descriptions permitted as sub-sections with image-region locators | a normalized preview/thumbnail |
-| *(image that is a document* — a scanned page, a slide deck export*)* | the existing OCR route | as today | as today |
+| **Image** (`image/*`) | **both lanes, weighted**: VLM description and OCR of visible text, with a classifier setting *emphasis and budget*, never exclusion | the description and a "Visible text (OCR)" section, clearly sectioned; region-grain descriptions permitted as sub-sections with image-region locators | the **agent rendition** (§4a) plus any crops/thumbnails |
 
 Notes an implementer needs:
 
-- **The image discriminator.** MIME alone cannot distinguish "image that is a document" (→
-  OCR route) from "image that is a picture" (→ description route); the route includes a
-  cheap classifier (or the VLM's own routing call). Misroutes are recoverable — both routes
-  are versioned conversions of immutable bytes; a route fix is a version bump.
+- **The image classifier chooses emphasis, not exclusion.** MIME cannot distinguish a
+  scanned page from a photo, so the route includes a cheap classifier (or the VLM's own
+  routing call) — but its output is a *weighting*, not a switch. A scan-leaning image spends
+  its budget on OCR and still records a short visual description; a photo-leaning image
+  spends it on description and still runs OCR over any visible text. The reason is that the
+  classes are not disjoint in practice: a screenshot, a chart, a slide, and a whiteboard
+  photo all carry both readable symbols and visual structure that the other lane would
+  discard. An exclusive switch turns every misclassification into permanently missing
+  evidence; a weighting turns it into a cheaper-but-complete conversion. Both lanes label
+  their ranges under §5, so a reader always sees which lane produced which text, and a lane
+  that genuinely produced nothing is disclosed as a coverage gap rather than omitted.
+  Misroutes remain recoverable either way — every route is a versioned conversion of
+  immutable bytes, and a re-weighting is a version bump (§6).
 - **Diarization is load-bearing, and conservative.** Attributed stance (D59) requires a
   holder: without speakers, every opinion in a meeting recording is holderless and Selection
   drops it. But *wrong* attribution corrupts stance memory, while *missing* attribution
@@ -187,14 +196,190 @@ Rules, each load-bearing:
 - **Deep links on every surface.** P3 stubs and `document.md` frontmatter render locators as
   raw-mount-relative links with media fragments (`original.mp3#t=873`); the retrieval
   envelope's provenance handles carry the locators; and unmounted parity requires a
-  **locator-aware serving operation** (`hydrate depth=bytes` with a time-range/region, or a
-  `source_open` primitive) returning a seekable, codec-aware segment — a naive byte-range is
-  a false promise for arbitrary video codecs. Clip extraction is a *serving* operation, never
-  a new stored artifact.
+  **locator-aware serving operation** returning a seekable, codec-aware segment — a naive
+  byte-range is a false promise for arbitrary video codecs. Two named operations share that
+  one serving path: `hydrate depth=bytes` fetches the *bytes* of a locator's interval or
+  region, and **`source_open` (§4a)** delivers the same material as *content in the client's
+  perceptual channels* — the operation an agent uses when it needs to look rather than to hold
+  bytes. Clip extraction is a
+  *serving* operation, never a new stored artifact.
 - **Three kinds of time, named apart** (schemas, API fields, the consumption skill):
   `start_ms` = where in the *file* the evidence occurs; `claim_valid_from` (D41) = when the
   fact held *in the world*; `ingested_at` = when the *system* learned it. Calling any two of
   these "the timestamp" invites wrong as-of queries.
+
+## 4a. Agent-visible source access — `source_open` serves perception, not pointers
+
+**The problem this solves.** §4 gives a claim a precise pointer into its source: this region
+of this image, this interval of this recording. The pointer is only useful if the agent can
+*act* on it. A mounted agent can — open the file, seek, look. For an unmounted agent every
+existing answer stops one step short: a `raw_uri` is a string, a URL is a promise the client
+may never redeem, and `hydrate depth=bytes` returns *bytes*, which a model cannot perceive
+unless something decodes them into its input channel. Because §4's second grounding hop
+exists so a reader can catch the converter being wrong, a serving path that never puts the
+source in front of the model reduces that audit to paraphrasing the converter's own output.
+
+**The operation.** `source_open` is the locator-aware operation that serves a source as
+**perceptual content** — content in the client's native modality channels rather than a
+reference to be resolved later. It is a direct §3 primitive (retrieval), not a fifth assured
+operation (D87 unchanged), and it shares `hydrate depth=bytes`'s resolution path,
+authorization, and audit. It carries its own name because "let me look at it" is a different
+agent intent from progressive record deepening, and tool discovery is how agents find intents.
+
+```
+source_open(version_id, representation_id?, locator?, accept?) -> envelope(grain: evidence)
+```
+
+There is **no caller-selected view mode.** The server decides whether the stored original can
+be served as-is — already a supported format, safely decodable, within served bounds — or
+whether a rendition must stand in, and the result says which it did (below). Making that a
+caller flag would invite an agent to request an unbounded original into its own context, and
+would let two callers disagree about what "the source" means.
+
+**What each modality returns.** "Perceptual" is modality-specific, and every media kind the
+router accepts has a defined answer:
+
+| Source | Content returned | With a locator |
+|---|---|---|
+| Image | image content, in a format the client accepts | whole-image overview **plus** a high-detail crop of the region |
+| Audio | audio content for the interval | the interval, bounded by served limits |
+| Video | keyframe image content for the interval plus its audio | the interval's frames and audio, not the whole file |
+| Pageless text sources | the source text of the `source_range` | the interval, with surrounding context |
+
+A region or interval always returns orienting context alongside the detail, because a crop
+without context is uninterpretable and an overview without detail loses what motivated the call.
+What "context" is differs by modality, and each is bounded: for an image it is the whole-image
+overview beside the crop; for a recording it is **not** a longer excerpt — extending audio to
+provide context has no natural stopping point and would defeat the served duration bound — but
+the document's derived preview and summary material (§8) carried beside the requested interval.
+A caller that wants more of a recording asks for a wider interval, which is a locator it can
+state and a cost it can see.
+
+**Without a locator, a time-based source returns its preview material, never an excerpt.** An
+image has a natural whole — the image — so a locator-free call returns it. A recording does
+not: any excerpt the server picked would be an arbitrary claim about which ten seconds
+mattered, and the whole file is never inlined. A locator-free call on `audio/*` or `video/*`
+therefore returns the document's existing derived preview material (keyframes, thumbnails, and
+the derived summary sections — §8) plus the handle and duration, and no audio or video content.
+Perceiving a recording requires saying *when*; that is what §4's locators are for.
+
+**What the contract does and does not guarantee.** It guarantees the *server* delivered the
+source in a form the client's model can consume, in the same response as the identity that
+proves what it is. That closes the server-side failure mode, and it is strictly stronger than
+a link: a `resource_link` or signed URL delivers nothing, and the protocol does not require a
+client to fetch it, so a link-only result is indistinguishable server-side between "the agent
+looked" and "the agent did not". It does **not** prove the pixels entered the model's context.
+MCP defines image and audio blocks as tool-result content and leaves it to the host how those
+blocks reach the model, so no server-side success can establish that a host forwarded them.
+The audit record is therefore honest about its own scope: it records that content of a stated
+kind, size, and hash was delivered to a named principal, never that a model perceived it.
+**End-to-end perception is proved by evaluation, not by the wire contract** — the held-out
+detail check in §10's spike list, where an agent must report a visual or audible detail
+deliberately absent from every derived text. A wire contract can make perception possible and
+remove every server-side excuse; only a test can show it happened.
+
+**Format negotiation is caller-declared, because no protocol declares it.** MCP has no
+standard client capability announcing which tool-result image or audio MIME types a host
+accepts, so a server cannot infer it. The caller therefore states it: `accept` is an optional
+list of MIME types the caller can consume. The deployment publishes its **served set** —
+output formats per modality with maximum payload, pixel, and duration bounds — as ordinary
+capability data in the envelope, the way D49 carries capability and freshness. The server
+returns the best match between `accept` and the served set; with `accept` omitted it returns
+the served default, chosen to be the most broadly supported member. **An empty intersection is
+a typed `boundary` (D49)** naming the served set, never a silent failure or a payload the
+caller cannot decode. An agent must never have to invent a `max_edge_px` to look at a photo:
+bounds are served, not caller homework.
+
+**The response maps content to identity, part by part.** One response may carry several
+content blocks — an overview and a detail crop, or a video interval's keyframes and its audio.
+The envelope therefore carries a `content_manifest[]` in the same order as the protocol's
+native content blocks — a name chosen deliberately, because D87 removed `Envelope.parts` as an
+envelope-of-envelopes composition mechanism and this is not that: it describes one response's
+own content blocks and composes nothing — each entry naming its `role` (`overview` | `detail` | `keyframe` | `audio` |
+`source_text`), `content_kind` and `mime`, its `bytes_sha256`, its `origin` (`original` |
+`agent_rendition`), the `transforms[]` that produced it when derived, the `locator` it
+answers, and its `trust: untrusted` label. Without that pairing a reader holding three images
+cannot say which is the crop, which is byte-identical, and which was resampled — and the
+identity guarantee below would be unverifiable in exactly the case it matters most.
+
+**Original versus rendition is never blurred.** Every result declares its content `original`
+or `agent_rendition`. `original` means byte-identical to the stored source and hash-verifiable
+against it. `agent_rendition` means a derived view, and it carries its own hash plus the
+transform list that produced it — decoder and version, orientation applied, colour conversion,
+resampling, and what metadata was removed. Renditions exist because many clients cannot
+consume HEIC, TIFF, camera RAW, active SVG, or a 100-megapixel panorama, and because handing a
+model unsanitized source is a decode-safety hazard. Whole originals of any size remain
+fetchable for audit, export, and hash verification through `hydrate depth=bytes` and the CLI
+download path, which are byte channels with no context budget to protect.
+
+**Where renditions come from — reads stay side-effect-free.** The route produces the standard
+renditions at conversion time, as ordinary `media/` derived assets under §1 with locators and
+manifest entries like any other. `source_open` serves those. When a locator names a region or
+interval with no stored asset, the operation performs the same **ephemeral** transform that §4
+already binds for clip extraction ("clip extraction is a *serving* operation, never a new
+stored artifact"; retrieval §7 repeats it): it computes the view, returns it, and stores
+nothing.
+Retrieval §12's rule that reads never write is preserved exactly — a read may compute, but
+only a conversion creates a stored asset, and only §6 advances a representation.
+
+**Retrieval offers the action; it does not take it.** Every media-bearing envelope item
+carries a compact **source handle** in its provenance block (§5 of retrieval): immutable
+identity, detected MIME, dimensions or duration, the readiness dimensions of §4b, any region
+or interval locator, and `source_open` named as the next action — and no content. The agent
+decides whether the question is worth the context and the bandwidth. The system must neither
+inline every source into every answer (burning context, widening prompt-injection surface, and
+removing the agent's judgment) nor bury the original behind a surface only a human can drive
+(removing its autonomy). This is D51's "compact by default, the source one decision away"
+applied to the moment of looking. **A mounted agent does not need this operation at all** — under
+D108 it opens `<doc_id>/<content_hash>/original.<ext>` directly, which is the better motion
+whenever the filesystem is available. `source_open` exists for the unmounted agent, which is
+most agents against a managed deployment, and for locator-scoped access to large media where
+the file is present but nobody wants all of it in context.
+
+**The source is untrusted evidence.** Decoding runs in an isolated, resource-bounded process
+with pixel, frame, recursion, and time limits, so malformed files and decompression bombs fail
+before any expensive model runs. An opened source can itself carry an injection — text in the
+image, speech in the recording, addressing the agent directly. The result labels its content
+untrusted, and the consumption skill (retrieval §8) teaches the rule: visible or audible
+instructions inside a source are *testimony to report*, never instructions to follow. EXIF and
+similar metadata survive only in the original; a rendition's manifest records what was
+stripped, and location or device identifiers are not promoted into retrieval by default. Every
+open and every download is audited with principal, version, representation, rendition,
+locator, byte count, content kind, and outcome.
+
+## 4b. Scoped readiness — one boolean cannot describe a media document
+
+A media document is not simply ready or not. Its source can be safely stored and openable
+while its conversion failed; its text can be fully searchable while its visual index rebuilds.
+Reporting one flag either lies about what works or withholds what does. The source handle
+(§4a) and the envelope's provenance therefore carry four independent dimensions, each read
+from state that already exists rather than from a new flag:
+
+| Dimension | Read from | False means |
+|---|---|---|
+| `source_stored` | the version's content object and its verified hash | the ingest did not happen; nothing else is meaningful |
+| `agent_view_ready` | the detected type resolves to a decoder in the deployment's served set (§4a), and the version passed safe-decode admission at ingest | `source_open` cannot serve perceptual content; `hydrate depth=bytes` may still serve bytes |
+| `text_retrieval_ready` | a current representation (§6) exists and its projection is caught up | the document is invisible to text search; its source is still openable |
+| `visual_search_ready` | **per query→target modality pair**, exactly as §7 advertises capability: its `media_segments` rows are current for that pair | that pair misses the document; other configured pairs and every non-search path still work |
+
+`visual_search_ready` is therefore a map from pair to state, not one boolean: a source can be
+discoverable by a text query and not by an image query, and collapsing the two would report a
+capability the deployment does not have. An unconfigured pair is D49's typed `boundary`, not a
+false value.
+
+**Per-lane detail is disclosure, not a fifth flag.** Which *lane* failed — OCR, description,
+diarization, keyframing — is already recorded where it belongs: the manifest's coverage policy,
+coverage result, and gaps/warnings (§2), labeled per range under §5. A document whose OCR lane
+produced nothing while its description lane succeeded has `text_retrieval_ready = true` and a
+disclosed coverage gap naming the empty lane; a reader that needs the distinction reads the
+manifest, which is the object that actually knows. Inventing per-lane booleans beside it would
+create a second, drifting account of the same fact.
+
+The rule this encodes: **a failure in one lane never removes access earned by another.** A
+description-model outage must not make an already-safe source impossible to look at, and a
+failed visual index must not withdraw text results. Recovery is per-lane and re-runs nothing
+else: a rebuilt projection needs no re-conversion, and a re-run conversion lane advances a new
+representation under §6 rather than mutating the current one.
 
 ## 5. Derivation disclosure — the reader always knows how mediated the text is
 
@@ -329,9 +514,10 @@ carries — beyond the standard `doc_id`/`artifact_uri`/`content_hash`/`section_
 (e0 §5) — the **`raw_uri`** (mount-relative path to the original) and, for time-coded media,
 the document's duration and preview links into the artifact `media/` folder
 (keyframes/thumbnails), so the browse path shows what the file *is* before anyone opens
-2 GB. Never whole raw media in the tree; never per-keyframe pseudo-documents. The raw mount
-serves originals as bound in D51 (off-path, explicit pointers, audit-logged, mime-routed
-storage classes — media likely to be read sits in standard/nearline, §e0).
+2 GB. Never a *duplicated* original in the tree, and never per-keyframe pseudo-documents: the
+one original is reachable in place at `<doc_id>/<content_hash>/original.<ext>`, above the
+representation directory, so browsing finds it without any copy being made (D108). The raw
+mount serves originals as bound in D51 (read-only, mime-routed storage classes — media likely to be read sits in standard/nearline, §e0).
 
 **What a deep link *is* on each surface — stated so no one ships a broken promise.** The
 rendered form `original.mp3#t=873` is a **media-fragment rendering for display**: browsers
@@ -342,16 +528,17 @@ and players understand it; a filesystem does not. So:
   motion explicitly: open the mounted file with local tooling at the offset (any player's
   seek, `ffmpeg -ss 873 -i <mounted path> …` for a clip) — the fragment string is never
   itself a path.
-- **Unmounted**: the locator goes to the serving operation (`hydrate depth=bytes` with a
-  locator, retrieval §3), which returns a seekable, codec-aware segment for the interval or
-  region — parity with the mounted seek, without downloading the file.
+- **Unmounted**: the locator goes to the serving operation — `hydrate depth=bytes` for a
+  seekable, codec-aware segment of the interval or region (retrieval §3), or `source_open`
+  (§4a) when the agent needs to *perceive* the source rather than hold its bytes. Parity with
+  the mounted seek, without downloading the file.
 
 ## 9. Decision interactions
 
 | Decision | Effect |
 |---|---|
 | D38/D57 | **refined**: converter contract generalizes (source map, derived assets, manifest); routes added; canonical-text rule (document.md, sidecars are interchange) fixes the e0 §2 transcript-placement ambiguity |
-| D51 | **confirmed and completed**: the raw mount + `media/` derived-only rule was the right half; locators + deep links complete the requirement's "agent gets raw when needed" with second-precision |
+| D51 | **confirmed, completed, then amended**: the raw mount + `media/` derived-only rule was the right half; locators + deep links complete "agent gets raw when needed" with second-precision; **D108** withdraws the off-navigation-path clause so a browsing agent reaches the original directly |
 | D32 | **extended**: two-hop grounding; modality-aware layer-4 audits |
 | D54–D56 | **precision fix + one new object**: representations become identified immutable objects (`document_representations`, representation-addressed artifact paths, current-pointer swap on completion); the extraction basis is `(representation_id, blockizer_version, structurer_version, extractor_version)`; upgrades flow the processing-driven ruleset; D56 reuse and `chunk_claims` occurrence provenance become representation-aware |
 | D59 | **served**: diarization is what makes recorded stance attributable; conservative resolution protects it |
@@ -382,7 +569,18 @@ and players understand it; a filesystem does not. So:
     growth; hard-forget latency at target scale.
 11. **Provider/privacy routes** — which adapters run locally vs send media to a provider;
     the manifest records the execution context (D61 ports).
-12. **Image discriminator accuracy** (document vs picture) and misroute cost.
+12. **Image lane weighting**: classifier accuracy as an emphasis signal, and the cost of
+    running the lighter lane at reduced budget versus the evidence it recovers (D107 — the
+    discriminator no longer excludes a lane, so the measurement is spend-versus-recall, not
+    misroute cost).
+12b. **Held-out perceptual detail** (the D107 end-to-end check). Build a corpus where each
+    media source contains a detail deliberately absent from every derived text — a visual
+    element no description mentions, a sound no transcript renders. Ask an agent, through the
+    ordinary retrieval path and then `source_open`, to report that detail. Caption-only and
+    OCR-only paths must fail it; the source-open path must pass. This is the only measurement
+    that shows perception happened end to end, because the wire contract can prove delivery
+    and nothing more (§4a). Measure it per client, since host handling of content blocks is
+    a client property, not a server one.
 13. **S58 media extension** — a cold agent must distinguish source expression / model
     observation / media time / world time / current fact from the skill alone.
 ## References

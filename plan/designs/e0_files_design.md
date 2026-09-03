@@ -161,8 +161,11 @@ gates everything downstream:
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
 - **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF + images-that-are-documents → **OCR** (e.g. Mistral OCR / docling / marker); office /
-  html / email → **markitdown**; plain text → passthrough. (This generalizes the common practice of
+  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → both the OCR and
+  description lanes with a classifier setting emphasis, never one to the exclusion of the other
+  (D107 — this replaced the earlier "images-that-are-documents → OCR" split, which discarded a
+  modality whenever the classifier was wrong); office / html / email → **markitdown**; plain
+  text → passthrough. (This generalizes the common practice of
   *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
   bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
   block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;

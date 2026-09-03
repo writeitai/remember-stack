@@ -944,8 +944,10 @@ back-pointers become best-effort provenance tiers. The conversion route is pinne
 `e1_chunks_design.md` §2.
 
 **Refined by D65 (media).** The router gains three media routes (audio → diarized ASR; video →
-ASR + adaptive keyframes + optional shot notes; standalone picture → VLM description behind a
-document-vs-picture discriminator), and the contract generalizes once more: the page map
+ASR + adaptive keyframes + optional shot notes; image → VLM description and OCR as weighted
+lanes, a classifier setting emphasis rather than excluding either — **refined by D107**, which
+replaced the original exclusive document-vs-picture discriminator), and the contract
+generalizes once more: the page map
 becomes a **source map** (character intervals → typed locators: page / image region / time
 range / video region) and the output adds a **manifest** recording route, models, versions,
 and per-section derivation labels — `convert(bytes, mime, hints) → { document.md, source_map,
@@ -1578,6 +1580,11 @@ via raw is accepted under per-deployment IAM — the deployment is one trust dom
 with a different trust boundary belongs in a separate deployment, never behind an in-library
 filter. The skill joins the eval surface (S58). Requirements §Retrieval is reframed around
 harness-first consumption.
+
+**Amended by D108 (originals on the navigation path).** D51's "off the navigation path"
+clause is withdrawn: every original is reachable from its document's directory alongside the
+representation, not only through an explicit pointer. The rest of D51 stands, including its own
+basis for the audit property — provider data-access logging, not unmountedness.
 
 **Refined by D65 (media).** Confirmed and completed: raw pointers gain **typed source
 locators** rendered as deep links (`original.mp3#t=873`) so the agent lands on the exact
@@ -2313,6 +2320,16 @@ captioned by one VLM family share one systematic perception error — composes w
 Refines D38/D57 (contract, routes), D51 (completed with locator deep links), D32 (two-hop +
 modality-aware audits), D54/D56 (representation objects + basis + occurrence provenance),
 D49 (envelope + boundary); D8/D9/D63 unchanged.
+
+**Refined by D107 (agent-visible source access).** Two of the eight bindings are amended, and
+one contract is added. Binding (4)'s "locator-aware serving operation for unmounted parity"
+gains a sibling: `hydrate depth=bytes` continues to serve bytes, and `source_open` serves the
+same material as perceptual content, which nothing in D65 had required. Binding (2)'s
+document-vs-picture discriminator becomes **lane emphasis** — both the description and OCR
+lanes run on every image, the classifier setting budget rather than excluding a modality.
+Scoped readiness (`source_stored`/`agent_view_ready`/`text_retrieval_ready`/
+`visual_search_ready`) is a *new* contract, not a replacement: D65 bound no readiness flag at
+all.
 
 ## D66. The public documentation site — the WriteIt docs module in-repo, with a same-PR truthfulness contract
 
@@ -4989,3 +5006,161 @@ rung) and `plan/designs/locomo_benchmark_design.md` Full-v21 protocol.
 design named but never implemented) and D105's Full-v20 benchmark identity.
 Preserves D41 (claims stay the one home of asserted validity), D98
 retrieval, D100/D102 identity, and D104/D105 answer-prompt contracts.
+## D107. Agent-visible source access — `source_open` serves perception, and image routing is lane emphasis
+
+**Decision (2026-09-03).** D65 bound how a media source is *derived* and *pointed at*. It left
+the last step — an unmounted agent actually perceiving the source — unbuilt: `media_design.md`
+§4 named "a `source_open` primitive" once as an alternative, while §8 and
+`retrieval_design.md` §3/§7 all selected `hydrate depth=bytes`, whose bound result is a
+seekable byte segment. No location ever required the result to be something a model can
+perceive. Bind that, and the routing change the same evidence forces. Five bindings.
+
+(1) **`source_open` is a direct retrieval primitive** (not a fifth assured operation — D87
+unchanged) sharing `hydrate depth=bytes`'s resolution path, authorization, and audit:
+`source_open(version_id, representation_id?, locator?, accept?)`, returning the D49 envelope at
+`evidence` grain with perceptual content carried in the protocol's native content channels
+beside it and a `content_manifest[]` pairing each content block to its role, hash, `original`/
+`agent_rendition` origin, transforms, locator, and untrusted label — without that pairing a
+reader holding an overview and a crop cannot say which is byte-identical. The name is chosen to
+avoid reviving `Envelope.parts`/`EnvelopePart`, which D87 removed as an envelope-of-envelopes
+composition mechanism; this describes one response's own content blocks and composes nothing. It has its own name because "let me look at it" is a different agent intent from
+progressive record deepening, and tool discovery is how agents find intents. **There is no
+caller-selected view mode**: the server decides whether the stored original can be served
+as-is or a rendition must stand in, because a caller flag would let an agent pull an unbounded
+original into its own context and would let two callers mean different things by "the source".
+A locator returns overview **plus** high-detail region or interval — a crop without context is
+uninterpretable, an overview without detail loses what motivated the call. Without a locator an
+image returns itself, while a recording returns only its derived preview material: any excerpt
+the server chose would be an unearned claim about which seconds mattered, and the whole file is
+never inlined.
+
+(2) **Perceptual content, per modality, negotiated by declaration.** Images return image
+content, audio returns audio content for the interval, video returns the interval's keyframes
+plus its audio, and pageless text sources return their source range. No protocol declares which
+tool-result formats a host accepts — MCP has no such client capability — so the *caller*
+declares: `accept` lists consumable MIME types, the deployment publishes its served set with
+payload, pixel, and duration bounds as ordinary envelope capability data, and the server returns
+the best match. An empty intersection is a typed `boundary` naming the served set, never a
+silent failure or an undecodable payload; an agent never invents a size parameter.
+
+(3) **The guarantee is scoped honestly.** The contract guarantees the *server* delivered the
+source in a consumable form together with the identity that proves what it is — strictly
+stronger than a link, which delivers nothing and which no protocol obliges a client to fetch,
+making a link-only result indistinguishable server-side between "the agent looked" and "the
+agent did not". It does **not** prove the content entered the model's context: MCP defines
+image and audio blocks as tool-result content and leaves their handling to the host. The audit
+record states only what it knows — that content of a stated kind, size, and hash was delivered
+to a named principal. **End-to-end perception is proved by evaluation**, through the held-out
+detail check bound as `media_design.md` §10 spike 12b, where an agent must report something
+deliberately absent from every derived text, measured per client because host handling of
+content blocks is a client property.
+A wire contract can make perception possible and remove every server-side excuse; only a test
+shows it happened.
+
+(4) **Original and rendition are named apart, and reads stay side-effect-free.** Every result
+declares its content `original` (byte-identical, hash-verifiable) or `agent_rendition` (a
+derived view carrying its own hash and full transform list — decoder, orientation, colour
+conversion, resampling, stripped metadata). Renditions exist because many clients cannot
+consume HEIC, TIFF, RAW, active SVG, or a 100-megapixel panorama, and because unsanitized
+source is a decode-safety hazard. Standard renditions are produced at *conversion* time as
+ordinary `media/` derived assets; a locator with no stored asset is served by the same
+**ephemeral** transform §4 already binds for clip extraction ("never a new stored artifact") —
+computed, returned, stored never — so retrieval §12's "no query-time writes" holds exactly. Whole originals of any size
+stay fetchable through `hydrate depth=bytes` and the CLI download path, which are byte
+channels with no context budget to protect.
+
+(5) **Open-on-demand, untrusted content, lane emphasis, scoped readiness.** Every media-bearing
+envelope item carries a compact **source handle** in its provenance — identity, detected MIME,
+dimensions or duration, readiness, any locator, `source_open` named as the next action — and no
+content, so the agent spends context only when it decides to; this is D51's "off the browse
+path, one explicit action away" applied to the moment of looking. Source content is labeled
+untrusted: text or speech inside an opened source is testimony to report, never an instruction
+to follow, and the consumption skill teaches that rule. D65's picture-vs-document discriminator
+becomes a **weighting**: both the description lane and the OCR lane run on every image, the
+classifier setting emphasis and budget. The classes are not disjoint — a screenshot, chart,
+slide, and whiteboard photo each carry readable symbols *and* visual structure — so an
+exclusive switch turns every misclassification into permanently missing evidence while a
+weighting turns it into a cheaper-but-complete conversion, with any empty lane disclosed as a
+coverage gap. Readiness becomes four independent dimensions read from existing state — `source_stored`,
+`agent_view_ready` (served decoder set plus safe-decode admission), `text_retrieval_ready`, and
+`visual_search_ready` **per query→target modality pair**, matching how §7 already advertises
+that capability, since a source can be discoverable by text query and not by image query —
+encoding
+that **a failure in one lane never removes access earned by another**; which lane failed stays
+where it already lives, in the manifest's coverage gaps, rather than in parallel booleans that
+would drift from it.
+
+**Context.** The driving requirement behind D65 was that the consuming agent keeps access to
+the raw files whenever it decides it needs them. For a mounted agent that was already true.
+For an unmounted one, every available answer proved addressability rather than access: an
+agent handed a pointer and reporting what the caption said has audited nothing — it has
+repeated the derivation it was meant to check. The corpus had effectively settled on a byte
+channel without anyone deciding that perception was out of scope; `source_open` appeared once,
+unpursued, in the one section that had reason to want it. The lane change follows the same
+evidence: routing is a budget decision, and an exclusive route silently discards a modality
+the source actually had.
+
+**Consequences.** Design home: `plan/designs/media_design.md` §4a (the operation, modality
+results, the scoped guarantee, format negotiation, original-versus-rendition, rendition
+lifecycle, open-on-demand, untrusted content, audit) and §4b (scoped readiness); §2 restated
+for lane emphasis; §4 and §8 name both serving operations. `plan/designs/retrieval_design.md`
+§3 gains the primitive, §5 the source handle in envelope provenance, §7 the sibling
+relationship and MCP exposure, §8 the skill's untrusted-source rule. Refines D65 (2) and (4),
+and D38's media-route refinement (the discriminator it describes becomes a weighting).
+Confirms D51's off-path rule and D87's assured-operation set. Composes with D49 (envelope,
+grain, typed `boundary`, capability advertisement) and D57/D65 (the decoder and any provider
+are ordinary versioned manifest components with execution context — **not** a new D61 port;
+D61's declared ports are unchanged). Spike 12 is restated to measure emphasis-weighting cost
+rather than discriminator misroute cost, and spike 12b adds the held-out detail check. The
+`media_converter_routes_bound` acceptance check is amended so a correct lane-emphasis
+implementation passes rather than fails it, and `e0_files_design.md`'s router is corrected to
+match §2 rather than keep the replaced exclusive split. `locomo_benchmark_design.md` §6's
+complete retrieval surface is **deliberately untouched**: adding a public operation to that
+answer catalog forces a new benchmark protocol version and breaks score comparability, which is
+the benchmark owner's call and not a side effect of a media design. The catalog stays true until
+`source_open` is implemented and exposed; that exposure carries the protocol bump. Sequencing
+lives in `plan/plans/`.
+
+## D108. Originals sit on the navigation path, alongside their representation
+
+**Decision (2026-09-03).** Every document's byte-identical original is reachable by browsing,
+at `<doc_id>/<content_hash>/original.<ext>` — one level *above* the representation directory,
+so it is shared by every representation of the same bytes and a re-conversion never duplicates
+it. D51's "off the navigation path, reached only via explicit pointers" clause is withdrawn.
+Everything else in D51 stands: the mount stays read-only, storage classes stay mime-routed, and
+hard-forget deletes originals exactly as before.
+
+**Context.** D51 already reached this conclusion for media and stopped one step short of it. Its
+own Context says that for whole-file media "the original **is** the artifact" and that "a
+transcript is precisely the lossy rendering a multimodal agent needs to bypass";
+`storage_routing.py` encodes the same judgement in code, routing `video/`, `audio/`, and
+`image/` originals hot because "the bytes themselves are the value". What D51 kept off-path was
+*navigation*, which it treats as a property distinct from reachability ("promotion ≠
+reachability"). That barrier was defensible when a harness could do nothing with a video but
+read its transcript. Models that consume video, audio, and images directly are now ordinary, so
+the barrier now costs more than it protects: it asks an agent to resolve a pointer to reach the
+one artifact it handles best, on a filesystem the same design tells it to prefer for everything
+a filesystem can do.
+
+Scope is **every original, not only media**. A single rule is easier to teach a cold agent than
+a per-family exception, and the cost that motivated the split is a storage-class cost, not a
+navigation cost — it is already solved by mime-routed classes and unchanged here.
+
+**Consequences.** The read record follows D51's own basis and is unchanged where the object
+store provides it: a mounted read of a GCS-backed original is a GCS read under Cloud Audit
+Logs, and an S3-compatible store with access logging behaves the same. `AuditedRawReader`
+remains the audited path for API/CLI byte fetches. Where a deployment backs raw with a plain
+local filesystem, browse-path reads of originals are **not** recorded — that is a property of
+that storage choice, stated here rather than left to surprise an operator, and it is the reason
+a deployment that needs the record configures a store that logs.
+
+An archive-class original is now reachable by a tree walk, so an untargeted scan can incur
+archive retrieval fees — the cost D51's storage split exists to bound. Storage class is
+unchanged by exposure; a per-deployment policy may narrow which families appear on the
+navigation path, and the default exposes all of them.
+
+For a mounted agent this removes the need for `source_open` (D107) entirely: it opens the file.
+`source_open` remains the only path for an unmounted agent, which is most agents against a
+managed deployment, and remains the locator-scoped path for large media where an agent wants
+ten seconds of a recording rather than the file. Any managed-offering claim about how originals
+are accessed is a D5 claim-governance matter in the cloud repository, not settled here.
