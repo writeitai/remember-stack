@@ -1,10 +1,11 @@
-"""The signed perimeter credential, and what it refuses.
+"""Signed perimeter credentials and shared-secret compatibility at their boundary.
 
 These tests are mostly about refusal. A verifier that accepts good credentials
 is easy; the interesting question is whether it can be talked into accepting
 something it should not — a token signed with the wrong key, one aimed at
 another deployment, one asking to be verified with no algorithm at all, or one
-whose expiry has passed.
+whose expiry has passed. The HTTP proofs also pin compatibility with the legacy
+unscoped shared secret wherever narrow signed authority changes behaviour.
 """
 
 from __future__ import annotations

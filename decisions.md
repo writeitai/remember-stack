@@ -4571,10 +4571,11 @@ Alembic's autocommit boundary and impossible to pre-build by hand before
 the column existed. The later "documents by principal" operation adds the
 index in its own revision.
 
-**Refinement (2026-09-03).** Where API authentication is configured, trusted
-attribution additionally requires full `write` authority. The unscoped shared
-secret remains unrestricted; narrow signed scopes cannot assert an immutable
-principal and their attribution headers are ignored.
+**Amendment (2026-09-03, ingest attribution authority).** Where API
+authentication is configured, trusted attribution additionally requires full
+`write` authority. The unscoped shared secret remains unrestricted; narrow
+signed scopes cannot assert an immutable principal and their attribution
+headers are ignored.
 
 **Why.** D50 makes content-level authorization and per-user scoping
 library non-goals; that is about **authorization**. Attribution is a

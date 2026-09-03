@@ -65,14 +65,13 @@ cannot name its immutable principal. Without API auth, enabling the setting
 trusts the network perimeter by itself. On an ordinarily reachable deployment
 it makes attribution meaningless rather than merely permissive.
 
-Attribution is honoured only when the composing profile declares
-`trusted_principal_source=True` and, when present, the API credential carries
-full `write` authority. The legacy shared secret has that unrestricted
-authority; a narrow signed credential identifies its own caller but has no
-authority to assert an arbitrary principal. Untrusted attribution is **ignored,
-not rejected**: nothing forged is recorded either way, so refusing buys no
-safety while adding a failure mode where a merely misconfigured deployment
-rejects real documents.
+Full `write` is the line because such a credential can already write anything
+to this deployment, so naming a principal grants it no authority it lacks. A
+narrow credential's issuer deliberately withheld everything else, and
+attribution must not be the one fact it can still forge. Untrusted attribution
+is **ignored, not rejected**: nothing forged is recorded either way, so refusing
+buys no safety while adding a failure mode where a merely misconfigured
+deployment rejects real documents.
 **Metadata must never break ingest.** Default is off, so the self-host
 posture is unchanged.
 

@@ -1137,9 +1137,10 @@ def _parse_ingest_principal(
 ) -> IngestPrincipal | None:
     """Validate a trusted attribution pair, or raise a 422 explaining why.
 
-    Only reached on a trusted perimeter presenting full WRITE authority, so a
-    malformed pair here is a real client error worth reporting rather than
-    metadata that should be dropped.
+    Only reached on a trusted network perimeter and, where API authentication
+    is configured, one presenting full WRITE authority. A malformed pair here
+    is therefore a real client error worth reporting rather than metadata that
+    should be dropped.
     """
     if kind is None and ref is None:
         return None
@@ -1204,9 +1205,10 @@ def _mount_ingest(
                 description=(
                     "One of: user | api_credential | service. Sent with"
                     " X-Ingest-Principal-Ref. Ignored unless the deployment"
-                    " declares a trusted principal source and the presenting"
-                    " credential carries full write authority; malformed values"
-                    " are 422 only for a trusted assertion."
+                    " declares a trusted principal source and, where API"
+                    " authentication is configured, the presenting credential"
+                    " carries full write authority; malformed values are 422"
+                    " only for a trusted assertion."
                 ),
             ),
         ] = None,
@@ -1229,13 +1231,13 @@ def _mount_ingest(
         reach it.
 
         The pair is honoured only when the composing profile declares its
-        network perimeter trusted (``trusted_principal_source``) and the
-        presenting credential carries full WRITE authority. The unscoped
-        shared secret is unrestricted; narrow signed credentials may add or
-        read data, but cannot nominate an immutable principal. Untrusted
-        attribution is **ignored, not rejected**: nothing forged is recorded
-        either way, and refusing would let a metadata concern fail an otherwise
-        valid ingest.
+        network perimeter trusted (``trusted_principal_source``) and, where API
+        authentication is configured, the presenting credential carries full
+        WRITE authority. The unscoped shared secret is unrestricted; a narrow
+        signed ``ingest`` credential may add a document but cannot nominate its
+        principal. Untrusted attribution is **ignored, not rejected**: nothing
+        forged is recorded either way, and refusing would let a metadata
+        concern fail an otherwise valid ingest.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
