@@ -51,6 +51,84 @@ Four things are true of every deployment's API:
   (`unknown_entity`, `known_empty`, `boundary`). An unroutable request is an
   ordinary HTTP status.
 
+## The machine-readable schema
+
+The query API is also described by an OpenAPI document, so a client can be
+**generated** from the contract rather than transcribed from prose. It covers
+the routes a shipped self-host deployment serves — not the cost-export listener
+below, which is a separate process, nor connector management, which no shipped
+profile composes. The
+document is [`openapi.json`](https://github.com/writeitai/remember-stack/blob/main/openapi.json)
+at the root of the repository, and releases published from now on attach it as
+a release asset of the same name. Releases up to and including v0.15.0 predate
+it, so check a release's asset list before pinning one to generate from — the
+repository copy always describes the current `main`.
+
+A deployment does **not** serve the schema itself. `GET /openapi.json` is not a
+route, and that is deliberate rather than an oversight: FastAPI's schema
+endpoint is not covered by the auth perimeter, so serving it would hand the
+complete surface — every path, parameter and response shape — to callers who
+have not authenticated. The document is a build artifact of the release
+instead, published where anyone entitled to the software can read it and
+nowhere else.
+
+Generate a typed client the usual way for your language, for example:
+
+```bash
+# From the repository, describing current main:
+curl -fsSL -o openapi.json \
+  https://raw.githubusercontent.com/writeitai/remember-stack/main/openapi.json
+
+# Or, pinned to the version you actually run — check the release's asset
+# list first, since releases up to v0.15.0 do not carry it:
+#   curl -fsSL -o openapi.json \
+#     https://github.com/writeitai/remember-stack/releases/download/<tag>/openapi.json
+
+# TypeScript
+npx openapi-typescript openapi.json -o src/engine-schema.ts
+
+# Python
+uvx openapi-python-client generate --path openapi.json
+```
+
+Pin to the release you run rather than to `main` for anything you ship: the
+document is the contract of one version, and `main` describes whatever is
+newest.
+
+The document is stamped with the package version it describes, and declares
+the bearer scheme, so a generated client knows to send `Authorization: Bearer
+…`. Whether a credential is actually *required* is a deployment's own
+configuration: a host with no perimeter configured serves openly and ignores
+one, which is why the quickstart works without any. Sending a credential is
+always safe; a client that cannot send one cannot talk to a guarded host.
+
+It describes the surface of a **fully configured self-host deployment** —
+what the shipped stack serves with its capabilities in place — not every route
+the code could theoretically mount. Two things follow, and they are worth
+keeping straight:
+
+- **Capabilities nobody ships are absent.** A route the code can mount but no
+  deployment composes would be advertised and then answer 404 everywhere, so
+  CI fails if the export composes a capability the self-host profile never
+  passes.
+- **Capabilities you have not configured are still listed.** Whether a
+  perimeter or a spend lease is composed is decided at run time from your
+  settings, and no check on the published document can know your
+  configuration. Treat the schema as the contract of a fully configured
+  deployment, and your own configuration as what your host actually enforces.
+
+If you build a deployment programmatically with a different set of
+capabilities, its surface is the subset you composed.
+
+Regenerate it after changing any route:
+
+```bash
+uv run python scripts/export_openapi.py -o openapi.json
+```
+
+CI compares the committed file against a fresh export and fails when they
+differ, so the published contract cannot quietly fall behind the code.
+
 ## Cost export (ops listener, not this API)
 
 Content-free spend export is **not** a route on the query API. When

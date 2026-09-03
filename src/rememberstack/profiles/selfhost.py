@@ -968,24 +968,8 @@ class SelfHostProfile:
             ),
             documents=DocumentInventory(engine=self._engine),
             graph=graph_queries,
+            build_info=_BuildInfo(engine=self._engine),
         )
-
-        @app.get("/deployment", response_model=DeploymentBuildInfo)
-        def deployment_build_info() -> DeploymentBuildInfo:
-            """Report which code and model bindings are serving, before any work."""
-            with self._engine.connect() as connection:
-                document_binding_generation = connection.execute(
-                    text(
-                        "SELECT document_binding_generation FROM deployments"
-                        " WHERE deployment_id = :deployment_id"
-                    ),
-                    {"deployment_id": self._settings.deployment_id},
-                ).scalar_one()
-            return DeploymentBuildInfo(
-                build_revision=_build_revision(),
-                model_bindings=_model_bindings(),
-                document_binding_generation=document_binding_generation,
-            )
 
         @app.get("/healthz", include_in_schema=False)
         def healthz() -> dict[str, str]:
@@ -1498,6 +1482,36 @@ def _expected_components() -> dict[PipelineStage, str]:
             embedding_model=P1Settings().embedding_model
         ),
     }
+
+
+class _BuildInfo:
+    """Answer `GET /deployment` from the spine this profile serves.
+
+    Lives beside the profile because the binding generation is a property of
+    this deployment's database, not of the HTTP layer. `build_api` composes it
+    like any other capability, so the route is declared in one place with the
+    rest of the surface rather than bolted onto the app afterwards.
+    """
+
+    def __init__(self, *, engine: Engine) -> None:
+        """Bind the spine to read the binding generation from."""
+        self._engine = engine
+
+    def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
+        """Report serving code and model bindings, plus the binding generation."""
+        with self._engine.connect() as connection:
+            document_binding_generation = connection.execute(
+                text(
+                    "SELECT document_binding_generation FROM deployments"
+                    " WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": deployment_id},
+            ).scalar_one()
+        return DeploymentBuildInfo(
+            build_revision=_build_revision(),
+            model_bindings=_model_bindings(),
+            document_binding_generation=document_binding_generation,
+        )
 
 
 def _build_revision() -> str:

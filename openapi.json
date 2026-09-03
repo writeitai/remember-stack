@@ -1,0 +1,5271 @@
+{
+  "components": {
+    "schemas": {
+      "AggregateBucket": {
+        "additionalProperties": false,
+        "description": "One group in an enumerated aggregate (retrieval \u00a79): a key and its count.\n\n`key` is the group label \u2014 a predicate, an object entity, a timeline\nperiod, or an entity id rendered as text \u2014 and `null` for the single\nbucket of a plain count. `entity_id` is populated when the group IS an\nentity (group-by-object, delta-top-entities, typed-absence), so the\nagent can hop straight to it without re-resolving the label.",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          }
+        },
+        "required": [
+          "key",
+          "count"
+        ],
+        "title": "AggregateBucket",
+        "type": "object"
+      },
+      "AggregateReport": {
+        "additionalProperties": false,
+        "description": "An enumerated aggregate's result: the form asked, and its buckets.\n\nAggregation is enumerated, never general (retrieval \u00a79): each `form`\nis a bounded SQL shape with a predictable cost. `total` is the sum\nacross buckets (or the single count); `bounded_by` names the cap when\nthe shape rides a bounded feed (e.g. delta-top-entities), so a reader\nknows the ranking is over the window, not all of history.",
+        "properties": {
+          "bounded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bounded By"
+          },
+          "buckets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AggregateBucket"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "form": {
+            "title": "Form",
+            "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "form",
+          "total"
+        ],
+        "title": "AggregateReport",
+        "type": "object"
+      },
+      "AsOfTemporalScope": {
+        "additionalProperties": false,
+        "description": "A two-axis audit read with an explicitly reconstructed identity regime.",
+        "properties": {
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "identity_regime": {
+            "$ref": "#/components/schemas/IdentityRegime",
+            "default": "current"
+          },
+          "mode": {
+            "const": "as_of",
+            "default": "as_of",
+            "title": "Mode",
+            "type": "string"
+          },
+          "valid_at": {
+            "format": "date-time",
+            "title": "Valid At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid_at",
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "AsOfTemporalScope",
+        "type": "object"
+      },
+      "AtTemporalScope": {
+        "additionalProperties": false,
+        "description": "A current-belief read of the world-valid state at one instant.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "identity_regime": {
+            "$ref": "#/components/schemas/IdentityRegime",
+            "default": "current"
+          },
+          "mode": {
+            "const": "at",
+            "default": "at",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "AtTemporalScope",
+        "type": "object"
+      },
+      "CapabilityReadiness": {
+        "additionalProperties": false,
+        "description": "One live capability's required/readiness state and safe reason.",
+        "properties": {
+          "built_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Built At"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "required",
+          "ready",
+          "checked_at",
+          "reason"
+        ],
+        "title": "CapabilityReadiness",
+        "type": "object"
+      },
+      "ChangeRecord": {
+        "additionalProperties": false,
+        "description": "One entry in the `delta` change feed (S13/S14/S30).\n\n`kind` is what changed (relation | observation | claim | page) and\n`change` is how (new | invalidated | capped | recompiled). `at` is the\ninstant that placed it in the feed \u2014 the ingestion, invalidation, or\nrecompilation time the caller's `since` was compared against \u2014 so a\nfollow-up `delta` can resume from the last `at` it saw.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "change": {
+            "title": "Change",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": [
+          "kind",
+          "change",
+          "id",
+          "label",
+          "at"
+        ],
+        "title": "ChangeRecord",
+        "type": "object"
+      },
+      "ChunkEvidenceResult": {
+        "additionalProperties": false,
+        "description": "One live source chunk, distinct from an extracted claim or fact.",
+        "properties": {
+          "char_end": {
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "chunk_text": {
+            "title": "Chunk Text",
+            "type": "string"
+          },
+          "context_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Prefix"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "document_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Title"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "representation_id": {
+            "format": "uuid",
+            "title": "Representation Id",
+            "type": "string"
+          },
+          "section_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Role"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_modified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Modified At"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "doc_id",
+          "version_id",
+          "representation_id",
+          "chunk_text",
+          "char_start",
+          "char_end",
+          "section_role",
+          "source_kind"
+        ],
+        "title": "ChunkEvidenceResult",
+        "type": "object"
+      },
+      "CoMember": {
+        "additionalProperties": false,
+        "description": "One other side of a contradiction, surfaced with the fact (S23).\n\nA light record \u2014 enough to see the competing claim and hydrate it \u2014 so a\ncontradiction block can carry several sides without recursion.",
+        "properties": {
+          "evidence_count": {
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "fact_id": {
+            "format": "uuid",
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "validity": {
+            "$ref": "#/components/schemas/Validity"
+          }
+        },
+        "required": [
+          "fact_id",
+          "label",
+          "evidence_count",
+          "validity"
+        ],
+        "title": "CoMember",
+        "type": "object"
+      },
+      "ContextBundleV1": {
+        "additionalProperties": false,
+        "description": "The sole side-by-side response for complete testimony and fact reads.",
+        "properties": {
+          "contract": {
+            "const": "ContextBundle/v1",
+            "default": "ContextBundle/v1",
+            "title": "Contract",
+            "type": "string"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/Envelope"
+          },
+          "testimony": {
+            "$ref": "#/components/schemas/Envelope"
+          }
+        },
+        "required": [
+          "testimony",
+          "facts"
+        ],
+        "title": "ContextBundleV1",
+        "type": "object"
+      },
+      "Contradiction": {
+        "additionalProperties": false,
+        "description": "The S23 contract block: a fact's live contradiction, never one-sided.\n\nReturning one side of a live contradiction group without its others is a\ncontract violation, not a ranking choice (\"contradictions are surfaced,\nnever silently resolved\"). The bounded form: co-members come back INLINE\nup to a guaranteed cap (typical groups are 2\u20133 sides \u2014 both FY2023\nrevenue figures together, each with its own evidence handle); beyond the\ncap the block still always carries `group_id`, `returned`, `total`, and a\n`continuation`. One-sided is never a valid answer.",
+        "properties": {
+          "co_members": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoMember"
+            },
+            "title": "Co Members",
+            "type": "array"
+          },
+          "continuation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation"
+          },
+          "group_id": {
+            "format": "uuid",
+            "title": "Group Id",
+            "type": "string"
+          },
+          "returned": {
+            "minimum": 0.0,
+            "title": "Returned",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "returned",
+          "total"
+        ],
+        "title": "Contradiction",
+        "type": "object"
+      },
+      "CurrentTemporalScope": {
+        "additionalProperties": false,
+        "description": "A read evaluated against the world and identity state at one instant.",
+        "properties": {
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "identity_regime": {
+            "$ref": "#/components/schemas/IdentityRegime",
+            "default": "current"
+          },
+          "mode": {
+            "const": "current",
+            "default": "current",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "CurrentTemporalScope",
+        "type": "object"
+      },
+      "DeploymentBuildInfo": {
+        "additionalProperties": false,
+        "description": "Non-secret identity of the code and model bindings currently serving.\n\nAvailable without version ids so a caller can verify provenance *before*\nsubmitting work, rather than after the pipeline has already processed it\nunder whatever image happened to be running.",
+        "properties": {
+          "build_revision": {
+            "default": "",
+            "description": "Source revision stamped into the running image at build time; empty when the image was built without it.",
+            "title": "Build Revision",
+            "type": "string"
+          },
+          "document_binding_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current document-local entity binding projection generation.",
+            "title": "Document Binding Generation"
+          },
+          "model_bindings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Current non-secret provider model identities.",
+            "title": "Model Bindings",
+            "type": "object"
+          }
+        },
+        "title": "DeploymentBuildInfo",
+        "type": "object"
+      },
+      "DocumentPage": {
+        "additionalProperties": false,
+        "description": "One page of the document inventory.\n\n``cursor`` is opaque and absent on the last page. Callers must not\nconstruct one: it encodes the sort position, and an invented value would\nsilently skip or repeat documents rather than fail.",
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents"
+        ],
+        "title": "DocumentPage",
+        "type": "object"
+      },
+      "DocumentSummary": {
+        "additionalProperties": false,
+        "description": "One document lineage, with the newest snapshot the engine has observed.\n\n``latest`` is the highest ``version_no`` in the lineage, which is\ndeliberately not the same as the lineage's *current* version. The current\npointer only moves once a snapshot finishes processing, so a document\nwhose first version is still converting \u2014 or whose newest version failed \u2014\nhas no current version at all. Keying this on the current pointer would\nmake exactly the documents somebody is worried about disappear from the\nlist, which is the opposite of what an intake view is for.\n\n``serving`` says whether a *ready* snapshot exists to answer questions\nfrom, so the two facts stay separable: \"the newest upload failed\" and\n\"there is nothing here to search\" are different situations and a customer\nneeds to tell them apart.",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/DocumentVersionSummary"
+          },
+          "serving": {
+            "title": "Serving",
+            "type": "boolean"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "source_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Uri"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "doc_id",
+          "source_kind",
+          "first_seen_at",
+          "latest",
+          "serving"
+        ],
+        "title": "DocumentSummary",
+        "type": "object"
+      },
+      "DocumentVersionSummary": {
+        "additionalProperties": false,
+        "description": "The state of one observed snapshot of a document.\n\n``status`` is the version's own processing state, not a judgement about\nthe document: a lineage whose newest version is ``failed`` may still be\nserving an older one that is ``ready``.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ingested_at": {
+            "format": "date-time",
+            "title": "Ingested At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ingesting",
+              "converting",
+              "structuring",
+              "ready",
+              "failed",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_id",
+          "version_no",
+          "status",
+          "ingested_at"
+        ],
+        "title": "DocumentVersionSummary",
+        "type": "object"
+      },
+      "EntityCandidate": {
+        "additionalProperties": false,
+        "description": "One ranked resolve candidate (never a silent guess, S51).",
+        "properties": {
+          "canonical_name": {
+            "title": "Canonical Name",
+            "type": "string"
+          },
+          "context_hits": {
+            "default": 0,
+            "title": "Context Hits",
+            "type": "integer"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "canonical_name",
+          "tier"
+        ],
+        "title": "EntityCandidate",
+        "type": "object"
+      },
+      "Envelope": {
+        "additionalProperties": false,
+        "description": "The D49 envelope: results plus the answer's machine-readable self-account.\n\nEach answer is one operation's cohesive typed result. Independent complete\ntestimony and fact responses use ``ContextBundleV1`` instead of nesting or\nblending payloads inside an envelope.",
+        "properties": {
+          "aggregate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AggregateReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChangeRecord"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "chunks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChunkEvidenceResult"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "dropped_by_hydration": {
+            "default": 0,
+            "title": "Dropped By Hydration",
+            "type": "integer"
+          },
+          "edges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "entities": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EntityCandidate"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceResult"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "evidence_totals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceTotal"
+            },
+            "title": "Evidence Totals",
+            "type": "array"
+          },
+          "excluded_unstamped": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Excluded Unstamped",
+            "type": "integer"
+          },
+          "fact_evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FactEvidence"
+            },
+            "title": "Fact Evidence",
+            "type": "array"
+          },
+          "facts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FactResult"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/Freshness"
+          },
+          "grain": {
+            "$ref": "#/components/schemas/Grain"
+          },
+          "negative": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Negative"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "pages": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PageRef"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "paths": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphPath"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "ranking": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RankedItem"
+            },
+            "title": "Ranking",
+            "type": "array"
+          },
+          "sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SourceRecord"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "temporal_scope": {
+            "discriminator": {
+              "mapping": {
+                "as_of": "#/components/schemas/AsOfTemporalScope",
+                "at": "#/components/schemas/AtTemporalScope",
+                "current": "#/components/schemas/CurrentTemporalScope",
+                "history": "#/components/schemas/HistoryTemporalScope",
+                "overlap": "#/components/schemas/OverlapTemporalScope"
+              },
+              "propertyName": "mode"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CurrentTemporalScope"
+              },
+              {
+                "$ref": "#/components/schemas/AtTemporalScope"
+              },
+              {
+                "$ref": "#/components/schemas/OverlapTemporalScope"
+              },
+              {
+                "$ref": "#/components/schemas/HistoryTemporalScope"
+              },
+              {
+                "$ref": "#/components/schemas/AsOfTemporalScope"
+              }
+            ],
+            "title": "Temporal Scope"
+          },
+          "transcript": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TranscriptEntry"
+            },
+            "title": "Transcript",
+            "type": "array"
+          },
+          "truncation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Truncation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "grain",
+          "temporal_scope",
+          "freshness"
+        ],
+        "title": "Envelope",
+        "type": "object"
+      },
+      "EvidenceResult": {
+        "additionalProperties": false,
+        "description": "One evidence-grain record: a claim with its provenance anchors.",
+        "properties": {
+          "asserted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asserted At"
+          },
+          "char_end": {
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "claim_id": {
+            "format": "uuid",
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "claim_text": {
+            "title": "Claim Text",
+            "type": "string"
+          },
+          "claim_valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Valid From"
+          },
+          "claim_valid_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Valid Kind"
+          },
+          "claim_valid_precision": {
+            "default": "unknown",
+            "title": "Claim Valid Precision",
+            "type": "string"
+          },
+          "claim_valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Valid Until"
+          },
+          "corroboration_count": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corroboration Count"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "document_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Title"
+          },
+          "grouped_claim_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Grouped Claim Ids",
+            "type": "array"
+          },
+          "is_attributed": {
+            "title": "Is Attributed",
+            "type": "boolean"
+          },
+          "is_current_testimony": {
+            "title": "Is Current Testimony",
+            "type": "boolean"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
+          },
+          "source_span": {
+            "title": "Source Span",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "doc_id",
+          "chunk_id",
+          "claim_text",
+          "source_span",
+          "char_start",
+          "char_end",
+          "is_attributed",
+          "is_current_testimony"
+        ],
+        "title": "EvidenceResult",
+        "type": "object"
+      },
+      "EvidenceTotal": {
+        "additionalProperties": false,
+        "description": "Exact evidence disclosure for one fact and one evidence stance.",
+        "properties": {
+          "fact_id": {
+            "format": "uuid",
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "fact_kind": {
+            "enum": [
+              "relation",
+              "observation"
+            ],
+            "title": "Fact Kind",
+            "type": "string"
+          },
+          "returned": {
+            "minimum": 0.0,
+            "title": "Returned",
+            "type": "integer"
+          },
+          "stance": {
+            "enum": [
+              "supports",
+              "contradicts"
+            ],
+            "title": "Stance",
+            "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fact_kind",
+          "fact_id",
+          "stance",
+          "returned",
+          "total"
+        ],
+        "title": "EvidenceTotal",
+        "type": "object"
+      },
+      "FactEvidence": {
+        "additionalProperties": false,
+        "description": "One explicit fact-to-claim association in a flat compound answer.",
+        "properties": {
+          "claim_id": {
+            "format": "uuid",
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "format": "uuid",
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "fact_kind": {
+            "enum": [
+              "relation",
+              "observation"
+            ],
+            "title": "Fact Kind",
+            "type": "string"
+          },
+          "stance": {
+            "enum": [
+              "supports",
+              "contradicts"
+            ],
+            "title": "Stance",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_kind",
+          "fact_id",
+          "claim_id",
+          "stance"
+        ],
+        "title": "FactEvidence",
+        "type": "object"
+      },
+      "FactResult": {
+        "additionalProperties": false,
+        "description": "One fact-grain record: a live relation or observation, hydrated.",
+        "properties": {
+          "contradiction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Contradiction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contradiction_group": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contradiction Group"
+          },
+          "evidence_count": {
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "fact_id": {
+            "format": "uuid",
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "support": {
+            "$ref": "#/components/schemas/FactSupport",
+            "default": "current"
+          },
+          "validity": {
+            "$ref": "#/components/schemas/Validity"
+          }
+        },
+        "required": [
+          "fact_id",
+          "kind",
+          "label",
+          "evidence_count",
+          "validity"
+        ],
+        "title": "FactResult",
+        "type": "object"
+      },
+      "FactSupport": {
+        "description": "Whether a fact still has current-testimony support (D54).\n\n`current` is the normal state; `withdrawn` means every source that\nasserted the fact has stopped (an open `support_withdrawn` review flag) \u2014\nthe fact is *flagged, not vanished*, so an agent sees the ground moved\nbefore planning against it. A withdrawn fact is still returned.",
+        "enum": [
+          "current",
+          "withdrawn"
+        ],
+        "title": "FactSupport",
+        "type": "string"
+      },
+      "Freshness": {
+        "additionalProperties": false,
+        "description": "Per-source freshness stamps (S42): what lag the answer could carry.\n\nEach contributing channel also exposes its **`believed_at` horizon**: the\noldest system-time a query can reach before the channel can no longer\nanswer. Whenever a horizon is finite, a `believed_at` before it must return\na `boundary` (retrieval \u00a73), never a silent truncation. The live graph has\nno separate freshness stamp because it reads the same PostgreSQL snapshot.",
+        "properties": {
+          "k": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "p1_believed_at_horizon": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P1 Believed At Horizon"
+          },
+          "p1_written_inline": {
+            "default": true,
+            "title": "P1 Written Inline",
+            "type": "boolean"
+          },
+          "pg_live_ts": {
+            "format": "date-time",
+            "title": "Pg Live Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pg_live_ts"
+        ],
+        "title": "Freshness",
+        "type": "object"
+      },
+      "Grain": {
+        "description": "The D49 grain type-system: what kind of truth a result is.",
+        "enum": [
+          "fact",
+          "evidence",
+          "compiled",
+          "composite"
+        ],
+        "title": "Grain",
+        "type": "string"
+      },
+      "GraphCitationPathRequest": {
+        "additionalProperties": false,
+        "description": "Bounded directed document-citation path request.",
+        "properties": {
+          "from_doc_id": {
+            "format": "uuid",
+            "title": "From Doc Id",
+            "type": "string"
+          },
+          "max_hops": {
+            "default": 6,
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Max Hops",
+            "type": "integer"
+          },
+          "to_doc_id": {
+            "format": "uuid",
+            "title": "To Doc Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_doc_id",
+          "to_doc_id"
+        ],
+        "title": "GraphCitationPathRequest",
+        "type": "object"
+      },
+      "GraphEdge": {
+        "additionalProperties": false,
+        "description": "One traversed relation, carrying its bi-temporal state.",
+        "properties": {
+          "evidence_count": {
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "fact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact"
+          },
+          "ingested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingested At"
+          },
+          "invalidated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidated At"
+          },
+          "object_id": {
+            "format": "uuid",
+            "title": "Object Id",
+            "type": "string"
+          },
+          "predicate": {
+            "title": "Predicate",
+            "type": "string"
+          },
+          "relation_id": {
+            "format": "uuid",
+            "title": "Relation Id",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "support": {
+            "$ref": "#/components/schemas/FactSupport",
+            "default": "current"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "relation_id",
+          "subject_id",
+          "object_id",
+          "predicate",
+          "fact",
+          "evidence_count",
+          "valid_from",
+          "valid_until",
+          "ingested_at",
+          "invalidated_at"
+        ],
+        "title": "GraphEdge",
+        "type": "object"
+      },
+      "GraphInvocation": {
+        "additionalProperties": false,
+        "description": "One graph helper's terminal work and truncation disclosure.",
+        "properties": {
+          "applied_believed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Believed At"
+          },
+          "applied_valid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Valid At"
+          },
+          "effective_depth": {
+            "minimum": 1.0,
+            "title": "Effective Depth",
+            "type": "integer"
+          },
+          "effective_expansion_budget": {
+            "minimum": 1.0,
+            "title": "Effective Expansion Budget",
+            "type": "integer"
+          },
+          "effective_frontier_budget": {
+            "minimum": 1.0,
+            "title": "Effective Frontier Budget",
+            "type": "integer"
+          },
+          "effective_result_budget": {
+            "minimum": 1.0,
+            "title": "Effective Result Budget",
+            "type": "integer"
+          },
+          "effective_time_budget_ms": {
+            "minimum": 1.0,
+            "title": "Effective Time Budget Ms",
+            "type": "integer"
+          },
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated At"
+          },
+          "examined_edges": {
+            "minimum": 0.0,
+            "title": "Examined Edges",
+            "type": "integer"
+          },
+          "function": {
+            "enum": [
+              "graph_neighborhood",
+              "graph_path",
+              "graph_citation_path"
+            ],
+            "title": "Function",
+            "type": "string"
+          },
+          "ordinal": {
+            "minimum": 0.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "returned_paths": {
+            "minimum": 0.0,
+            "title": "Returned Paths",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "depth_budget",
+                  "expansion_budget",
+                  "frontier_budget",
+                  "result_budget",
+                  "time_budget"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Reason"
+          }
+        },
+        "required": [
+          "ordinal",
+          "function",
+          "truncated",
+          "examined_edges",
+          "returned_paths",
+          "effective_depth",
+          "effective_expansion_budget",
+          "effective_frontier_budget",
+          "effective_result_budget",
+          "effective_time_budget_ms"
+        ],
+        "title": "GraphInvocation",
+        "type": "object"
+      },
+      "GraphNeighborhoodRequest": {
+        "additionalProperties": false,
+        "description": "Bounded entity-neighborhood request.",
+        "properties": {
+          "believed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Believed At"
+          },
+          "continuation": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "hops": {
+            "default": 2,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Hops",
+            "type": "integer"
+          },
+          "include_paths": {
+            "default": false,
+            "title": "Include Paths",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 500,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "predicates": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Predicates",
+            "type": "array"
+          },
+          "valid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid At"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "title": "GraphNeighborhoodRequest",
+        "type": "object"
+      },
+      "GraphNode": {
+        "additionalProperties": false,
+        "description": "One entity the traversal reached, with its hop distance.",
+        "properties": {
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "hops": {
+            "minimum": 0.0,
+            "title": "Hops",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name",
+          "hops"
+        ],
+        "title": "GraphNode",
+        "type": "object"
+      },
+      "GraphPath": {
+        "additionalProperties": false,
+        "description": "One connection between two entities \u2014 a COMPOUND result.\n\nA path revalidates as a unit (S17/S21): if hydration drops any edge,\nthe whole path drops, because a path with a hole is not a shorter\npath \u2014 it is a different (and false) claim about connection.",
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            },
+            "minItems": 1,
+            "title": "Edges",
+            "type": "array"
+          },
+          "length": {
+            "minimum": 1.0,
+            "title": "Length",
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            },
+            "minItems": 2,
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "length",
+          "nodes",
+          "edges"
+        ],
+        "title": "GraphPath",
+        "type": "object"
+      },
+      "GraphPathRequest": {
+        "additionalProperties": false,
+        "description": "Bounded shortest entity-path request.",
+        "properties": {
+          "believed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Believed At"
+          },
+          "from_entity_id": {
+            "format": "uuid",
+            "title": "From Entity Id",
+            "type": "string"
+          },
+          "max_hops": {
+            "default": 4,
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Max Hops",
+            "type": "integer"
+          },
+          "predicates": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Predicates",
+            "type": "array"
+          },
+          "to_entity_id": {
+            "format": "uuid",
+            "title": "To Entity Id",
+            "type": "string"
+          },
+          "valid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid At"
+          }
+        },
+        "required": [
+          "from_entity_id",
+          "to_entity_id"
+        ],
+        "title": "GraphPathRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HistoryTemporalScope": {
+        "additionalProperties": false,
+        "description": "All currently believed fact intervals that began by evaluation time.",
+        "properties": {
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "identity_regime": {
+            "$ref": "#/components/schemas/IdentityRegime",
+            "default": "current"
+          },
+          "mode": {
+            "const": "history",
+            "default": "history",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "HistoryTemporalScope",
+        "type": "object"
+      },
+      "IdentityRegime": {
+        "description": "Which identity boundary answered a read (S61).\n\n`current` (the default) follows today's aliases and merge redirects even\nunder a past `believed_at`; `as_of` means the identity boundary was\nreconstructed as it stood at the queried instant (the transcript-based\n`examples.identity_as_of` saved query). The envelope always states which, so an audit\nread can never silently mix today's identities with yesterday's beliefs.",
+        "enum": [
+          "current",
+          "as_of"
+        ],
+        "title": "IdentityRegime",
+        "type": "string"
+      },
+      "IngestedVersion": {
+        "additionalProperties": false,
+        "description": "What one ingest did: the lineage/version it landed on, and whether it was new.\n\n`created=False` is the D55 content-hash no-op: identical bytes re-ingested\nnever create a second version or re-run the chain.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "deployment_id": {
+            "format": "uuid",
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deployment_id",
+          "doc_id",
+          "version_id",
+          "content_hash",
+          "created"
+        ],
+        "title": "IngestedVersion",
+        "type": "object"
+      },
+      "KFreshness": {
+        "additionalProperties": false,
+        "description": "The compiled-grain honesty block (retrieval \u00a75): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it \u2014 the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
+        "properties": {
+          "compiled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compiled At"
+          },
+          "open_flags": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Open Flags",
+            "type": "integer"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "title": "KFreshness",
+        "type": "object"
+      },
+      "Negative": {
+        "additionalProperties": false,
+        "description": "One typed 'no': each kind demands a different agent reaction.",
+        "properties": {
+          "explanation": {
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NegativeKind"
+          },
+          "workaround": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workaround"
+          }
+        },
+        "required": [
+          "kind",
+          "explanation"
+        ],
+        "title": "Negative",
+        "type": "object"
+      },
+      "NegativeKind": {
+        "description": "The fixed negative-answer taxonomy (S29/S39/S55).\n\nDeliberately no `denied` kind: content-level authorization is a library\nnon-goal (retrieval \u00a79), and hard-deleted (forgotten) content is\nindistinguishable-from-never-existed (S55), so it surfaces as\n`unknown_entity`/`known_empty`, never a distinct kind. Freezing the\ntaxonomy now is safe precisely because of these two omissions \u2014\nretrofitting a kind onto a deployed API breaks consumers.",
+        "enum": [
+          "unknown_entity",
+          "known_empty",
+          "boundary"
+        ],
+        "title": "NegativeKind",
+        "type": "string"
+      },
+      "OverlapTemporalScope": {
+        "additionalProperties": false,
+        "description": "A current-belief read of facts overlapping one inclusive interval.",
+        "properties": {
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "from": {
+            "format": "date-time",
+            "title": "From",
+            "type": "string"
+          },
+          "identity_regime": {
+            "$ref": "#/components/schemas/IdentityRegime",
+            "default": "current"
+          },
+          "mode": {
+            "const": "overlap",
+            "default": "overlap",
+            "title": "Mode",
+            "type": "string"
+          },
+          "to": {
+            "format": "date-time",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "OverlapTemporalScope",
+        "type": "object"
+      },
+      "PageRef": {
+        "additionalProperties": false,
+        "description": "One K page the `pages_about` discovery index reports (S31/S45).\n\nThe rule-key inverted index that routes writes, read backwards: which\npages exist about an entity or key. `stale` mirrors the refresh state \u2014\na page whose inputs changed but has not recompiled \u2014 so discovery never\npresents an out-of-date page as fresh without saying so.",
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "git_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Path"
+          },
+          "last_compiled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Compiled At"
+          },
+          "open_review_flags": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Open Review Flags",
+            "type": "integer"
+          },
+          "page_kind": {
+            "title": "Page Kind",
+            "type": "string"
+          },
+          "page_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Summary"
+          },
+          "redaction_required": {
+            "default": false,
+            "title": "Redaction Required",
+            "type": "boolean"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "page_kind",
+          "git_path",
+          "page_summary",
+          "last_compiled_at",
+          "status"
+        ],
+        "title": "PageRef",
+        "type": "object"
+      },
+      "PipelineReadinessReport": {
+        "additionalProperties": false,
+        "description": "Machine-verifiable E/P readiness for a bounded set of versions.",
+        "properties": {
+          "build_revision": {
+            "default": "",
+            "description": "Source revision stamped into the running image at build time. Empty when the image was built without it. Comparing this against the revision a benchmark prepared with is the only way to know the serving code is the code under test; a filesystem checkout says nothing about what the containers actually run.",
+            "title": "Build Revision",
+            "type": "string"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityReadiness"
+            },
+            "propertyNames": {
+              "enum": [
+                "pipeline",
+                "p1",
+                "live_graph",
+                "p3"
+              ]
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "document_binding_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current bounded document-entity projection generation. NULL means document-local exact T0 replay is disabled.",
+            "title": "Document Binding Generation"
+          },
+          "model_bindings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Current non-secret serving-process configuration; this is not processing-time provenance for the requested versions.",
+            "title": "Model Bindings",
+            "type": "object"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionPipelineReadiness"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "versions",
+          "capabilities"
+        ],
+        "title": "PipelineReadinessReport",
+        "type": "object"
+      },
+      "PipelineReadinessRequest": {
+        "additionalProperties": false,
+        "description": "Exhaustive readiness capabilities for a bounded version set.",
+        "properties": {
+          "require": {
+            "$ref": "#/components/schemas/ReadinessRequirements"
+          },
+          "version_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Version Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "version_ids",
+          "require"
+        ],
+        "title": "PipelineReadinessRequest",
+        "type": "object"
+      },
+      "PipelineStageReadiness": {
+        "additionalProperties": false,
+        "description": "One expected document-version stage at the public readiness boundary.",
+        "properties": {
+          "component_version": {
+            "title": "Component Version",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "missing",
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "dead_letter",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "component_version",
+          "status"
+        ],
+        "title": "PipelineStageReadiness",
+        "type": "object"
+      },
+      "QueryErrorCode": {
+        "description": "Every public failure code, exactly as bound in design \u00a74.1.",
+        "enum": [
+          "parse_error",
+          "multiple_statements",
+          "statement_not_allowed",
+          "relation_not_allowed",
+          "function_not_allowed",
+          "function_placement_not_allowed",
+          "operator_not_allowed",
+          "invalid_parameter",
+          "schema_version_mismatch",
+          "unbounded_recursion",
+          "quota_exceeded",
+          "concurrency_exceeded",
+          "saved_query_not_found",
+          "saved_query_disabled",
+          "saved_query_incompatible",
+          "saved_query_revalidation_pending",
+          "statement_timeout",
+          "lock_timeout",
+          "cancelled",
+          "resource_limit",
+          "execution_error",
+          "pg_unavailable",
+          "p1_unavailable",
+          "graph_unavailable",
+          "corpus_body_unavailable",
+          "generation_unavailable",
+          "confirmation_failed"
+        ],
+        "title": "QueryErrorCode",
+        "type": "string"
+      },
+      "QueryResult": {
+        "additionalProperties": false,
+        "description": "One complete `QueryResult/v1` response.",
+        "properties": {
+          "columns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ResultColumn"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "contract": {
+            "const": "QueryResult/v1",
+            "default": "QueryResult/v1",
+            "title": "Contract",
+            "type": "string"
+          },
+          "deployment_id": {
+            "format": "uuid",
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "number"
+          },
+          "empty_result": {
+            "default": false,
+            "title": "Empty Result",
+            "type": "boolean"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryErrorCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated At"
+          },
+          "exact_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Total"
+          },
+          "exact_total_known": {
+            "default": false,
+            "title": "Exact Total Known",
+            "type": "boolean"
+          },
+          "execution_started_at": {
+            "format": "date-time",
+            "title": "Execution Started At",
+            "type": "string"
+          },
+          "grade": {
+            "const": "exploratory_tabular",
+            "default": "exploratory_tabular",
+            "title": "Grade",
+            "type": "string"
+          },
+          "graph_invocations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphInvocation"
+            },
+            "title": "Graph Invocations",
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ResultLimits"
+          },
+          "negative_kind": {
+            "title": "Negative Kind",
+            "type": "null"
+          },
+          "ordered_result": {
+            "default": false,
+            "title": "Ordered Result",
+            "type": "boolean"
+          },
+          "pg_snapshot_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pg Snapshot At"
+          },
+          "query_hash": {
+            "title": "Query Hash",
+            "type": "string"
+          },
+          "query_language": {
+            "const": "sql",
+            "default": "sql",
+            "title": "Query Language",
+            "type": "string"
+          },
+          "query_space_schema": {
+            "const": "memory_v1",
+            "default": "memory_v1",
+            "title": "Query Space Schema",
+            "type": "string"
+          },
+          "referenced_functions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Referenced Functions",
+            "type": "array"
+          },
+          "referenced_views": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Referenced Views",
+            "type": "array"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "returned_byte_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Returned Byte Count",
+            "type": "integer"
+          },
+          "returned_row_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Returned Row Count",
+            "type": "integer"
+          },
+          "rows": {
+            "default": [],
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "saved_query": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved Query"
+          },
+          "semantic_invocations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SemanticInvocation"
+            },
+            "title": "Semantic Invocations",
+            "type": "array"
+          },
+          "source_grain_tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Grain Tags",
+            "type": "array"
+          },
+          "surface_manifest_hash": {
+            "title": "Surface Manifest Hash",
+            "type": "string"
+          },
+          "termination_reason": {
+            "default": "completed",
+            "enum": [
+              "completed",
+              "rejected",
+              "failed"
+            ],
+            "title": "Termination Reason",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Reason"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "request_id",
+          "deployment_id",
+          "surface_manifest_hash",
+          "query_hash",
+          "limits",
+          "execution_started_at",
+          "elapsed_ms"
+        ],
+        "title": "QueryResult",
+        "type": "object"
+      },
+      "RankedItem": {
+        "additionalProperties": false,
+        "description": "One item in a fused or reranked ordering (retrieval \u00a73: `fuse`/`rerank`).\n\n`score` is the operator's output \u2014 the RRF sum for `fuse`, the signal\nvalue for `rerank` \u2014 and the tuple order IS the rank. `signals` keeps\neach contributing value visible, because the rerankers are meant to be\ninspectable stages (D9), not a black-box sort.",
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "signals": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Signals",
+            "type": "object"
+          }
+        },
+        "required": [
+          "item_id",
+          "score"
+        ],
+        "title": "RankedItem",
+        "type": "object"
+      },
+      "ReadinessRequirements": {
+        "additionalProperties": false,
+        "description": "The exhaustive capability set a readiness caller may require.",
+        "properties": {
+          "live_graph": {
+            "title": "Live Graph",
+            "type": "boolean"
+          },
+          "p1": {
+            "title": "P1",
+            "type": "boolean"
+          },
+          "p3": {
+            "title": "P3",
+            "type": "boolean"
+          },
+          "pipeline": {
+            "title": "Pipeline",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pipeline",
+          "p1",
+          "live_graph",
+          "p3"
+        ],
+        "title": "ReadinessRequirements",
+        "type": "object"
+      },
+      "ResultColumn": {
+        "additionalProperties": false,
+        "description": "One projected column: name, SQL type, nullability.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nullable": {
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "nullable"
+        ],
+        "title": "ResultColumn",
+        "type": "object"
+      },
+      "ResultLimits": {
+        "additionalProperties": false,
+        "description": "The caps this request actually ran under.",
+        "properties": {
+          "analytical_tier": {
+            "title": "Analytical Tier",
+            "type": "boolean"
+          },
+          "byte_cap": {
+            "title": "Byte Cap",
+            "type": "integer"
+          },
+          "row_cap": {
+            "title": "Row Cap",
+            "type": "integer"
+          },
+          "statement_timeout_ms": {
+            "title": "Statement Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row_cap",
+          "byte_cap",
+          "statement_timeout_ms",
+          "analytical_tier"
+        ],
+        "title": "ResultLimits",
+        "type": "object"
+      },
+      "RunSavedQueryRequest": {
+        "additionalProperties": false,
+        "description": "Body for `POST /query/saved/{namespace}/{name}/run`.",
+        "properties": {
+          "max_rows": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rows"
+          },
+          "parameters": {
+            "items": {},
+            "title": "Parameters",
+            "type": "array"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "RunSavedQueryRequest",
+        "type": "object"
+      },
+      "SearchRequest": {
+        "additionalProperties": false,
+        "description": "A search, with the terms in the body rather than the request line.\n\nThe query is the customer's own words \u2014 often the most sensitive string in\nthe whole exchange. A URL is not a private place: it is written to access\nlogs, kept by proxies, retained in browser history, and attached to\nreferrers. So the search surface takes a body, and the terms never appear\nin a request line (D59).\n\nThe ``GET`` forms remain for existing clients, which reach the deployment\nover a private path. A browser does not.",
+        "properties": {
+          "channel": {
+            "default": "semantic",
+            "enum": [
+              "semantic",
+              "bm25"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "k": {
+            "default": 10,
+            "maximum": 400.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest",
+        "type": "object"
+      },
+      "SemanticInvocation": {
+        "additionalProperties": false,
+        "description": "One \u00a73.4 nomination invocation's disclosure (populated by Batch C).",
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "dropped_absent": {
+            "default": 0,
+            "title": "Dropped Absent",
+            "type": "integer"
+          },
+          "dropped_absent_current": {
+            "default": 0,
+            "title": "Dropped Absent Current",
+            "type": "integer"
+          },
+          "dropped_absent_projection": {
+            "default": 0,
+            "title": "Dropped Absent Projection",
+            "type": "integer"
+          },
+          "dropped_ambiguous": {
+            "default": 0,
+            "title": "Dropped Ambiguous",
+            "type": "integer"
+          },
+          "dropped_body_mismatch": {
+            "default": 0,
+            "title": "Dropped Body Mismatch",
+            "type": "integer"
+          },
+          "dropped_filtered": {
+            "default": 0,
+            "title": "Dropped Filtered",
+            "type": "integer"
+          },
+          "dropped_hash_mismatch": {
+            "default": 0,
+            "title": "Dropped Hash Mismatch",
+            "type": "integer"
+          },
+          "dropped_stale": {
+            "title": "Dropped Stale",
+            "type": "integer"
+          },
+          "embedder_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedder Generation"
+          },
+          "function": {
+            "title": "Function",
+            "type": "string"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "nominated": {
+            "title": "Nominated",
+            "type": "integer"
+          },
+          "pg_confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pg Confirmed At"
+          },
+          "policy_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Generation"
+          },
+          "termination_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Termination Reason"
+          }
+        },
+        "required": [
+          "function",
+          "nominated",
+          "confirmed",
+          "dropped_stale"
+        ],
+        "title": "SemanticInvocation",
+        "type": "object"
+      },
+      "SourceRecord": {
+        "additionalProperties": false,
+        "description": "One hydrated source document handle (S5: down to the artifact URI).",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "first_mentioned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Mentioned At"
+          },
+          "last_mentioned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Mentioned At"
+          },
+          "markdown_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Markdown Uri"
+          },
+          "mention_count": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mention Count"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "doc_id",
+          "title",
+          "source_kind",
+          "markdown_uri"
+        ],
+        "title": "SourceRecord",
+        "type": "object"
+      },
+      "SqlExplainRequest": {
+        "additionalProperties": false,
+        "description": "Body for `POST /query/sql/explain` \u2014 sql and parameters only.",
+        "properties": {
+          "parameters": {
+            "items": {},
+            "title": "Parameters",
+            "type": "array"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "title": "SqlExplainRequest",
+        "type": "object"
+      },
+      "SqlQueryRequest": {
+        "additionalProperties": false,
+        "description": "Body for `POST /query/sql` (execution fields allowed).",
+        "properties": {
+          "max_rows": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rows"
+          },
+          "parameters": {
+            "items": {},
+            "title": "Parameters",
+            "type": "array"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "title": "SqlQueryRequest",
+        "type": "object"
+      },
+      "ToolDescriptor": {
+        "additionalProperties": false,
+        "description": "One assured operation and its live implementation identity.",
+        "properties": {
+          "answer_intent": {
+            "title": "Answer Intent",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "implementation_plan_hash": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Implementation Plan Hash"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "mutates": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mutates"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "output_grain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Grain"
+          },
+          "result_contract": {
+            "minLength": 1,
+            "title": "Result Contract",
+            "type": "string"
+          },
+          "result_schema": {
+            "additionalProperties": true,
+            "title": "Result Schema",
+            "type": "object"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "result_schema",
+          "result_contract",
+          "output_grain",
+          "answer_intent"
+        ],
+        "title": "ToolDescriptor",
+        "type": "object"
+      },
+      "TranscriptEntry": {
+        "additionalProperties": false,
+        "description": "One append-only decision record, as the `transcript` primitive returns it.\n\nThe audit trail is uniform across the four subjects a decision can be\nabout (S8/S32/S35): a supersession-adjudicated relation or observation,\na resolved/merged entity, or a compiled K page. `subject_kind` says\nwhich, and `related_id` points at the counterpart the decision paired\nthe subject with \u2014 the other relation/observation in a supersede pair,\nthe entity absorbed in a merge, or the compilation's artifact \u2014 so an\nagent can walk from any decision to what it acted on.",
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by": {
+            "title": "Decided By",
+            "type": "string"
+          },
+          "features": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "related_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Id"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_kind",
+          "outcome",
+          "method",
+          "confidence",
+          "related_id",
+          "decided_by",
+          "decided_at",
+          "features"
+        ],
+        "title": "TranscriptEntry",
+        "type": "object"
+      },
+      "Truncation": {
+        "additionalProperties": false,
+        "description": "The explicit cap marker (S18/S49): no silent top-k ever.\n\n``estimated_total`` is what the traversal could see before the cap;\n``continuation`` carries the opaque cursor a follow-up call passes back.",
+        "properties": {
+          "continuation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation"
+          },
+          "estimated_total": {
+            "minimum": 0.0,
+            "title": "Estimated Total",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "returned": {
+            "minimum": 0.0,
+            "title": "Returned",
+            "type": "integer"
+          },
+          "total_is_exact": {
+            "default": true,
+            "title": "Total Is Exact",
+            "type": "boolean"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "truncated",
+          "returned",
+          "estimated_total"
+        ],
+        "title": "Truncation",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "Validity": {
+        "additionalProperties": false,
+        "description": "A result's bi-temporal state as hydration re-read it (D48).",
+        "properties": {
+          "ingested_at": {
+            "format": "date-time",
+            "title": "Ingested At",
+            "type": "string"
+          },
+          "invalidated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidated At"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "valid_from",
+          "valid_until",
+          "ingested_at",
+          "invalidated_at"
+        ],
+        "title": "Validity",
+        "type": "object"
+      },
+      "VersionPipelineReadiness": {
+        "additionalProperties": false,
+        "description": "The complete expected continuous pipeline state for one version.",
+        "properties": {
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineStageReadiness"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "ready",
+          "stages"
+        ],
+        "title": "VersionPipelineReadiness",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "RememberStack query API",
+    "version": "0.15.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/deployment": {
+      "get": {
+        "description": "Report which code and model bindings are serving, before any work.",
+        "operationId": "deployment_build_info_deployment_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentBuildInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deployment Build Info"
+      }
+    },
+    "/documents": {
+      "get": {
+        "description": "One page of documents, newest lineage first.\n\nOrdered by when each document was *first seen*, which never changes \u2014\nre-ingesting one does not move it up. An activity order would, and a\nkeyset cursor against a moving key drops and repeats rows.\n\n`status` filters on the *newest* version's state, which is what makes\n\"show me what failed\" answerable in one call rather than by paging the\nwhole corpus and filtering client-side.",
+        "operationId": "list_documents_documents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ingesting",
+                    "converting",
+                    "structuring",
+                    "ready",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Documents"
+      }
+    },
+    "/graph/citation-path": {
+      "post": {
+        "description": "Return bounded directed citation paths between two documents.",
+        "operationId": "graph_citation_path_graph_citation_path_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphCitationPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Graph Citation Path"
+      }
+    },
+    "/graph/neighborhood": {
+      "post": {
+        "description": "Return a current or bitemporal bounded entity neighborhood.",
+        "operationId": "graph_neighborhood_graph_neighborhood_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphNeighborhoodRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Graph Neighborhood"
+      }
+    },
+    "/graph/path": {
+      "post": {
+        "description": "Return bounded equal-length shortest paths between two entities.",
+        "operationId": "graph_path_graph_path_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Graph Path"
+      }
+    },
+    "/hydrate/relation/{relation_id}": {
+      "get": {
+        "description": "The S5 chain: relation \u2192 evidence claims \u2192 source documents.",
+        "operationId": "hydrate_relation_hydrate_relation__relation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Relation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Hydrate Relation"
+      }
+    },
+    "/ingest": {
+      "post": {
+        "description": "Push one file through E0, optionally as a stable lineage version.\n\nAttribution travels in **headers, never the query string**: the\nreference is erasable PII and a URL is copied verbatim into access\nlogs, proxies and traces, where a later principal deletion cannot\nreach it.\n\nThe pair is honoured only when the composing profile declares its\nperimeter trusted (``trusted_principal_source``). The deployment-wide\nbearer identifies a deployment, not a caller, so elsewhere any client\ncould assert it was a person. Untrusted attribution is **ignored, not\nrejected**: nothing forged is recorded either way, and refusing would\nlet a metadata concern fail an otherwise valid ingest.",
+        "operationId": "ingest_document_ingest_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Filename",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mime",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Mime",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "title",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Title"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_modified_at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Modified At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "versioning_mode",
+            "required": false,
+            "schema": {
+              "default": "snapshot",
+              "enum": [
+                "snapshot",
+                "living"
+              ],
+              "title": "Versioning Mode",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_version_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Version Ref"
+            }
+          },
+          {
+            "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source; malformed values are 422 only on a trusted deployment.",
+            "in": "header",
+            "name": "X-Ingest-Principal-Kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source; malformed values are 422 only on a trusted deployment.",
+              "title": "X-Ingest-Principal-Kind"
+            }
+          },
+          {
+            "description": "Opaque caller-stable actor id, 1..255 printable ASCII characters. Sent with X-Ingest-Principal-Kind.",
+            "in": "header",
+            "name": "X-Ingest-Principal-Ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque caller-stable actor id, 1..255 printable ASCII characters. Sent with X-Ingest-Principal-Kind.",
+              "title": "X-Ingest-Principal-Ref"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "title": "Content",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestedVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ingest Document"
+      }
+    },
+    "/lookup/observations": {
+      "get": {
+        "description": "Live observations on one entity, semantic over statements (S2).",
+        "operationId": "lookup_observations_lookup_observations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property_query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Property Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Lookup Observations"
+      }
+    },
+    "/lookup/relations": {
+      "get": {
+        "description": "Relations matching an (s, p, o) pattern \u2014 current, or as-of (S9).",
+        "operationId": "lookup_relations_lookup_relations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "subject_entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Entity Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "predicate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Predicate"
+            }
+          },
+          {
+            "in": "query",
+            "name": "object_entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Object Entity Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valid_at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Valid At"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Lookup Relations"
+      }
+    },
+    "/operations": {
+      "get": {
+        "description": "The four assured operations for this deployment.",
+        "operationId": "list_operations_operations_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolDescriptor"
+                  },
+                  "title": "Response List Operations Operations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Operations"
+      }
+    },
+    "/operations/{name}": {
+      "post": {
+        "description": "Run one assured operation by name over JSON arguments.\n\nThe route-level table cannot classify this one: operations are registry\ndata, and whether a given operation mutates is a property of the\noperation rather than of the path. So the scope check happens here,\nagainst the descriptor, and an operation that has not declared itself\nnon-mutating is refused to a read-only credential.",
+        "operationId": "run_operation_operations__name__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ContextBundleV1"
+                    }
+                  ],
+                  "title": "Response Run Operation Operations  Name  Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Operation"
+      }
+    },
+    "/query/saved": {
+      "get": {
+        "description": "Registry metadata for discoverable saved queries.",
+        "operationId": "list_saved_queries_query_saved_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "namespace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Namespace"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Saved Queries Query Saved Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Saved Queries"
+      }
+    },
+    "/query/saved/{namespace}/{name}": {
+      "get": {
+        "description": "One immutable saved-query version.",
+        "operationId": "describe_saved_query_query_saved__namespace___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Describe Saved Query Query Saved  Namespace   Name  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Describe Saved Query"
+      }
+    },
+    "/query/saved/{namespace}/{name}/run": {
+      "post": {
+        "description": "Execute one active saved query through the same SQL executor.",
+        "operationId": "run_saved_query_query_saved__namespace___name__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunSavedQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Saved Query"
+      }
+    },
+    "/query/space": {
+      "get": {
+        "description": "Manifest-backed schema discovery (content-free).",
+        "operationId": "describe_query_space_query_space_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "pattern",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pattern"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_examples",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Examples",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Describe Query Space Query Space Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Describe Query Space"
+      }
+    },
+    "/query/space/search": {
+      "get": {
+        "description": "Search checked-in manifest text only.",
+        "operationId": "search_query_space_query_space_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Search Query Space Query Space Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Query Space"
+      }
+    },
+    "/query/sql": {
+      "post": {
+        "description": "One sandboxed SQL statement; QueryResult/v1.",
+        "operationId": "query_sql_query_sql_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SqlQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Query Sql"
+      }
+    },
+    "/query/sql/explain": {
+      "post": {
+        "description": "EXPLAIN one SQL statement without executing it.",
+        "operationId": "explain_sql_query_sql_explain_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SqlExplainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Explain Sql"
+      }
+    },
+    "/readiness": {
+      "post": {
+        "description": "Inspect exact pipeline and explicitly requested capabilities.",
+        "operationId": "pipeline_readiness_readiness_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineReadinessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineReadinessReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Pipeline Readiness"
+      }
+    },
+    "/resolve": {
+      "get": {
+        "description": "Resolve current entities, optionally ranked by focal context (S51).",
+        "operationId": "resolve_resolve_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "context_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Context Entity Ids"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve"
+      }
+    },
+    "/search/chunks": {
+      "get": {
+        "description": "Search live source chunks as separately typed evidence.",
+        "operationId": "search_chunks_search_chunks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "default": "semantic",
+              "enum": [
+                "semantic",
+                "bm25"
+              ],
+              "title": "Channel",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Chunks"
+      },
+      "post": {
+        "description": "Search live source chunks as separately typed evidence.",
+        "operationId": "post_search_chunks_search_chunks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Search Chunks"
+      }
+    },
+    "/search/claims": {
+      "get": {
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.",
+        "operationId": "search_claims_search_claims_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "default": "semantic",
+              "enum": [
+                "semantic",
+                "bm25"
+              ],
+              "title": "Channel",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Claims"
+      },
+      "post": {
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.",
+        "operationId": "post_search_claims_search_claims_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Search Claims"
+      }
+    },
+    "/transcript/relation/{relation_id}": {
+      "get": {
+        "description": "The S8 audit query: why the system believes what it believes.",
+        "operationId": "transcript_relation_transcript_relation__relation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Relation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transcript Relation"
+      }
+    }
+  }
+}
