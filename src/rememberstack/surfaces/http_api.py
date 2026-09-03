@@ -1176,8 +1176,8 @@ def _mount_ingest(
     ingest: IngestPort,
     deployment_id: UUID,
     max_body_bytes: int | None,
+    attribution_requires_write: bool,
     trusted_principal_source: bool = False,
-    attribution_requires_write: bool = False,
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
@@ -1204,9 +1204,9 @@ def _mount_ingest(
                 description=(
                     "One of: user | api_credential | service. Sent with"
                     " X-Ingest-Principal-Ref. Ignored unless the deployment"
-                    " declares a trusted principal source and any configured"
-                    " API credential has full write authority; malformed values are"
-                    " 422 only for a trusted assertion."
+                    " declares a trusted principal source and the presenting"
+                    " credential carries full write authority; malformed values"
+                    " are 422 only for a trusted assertion."
                 ),
             ),
         ] = None,
@@ -1229,12 +1229,13 @@ def _mount_ingest(
         reach it.
 
         The pair is honoured only when the composing profile declares its
-        network perimeter trusted (``trusted_principal_source``) and any
-        configured API credential has full WRITE authority. The unscoped shared
-        secret is unrestricted; narrow signed credentials may add or read data,
-        but cannot nominate an immutable principal. Untrusted attribution is
-        **ignored, not rejected**: nothing forged is recorded either way, and
-        refusing would let a metadata concern fail an otherwise valid ingest.
+        network perimeter trusted (``trusted_principal_source``) and the
+        presenting credential carries full WRITE authority. The unscoped
+        shared secret is unrestricted; narrow signed credentials may add or
+        read data, but cannot nominate an immutable principal. Untrusted
+        attribution is **ignored, not rejected**: nothing forged is recorded
+        either way, and refusing would let a metadata concern fail an otherwise
+        valid ingest.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop

@@ -4548,12 +4548,12 @@ principal, so D55's identical-bytes no-op can never let a later submitter
 rewrite it. The pair travels in `X-Ingest-Principal-*` **headers, never the
 query string**, because `external_ref` is erasable PII and a URL is copied
 into access logs, proxies and traces. It is honoured **only** when the
-composing profile sets `trusted_principal_source`; the deployment-wide
-bearer identifies a deployment, not a caller. Untrusted attribution is
-**ignored, not rejected** — nothing forged is recorded either way, so a
-refusal would buy no safety while letting a metadata concern fail a real
-upload. `external_ref` is constrained to printable ASCII because the
-header transport cannot carry more, making that an explicit 422 rather
+composing profile sets `trusted_principal_source` and, where API authentication
+is configured, the presenting credential carries full `write` authority.
+Untrusted attribution is **ignored, not rejected** — nothing forged is recorded
+either way, so a refusal would buy no safety while letting a metadata concern
+fail a real upload. `external_ref` is constrained to printable ASCII because
+the header transport cannot carry more, making that an explicit 422 rather
 than an encoding crash. Deleting a principal
 nulls attribution (`ON DELETE SET NULL`) and never destroys the version.
 `IngestedVersion` is unchanged and the `ingested_by` keyword is omitted
@@ -4586,12 +4586,13 @@ this decision exists to prevent.
 **Consequences.** Erasure here is **row deletion, not a D74-grade
 forget**: there is no portable manifest, barrier, residual verification or
 restore replay for principals, so this must not be offered as an erasure
-guarantee until the follow-up person-grain forget target lands. Within a
-trusted perimeter the principal remains caller-asserted; deriving it would
-need a per-caller perimeter the engine does not have. Operators must apply
-the migration and start the new runtime **before** any client forwards
-attribution — an older engine accepts the upload, creates an unattributed
-version, and D55 then prevents a retry from repairing it.
+guarantee until the follow-up person-grain forget target lands. A full-write
+caller within a trusted perimeter still asserts the principal. Narrow
+credentials never turn their own subject into attribution implicitly, because
+that would conflate the credential holder with the immutable creator claim.
+Operators must apply the migration and start the new runtime **before** any
+client forwards attribution — an older engine accepts the upload, creates an
+unattributed version, and D55 then prevents a retry from repairing it.
 
 **Rejected.** No principal; an opaque string without a kind; inferring a
 person from a credential; the principal in the query string; accepting
