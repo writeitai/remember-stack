@@ -107,6 +107,7 @@ uvx --from rememberstack==0.2.0 remember --version
 docker pull ghcr.io/writeitai/remember-stack:0.2.0
 gh release download v0.2.0 --repo writeitai/remember-stack \
   --pattern compose.yaml --pattern default.env.example --pattern openapi.json
+test "$(jq -r .info.version openapi.json)" = 0.2.0
 cp default.env.example .env
 docker compose --env-file .env up --no-build --pull always --detach --wait
 curl --fail http://localhost:8000/healthz
