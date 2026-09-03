@@ -1,5 +1,14 @@
 # Design: entity-grain observation flush fan-out
 
+> **Binding D107 amendment (2026-09-03).** The total processing order of §5.5
+> (`asserted_at NULLS LAST, claim_id, statement`) is unchanged and remains a
+> work order only. The §5.5.3 late-arrival re-split decides eligibility by the
+> attached state claim's canonical occurrence start relative to the
+> world-time cap `T`, not by `asserted_at`; undated attached evidence is never
+> re-split. The staggered acceptance case gains a variant with said-on and
+> is-about orders reversed whose final slices follow the world. Contract:
+> `temporal_clocks_design.md` §4.5.
+
 **Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS (r3+r4); Codex
 r3 ordering gap closed in this revision — binding once landed on `main`  
 **Date:** 2026-08-12  
