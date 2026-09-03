@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v20 setup
+# RS-LoCoMo-Full-v21 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,12 +16,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v20 \
+  --protocol full-v21 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v20` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v21` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -63,6 +63,15 @@ V17 also fingerprints D100 entity resolution: one match-biased simple-model T4
 call sees the complete bounded candidate snapshot and returns a supplied
 candidate id or `new`. There is no insufficient-evidence result or
 confidence-routed frontier call.
+
+V21 fingerprints the D106 observation adjudicator: dated events with disjoint
+resolved windows never collapse onto each other, a dated event is never
+`evidence` for an undated statement (nor the reverse), and the verdict prompt
+shows both timelines. The `adjudicate_observations` component version pins
+that generation; the dataset, rendered documents, retrieval surface, answer
+and judge prompts, budgets, and scoring are those of v20. V20 and v21 scores
+are directional, not a one-variable comparison — the fact layer a v21 store
+serves differs from a v20 store's.
 
 Build the image from the revision under test — Compose otherwise serves the
 published release image, and the harness refuses to run against an engine whose
