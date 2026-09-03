@@ -821,6 +821,9 @@ read if the platform reports a world-readable mode.
 | Export cursor malformed | 422, no receipts |
 | Empty page inside horizon | 200 heartbeat |
 | Login without `--token-host` / env | Exit 2; no derive-from-api-url |
+| Login without `--api-url` or an advertised hostname | Exit 1; ask for `--api-url`; withdraw the mint; keep any existing file |
+| Login with an invalid advertised hostname | Exit 1; print the hostname; withdraw the mint; keep any existing file |
+| Login with a hostname that is not live | Exit 1; print the hostname; withdraw the mint; keep any existing file |
 | Logout revoke 5xx | Keep file; exit 1 |
 | Credential file world-readable | Refuse to read |
 

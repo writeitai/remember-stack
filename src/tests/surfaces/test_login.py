@@ -615,6 +615,7 @@ def test_login_refuses_a_hostname_that_is_not_live(
         "[::1",
         "evil\x1b[2m.example",
         "a\x00b",
+        "xn--0.com",
     ],
 )
 def test_login_refuses_an_invalid_advertised_hostname(

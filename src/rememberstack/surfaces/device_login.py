@@ -329,24 +329,30 @@ def _valid_data_plane_hostname(hostname: str) -> bool:
         return False
     try:
         url = httpx.URL(f"https://{hostname}")
-    except httpx.InvalidURL:
+        host = url.host
+        port = url.port
+        userinfo = url.userinfo
+        path = url.path
+        query = url.query
+        fragment = url.fragment
+    except (httpx.InvalidURL, UnicodeError):
         return False
     if (
-        not url.host
-        or url.userinfo
-        or url.path != "/"
-        or url.query
-        or url.fragment
+        not host
+        or userinfo
+        or path != "/"
+        or query
+        or fragment
         or hostname.endswith(":")
-        or (url.port is not None and not 1 <= url.port <= 65535)
+        or (port is not None and not 1 <= port <= 65535)
     ):
         return False
     try:
-        ip_address(url.host)
+        ip_address(host)
     except ValueError:
-        if len(url.host) > 253:
+        if len(host) > 253:
             return False
-        labels = url.host.rstrip(".").split(".")
+        labels = host.rstrip(".").split(".")
         return all(
             label
             and len(label) <= 63
