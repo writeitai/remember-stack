@@ -1,12 +1,13 @@
 schema_version: 1
 id: media_converter_routes_bound
 type: harness_judge
-description: The three media converter routes exist (diarized ASR, video ASR + adaptive keyframes, image discriminator to OCR or VLM description), the canonical-text rule holds (document.md is the only extractable text; sidecars are interchange), and the generalized converter contract is implemented.
-tags: [e0, media, D65, D38]
+description: The three media converter routes exist (diarized ASR, video ASR + adaptive keyframes, image running both OCR and VLM description as weighted lanes), the canonical-text rule holds (document.md is the only extractable text; sidecars are interchange), and the generalized converter contract is implemented.
+tags: [e0, media, D65, D38, D107]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding design invariant.
   Read plan/designs/media_design.md §1–§3 and plan/designs/e0_files_design.md §2–§3 — the
-  binding sources — and decisions.md D65 (with D38/D57 and their refinement annotations) for
+  binding sources (media_design §2 as refined by D107) and decisions.md D65 and D107 (with
+  D38/D57 and their refinement annotations) for
   rationale, then locate the conversion module and its router under src/. These are acceptance
   checks for the FINAL system: if the subsystem is absent or partial, score 0.
 
@@ -15,9 +16,12 @@ instructions: |
      (converter_name/converter_version): audio/* → diarized ASR producing a transcript as
      document.md with one block-eligible unit per speaker turn; video/* → ASR of the audio
      track + adaptive keyframes (per shot/coverage policy, not per frame) landing in media/
-     with locators + optional VLM shot notes; standalone images → a document-vs-picture
-     discriminator routing to OCR (image that is a document) or VLM description + OCR of
-     visible text (image that is a picture). MIME alone is never the picture/document decider.
+     with locators + optional VLM shot notes; image/* → BOTH a VLM description lane and an OCR
+     lane on every image, with a classifier setting emphasis and budget rather than selecting
+     one and excluding the other (D107 replaced D65's exclusive document-vs-picture
+     discriminator). An implementation that routes an image to only one lane fails this check.
+     A lane that genuinely produced nothing is disclosed as a coverage gap in the manifest,
+     never silently omitted. MIME alone is never the emphasis decider.
   2. Speaker resolution is conservative by implementation: a speaker is resolved to a person
      entity only on positive evidence (self-introduction, bundle participant metadata,
      registry match); otherwise a stable anonymous label (e.g. "Speaker 2") is kept — the
