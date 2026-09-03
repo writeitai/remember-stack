@@ -1254,3 +1254,61 @@ def test_d106_a_dated_event_may_still_supersede_an_undated_state(
     assert rows[0]["statement"] == "Alice is the CEO of Acme."
     assert rows[0]["valid_until"] is not None  # capped by the dated event
     assert rows[1]["valid_until"] is None
+
+
+def test_d107_a_day_and_an_instant_inside_it_overlap(database_engine: Engine) -> None:
+    """Canonical bounds (D107 §5): a day-precision win and an instant-precision
+    mention later that same day overlap, so the model's `evidence` verdict is
+    honoured and one fact remains; the same instant on the next day is a
+    different occurrence."""
+    adjudicator, _provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won the regional final on Saturday.",
+        engine=database_engine,
+        asserted_at="2022-11-07T20:10:00Z",
+        event_window=("2022-11-05", "2022-11-05"),
+    )
+    claim_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, extractor_version, asserted_at,"
+                " claim_valid_kind, claim_valid_precision, claim_valid_from,"
+                " claim_valid_until) VALUES (:c, :d, :doc, :ch, :s, :s, 0, 1,"
+                " true, true, 'test', CAST(:a AS timestamptz), 'event_time',"
+                " 'instant', CAST(:t AS timestamptz), CAST(:t AS timestamptz))"
+            ),
+            {
+                "c": claim_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": uuid4(),
+                "ch": uuid4(),
+                "s": "Nate said the final wrapped up at seven in the evening.",
+                "a": "2022-11-08T09:00:00Z",
+                "t": "2022-11-05T19:00:00Z",
+            },
+        )
+    adjudicator.add_observation(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_entity_id=nate,
+        statement="Nate said the final wrapped up at seven in the evening.",
+        claim_id=claim_id,
+        doc_id=uuid4(),
+    )
+    assert len(_observations(engine=database_engine, entity=nate)) == 1
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won the regional final on Saturday.",
+        engine=database_engine,
+        asserted_at="2022-11-14T20:10:00Z",
+        event_window=("2022-11-06", "2022-11-06"),
+    )
+    assert len(_observations(engine=database_engine, entity=nate)) == 2

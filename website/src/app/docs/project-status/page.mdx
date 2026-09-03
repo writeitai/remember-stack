@@ -252,7 +252,12 @@ examined, and the failure looks like the deployment being down.
   retrieval, retry, reasoning-effort, or call-budget work.
 - Historical `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
   that directly satisfies the question. It does not add a retrieval or retry.
-- The current `RS-LoCoMo-Full-v21` pins the D106 observation adjudicator:
+- The current `RS-LoCoMo-Full-v22` pins canonical half-open claim bounds
+  (D107 WP-T.0a): a day-precision claim is found from an intraday `claims_as_of`
+  window and the observation adjudicator no longer treats a day as a
+  zero-width point. Ingestion provenance and `claims_as_of` results change; the
+  benchmark's tool set does not.
+- Historical `RS-LoCoMo-Full-v21` pins the D106 observation adjudicator:
   dated events with disjoint resolved windows never collapse onto or supersede
   each other (a same-occurrence date dispute may contradict), and a dated
   event is never `evidence` for an undated statement. Recurring

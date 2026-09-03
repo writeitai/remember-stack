@@ -5,6 +5,7 @@ src/tests/eval/test_s58_consumption.py
 src/tests/profiles/test_selfhost_profile.py
 src/tests/spikes/test_operational_scale.py
 src/tests/spine/test_backfill.py
+src/tests/spine/test_canonical_bounds_sql.py
 src/tests/spine/test_clustering.py
 src/tests/spine/test_component_versions.py
 src/tests/spine/test_deployment_bootstrap.py

@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v21 setup
+# RS-LoCoMo-Full-v22 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,12 +16,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v21 \
+  --protocol full-v22 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v21` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v22` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -63,6 +63,11 @@ V17 also fingerprints D100 entity resolution: one match-biased simple-model T4
 call sees the complete bounded candidate snapshot and returns a supplied
 candidate id or `new`. There is no insufficient-evidence result or
 confidence-routed frontier call.
+
+V22 fingerprints D107 WP-T.0a: the observation adjudicator and `claims_as_of`
+compare canonical half-open bounds (a day is the whole calendar day, an
+instant a non-empty point, adjacent units do not overlap); everything else is
+v21's.
 
 V21 fingerprints the D106 observation adjudicator: dated events with disjoint
 resolved windows never collapse onto or supersede each other (they may only

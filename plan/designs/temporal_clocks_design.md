@@ -348,12 +348,15 @@ ends as +∞. A caller's inclusive request `claims_as_of(from, to)` converts
 to `[from, to + 1 µs)`, so `from == to` is a point-in-time query, not an
 empty one.
 
-**Where it runs.** The function ships as one immutable SQL function in the
-`memory_v1` query space (`memory_v1.canonical_bounds`) with a companion
+**Where it runs.** The engine's own SQL calls two IMMUTABLE public-schema
+functions, `claim_canonical_start(from, precision)` and
+`claim_canonical_end(from, until, precision)`, backed by an expression index
+so the as-of scan stays indexed; the query space exposes the same
+canonicalisation as `memory_v1.canonical_bounds` with a companion
 `claims_canonical` view exposing `canon_start`/`canon_end` beside the raw
 columns, so saved examples, open SQL, the catalog metadata and the
-open-query prose use the same canonicalisation as the engine; the Python
-side calls the same definition. **Fact windows are stored canonical** —
+open-query prose use it too; the Python side (`core/temporal.py`) mirrors
+the same table and a test pins the twins equal. **Fact windows are stored canonical** —
 `valid_from`/`valid_until` and `occurs_from`/`occurs_until` are written from
 `canonical_bounds` at seeding, so every fact predicate the engine already
 has (`valid_until > :as_of`, `tstzrange(valid_from, valid_until)` in the
