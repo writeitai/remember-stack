@@ -167,9 +167,10 @@ spells the distinction out for the verdict model.
 ### 4.7 K fact sheets label the said-on date "valid since" and sort history by it (P2, P5)
 
 `src/rememberstack/core/knowledge_fact_sheet.py:55-63`, `:72-99`: the
-"Current relations" column `valid since` is `fact.valid_from` (always empty
-for relations, 4.2) and the observation table's `valid from` is the session
-date; "Observation history" is sorted by that same value, so a back-dated
+"Current relations" column `valid since` is `fact.valid_from` (empty for
+every first spell of a relation, 4.2; a re-occurring spell shows the prior
+spell's end) and the observation table's `valid from` is the session date;
+"Observation history" is sorted by that same value, so a back-dated
 retrospective reads in the wrong order.
 
 ### 4.8 The K prose writer's claims carry no dates at all (P4)
@@ -183,9 +184,10 @@ week".
 ### 4.9 `aggregate(form="timeline")` buckets by ingest year (P2, P6)
 
 `query_engine.py:4285-4307`: `coalesce(valid_from, ingested_at)` for both fact
-kinds. With 4.2, the relation half is entirely ingest time; the observation
-half is said-on time. A 2015–2020 archive imported today is one bar labelled
-2026, under a docstring that says "an entity's facts by year" (`:2087-2088`).
+kinds. With 4.2, most relation entries fall back to ingest time (only
+re-occurring spells carry a start); the observation half is said-on time. A
+2015–2020 archive imported today is one bar labelled 2026, under a docstring
+that says "an entity's facts by year" (`:2087-2088`).
 
 ### 4.10 Observation batch order — who supersedes whom — follows the said-on clock (P5)
 
@@ -320,8 +322,9 @@ invalidates every withdrawn observation, by its own docstring because
 `evidence_lifecycle_design.md:153-165` ask for a per-shape judgement — a
 withdrawn effective state caps its world-time, a withdrawn measurement keeps
 its window and closes belief only. Without a temporal kind the code cannot
-make that judgement, so a withdrawn state observation is recorded as *never
-believed* rather than *ended*.
+make that judgement, so a withdrawn state observation gets a belief-time
+invalidation where D55 requires a world-time close: its state end is never
+recorded, and the removal is classified as invalidation.
 
 ## 5. Checked and sound
 
