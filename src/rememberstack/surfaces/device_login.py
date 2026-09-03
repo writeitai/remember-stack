@@ -67,9 +67,9 @@ class DeviceTokenSuccess(BaseModel):
     server may add, and the client must carry on. Fields this client actually
     needs are declared and validated; anything else is the server's business.
 
-    Known-but-unused fields are declared explicitly rather than swallowed, so a
-    reader can see what the server sends and a future change to use one does not
-    have to rediscover it.
+    The advertised data-plane hostname is declared explicitly because login uses
+    it to configure managed deployments without a separate ``--api-url``. Other
+    additive fields remain safe to ignore until the client needs them.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
@@ -283,9 +283,21 @@ def revoke_self(*, client: httpx.Client, access_token: str) -> int:
 
 
 def credential_from_token(
-    *, token: DeviceTokenSuccess, api_url: str, token_host: str
+    *, token: DeviceTokenSuccess, api_url: str | None, token_host: str
 ) -> CredentialFile:
-    """Build the v1 credential document from a successful poll."""
+    """Build the v1 credential document, deriving its managed API URL."""
+    if api_url is None:
+        hostname = token.data_plane_hostname
+        if hostname is None or not hostname.strip():
+            raise DeviceGrantError(
+                "token host did not advertise a data-plane hostname; pass --api-url"
+            )
+        if not token.data_plane_hostname_live:
+            raise DeviceGrantError(
+                f"deployment hostname: {hostname}\n"
+                "your deployment is not live yet; run `remember login` again when it is"
+            )
+        api_url = f"https://{hostname}"
     return CredentialFile(
         version=1,
         api_url=api_url,

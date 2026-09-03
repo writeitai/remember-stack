@@ -40,12 +40,26 @@ remember --version
 Device-grant login lives in the base wheel. `--token-host` (or
 `REMEMBERSTACK_TOKEN_HOST`) is required on login and is **never** derived from
 `--api-url`. The token host is the service that mints deployment tokens; it is
-not the query API.
+not the query API. For a managed deployment whose advertised hostname is live,
+the token response supplies the API URL, so only the token host is needed:
+
+```bash
+remember login --token-host https://token-host.example
+```
+
+For a self-hosted or local deployment, pass its API URL explicitly. This
+override wins even if the token host advertises a different or not-yet-live
+hostname:
 
 ```bash
 remember login --token-host https://token-host.example --api-url http://127.0.0.1:8000
 remember logout
 ```
+
+Without `--api-url`, login refuses an advertised hostname that is not live,
+prints that hostname, and asks you to run `remember login` again when it is. If
+the token host advertises no hostname, login asks for `--api-url`. Neither
+refusal writes a credential file.
 
 `login` prints the user code and both verification URLs, then polls
 `POST {token_host}/v1/device/token`. It never prints `device_code` or

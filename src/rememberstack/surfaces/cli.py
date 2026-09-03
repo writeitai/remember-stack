@@ -641,7 +641,6 @@ def _login_locked(args: argparse.Namespace) -> int:
     """The login itself, with the credential lock already held."""
     from rememberstack.surfaces.credentials import append_pending_revocation
     from rememberstack.surfaces.credentials import assert_revocation_capacity
-    from rememberstack.surfaces.credentials import CliClientEnv
     from rememberstack.surfaces.credentials import credential_origin
     from rememberstack.surfaces.credentials import CredentialError
     from rememberstack.surfaces.credentials import drop_pending_revocation
@@ -654,8 +653,7 @@ def _login_locked(args: argparse.Namespace) -> int:
     from rememberstack.surfaces.device_login import DeviceGrantError
     from rememberstack.surfaces.device_login import poll_device_token
 
-    env = CliClientEnv.model_validate({})
-    api_url = args.api_url or env.api_url or "http://127.0.0.1:8000"
+    api_url = args.api_url
     try:
         token_host = _resolved_token_host(explicit=args.token_host)
     except ValueError as error:
@@ -762,9 +760,16 @@ def _login_locked(args: argparse.Namespace) -> int:
             # success, take it back out of the journal — it is the current
             # credential now, not one awaiting revocation.
             try:
-                credential = credential_from_token(
-                    token=token, api_url=api_url, token_host=token_host
-                )
+                try:
+                    credential = credential_from_token(
+                        token=token, api_url=api_url, token_host=token_host
+                    )
+                except DeviceGrantError:
+                    # The poll already journalled the minted bearer. Retire it
+                    # now when possible; if the host cannot confirm that, the
+                    # journal keeps the only secret needed for a later retry.
+                    _retry_pending_revocation()
+                    raise
                 if existing is not None:
                     # Written before the file is overwritten, because
                     # overwriting it destroys the only copy of the

@@ -488,6 +488,92 @@ def _mock_client(monkeypatch: pytest.MonkeyPatch, handler: object) -> None:
     monkeypatch.setattr(httpx, "Client", factory)
 
 
+def test_login_derives_the_api_url_from_a_live_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A managed login needs only the token host once its deployment is live."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
+    _mock_client(
+        monkeypatch,
+        _grant_handler(
+            token_body=_token_body(
+                data_plane_hostname=hostname, data_plane_hostname_live=True
+            ),
+            calls=calls,
+        ),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 0
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.api_url == f"https://{hostname}"
+
+
+def test_login_api_url_override_wins_over_an_unready_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Self-host and local users can explicitly choose their API endpoint."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(
+        monkeypatch,
+        _grant_handler(
+            token_body=_token_body(
+                data_plane_hostname="not-live.dp.remember.dev",
+                data_plane_hostname_live=False,
+            ),
+            calls=calls,
+        ),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", _API]) == 0
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.api_url == _API
+
+
+def test_login_refuses_a_hostname_that_is_not_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Do not persist a managed endpoint before the control plane says it is live."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
+    _mock_client(
+        monkeypatch,
+        _grant_handler(
+            token_body=_token_body(
+                data_plane_hostname=hostname, data_plane_hostname_live=False
+            ),
+            calls=calls,
+        ),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
+    captured = capsys.readouterr()
+    assert hostname in captured.err
+    assert "your deployment is not live yet" in captured.err
+    assert "run `remember login` again when it is" in captured.err
+    assert load_credentials() is None
+    assert calls == ["authorize", "token", "revoke"]
+
+
+def test_login_without_an_advertised_hostname_asks_for_api_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Older and self-hosted token services still need an explicit API URL."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    _mock_client(monkeypatch, _grant_handler(token_body=_token_body(), calls=calls))
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
+    assert "--api-url" in capsys.readouterr().err
+    assert load_credentials() is None
+    assert calls == ["authorize", "token", "revoke"]
+
+
 def test_login_revokes_the_predecessor_only_after_minting(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
