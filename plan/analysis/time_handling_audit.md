@@ -7,6 +7,8 @@ binding contract is `plan/designs/temporal_clocks_design.md`.
 
 **Revision audited:** `02b79904` (the merge of D106). Line numbers below are
 for that revision; function and statement names are the stable anchors.
+Findings 4.2, 4.6, 4.12, 4.13 and 4.14 were narrowed after an independent
+Codex review verified each against the code; 4.18 was added from that review.
 
 ## 1. Question
 
@@ -89,10 +91,12 @@ never written anywhere else: not from `claim_valid_from`, not from
 March 2024' can seed `works_for.valid_from`"), and the docs promise
 `valid_at` answers "when was this true in the world"
 (`website/src/app/docs/concepts/page.mdx:80`). `lookup_relations(valid_at=…)`
-filters `valid_from IS NULL OR valid_from <= :as_of`
-(`query_engine.py:3696`), so with `valid_from` always `NULL`, "who did Alice
-work for in 2010?" returns her current employer. The as-of axis is a no-op on
-the relation side.
+does filter both ends (`valid_from IS NULL OR valid_from <= :as_of` and
+`valid_until IS NULL OR valid_until > :as_of`, `query_engine.py:3696-3697`),
+so a *capped* spell is excluded after its end — but with `valid_from` always
+`NULL`, no fact can be excluded *before its true beginning*: "who did Alice
+work for in 2010?" returns her 2024 employer alongside any earlier one. The
+start half of the as-of axis is a no-op on the relation side.
 
 ### 4.3 Relation supersession judges "the same period" without seeing any period (P2, P4)
 
@@ -149,12 +153,15 @@ consumer reads "Nate won a video game tournament last week" with no anchor.
 `benchmarks/locomo/protocol.py:135-137` — the prompt says "Use timestamps to
 resolve relative dates" and nothing else about time. The envelopes carry
 `asserted_at`, `claim_valid_*`, and `validity.valid_from` (fact grain) side
-by side; `_reader_trace_record` (`:344-347`) drops `None` fields, so for a
-relation (4.2) the only surviving timestamp is `ingested_at` — the benchmark's
-own run clock — and for an observation `validity.valid_from` is the session
-date under a name that reads as world-time. Contrast
-`observation_adjudication.py:63-72`, which spells the distinction out for the
-verdict model.
+by side, and `fact_context` does include representative evidence rows with
+`asserted_at` and claim windows (`query_engine.py:778-867`); but the direct
+relation result's own `Validity` is all-`NULL` for a first-occurrence
+relation (4.2), and `_reader_trace_record` (`:344-347`) drops `None` fields,
+so on that row the only surviving timestamp is `ingested_at` — the
+benchmark's own run clock — while for an observation `validity.valid_from` is
+the session date under a name that reads as world-time. The reader is never
+told which is which. Contrast `observation_adjudication.py:63-72`, which
+spells the distinction out for the verdict model.
 
 ### 4.7 K fact sheets label the said-on date "valid since" and sort history by it (P2, P5)
 
@@ -199,11 +206,14 @@ replay-stable under reordering.
 
 ### 4.12 P1 offers a said-on filter and no is-about filter (P1, P2)
 
-`adapters/postgres_p1.py:1371-1400`: claim search accepts `asserted_from` /
-`asserted_to` only; `_fact_filters` (`:1427-1446`) has nothing temporal. The
-D41 partial index on `(claim_valid_from, claim_valid_until)` exists and is
-unused by search. "Nate's claims about October" returns what was *spoken* in
-October.
+`adapters/postgres_p1.py:1371-1400`: *claim* search accepts `asserted_from`
+/ `asserted_to` only — the D41 partial index on
+`(claim_valid_from, claim_valid_until)` is unused by the search path, so
+"Nate's claims about October" returns what was *spoken* in October. *Fact*
+search is not time-blind: `_fact_time` (`:1449-1492`) offers as-of and window
+selectors over the fact's `valid_from`/`valid_until` — which, per 4.2 and
+4.17, hold the wrong clock, so the selector is correct over incorrect
+inputs.
 
 ### 4.13 Day/month/year precision is stored as a zero-width interval (P3)
 
@@ -212,19 +222,23 @@ October.
 `_CLAIMS_AS_OF_CANDIDATES` (`query_engine.py:3585-3600`) intersects closed
 intervals. A day-precision May-7 claim is `[May 7 00:00, May 7 00:00]`, so
 "what held during May 7, 09:00–23:00" returns nothing; a year-precision 2022
-claim ends at 2022-12-31 00:00. D106's `_windows_disjoint` inherits the point
-semantics, so two same-day events from different wordings can read as
-touching but not overlapping.
+claim ends at 2022-12-31 00:00. D106's `_windows_disjoint` compares with
+strict `<`, so two *equal* points do overlap; but two same-day events whose
+wordings resolve to different instants of that day, or a day-precision and an
+instant-precision claim, are points that miss each other although the day
+contains both.
 
 ### 4.14 E2 teaches only `event_time` (P4)
 
 `workers/e2.py:167-209`: all three worked examples are `event_time`;
 `measurement_period`, `effective_period`, `proposition_validity` are never
 named; `open` gets one structural mention and no example; `CandidateClaim`
-(`model/claims.py:158-168`) has no field descriptions. "Alice has been CEO
-since 2019" — `proposition_validity`, `open`, from=2019 — is emitted as a
-point event or not at all. This starves D106 directly: its rung fires on
-`about_kind == "event_time"` only.
+(`model/claims.py:158-168`) has no field descriptions. The kinds are exposed
+structurally, so the model *can* emit `proposition_validity` / `open` for
+"Alice has been CEO since 2019", but nothing teaches it their semantics; how
+often it does is unmeasured. Whatever it emits instead, D106's rung fires on
+`about_kind == "event_time"` only, so mislabelled kinds silently change which
+pairs the rung governs.
 
 ### 4.15 The document header shown to E2 drops the time of day (P3)
 
@@ -253,6 +267,17 @@ discards it — nothing persists it (`_INSERT_OBSERVATION:1527-1537` stores no
 window). Two sessions re-asserting one event leave the row's world-window at
 `[earliest session, ∞)` although the event window `[2023-09-29, 2023-09-29]`
 was computed one function away.
+
+### 4.18 The consumption skill defines `claims_as_of` as a system-time query (P2)
+
+`src/rememberstack/core/consumption_skill.py:191-194`: "`claims_as_of` means
+what sources asserted as of a past **system** time" — D41 defines it over the
+claims' *world*-time window, and the implementation filters
+`claim_valid_from/until` (5. below). The skill's "Time and media" section
+(`:202-210`) teaches fact validity versus ingestion but not the said-on /
+is-about distinction. Under D60 the skill is part of the complete agent-facing
+surface, so agents are taught the wrong clock in the one place meant to teach
+clocks.
 
 ## 5. Checked and sound
 
@@ -289,13 +314,13 @@ Absence of a finding above is a result, not an omission:
   every D106 coercion is recorded, so all of the above is diagnosable from
   the audit tables without a rerun.
 
-## 6. Why this is one decision, not seventeen fixes
+## 6. Why this is one decision, not eighteen fixes
 
 Every finding is the same confusion: the engine resolves world-time once, at
 extraction, and then reasons on the source's date. The fix that closes all of
 them is a single contract — world-time flows from the claim's is-about window
-into fact windows, ordering, prompts, and consumer surfaces; said-on time is
-provenance and an upper bound, never validity; a missing time stays missing
-rather than becoming `now()`. That contract is D107 and
+into fact windows, temporal succession, prompts, dedupe keys, and consumer
+surfaces; said-on time is provenance, never validity; a missing time stays
+missing rather than becoming `now()`. That contract is D107 and
 `plan/designs/temporal_clocks_design.md`; the sequencing is
 `plan/plans/temporal_clocks.md`.
