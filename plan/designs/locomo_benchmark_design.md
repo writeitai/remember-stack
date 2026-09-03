@@ -1,7 +1,19 @@
 # LoCoMo full-system benchmark design
 
-> **Binding D105 amendment (2026-09-01).** The current protocol is
-> `RS-LoCoMo-Full-v20`. It retains v19's dataset, ingestion, models, tools,
+> **Binding D106 amendment (2026-09-03).** The current protocol is
+> `RS-LoCoMo-Full-v21`. It retains v20's dataset, rendered documents, models,
+> tools, budgets, answer and judge prompts, counterfactual and complete-answer
+> instructions, content-before-`Unknown` harness guard, and no-review scoring
+> rule. Its pinned `adjudicate_observations` component version now carries the
+> D106 temporal-compatibility rung: dated events with disjoint resolved windows
+> never collapse onto or supersede each other (a same-occurrence date dispute
+> may contradict), and a dated event is never `evidence` for an undated
+> statement. Ingestion provenance, protocol identity, and fingerprint
+> roll; no retrieval, retry, model-effort, or call-budget behavior changes.
+> V20 and v21 scores are directional because the fact layer differs.
+
+> **Historical D105 amendment (2026-09-01; superseded by D106).** The D105
+> protocol was `RS-LoCoMo-Full-v20`. It retained v19's dataset, ingestion, models, tools,
 > budgets, counterfactual instruction, content-before-`Unknown` harness guard,
 > and no-review scoring rule. Its answer prompt now also requires every
 > distinct retrieved value that directly satisfies the question, rather than
@@ -53,7 +65,7 @@
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v20 run.
+> paid run of the current protocol.
 
 ## 1. Acceptance boundary
 
@@ -79,7 +91,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v20
+protocol                RS-LoCoMo-Full-v21
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -651,7 +663,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v20 requires to be
+- the non-secret `document_binding_generation`, which Full-v21 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -797,11 +809,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v20 \
+  --protocol full-v21 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v20`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v21`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

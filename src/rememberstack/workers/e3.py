@@ -85,8 +85,12 @@ E3_NORMALIZER_VERSION: Final = (
 Temperature=0.0 is part of provenance.
 """
 
-OBS_FLUSH_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1:entity-fanout-1"
-"""Post-barrier observation flush generation (D88 §5.6; D90 entity fan-out)."""
+OBS_FLUSH_VERSION: Final = (
+    "e3-obs-flush-2026.09a:temporal-gate-1:claim-fanout-1:entity-fanout-1"
+)
+"""Post-barrier observation flush generation (D88 §5.6; D90 entity fan-out).
+09a/temporal-gate-1: D106 — dated events with disjoint resolved windows never
+collapse, and a dated event never becomes evidence for an undated statement."""
 
 OBS_FLUSH_LEGACY_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1"
 """Pre-D90 version-serial obs flush component version (cutover only)."""
@@ -657,7 +661,11 @@ class AdjudicateObservationsHandler:
                 extractor_version=extractor_version,
                 content_hash=content_hash,
                 lane=work.lane,
-                obs_flush_component_version=OBS_FLUSH_VERSION,
+                # Report the claimed unit's own generation, not the current
+                # constant: a unit enqueued before an OBS_FLUSH_VERSION roll
+                # must complete under the generation its barrier counts, or
+                # the barrier never closes (D106 rollout contract).
+                obs_flush_component_version=work.component_version,
                 doc_id=doc_id,
             ),
         )

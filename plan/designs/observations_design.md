@@ -142,6 +142,39 @@ When a claim asserts a value/property about entity *E*:
    state-vs-measurement from the `statement` (semantic), not from a typed column. This is the rule that
    replaces the dropped `about_period` columns: rather than recording the period structurally, the
    system simply never caps a period figure and lets same-period conflicts coexist.
+
+   **Temporal compatibility — the deterministic rung (D106).** Before any model call, the
+   adjudicator reads what the claim already knows about *when*: its D41 `claim_valid_kind` and
+   resolved window. A claim that describes a **datable event** (`event_time` — a win, a visit, a
+   purchase; the extractor resolved "last Saturday" to a calendar day) is compared to the
+   candidate's own event window, which is the span of the event-time claims supporting it.
+   A resolved start with no end is a D41 *open* interval and stays unbounded (it overlaps every later
+   window). Then:
+   - **both dated events, disjoint windows → `evidence` and `supersede` are forbidden.** Two things
+     that happened on different days are different occurrences — *unless* two sources are disagreeing
+     about the date of one named occurrence ("the Valorant final on Friday" vs "…on Saturday"), which
+     only the date-aware model can tell. So the pair is still judged, but may only `contradict` (both
+     stand, grouped) or stay `new`; an `evidence` or `supersede` verdict is coerced to `new` and
+     recorded with its reason. This holds even when the wording is byte-identical — "won a tournament
+     last week" said in January and again in October is two wins, not one re-asserted — and identical
+     text is then kept apart *without* a verdict (the exact-statement shortcut obeys the same rule).
+   - **one dated event, one undated statement → `evidence` is forbidden.** The pair may still be
+     judged for supersede/contradict (a dated resignation can end a "is CEO" state), but a verdict
+     of `evidence` is coerced to `new` and recorded with its reason; identical text is again kept
+     apart without a verdict. A specific dated event is never a re-assertion of a vaguer statement
+     ("has been winning a few tournaments"), and a summary never re-asserts a specific event — both
+     stand.
+   - **both undated, or both dated with overlapping windows → the ladder as before.** A re-mention
+     of the *same* event (same resolved date, or a year-level and a day-level window for one
+     occurrence) still collapses as evidence; headcounts, revenues and stances are untouched.
+   The verdict prompt shows, for each statement, when the source *said it* and what world-time it *is
+   about* (the resolved window of any D41 kind, not only events), and defines both, so the model
+   judges with the timelines in front of it rather than two bare strings. Within one batch a block row
+   that absorbs evidence widens its in-memory windows, so a later overlapping claim is not split off
+   as a different occurrence. Every adjudication record carries the coercions that preceded it. The
+   rung is the "deterministic value/period compare" step the cascade below always named; it is what
+   keeps recurring same-shaped events countable — the failure it closes is recorded in
+   `plan/analysis/locomo_conv42_recurring_event_adjudication.md`.
 4. **Fail safe — a binding adjudicator contract (not just a hope).** This is the honest core of the
    untyped design: "never silently resolve" is **policy enforced in E3 + eval**, not a schema invariant.
    The binding rules:
@@ -186,6 +219,22 @@ rank were poor, the prior headcount is still *in the candidate set* (the entity 
 worst the adjudicator spends a bit more. Contrast a pure semantic-cluster approach, where a mis-clustered
 prior headcount would be **invisible** and silently duplicated. Anchoring to the resolved entity is what
 buys this.
+
+**Distinct events — seven tournament wins (D106).** A conversation reports, months apart, "I won
+my first tournament last week", "won my second tournament last week", "won another regional
+tournament", "won my fourth tournament on Friday", "won an international tournament yesterday",
+"won a really big tournament last week", "won the Valorant final last Saturday". Every claim is a
+dated event (`event_time`, day precision, all seven windows disjoint). Without the temporal rung a
+small model reading only the two strings judged October's "won a really big tournament last week"
+to be `evidence` for January's "won his first tournament last week" — both say "last week" — and
+folded the international and Valorant wins into "has been winning a few tournaments"; the entity
+ended with four win facts and a count question answered "at least five" against seven. With the
+rung: each new win is still judged against the similar earlier wins and the undated summary, but
+with both timelines in the prompt, and whatever the model answers, an `evidence` or `supersede`
+verdict against a disjoint-window win — or an `evidence` verdict against the summary — is coerced to
+`new` and recorded → **seven observations, one summary**. A second mention of the *same* win (same
+resolved day) still collapses as evidence onto it, and two sources disagreeing about *which* day one
+named final was won may `contradict`, so both stand grouped.
 
 ### Supersession appends — an observation is a time-slice, never an in-place edit
 
@@ -234,7 +283,9 @@ value → observation), and often the claim's embedding (E2 embeds claims for P1
    - For a **hub entity**, the same vector step top-k ranks *which* candidates to compare (cheap math); a
      skipped far candidate costs at most a duplicate row, never a wrong supersede.
 3. **Adjudicate the residue only (cheap → frontier).** Only similar-but-not-identical candidates escalate
-   the D4 cascade: deterministic value/period compare → small model → frontier LLM for the survivors. The
+   the D4 cascade: the deterministic temporal-compatibility compare (§3 step 3, D106 — it bounds which
+   verdicts a pair may take, and decides identical text alone) → small model → frontier LLM for the
+   survivors. The
    adjudicator decides same-property (+ same-period for a figure) and the outcome under the no-cap rule
    (state → supersede; measurement → contradict/coexist; same value → evidence; else new), and **fails
    safe to coexist** below the supersede margin.

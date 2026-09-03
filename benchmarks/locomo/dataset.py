@@ -140,10 +140,10 @@ def load_manifest(tier: str) -> QuestionManifest:
         )
     if manifest.dataset_commit != DATASET_COMMIT:
         raise DatasetValidationError(
-            "manifest dataset commit is not RS-LoCoMo-Full-v20"
+            "manifest dataset commit is not RS-LoCoMo-Full-v21"
         )
     if manifest.dataset_sha256 != DATASET_SHA256:
-        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-Full-v20")
+        raise DatasetValidationError("manifest dataset hash is not RS-LoCoMo-Full-v21")
     actual = item_ids_hash(item_ids=manifest.item_ids)
     if actual != manifest.item_ids_sha256:
         raise DatasetValidationError(

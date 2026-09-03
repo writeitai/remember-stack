@@ -250,8 +250,15 @@ examined, and the failure looks like the deployment being down.
   hypothetical may follow causal or motivational relationships in retrieved
   evidence even when no source states the hypothetical verbatim. It adds no
   retrieval, retry, reasoning-effort, or call-budget work.
-- The current `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
+- Historical `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
   that directly satisfies the question. It does not add a retrieval or retry.
+- The current `RS-LoCoMo-Full-v21` pins the D106 observation adjudicator:
+  dated events with disjoint resolved windows never collapse onto or supersede
+  each other (a same-occurrence date dispute may contradict), and a dated
+  event is never `evidence` for an undated statement. Recurring
+  same-shaped events (seven tournament wins months apart) now survive as
+  distinct facts. It changes ingestion provenance only; retrieval, prompts,
+  budgets, and scoring are those of v20.
 
 ## What landed after v0.6.0 (in v0.7.0; historical resolver generation)
 

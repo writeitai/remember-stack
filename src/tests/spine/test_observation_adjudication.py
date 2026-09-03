@@ -153,40 +153,156 @@ def _add(
     statement: str,
     engine: Engine | None = None,
     asserted_at: str | None = None,
+    event_window: tuple[str, str | None] | None = None,
+    doc_id: UUID | None = None,
 ) -> UUID:
     """One observation through the cascade with a fresh claim.
 
     With `asserted_at`, a real dated claim row backs the testimony (the D41
     seed the boundary math reads); without it, the testimony is undated.
+    With `event_window`, the claim is a datable EVENT resolved to that
+    `[from, until]` window (`claim_valid_kind = 'event_time'`, day precision;
+    an `until` of `None` is a D41 open interval), the input the D106
+    temporal-compatibility rung reads.
     """
+    doc_id = doc_id or uuid4()
     claim_id = uuid4()
     if asserted_at is not None and engine is not None:
-        with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "INSERT INTO claims (claim_id, deployment_id, doc_id,"
-                    " chunk_id, claim_text, source_span, char_start, char_end,"
-                    " anchor_ok, window_membership_ok, extractor_version,"
-                    " asserted_at)"
-                    " VALUES (:c, :d, :doc, :ch, :s, :s, 0, 1, true, true,"
-                    " 'test', CAST(:a AS timestamptz))"
-                ),
-                {
-                    "c": claim_id,
-                    "d": _DEPLOYMENT_ID,
-                    "doc": uuid4(),
-                    "ch": uuid4(),
-                    "s": statement,
-                    "a": asserted_at,
-                },
-            )
+        _claim(
+            engine=engine,
+            claim_id=claim_id,
+            doc_id=doc_id,
+            statement=statement,
+            asserted_at=asserted_at,
+            event_window=event_window,
+        )
     return adjudicator.add_observation(
         deployment_id=_DEPLOYMENT_ID,
         subject_entity_id=entity,
         statement=statement,
         claim_id=claim_id,
-        doc_id=uuid4(),
+        doc_id=doc_id,
     )
+
+
+def _claim(
+    *,
+    engine: Engine,
+    claim_id: UUID,
+    doc_id: UUID,
+    statement: str,
+    asserted_at: str,
+    event_window: tuple[str, str | None] | None = None,
+) -> None:
+    """Insert one dated claim row, optionally a resolved D41 event window."""
+    precision = "unknown"
+    if event_window is not None:
+        precision = "open" if event_window[1] is None else "day"
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id,"
+                " chunk_id, claim_text, source_span, char_start, char_end,"
+                " anchor_ok, window_membership_ok, extractor_version,"
+                " asserted_at, claim_valid_kind, claim_valid_precision,"
+                " claim_valid_from, claim_valid_until)"
+                " VALUES (:c, :d, :doc, :ch, :s, :s, 0, 1, true, true,"
+                " 'test', CAST(:a AS timestamptz),"
+                " CAST(:kind AS claim_valid_kind),"
+                " CAST(:precision AS claim_valid_precision),"
+                " CAST(:vf AS timestamptz), CAST(:vu AS timestamptz))"
+            ),
+            {
+                "c": claim_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "ch": uuid4(),
+                "s": statement,
+                "a": asserted_at,
+                "kind": None if event_window is None else "event_time",
+                "precision": precision,
+                "vf": None if event_window is None else event_window[0],
+                "vu": None if event_window is None else event_window[1],
+            },
+        )
+
+
+def _collapse_happy_router(prompt: str, type_name: str) -> dict[str, object]:
+    """The failure the D106 rung exists to stop: a small model that reads
+    "won a tournament last week" twice and calls the second a re-assertion.
+
+    It answers `evidence` for any pair about the same recurring activity —
+    exactly what the conv-42 run's adjudicator did to five of seven wins —
+    so a test passes only when the deterministic rung keeps it from mattering.
+    """
+    if type_name != "ObservationVerdict":
+        raise AssertionError(f"unexpected generate call: {type_name}")
+    lower = prompt.lower()
+    if "tournament" in lower or "participa" in lower or "competing" in lower:
+        return {"outcome": "evidence", "confidence": 0.95}
+    return {"outcome": "new", "confidence": 0.9}
+
+
+def _observations(*, engine: Engine, entity: UUID) -> list[dict[str, object]]:
+    """The entity's live observations, oldest window first."""
+    with engine.connect() as connection:
+        return [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT observation_id, statement, valid_from, evidence_count"
+                    " FROM observations"
+                    " WHERE subject_entity_id = :e AND invalidated_at IS NULL"
+                    " ORDER BY valid_from NULLS LAST, statement"
+                ),
+                {"e": entity},
+            ).mappings()
+        ]
+
+
+def _verdict_calls(provider: FakeModelProvider) -> int:
+    """How many verdict prompts the ladder actually bought."""
+    return sum(1 for prompt in provider.generated_prompts if "EXISTING:" in prompt)
+
+
+# Seven distinct wins as conv-42 reported them: same shape, months apart.
+_SEVEN_WINS: tuple[tuple[str, str, str], ...] = (
+    (
+        "Nate said he won his first video game tournament last week.",
+        "2022-01-21T19:31:00Z",
+        "2022-01-14",
+    ),
+    (
+        "Nate said that Nate won Nate's second tournament last week.",
+        "2022-05-02T11:54:00Z",
+        "2022-04-25",
+    ),
+    (
+        "Nate just won another regional video game tournament last week.",
+        "2022-06-03T17:44:00Z",
+        "2022-05-27",
+    ),
+    (
+        "Nate won Nate's fourth video game tournament on Friday.",
+        "2022-07-10T14:34:00Z",
+        "2022-07-08",
+    ),
+    (
+        "Nate won an international tournament yesterday.",
+        "2022-08-22T10:57:00Z",
+        "2022-08-21",
+    ),
+    (
+        "Nate said that Nate won a really big video game tournament last week.",
+        "2022-10-06T11:15:00Z",
+        "2022-09-29",
+    ),
+    (
+        "Nate won the final of a big Valorant tournament last Saturday.",
+        "2022-11-07T20:10:00Z",
+        "2022-11-05",
+    ),
+)
 
 
 def test_d90_staggered_late_arrival_resplit_shapes(database_engine: Engine) -> None:
@@ -674,3 +790,467 @@ def test_stance_content_never_becomes_a_fact(database_engine: Engine) -> None:
         ).scalar_one()
     assert subjects == [team]  # anchored on the holder, nowhere else
     assert relations == 0  # no fact about Atlas was derived
+
+
+def test_d106_seven_dated_wins_survive_as_seven_facts(database_engine: Engine) -> None:
+    """The conv-42 counting case: seven same-shaped wins on seven dates must
+    stay seven observations whatever the model says about any pair."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    for statement, asserted_at, day in _SEVEN_WINS:
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement=statement,
+            engine=database_engine,
+            asserted_at=asserted_at,
+            event_window=(day, day),
+        )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert [row["statement"] for row in rows] == [win[0] for win in _SEVEN_WINS]
+    assert all(row["evidence_count"] == 1 for row in rows)
+    # Disjoint dated pairs still reach the date-aware model (a same-occurrence
+    # date dispute must be able to surface as a contradiction); its
+    # collapse-happy `evidence` verdicts are coerced to `new` and audited.
+    assert _verdict_calls(provider) > 0
+    with database_engine.connect() as connection:
+        noops = connection.execute(
+            text(
+                "SELECT count(*) FROM observation_adjudications a"
+                " JOIN observations o ON o.observation_id = a.observation_id"
+                " WHERE o.subject_entity_id = :e AND a.outcome = 'noop'"
+            ),
+            {"e": nate},
+        ).scalar_one()
+    assert noops == 0
+
+
+def test_d106_arrival_order_does_not_change_the_count(database_engine: Engine) -> None:
+    """Reverse (and shuffled) arrival yields the same seven facts."""
+    adjudicator, _provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    shuffled = (
+        _SEVEN_WINS[6],
+        _SEVEN_WINS[2],
+        _SEVEN_WINS[0],
+        _SEVEN_WINS[4],
+        _SEVEN_WINS[1],
+        _SEVEN_WINS[5],
+        _SEVEN_WINS[3],
+    )
+    for statement, asserted_at, day in shuffled:
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement=statement,
+            engine=database_engine,
+            asserted_at=asserted_at,
+            event_window=(day, day),
+        )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 7
+    assert [row["statement"] for row in rows] == [win[0] for win in _SEVEN_WINS]
+
+
+def test_d106_same_event_mentioned_twice_still_collapses(
+    database_engine: Engine,
+) -> None:
+    """The rung is about DIFFERENT events: a re-mention of one event (same
+    resolved date) still collapses to one observation with two lineages."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    statement = "Nate won an international tournament yesterday."
+    for asserted_at in ("2022-08-22T10:57:00Z", "2022-08-22T18:00:00Z"):
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement=statement,
+            engine=database_engine,
+            asserted_at=asserted_at,
+            event_window=("2022-08-21", "2022-08-21"),
+        )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 1 and rows[0]["evidence_count"] == 2
+    assert _verdict_calls(provider) == 0  # exact re-assertion: zero LLM
+
+
+def test_d106_identical_words_about_two_dates_are_two_events(
+    database_engine: Engine,
+) -> None:
+    """ "won a tournament last week" in January and again in October is two
+    wins even though the strings are byte-identical."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    statement = "Nate said that Nate won a video game tournament last week."
+    for asserted_at, day in (
+        ("2022-01-21T19:31:00Z", "2022-01-14"),
+        ("2022-10-06T11:15:00Z", "2022-09-29"),
+    ):
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement=statement,
+            engine=database_engine,
+            asserted_at=asserted_at,
+            event_window=(day, day),
+        )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 2 and all(row["evidence_count"] == 1 for row in rows)
+    assert _verdict_calls(provider) == 0  # identical text: decided without a model
+
+
+def test_d106_a_vague_summary_never_absorbs_a_dated_event(
+    database_engine: Engine,
+) -> None:
+    """ "has been winning a few tournaments" (undated) must not swallow the
+    later dated international win as evidence, whatever the model says —
+    and the verdict prompt must have shown the model both timelines."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate said that Nate has been winning a few gaming tournaments.",
+        engine=database_engine,
+        asserted_at="2022-05-02T11:54:00Z",
+    )
+    dated = _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won an international tournament yesterday.",
+        engine=database_engine,
+        asserted_at="2022-08-22T10:57:00Z",
+        event_window=("2022-08-21", "2022-08-21"),
+    )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 2 and all(row["evidence_count"] == 1 for row in rows)
+    assert _verdict_calls(provider) == 1  # mixed pair: judged, then coerced
+    last_prompt = provider.generated_prompts[-1]
+    assert "said on: 2022-05-02\n  is about: no specific time given" in last_prompt
+    assert "said on: 2022-08-22\n  is about: a dated event on 2022-08-21" in last_prompt
+    with database_engine.connect() as connection:
+        features = connection.execute(
+            text(
+                "SELECT features FROM observation_adjudications"
+                " WHERE observation_id = :o AND outcome = 'add'"
+            ),
+            {"o": dated},
+        ).scalar_one()
+    assert features["temporal_gate"][0]["reason"].startswith("evidence coerced to new")
+
+
+def test_d106_a_dated_event_never_absorbs_a_later_summary(
+    database_engine: Engine,
+) -> None:
+    """The mirror image: a summary arriving after a dated event coexists."""
+    adjudicator, _provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won an international tournament yesterday.",
+        engine=database_engine,
+        asserted_at="2022-08-22T10:57:00Z",
+        event_window=("2022-08-21", "2022-08-21"),
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate said that Nate has been winning a few gaming tournaments.",
+        engine=database_engine,
+        asserted_at="2022-10-06T11:15:00Z",
+    )
+    assert len(_observations(engine=database_engine, entity=nate)) == 2
+
+
+def test_d106_boilerplate_state_never_absorbs_dated_participation(
+    database_engine: Engine,
+) -> None:
+    """conv-42's "Nate is a participant." (document-header boilerplate, nine
+    lineages) swallowed two real tournament entries. The boilerplate may
+    still collapse onto itself; the dated events stay distinct facts."""
+    adjudicator, _provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    for asserted_at in (
+        "2022-01-21T19:31:00Z",
+        "2022-02-07T09:00:00Z",
+        "2022-03-01T09:00:00Z",
+    ):
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement="Nate is a participant.",
+            engine=database_engine,
+            asserted_at=asserted_at,
+        )
+    for statement, asserted_at, day in (
+        (
+            "Nate said that Nate is currently participating in the video game tournament again.",
+            "2022-03-24T15:00:00Z",
+            "2022-03-24",
+        ),
+        (
+            "Nate said that Nate tried playing in the local Street Fighter tournament this time.",
+            "2022-04-25T15:00:00Z",
+            "2022-04-25",
+        ),
+    ):
+        _add(
+            adjudicator=adjudicator,
+            entity=nate,
+            statement=statement,
+            engine=database_engine,
+            asserted_at=asserted_at,
+            event_window=(day, day),
+        )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 3
+    boilerplate = next(
+        row for row in rows if row["statement"] == "Nate is a participant."
+    )
+    assert boilerplate["evidence_count"] == 3
+
+
+def test_d106_identical_text_dated_beside_undated_coexists(
+    database_engine: Engine,
+) -> None:
+    """One anchored and one unanchored extraction of the same sentence are
+    kept apart (a duplicate, never a silent merge), with no model call."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    alice = _entity(engine=database_engine)
+    statement = "Alice said she resigned from the tournament committee yesterday."
+    _add(
+        adjudicator=adjudicator,
+        entity=alice,
+        statement=statement,
+        engine=database_engine,
+        asserted_at="2026-03-02T09:00:00Z",
+        event_window=("2026-03-01", "2026-03-01"),
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=alice,
+        statement=statement,
+        engine=database_engine,
+        asserted_at="2026-03-09T09:00:00Z",
+    )
+    rows = _observations(engine=database_engine, entity=alice)
+    assert len(rows) == 2 and all(row["evidence_count"] == 1 for row in rows)
+    assert _verdict_calls(provider) == 0
+
+
+def test_d106_open_window_is_unbounded_not_a_point(database_engine: Engine) -> None:
+    """A D41 open interval ``[from, ∞)`` overlaps every later day, so a later
+    dated re-mention collapses onto it instead of splitting off."""
+    adjudicator, _provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    statement = "Nate has been competing in the regional tournament circuit."
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement=statement,
+        engine=database_engine,
+        asserted_at="2026-01-02T09:00:00Z",
+        event_window=("2026-01-01", None),
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement=statement,
+        engine=database_engine,
+        asserted_at="2026-02-16T09:00:00Z",
+        event_window=("2026-02-15", "2026-02-15"),
+    )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 1 and rows[0]["evidence_count"] == 2
+
+
+def test_d106_overlapping_windows_of_different_precision_may_collapse(
+    database_engine: Engine,
+) -> None:
+    """A year-level claim and a day-level claim inside that year overlap, so
+    the model's `evidence` verdict is honoured (no coercion)."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate said he won a video game tournament last year.",
+        engine=database_engine,
+        asserted_at="2023-02-01T09:00:00Z",
+        event_window=("2022-01-01", "2022-12-31"),
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won Nate's fourth video game tournament on Friday.",
+        engine=database_engine,
+        asserted_at="2022-07-10T14:34:00Z",
+        event_window=("2022-07-08", "2022-07-08"),
+    )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 1 and rows[0]["evidence_count"] == 2
+    assert _verdict_calls(provider) == 1
+    assert (
+        "is about: a dated event within 2022-01-01 to 2022-12-31"
+        in (provider.generated_prompts[-1])
+    )
+
+
+def test_d106_batch_widens_the_candidate_window_as_it_absorbs(
+    database_engine: Engine,
+) -> None:
+    """Within one batch the front-loaded row must not go stale: after
+    ``[Jan 1–10]`` absorbs an overlapping ``[Jan 10–20]`` re-mention, a
+    ``[Jan 20]`` re-mention still overlaps and collapses too."""
+    adjudicator, provider = _adjudicator(
+        engine=database_engine, router=_collapse_happy_router
+    )
+    nate = _entity(engine=database_engine)
+    statement = "Nate said he was competing in the winter tournament."
+    doc_id = uuid4()
+    claims = []
+    for asserted_at, window in (
+        ("2026-01-11T09:00:00Z", ("2026-01-01", "2026-01-10")),
+        ("2026-01-21T09:00:00Z", ("2026-01-10", "2026-01-20")),
+        ("2026-01-21T18:00:00Z", ("2026-01-20", "2026-01-20")),
+    ):
+        claim_id = uuid4()
+        _claim(
+            engine=database_engine,
+            claim_id=claim_id,
+            doc_id=doc_id,
+            statement=statement,
+            asserted_at=asserted_at,
+            event_window=window,
+        )
+        claims.append(claim_id)
+    adjudicator.add_observations(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_entity_id=nate,
+        assertions=tuple(
+            ObservationAssertion(statement=statement, claim_id=claim_id, doc_id=doc_id)
+            for claim_id in claims
+        ),
+    )
+    rows = _observations(engine=database_engine, entity=nate)
+    assert len(rows) == 1
+    with database_engine.connect() as connection:
+        evidence = connection.execute(
+            text("SELECT count(*) FROM observation_evidence WHERE observation_id = :o"),
+            {"o": rows[0]["observation_id"]},
+        ).scalar_one()
+    assert evidence == 3
+    assert _verdict_calls(provider) == 0
+
+
+def test_d106_disjoint_dates_may_still_contradict_one_occurrence(
+    database_engine: Engine,
+) -> None:
+    """Two sources disagreeing about the date of ONE named final are a
+    contradiction (both stand, grouped) — not two finals, not one merged."""
+
+    def router(prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "ObservationVerdict"
+        return {"outcome": "contradict", "confidence": 0.9}
+
+    adjudicator, provider = _adjudicator(engine=database_engine, router=router)
+    nate = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won the 2022 Valorant regional final on Friday.",
+        engine=database_engine,
+        asserted_at="2022-11-07T20:10:00Z",
+        event_window=("2022-11-04", "2022-11-04"),
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=nate,
+        statement="Nate won the 2022 Valorant regional final on Saturday.",
+        engine=database_engine,
+        asserted_at="2022-11-08T20:10:00Z",
+        event_window=("2022-11-05", "2022-11-05"),
+    )
+    with database_engine.connect() as connection:
+        groups = (
+            connection.execute(
+                text(
+                    "SELECT contradiction_group FROM observations"
+                    " WHERE subject_entity_id = :e"
+                ),
+                {"e": nate},
+            )
+            .scalars()
+            .all()
+        )
+    assert len(groups) == 2 and groups[0] is not None and groups[0] == groups[1]
+    assert _verdict_calls(provider) == 1
+
+
+def test_d106_a_dated_event_may_still_supersede_an_undated_state(
+    database_engine: Engine,
+) -> None:
+    """Mixed dating forbids only `evidence`: a dated resignation can end an
+    undated "is CEO" state under the ordinary cap contract."""
+
+    def router(prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "ObservationVerdict"
+        return {
+            "outcome": "supersede",
+            "confidence": 0.9,
+            "rationale": "the resignation ends the CEO state",
+        }
+
+    adjudicator, _provider = _adjudicator(engine=database_engine, router=router)
+    alice = _entity(engine=database_engine)
+    _add(
+        adjudicator=adjudicator,
+        entity=alice,
+        statement="Alice is the CEO of Acme.",
+        engine=database_engine,
+        asserted_at="2025-06-01T09:00:00Z",
+    )
+    _add(
+        adjudicator=adjudicator,
+        entity=alice,
+        statement="Alice resigned as CEO of Acme yesterday.",
+        engine=database_engine,
+        asserted_at="2026-03-02T09:00:00Z",
+        event_window=("2026-03-01", "2026-03-01"),
+    )
+    with database_engine.connect() as connection:
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT statement, valid_until FROM observations"
+                    " WHERE subject_entity_id = :e ORDER BY valid_from"
+                ),
+                {"e": alice},
+            ).mappings()
+        ]
+    assert len(rows) == 2
+    assert rows[0]["statement"] == "Alice is the CEO of Acme."
+    assert rows[0]["valid_until"] is not None  # capped by the dated event
+    assert rows[1]["valid_until"] is None
