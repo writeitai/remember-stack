@@ -49,6 +49,16 @@ def test_todays_control_plane_response_parses() -> None:
     assert parsed.data_plane_hostname_live is True
 
 
+def test_an_unprovisioned_deployment_may_report_null_status() -> None:
+    """A nullable hostname may naturally arrive with a nullable live flag."""
+    parsed = DeviceTokenSuccess.model_validate(
+        _control_plane_body(data_plane_hostname=None, data_plane_hostname_live=None)
+    )
+
+    assert parsed.data_plane_hostname is None
+    assert parsed.data_plane_hostname_live is False
+
+
 def test_an_expiry_the_server_starts_sending_parses() -> None:
     """D60 adds `expires_at`; a client must absorb it rather than break."""
     expires_at = datetime.now(timezone.utc) + timedelta(days=365)

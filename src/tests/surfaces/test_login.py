@@ -493,6 +493,7 @@ def test_login_derives_the_api_url_from_a_live_hostname(
 ) -> None:
     """A managed login needs only the token host once its deployment is live."""
     _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("REMEMBERSTACK_API_URL", "https://stale.example.test")
     calls: list[str] = []
     hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
     _mock_client(
@@ -509,6 +510,7 @@ def test_login_derives_the_api_url_from_a_live_hostname(
     stored = load_credentials()
     assert stored is not None
     assert stored.api_url == f"https://{hostname}"
+    assert calls == ["authorize", "token"]
 
 
 def test_login_api_url_override_wins_over_an_unready_hostname(
@@ -532,6 +534,31 @@ def test_login_api_url_override_wins_over_an_unready_hostname(
     stored = load_credentials()
     assert stored is not None
     assert stored.api_url == _API
+    assert calls == ["authorize", "token"]
+
+
+def test_login_normalizes_a_hostname_and_treats_a_blank_override_as_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Whitespace cannot turn a valid managed endpoint into a broken URL."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
+    _mock_client(
+        monkeypatch,
+        _grant_handler(
+            token_body=_token_body(
+                data_plane_hostname=f"  {hostname}  ", data_plane_hostname_live=True
+            ),
+            calls=calls,
+        ),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST, "--api-url", "  "]) == 0
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.api_url == f"https://{hostname}"
+    assert calls == ["authorize", "token"]
 
 
 def test_login_refuses_a_hostname_that_is_not_live(
@@ -539,6 +566,8 @@ def test_login_refuses_a_hostname_that_is_not_live(
 ) -> None:
     """Do not persist a managed endpoint before the control plane says it is live."""
     _isolate_config(monkeypatch, tmp_path)
+    predecessor = _stored(token_prefix="old-prefix")
+    write_credentials(credential=predecessor)
     calls: list[str] = []
     hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
     _mock_client(
@@ -554,8 +583,34 @@ def test_login_refuses_a_hostname_that_is_not_live(
     assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
     captured = capsys.readouterr()
     assert hostname in captured.err
-    assert "your deployment is not live yet" in captured.err
+    assert f"error: deployment {hostname} is not live yet" in captured.err
     assert "run `remember login` again when it is" in captured.err
+    stored = load_credentials()
+    assert stored is not None
+    assert stored.token_id == predecessor.token_id
+    assert stored.access_token == predecessor.access_token
+    assert calls == ["authorize", "token", "revoke"]
+
+
+def test_login_refuses_an_invalid_advertised_hostname(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A token response cannot persist a scheme or path as though it were a host."""
+    _isolate_config(monkeypatch, tmp_path)
+    calls: list[str] = []
+    hostname = "https://deployment.example.test/path"
+    _mock_client(
+        monkeypatch,
+        _grant_handler(
+            token_body=_token_body(
+                data_plane_hostname=hostname, data_plane_hostname_live=True
+            ),
+            calls=calls,
+        ),
+    )
+
+    assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
+    assert repr(hostname) in capsys.readouterr().err
     assert load_credentials() is None
     assert calls == ["authorize", "token", "revoke"]
 

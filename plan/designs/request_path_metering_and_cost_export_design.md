@@ -644,9 +644,13 @@ remember logout [--token-host URL]
 There is **no** derivation of a token host from `--api-url`. The engine
 must not encode a commercial control plane’s `/dp/v1` layout.
 
-`--api-url` on login is the query API stored in the file (default:
-`REMEMBERSTACK_API_URL` or `http://127.0.0.1:8000`). It is not the
-device-grant host.
+`--api-url` on login is an explicit query-API override stored in the file. If
+it is omitted, login derives `https://{data_plane_hostname}` from a live
+hostname advertised by the token host. It does not fall back to
+`REMEMBERSTACK_API_URL` or localhost: doing so could bind a newly minted
+deployment credential to an unrelated endpoint. A self-hosted or local token
+host that does not advertise a hostname therefore requires the flag. The query
+API is not the device-grant host.
 
 `logout` uses `--token-host`, else `REMEMBERSTACK_TOKEN_HOST`, else the
 file’s `token_host`. It does not take `--api-url`.

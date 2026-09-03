@@ -653,6 +653,9 @@ def _login_locked(args: argparse.Namespace) -> int:
     from rememberstack.surfaces.device_login import DeviceGrantError
     from rememberstack.surfaces.device_login import poll_device_token
 
+    # Login binds a newly minted deployment credential. Only the explicit flag
+    # may override that deployment's advertised host; a process-wide API URL
+    # can legitimately point at some other deployment.
     api_url = args.api_url
     try:
         token_host = _resolved_token_host(explicit=args.token_host)

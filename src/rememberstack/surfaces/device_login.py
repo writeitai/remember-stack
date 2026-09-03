@@ -10,11 +10,13 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from datetime import datetime
 import time
+from typing import Annotated
 from typing import Literal
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel
+from pydantic import BeforeValidator
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
@@ -85,7 +87,9 @@ class DeviceTokenSuccess(BaseModel):
     #: Advertised by the control plane; the CLI stores it so a caller does not
     #: have to be told the host separately.
     data_plane_hostname: str | None = None
-    data_plane_hostname_live: bool = False
+    data_plane_hostname_live: Annotated[
+        bool, BeforeValidator(lambda value: False if value is None else value)
+    ] = False
     #: When the credential stops working (D60). Absent for the unexpiring
     #: tokens minted before that decision, which is why it is optional rather
     #: than required — a client that demanded it would refuse today's tokens.
@@ -286,16 +290,25 @@ def credential_from_token(
     *, token: DeviceTokenSuccess, api_url: str | None, token_host: str
 ) -> CredentialFile:
     """Build the v1 credential document, deriving its managed API URL."""
-    if api_url is None:
-        hostname = token.data_plane_hostname
-        if hostname is None or not hostname.strip():
+    api_url = (api_url or "").strip()
+    if not api_url:
+        hostname = (token.data_plane_hostname or "").strip()
+        if not hostname:
             raise DeviceGrantError(
                 "token host did not advertise a data-plane hostname; pass --api-url"
             )
+        if (
+            "://" in hostname
+            or any(character in hostname for character in "/@?#\\")
+            or any(character.isspace() for character in hostname)
+        ):
+            raise DeviceGrantError(
+                f"token host advertised an invalid data-plane hostname: {hostname!r}"
+            )
         if not token.data_plane_hostname_live:
             raise DeviceGrantError(
-                f"deployment hostname: {hostname}\n"
-                "your deployment is not live yet; run `remember login` again when it is"
+                f"deployment {hostname} is not live yet; "
+                "run `remember login` again when it is"
             )
         api_url = f"https://{hostname}"
     return CredentialFile(
