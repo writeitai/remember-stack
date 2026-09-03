@@ -3,10 +3,15 @@
 **Status:** binding under D107
 
 **Date:** 2026-09-03 (fifth revision the same day, after four independent
-Codex design reviews; §11 records what each round withdrew)
+Codex design reviews; §10 records what each round withdrew)
 
 **Analysis:** `plan/analysis/time_handling_audit.md` (twenty-two findings at
 `02b79904`, each cited by file and function)
+
+**Open under D107 (decided in the sequencing, not here):** deterministic
+relation seeding under D88 concurrency, the locked compare-and-swap
+application of review verdicts, cached-artifact staleness, and the D74
+hard-forget inventory — see §12.
 
 **Builds on:** D41 (claims carry an immutable, source-asserted validity
 interval; a fact's window is the adjudicator's single recorded verdict, never
@@ -58,20 +63,32 @@ resolved bounds are; a start with `claim_valid_until IS NULL` is **open**;
   read the is-about window. The said-on clock is displayed as provenance and
   orders processing; it is never a window boundary.
 - **Rule 2 — a missing time stays missing.** An unknown is-about window
-  leaves a fact's windows `NULL` with basis `unknown`. Nothing is ever filled
-  with `now()`, with the said-on date, or with belief-time; an undated fact
-  never caps another and is never capped; it coexists, recorded.
+  leaves a fact's window endpoints `NULL` with basis `unknown`. Nothing is
+  ever filled with `now()`, with the said-on date, or with belief-time. A
+  fact whose bounds are unknown may still be *ended* by a successor that
+  supplies a world-time instant (a dated resignation ends "is CEO" even when
+  nobody said when the tenure began — D106); what an undated fact can never
+  do is *supply* a boundary to another.
 
 ## 3. Two kinds of fact, two windows
 
-Every fact (relation or observation) carries a **temporal kind** and two
+Every fact (relation or observation) carries a **temporal kind** — its
+*shape*, which is independent of whether its bounds are known — and two
 windows with different authority:
 
 | `temporal_kind` | seeded from claim kind | what the fact says | identity |
 | --- | --- | --- | --- |
-| `state` | `effective_period`, `proposition_validity` | something held over a span ("was CEO 2015–2018") | key + **verdict window** (disjoint slices per key; the relations `EXCLUDE`) |
+| `state` | `effective_period`, `proposition_validity` | something held over a span ("was CEO 2015–2018"; "is CEO" with no start given) | key + **verdict window** (disjoint slices per key; the relations `EXCLUDE`) — bounds may be unknown |
 | `occurrence` | `event_time`, `measurement_period` | something happened, or a figure for a span ("won the final on 2022-11-05"; "FY2023 revenue was $5M") | key + an **adjudicated** occurrence identity (§4.2) — windows may overlap |
-| `undated` | `NULL` | the source tied nothing to a date | key (+ statement wording for observations) |
+| `unknown` | `NULL` kind, and the ladder cannot tell shape from wording | the source tied nothing to a date and the statement does not say whether it is a state or an occurrence | key (+ statement wording for observations) |
+
+Shape and datedness are different questions. A claim with no D41 window is
+first classified by the normaliser's existing shape judgement (a state or
+an occurrence, from the wording, the same call that routes a claim to a
+relation or an observation); only when that judgement is itself unsure is
+the fact's kind `unknown`. A `state` with unknown bounds is still a state:
+it can be superseded and ended, and it is what most undated "X is Y"
+testimony becomes.
 
 | Window | Columns | Authority | Changes when |
 | --- | --- | --- | --- |
@@ -104,7 +121,9 @@ are the seed claim's **canonical bounds** (§5):
 | --- | --- | --- | --- | --- | --- |
 | `effective_period`, `proposition_validity` | `state` | canonical start | canonical end (bounded span → a closed historical slice; open → `NULL`) | `world_time` / `world_time`, or `unknown` for an open end | same as the verdict window |
 | `event_time`, `measurement_period` | `occurrence` | canonical start (believed from then on) | `NULL` — never capped (D43, extended to events) | `world_time` / `unknown` | the claim's canonical window |
-| `NULL` | `undated` | `NULL` | `NULL` | `unknown` / `unknown` | `NULL` |
+| `NULL`, shape judged `state` | `state` | `NULL` | `NULL` | `unknown` / `unknown` | `NULL` |
+| `NULL`, shape judged `occurrence` | `occurrence` | `NULL` | `NULL` | `unknown` / `unknown` | `NULL` |
+| `NULL`, shape unsure | `unknown` | `NULL` | `NULL` | `unknown` / `unknown` | `NULL` |
 
 The re-occurrence floor (a reopened state slice starts no earlier than the
 prior closed slice's end) applies **only** when the seed's start is provably
@@ -128,24 +147,27 @@ the ladder, as D106 requires. What changes is the **two candidate sets** and
 the **verdicts a temporal relation permits**:
 
 - **same-kind candidates** — live facts of the same key and the same
-  `temporal_kind`; eligible for `evidence`, `contradict`, or `new`;
+  `temporal_kind`; eligible for `evidence`, `supersede` (states only),
+  `contradict`, or `new`;
 - **state-ending candidates** — for an incoming `occurrence` claim only: the
   non-invalidated `state` slices of the same key (for observations, the same
-  entity) whose interval extends beyond the occurrence's canonical start —
-  open-ended *or* finite-ended (a 2027 resignation must reach "CEO
-  2025–2030") — eligible **only** for `supersede` or `contradict` (§4.4),
-  never for evidence. This is the cross-kind comparison D106's dated
-  resignation needs to end an "is CEO" state.
+  entity) whose known interval does not end before the occurrence's
+  canonical start — bounds unknown, open-ended, *or* finite-ended (a 2027
+  resignation must reach "CEO 2025–2030", and a dated resignation must reach
+  "is CEO" with no start given) — eligible **only** for `supersede` or
+  `contradict` (§4.4), never for evidence. This is the cross-kind comparison
+  D106's dated resignation needs.
 
 Within the same-kind set, the temporal relation of the two canonical
-windows bounds the verdict, as D106 does today:
+windows bounds the verdict, as D106 does today (`supersede` rows apply to
+states; occurrences are never superseded):
 
 | relation | permitted verdicts |
 | --- | --- |
-| both dated, **disjoint** | `new`, or `contradict` when the ladder finds one occurrence with a disputed date (D106) — never `evidence`, never `supersede` |
-| both dated, **overlapping** | `evidence` (the same occurrence or state re-mentioned; `occurs_*` widens), `contradict`, `new` (a different occurrence that merely overlaps: two visits on one day; a day-precision and an instant-precision claim about different things) |
-| **mixed** (one dated, one undated) | `supersede` / `contradict` / `new` — never `evidence` |
-| both undated | as today |
+| both dated, **disjoint** | `new`, or `contradict` when the ladder finds one occurrence with a disputed date (D106); for states, `supersede` only when the incoming start is later than the existing start (a later disjoint spell that ends the earlier one at the incoming start) — never `evidence` |
+| both dated, **overlapping** | `evidence` (the same occurrence or state re-mentioned; `occurs_*` widens), `supersede` (a state's value changed; cap at the incoming start under the guard), `contradict`, `new` (a different occurrence that merely overlaps: two visits on one day; a day-precision and an instant-precision claim about different things) |
+| **mixed** (one dated, one undated) | `supersede` (only when the *incoming* side is dated — it supplies the boundary), `contradict`, `new` — never `evidence` |
+| both undated | `evidence`, `contradict`, `new` — never `supersede` (no boundary exists) |
 
 Consequences by kind:
 
@@ -162,12 +184,14 @@ prevent duplicates. Acceptance covers same-key recurring events, coarse and
 fine precision overlap judged `new`, a disjoint pair judged `contradict`, and
 a union expansion bridging two existing occurrences.
 
-**Undated claims.** Observations: identical wording collapses onto an
-existing `undated` row of the same key, otherwise a new `undated` row.
-Relations: the triple *is* the content, so an undated claim attaches to the
-single open `state` slice if exactly one exists, else to the single `undated`
-row for the key (creating it once); it never attaches to an `occurrence` and
-never creates a second unbounded slice.
+**Undated claims.** A claim without a D41 window takes its shape from the
+normaliser's judgement (§3) and then follows its kind's rules with unknown
+bounds. Observations of kind `unknown`: identical wording collapses onto an
+existing `unknown` row of the same key, otherwise a new row. Relations: the
+triple *is* the content, so an undated relation claim attaches to the single
+open `state` slice if exactly one exists, else seeds one `state` slice with
+unknown bounds for the key (created once); it never attaches to an
+`occurrence` and never creates a second unbounded slice.
 
 **The relation write path becomes staged.** Today `upsert_relation` finds a
 live triple and attaches evidence before the relation ladder runs, which
@@ -184,8 +208,9 @@ no-op" short-circuit applies to `state` and `undated` triples only.
 
 **Relations schema.** The existing GiST `EXCLUDE` on `(subject, predicate,
 object) && tstzrange(valid_from, valid_until)` becomes partial on
-`temporal_kind = 'state'`; `undated` relations get a unique key on the
-triple; occurrence relations have no constraint.
+`temporal_kind = 'state'` (an unbounded-bounds state slice is one range
+`(,)` under it, so the "created once" rule above is what the constraint
+enforces); occurrence relations have no constraint.
 
 ### 4.3 Revising a verdict: a `temporal_window` review verdict (amends D24)
 
@@ -209,17 +234,26 @@ a dated `occurrence`) and raised as a `review_queue` item of a new kind,
 | `reverses_verdict_id` | set on a reversal |
 
 Invariants checked before apply, for verdicts that are not reversals: the
-start may move earlier, never later; no endpoint moves past a neighbouring
-slice's bound; a closed end is never reopened (D41); a `state` with two
-known endpoints stays non-empty. **Reversal is the one documented
+start may move earlier, never later, and an `unknown` start may become known
+(the transition `NULL → known` is the one permitted "later" move, because
+there was no start before); no endpoint moves past a neighbouring slice's
+bound; a closed end is never reopened (D41); a `state` with two known
+endpoints stays non-empty. A verdict applies only under the fact's lock and
+only when the fact's current bounds and bases still equal its `old_*`
+values (compare-and-swap); a stale verdict is not applied and returns to
+review. Review items are unique per `(fact, discrepancy fingerprint)` so a
+recurring recompute raises one item, not many. The full locked, ordered
+application contract — including how a reversal compensates only the
+endpoints its referenced verdict changed while preserving intervening caps
+and retractions — is an open item of §12. **Reversal is the one documented
 exception**: a reviewer may reverse a `temporal_window` verdict with a
 compensating verdict that restores the prior bounds and bases exactly —
 D24's reversibility applies to human verdicts over human verdicts, while
 D41's retrospective guard governs evidence-driven change; the two do not
 conflict because no evidence ever moves a window. Verdicts apply in
-`decided_at` order after caps and retractions on the same fact and replay in
-that order on rebuild (D7). Anything the invariants refuse stays a review
-item.
+`(decided_at, verdict_id)` order after caps and retractions on the same
+fact and replay in that order on rebuild (D7). Anything the invariants refuse
+stays a review item.
 
 ### 4.4 Closing: temporal succession, separate from processing order
 
@@ -237,9 +271,10 @@ successor**:
   dated resignation ends an "is CEO" state whose own start may be unknown,
   and a 2027 resignation shortens "CEO 2025–2030" to end in 2027.
 
-**Chronological guard, applied to every cap source including D55:** the
-boundary must be later than the predecessor's known verdict start and
-earlier than its known end; otherwise it is not a cap — the ladder's outcome
+**Chronological guard, applied to every cap source including D55**, stated
+mechanically over the predecessor's verdict window:
+`(valid_from IS NULL OR T > valid_from) AND (valid_until IS NULL OR T <
+valid_until)`. A boundary that fails it is not a cap — the ladder's outcome
 is recorded, the pair routes to `contradict` (both stand, grouped) when the
 values conflict and coexists otherwise, and a `temporal_window` review item
 is raised. When the successor supplies no world-time instant (an undated
@@ -248,21 +283,25 @@ adjudication row records `reason = "no world-time boundary -> coexist"`.
 The cap's basis is `verdict`. Relation supersession and observation
 supersession share this one rule. `now()` is never a boundary.
 
-**Retraction (D55) by temporal kind.** A withdrawn `state` whose withdrawing
-document version has a known source time is capped there under the guard
-(basis `source_removed`); when that time is unknown, the world-time end stays
-`unknown` and only the belief interval closes — `invalidated_at` set from the
+**Retraction (D55) by temporal kind, fail-closed.** A withdrawn `state`
+whose withdrawing document version has a known source time is capped there
+under the guard (basis `source_removed`). When that time is unknown, **or
+the guard refuses it**, the world-time end stays `NULL` with basis `unknown`
+and the belief interval closes regardless — `invalidated_at` set from the
 **persisted reconciliation event's timestamp**, never from the database
-clock, so a rebuild replays the same instant. A withdrawn `occurrence` or
-`undated` fact is never capped: it closes on belief-time the same way. This
-is the per-shape judgement D55 asks for and `close_observations` could not
-make while shape was semantic; `temporal_kind` makes it mechanical.
+clock, so a rebuild replays the same instant and a sole-support removal can
+never leave a zombie fact that later activates; a refused boundary is
+additionally sent to review as the disputed world-time endpoint. A withdrawn
+`occurrence` or `unknown`-kind fact is never capped: it closes on belief-time
+the same way. This is the per-shape judgement D55 asks for and
+`close_observations` could not make while shape was semantic;
+`temporal_kind` makes it mechanical.
 
 **Residual, measured rather than assumed:** undated, differently worded
-restatements of a changing state coexist as `undated` rows instead of
+restatements of a changing state coexist as unknown-bounds rows instead of
 capping. Identical wording collapses (§4.2), so growth comes only from
-distinct undated wordings; the count of `undated` rows per key is a reported
-metric and the lever is extraction coverage of the D41 kinds (§6).
+distinct undated wordings; the count of unknown-bounds rows per key is a
+reported metric and the lever is extraction coverage of the D41 kinds (§6).
 
 ### 4.5 The D90 late-arrival re-split uses the world clock
 
@@ -464,11 +503,13 @@ did is auditable like any verdict.
    pre-roll observation units complete under their own generation);
 2. **migrate** — add the new columns (`temporal_kind`, the two bases,
    `occurs_from`/`occurs_until`/`occurs_precision`, `seed_claim_id`),
-   `triggering_claim_id` on relation adjudications, the non-empty `state`
-   check, the partial `EXCLUDE`, the `undated` unique key, the
+   the non-empty `state` check, the partial `EXCLUDE`, the
    `fact_expiry_schedule` table, the `temporal_window` review kind and
-   `temporal_window_verdicts`, and the `memory_v1` canonicalisation function
-   and view;
+   `temporal_window_verdicts`, the `adjudication_outcome` value `migrate`
+   and `adjudication_method` value `migration`, and the `memory_v1`
+   canonicalisation function and view (`relation_adjudications.triggering_claim_id`
+   already exists and is populated from now on; `postgres_schema_design.md`
+   receives the matching D107 amendment with the full DDL);
 3. **convert in place**, per fact, idempotently and in batches, shadow-first
    (computed into staging columns, validated against §4.1 and §4.3
    invariants, swapped in one transaction per batch, resumable from the last
@@ -494,9 +535,10 @@ did is auditable like any verdict.
      is removed (no-cap rule) with the cap moved to the belief interval only
      if the row was withdrawn; a D55 fallback cap (the withdrawing version's
      time unknown) becomes belief-time invalidation at the persisted
-     reconciliation instant with `valid_until` set to `unknown`; a cap that
-     cannot be recomputed (successor unknown or undated) is set to
-     `unknown` with a `legacy_unknown_boundary` review item, and a cap the
+     reconciliation instant with `valid_until` set to `NULL`, basis
+     `unknown`; a cap that
+     cannot be recomputed (successor unknown or undated) is set to `NULL`,
+     basis `unknown`, with a `legacy_unknown_boundary` review item, and a cap the
      chronological guard would refuse is likewise routed to review;
 4. **readiness** reports the fact-layer generation and the count of open
    `legacy_unknown_boundary` items; consumers refuse to serve a store whose
@@ -547,6 +589,10 @@ Only §6's added kinds benefit from re-extraction.
   lost D106's ending-event case.
 - **Closing a retracted state on belief-time labelled `source_removed`**
   (revision 3). Withdrawn: belief-time is not world-time.
+- **An `undated` temporal kind that conflates shape with datedness**
+  (revisions 3–5). Withdrawn: it made "is CEO" with no start uncappable and
+  so lost D106's ending-event case again; shape and datedness are separate,
+  and only an undated *successor* is barred from supplying a boundary.
 - **Cap at the successor's said-on date** (revision 1); **bake the resolved
   date into the observation statement** (revision 1); **twenty-two local
   patches**; **keep `now()` as the undated cap**. Withdrawn for the reasons
@@ -562,10 +608,44 @@ Only §6's added kinds benefit from re-extraction.
   window stays the one adjudicated home; the occurrence window is derived
   metadata and is documented as such wherever it is shown.
 
+## 12. Open items this design does not yet decide
+
+Four contracts were identified by the fifth independent review as necessary
+for implementation and as touching decisions beyond this design's current
+scope. They are recorded here as open, are gated in `plan/plans/temporal_clocks.md`
+WP-T.1, and each is a spike whose result amends the named design before that
+package starts:
+
+1. **Deterministic relation seeding under D88 concurrency.** D88 lets
+   concurrent claim jobs upsert relations ("relation evidence attach is
+   commutative"); a per-key lock serialises arrival, not the D90 total
+   order, so which claim seeds a relation is a race. Required: a durable,
+   claim-idempotent relation staging relation and a post-barrier per-block
+   drain in the total order, analogous to D90 for observations — an
+   amendment to D88 and `e3_claim_level_normalize_fanout_design.md`.
+2. **The locked application of `temporal_window` verdicts.** §4.3 fixes the
+   compare-and-swap precondition, the order key and item uniqueness;
+   remaining are the per-fact locking rule between review and
+   ingestion/retraction writes, dependency validation on replay, and the
+   compensating-reversal algorithm that preserves intervening caps.
+3. **Cached-artifact staleness.** §7.1's schedule regenerates profiles and K
+   pages when their inputs' boundaries pass; remaining are how a future fact
+   that is not yet an input becomes a scheduled dependency, transactional
+   schedule maintenance on every boundary change, draining and coalescing
+   boundaries missed during downtime with the current instant as `E`, and a
+   checked stale state (or a D49-disclosed staleness) for an artifact whose
+   refresh is late, since the read-time predicate cannot protect
+   already-rendered text.
+4. **Hard-forget inventory (D74).** `seed_claim_id`, `occurs_*`, the review
+   payloads, `temporal_window_verdicts` (seed, actor, rationale, bounds),
+   migration-adjudication features, the expiry schedule, derived labels and
+   their embeddings must each be classified as delete / null / recompute in
+   `hard_forget_design.md` §4 and the canary matrix.
+
 ## References
 
 Decisions: D107 (this design), D41, D3, D4, D43, D88, D90, D106, D24, D7,
-D12, D55, D49. Analysis: `plan/analysis/time_handling_audit.md`. Sequencing:
+D12, D55, D49, D74. Analysis: `plan/analysis/time_handling_audit.md`. Sequencing:
 `plan/plans/temporal_clocks.md`. Affected designs carry a D107 amendment
 banner: `e2_e3_claims_relations_design.md`, `observations_design.md`,
 `registries_design.md`, `retrieval_design.md`, `k_layers_design.md`,

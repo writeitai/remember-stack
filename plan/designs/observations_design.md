@@ -6,10 +6,12 @@
 > recorded seed claim), seeded once from the D90-first claim's canonical D41
 > window — a state's span; an occurrence believed from its start onward and
 > never capped; `NULL`/`unknown` when undated — and a derived occurrence
-> window (`occurs_*`) that widens as evidence attaches. Occurrence identity
-> is adjudicated under the entity lock — overlapping windows are a candidate
-> filter the D106 rung judges, never identity — so recurring events stay
-> distinct rows; the rung compares canonical bounds. The said-on
+> window (`occurs_*`) that widens as evidence attaches. Candidate nomination
+> is unchanged (entity block, then similarity order, regardless of temporal
+> overlap); the temporal relation of canonical bounds only bounds the verdict,
+> so a disjoint pair may still contradict (D106) and recurring events stay
+> distinct rows because occurrence identity is the ladder's verdict under
+> the entity lock. The said-on
 > date is never a boundary. No verdict changes automatically (discrepancies
 > become `temporal_window` review verdicts, D24); a state is capped only at a
 > world-time instant its successor supplies, later than its own known start — a successor state's start or an ending occurrence's
