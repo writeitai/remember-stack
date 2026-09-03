@@ -94,6 +94,10 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
         Path("website/src/app/docs/reference/cli/page.mdx"): (
             f"# RememberStack {version}",
         ),
+        Path("website/src/app/docs/reference/api/page.mdx"): (
+            f"Release v{version} and later",
+            f"releases/download/v{version}/openapi.json",
+        ),
         Path("website/src/app/docs/project-status/page.mdx"): (
             f"releases/tag/v{version}",
             f"rememberstack/{version}/",

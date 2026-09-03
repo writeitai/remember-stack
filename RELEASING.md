@@ -107,8 +107,12 @@ uvx --from rememberstack==0.2.0 remember --version
 docker pull ghcr.io/writeitai/remember-stack:0.2.0
 gh release download v0.2.0 --repo writeitai/remember-stack \
   --pattern compose.yaml --pattern default.env.example --pattern openapi.json
-jq -e '.info.version == "0.2.0"' openapi.json >/dev/null || {
-  echo "openapi.json is not version 0.2.0" >&2
+found=$(jq -r '.info.version' openapi.json) || {
+  echo "cannot read openapi.json" >&2
+  exit 1
+}
+[ "$found" = "0.2.0" ] || {
+  echo "openapi.json is version $found, expected 0.2.0" >&2
   exit 1
 }
 cp default.env.example .env

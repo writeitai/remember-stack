@@ -13,6 +13,7 @@ _RELEASE_DOCS = (
     Path("website/src/app/docs/getting-started/page.mdx"),
     Path("website/src/app/docs/deployment/page.mdx"),
     Path("website/src/app/docs/reference/cli/page.mdx"),
+    Path("website/src/app/docs/reference/api/page.mdx"),
     Path("website/src/app/docs/project-status/page.mdx"),
 )
 
