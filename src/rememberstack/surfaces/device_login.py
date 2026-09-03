@@ -9,12 +9,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Mapping
 from datetime import datetime
+from ipaddress import ip_address
 import time
+from typing import Annotated
 from typing import Literal
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel
+from pydantic import BeforeValidator
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
@@ -67,9 +70,9 @@ class DeviceTokenSuccess(BaseModel):
     server may add, and the client must carry on. Fields this client actually
     needs are declared and validated; anything else is the server's business.
 
-    Known-but-unused fields are declared explicitly rather than swallowed, so a
-    reader can see what the server sends and a future change to use one does not
-    have to rediscover it.
+    The advertised data-plane hostname is declared explicitly because login uses
+    it to configure managed deployments without a separate ``--api-url``. Other
+    additive fields remain safe to ignore until the client needs them.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
@@ -85,7 +88,9 @@ class DeviceTokenSuccess(BaseModel):
     #: Advertised by the control plane; the CLI stores it so a caller does not
     #: have to be told the host separately.
     data_plane_hostname: str | None = None
-    data_plane_hostname_live: bool = False
+    data_plane_hostname_live: Annotated[
+        bool, BeforeValidator(lambda value: False if value is None else value)
+    ] = False
     #: When the credential stops working (D60). Absent for the unexpiring
     #: tokens minted before that decision, which is why it is optional rather
     #: than required — a client that demanded it would refuse today's tokens.
@@ -283,9 +288,27 @@ def revoke_self(*, client: httpx.Client, access_token: str) -> int:
 
 
 def credential_from_token(
-    *, token: DeviceTokenSuccess, api_url: str, token_host: str
+    *, token: DeviceTokenSuccess, api_url: str | None, token_host: str
 ) -> CredentialFile:
-    """Build the v1 credential document from a successful poll."""
+    """Build the v1 credential document, deriving its managed API URL."""
+    api_url = (api_url or "").strip()
+    if not api_url:
+        hostname = (token.data_plane_hostname or "").strip()
+        if not hostname:
+            raise DeviceGrantError(
+                "token host did not advertise a data-plane hostname; pass --api-url"
+            )
+        if not _valid_data_plane_hostname(hostname):
+            raise DeviceGrantError(
+                "token host advertised an invalid data-plane hostname: "
+                f"{hostname!r}; pass --api-url to override"
+            )
+        if not token.data_plane_hostname_live:
+            raise DeviceGrantError(
+                f"deployment {hostname!r} is not live yet; "
+                "run `remember login` again when it is"
+            )
+        api_url = f"https://{hostname}"
     return CredentialFile(
         version=1,
         api_url=api_url,
@@ -299,6 +322,54 @@ def credential_from_token(
         token_prefix=token.token_prefix,
         expires_at=token.expires_at,
     )
+
+
+def _valid_data_plane_hostname(hostname: str) -> bool:
+    """Accept one printable URL authority with a real DNS or IP host."""
+    if (
+        not hostname.isascii()
+        or not hostname.isprintable()
+        or any(character.isspace() for character in hostname)
+    ):
+        return False
+    try:
+        url = httpx.URL(f"https://{hostname}")
+        host = url.host
+        port = url.port
+        userinfo = url.userinfo
+        path = url.path
+        query = url.query
+        fragment = url.fragment
+    except (httpx.InvalidURL, UnicodeError):
+        return False
+    if (
+        not host
+        or userinfo
+        or path != "/"
+        or query
+        or fragment
+        or "@" in hostname
+        or "/" in hostname
+        or hostname.endswith(":")
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        return False
+    try:
+        ip_address(host)
+    except ValueError:
+        if len(host) > 253:
+            return False
+        stem = host[:-1] if host.endswith(".") else host
+        labels = stem.split(".")
+        return all(
+            label
+            and len(label) <= 63
+            and (label[0].isalnum() or label[0] == "_")
+            and (label[-1].isalnum() or label[-1] == "_")
+            and all(character.isalnum() or character in "-_" for character in label)
+            for label in labels
+        )
+    return True
 
 
 def request_same_origin(

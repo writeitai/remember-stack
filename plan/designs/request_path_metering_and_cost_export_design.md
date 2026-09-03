@@ -644,9 +644,26 @@ remember logout [--token-host URL]
 There is **no** derivation of a token host from `--api-url`. The engine
 must not encode a commercial control plane’s `/dp/v1` layout.
 
-`--api-url` on login is the query API stored in the file (default:
-`REMEMBERSTACK_API_URL` or `http://127.0.0.1:8000`). It is not the
-device-grant host.
+`--api-url` on login is an explicit query-API override stored in the file. If
+it is omitted, login derives `https://{data_plane_hostname}` from a live
+hostname advertised by the token host. It does not fall back to
+`REMEMBERSTACK_API_URL` or localhost: doing so could bind a newly minted
+deployment credential to an unrelated endpoint. A self-hosted or local token
+host that does not advertise a hostname therefore requires the flag. The query
+API is not the device-grant host.
+
+Without the explicit override, the hostname must be present, structurally
+valid, and advertised as live. Concretely, it is one printable ASCII host or
+`host:port`, with no scheme, path, query, fragment, userinfo, or whitespace; a
+port is 1..65535, and the host is either an IP literal or nonempty DNS labels
+of at most 63 characters and 253 characters in total. Underscore labels and
+one trailing DNS root dot are accepted; an empty label, including one left by
+a second trailing dot, is not. A missing hostname asks for `--api-url`; an
+invalid hostname or a present hostname whose live flag is false or null exits
+nonzero and prints the hostname and reason. These checks occur after the token
+is minted, so every refusal withdraws the new credential (or keeps its secret
+in the pending-revocation journal when withdrawal cannot be confirmed) and
+does not write or replace `credentials.json`.
 
 `logout` uses `--token-host`, else `REMEMBERSTACK_TOKEN_HOST`, else the
 file’s `token_host`. It does not take `--api-url`.
@@ -712,9 +729,17 @@ Success **200**:
   "org_id": "<uuid>",
   "deployment_id": "<uuid>",
   "label": "<string>",
-  "token_prefix": "<string>"
+  "token_prefix": "<string>",
+  "data_plane_hostname": "<hostname or null>",
+  "data_plane_hostname_live": "<boolean or null>"
 }
 ```
+
+The two data-plane fields let login bind the new credential to its deployment.
+Older or self-hosted token services may omit them; that is the missing-hostname
+case in §6.1. A null live flag is treated as false. The response model ignores
+additional fields so the separately deployed token service can evolve without
+breaking older clients.
 
 TTL: if authorize’s `expires_in` elapses before 200, stop. Do not keep
 polling a dead grant.
@@ -801,6 +826,9 @@ read if the platform reports a world-readable mode.
 | Export cursor malformed | 422, no receipts |
 | Empty page inside horizon | 200 heartbeat |
 | Login without `--token-host` / env | Exit 2; no derive-from-api-url |
+| Login without `--api-url` or an advertised hostname | Exit 1; ask for `--api-url`; withdraw the mint; keep any existing file |
+| Login with an invalid advertised hostname | Exit 1; print the hostname; ask for `--api-url`; withdraw the mint; keep any existing file |
+| Login with a hostname that is not live | Exit 1; print the hostname; withdraw the mint; keep any existing file |
 | Logout revoke 5xx | Keep file; exit 1 |
 | Credential file world-readable | Refuse to read |
 

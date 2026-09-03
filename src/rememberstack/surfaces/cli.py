@@ -654,8 +654,10 @@ def _login_locked(args: argparse.Namespace) -> int:
     from rememberstack.surfaces.device_login import DeviceGrantError
     from rememberstack.surfaces.device_login import poll_device_token
 
-    env = CliClientEnv.model_validate({})
-    api_url = args.api_url or env.api_url or "http://127.0.0.1:8000"
+    # Login binds a newly minted deployment credential. Only the explicit flag
+    # may override that deployment's advertised host; a process-wide API URL
+    # can legitimately point at some other deployment.
+    api_url = args.api_url
     try:
         token_host = _resolved_token_host(explicit=args.token_host)
     except ValueError as error:
@@ -762,9 +764,16 @@ def _login_locked(args: argparse.Namespace) -> int:
             # success, take it back out of the journal — it is the current
             # credential now, not one awaiting revocation.
             try:
-                credential = credential_from_token(
-                    token=token, api_url=api_url, token_host=token_host
-                )
+                try:
+                    credential = credential_from_token(
+                        token=token, api_url=api_url, token_host=token_host
+                    )
+                except DeviceGrantError:
+                    # The poll already journalled the minted bearer. Retire it
+                    # now when possible; if the host cannot confirm that, the
+                    # journal keeps the only secret needed for a later retry.
+                    _retry_pending_revocation()
+                    raise
                 if existing is not None:
                     # Written before the file is overwritten, because
                     # overwriting it destroys the only copy of the
@@ -811,9 +820,10 @@ def _login_locked(args: argparse.Namespace) -> int:
                         )
                     )
             except BaseException:
-                # The journal entry stays: whatever went wrong, the credential
-                # exists at the token host and the next login or logout will
-                # retire it. Nothing here has to succeed for that to hold.
+                # Unless the hostname-refusal path above already retired the
+                # mint, its journal entry stays: the credential exists at the
+                # token host and the next login or logout will retire it.
+                # Nothing here has to succeed for that to hold.
                 raise
     except KeyboardInterrupt:
         return 130
@@ -844,6 +854,14 @@ def _login_locked(args: argparse.Namespace) -> int:
         print(f"api_url: {credential.api_url}")
         if credential.expires_at is not None:
             print(f"expires_at: {credential.expires_at.isoformat()}")
+        env_api_url = CliClientEnv.model_validate({}).api_url
+        if env_api_url and env_api_url != credential.api_url:
+            print(
+                f"warning: REMEMBERSTACK_API_URL={env_api_url} overrides the "
+                f"stored api_url {credential.api_url} for other commands; "
+                "unset it to use this deployment",
+                file=sys.stderr,
+            )
         return 0
 
 
