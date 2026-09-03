@@ -1,5 +1,12 @@
 # Retrieval Design — the Query Machine
 
+> **Binding D107 amendment (2026-09-03).** Testimony grouping keys include the
+> claim's D41 window, so identical wording about different dates stays two
+> evidence rows; the fact-grain `Validity` gains `validity_basis`; P1 accepts
+> is-about (`valid_from`/`valid_until`) filters beside the said-on ones; and
+> `aggregate(form="timeline")` buckets by world-time with an explicit `undated`
+> bucket. Contract: `temporal_clocks_design.md` §5.2–§5.4.
+
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
 > PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
 > depth-two/variable neighborhoods, entity paths, and citation paths use bounded
