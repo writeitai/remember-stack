@@ -611,6 +611,8 @@ def test_login_refuses_a_hostname_that_is_not_live(
     "hostname",
     [
         "https://deployment.example.test/path",
+        "@deployment.example.test",
+        "deployment.example.test:8443/",
         ":8443",
         "[::1",
         "evil\x1b[2m.example",

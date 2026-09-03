@@ -348,6 +348,8 @@ def _valid_data_plane_hostname(hostname: str) -> bool:
         or path != "/"
         or query
         or fragment
+        or "@" in hostname
+        or "/" in hostname
         or hostname.endswith(":")
         or (port is not None and not 1 <= port <= 65535)
     ):

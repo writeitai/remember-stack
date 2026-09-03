@@ -820,9 +820,10 @@ def _login_locked(args: argparse.Namespace) -> int:
                         )
                     )
             except BaseException:
-                # The journal entry stays: whatever went wrong, the credential
-                # exists at the token host and the next login or logout will
-                # retire it. Nothing here has to succeed for that to hold.
+                # Unless the hostname-refusal path above already retired the
+                # mint, its journal entry stays: the credential exists at the
+                # token host and the next login or logout will retire it.
+                # Nothing here has to succeed for that to hold.
                 raise
     except KeyboardInterrupt:
         return 130
