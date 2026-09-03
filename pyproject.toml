@@ -163,7 +163,7 @@ section-order = ["future", "standard-library", "third-party", "first-party", "lo
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 include = ["src", "benchmarks"]
-extraPaths = ["src", "."]
+extraPaths = ["src", ".", "scripts"]
 exclude = ["**/.venv", "**/virtualenvs", "tmp/"]
 
 # Test code has different ergonomics (poking internals, monkeypatching) — relaxed

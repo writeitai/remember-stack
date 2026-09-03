@@ -28,6 +28,12 @@ Current public release: [`v0.15.0`](https://github.com/writeitai/remember-stack/
 - MCP assured-operation and open-query tools (stdio client transport)
 - Self-accounting response envelopes (grain, freshness, contradictions, typed negatives)
 - API, CLI, and MCP in lockstep; optional filesystem mounts and a deployment-rendered consumption skill
+- An OpenAPI document for the query API a self-host deployment serves, kept in
+  the repository and compared against the code in CI, so a client can be
+  generated rather than transcribed. The liveness probe stays out of it
+  deliberately. A deployment does not serve the document either — the schema
+  route sits outside the auth perimeter — and releases from here on attach it
+  as an asset
 - Cold-agent skill checks so harnesses keep claims and facts straight
 
 ### Knowledge pages

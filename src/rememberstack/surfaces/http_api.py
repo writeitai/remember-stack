@@ -34,17 +34,20 @@ from fastapi import Query
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
 
+from rememberstack import __version__
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV1
+from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
@@ -185,6 +188,14 @@ class DocumentInventoryPort(Protocol):
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
     ) -> DocumentPage: ...
+
+
+class BuildInfoPort(Protocol):
+    """Report the code and model bindings currently serving."""
+
+    def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
+        """Answer without touching submitted work, so a caller can check first."""
+        ...
 
 
 class GraphQueryPort(Protocol):
@@ -329,6 +340,7 @@ def build_api(
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
     graph: GraphQueryPort | None = None,
+    build_info: BuildInfoPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -372,10 +384,16 @@ def build_api(
     )
     dependencies = [
         *([Depends(perimeter_dep)] if perimeter_dep is not None else []),
+        # Declares the bearer scheme in the OpenAPI document so a generated
+        # client knows to send a credential. `auto_error=False` means it never
+        # raises: `perimeter_dep` above stays the sole enforcement point and
+        # keeps answering 401, so documenting the contract cannot change it.
+        *([Depends(HTTPBearer(auto_error=False))] if perimeter_dep is not None else []),
         Depends(_admission(admission=admission, deployment_id=deployment_id)),
     ]
     app = FastAPI(
         title="RememberStack query API",
+        version=__version__,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
@@ -511,6 +529,8 @@ def build_api(
         )
     if graph is not None:
         _mount_graph(app=app, graph=graph)
+    if build_info is not None:
+        _mount_build_info(app=app, build_info=build_info, deployment_id=deployment_id)
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
@@ -635,6 +655,29 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # the credential is what stops access immediately, not this list.
         max_age=600,
     )
+
+
+def _mount_build_info(
+    *, app: FastAPI, build_info: BuildInfoPort, deployment_id: UUID
+) -> None:
+    """Mount `GET /deployment`, the provenance a caller checks before working.
+
+    Composed here rather than added to the app after `build_api` returns, which
+    is where it used to live. A route bolted on afterwards is invisible to
+    anything reading the surface from this module — the published OpenAPI
+    document included, which then describes an API the deployment does not
+    match, and did.
+
+    The self-host profile still adds `GET /healthz` that way, deliberately: it
+    is the container's liveness probe rather than part of the query API, and it
+    is marked `include_in_schema=False` so the published document does not
+    offer it as one. Every *documented* route is composed here.
+    """
+
+    @app.get("/deployment", response_model=DeploymentBuildInfo)
+    def deployment_build_info() -> DeploymentBuildInfo:
+        """Report which code and model bindings are serving, before any work."""
+        return build_info.build_info(deployment_id=deployment_id)
 
 
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:

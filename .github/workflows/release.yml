@@ -205,6 +205,13 @@ jobs:
           name: postgres-image-evidence
           path: release-evidence/
 
+      # Asset names here are not always the names published. GitHub prefixes a
+      # dotfile with "default", so `.env.example` below is downloadable as
+      # `default.env.example` and by no other name. A consumer pinning the
+      # source name gets a 404, which is exactly what happened: four fleet
+      # engine pins recorded `.env.example`, copied forward from the first,
+      # because they were written from this list rather than from a release.
+      # Check the published asset names, not this block, when pinning.
       - name: Create the release with pinned deployment inputs
         uses: softprops/action-gh-release@v2
         with:
@@ -214,3 +221,4 @@ jobs:
             release-evidence/postgres-image-digests.json
             compose.yaml
             .env.example
+            openapi.json
