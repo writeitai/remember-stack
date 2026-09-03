@@ -59,9 +59,8 @@ the routes a shipped self-host deployment serves — not the cost-export listene
 below, which is a separate process, nor connector management, which no shipped
 profile composes. The
 document is [`openapi.json`](https://github.com/writeitai/remember-stack/blob/main/openapi.json)
-at the root of the repository, and releases published from now on attach it as
-a release asset of the same name. Releases up to and including v0.15.0 predate
-it, so check a release's asset list before pinning one to generate from — the
+at the root of the repository. Release v0.16.0 and later attach it as a release
+asset of the same name; releases up to and including v0.15.0 predate it. The
 repository copy always describes the current `main`.
 
 A deployment does **not** serve the schema itself. `GET /openapi.json` is not a
@@ -75,14 +74,13 @@ nowhere else.
 Generate a typed client the usual way for your language, for example:
 
 ```bash
-# From the repository, describing current main:
+# Pinned to the version you actually run (available from v0.16.0):
+curl -fsSL -o openapi.json \
+  https://github.com/writeitai/remember-stack/releases/download/v0.16.0/openapi.json
+
+# Or, from the repository, describing current main:
 curl -fsSL -o openapi.json \
   https://raw.githubusercontent.com/writeitai/remember-stack/main/openapi.json
-
-# Or, pinned to the version you actually run — check the release's asset
-# list first, since releases up to v0.15.0 do not carry it:
-#   curl -fsSL -o openapi.json \
-#     https://github.com/writeitai/remember-stack/releases/download/<tag>/openapi.json
 
 # TypeScript
 npx openapi-typescript openapi.json -o src/engine-schema.ts

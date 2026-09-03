@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.15.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.15.0) on [PyPI](https://pypi.org/project/rememberstack/0.15.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.16.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.16.0) on [PyPI](https://pypi.org/project/rememberstack/0.16.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -156,14 +156,49 @@ Current public release: [`v0.15.0`](https://github.com/writeitai/remember-stack/
   The resolver generation moves to `resolver-2026.08g`, so evaluation curves
   measured under `08f` are not comparable and a fresh run is required.
 
-## What landed after v0.15.0 (on `main`)
+## What landed after v0.15.0 (in v0.16.0)
+
+**Dated events no longer collapse merely because their words match.** The
+observation adjudicator now uses each claim's resolved world-time window.
+Events with disjoint dates stay distinct unless a date-aware verdict identifies
+one occurrence with disputed dates; a dated event also cannot serve as
+`evidence` for an undated summary. Recurring same-shaped events therefore
+survive as separate facts, and ingestion provenance changes
+([#360](https://github.com/writeitai/remember-stack/pull/360)).
+
+**Claim windows have one canonical half-open meaning.** Day, month, quarter,
+and year precision cover their complete calendar unit; instants remain
+non-empty points; open and unknown bounds stay explicit. `claims_as_of` now
+finds a day-precision claim from an intraday or point query, and observation
+adjudication uses the same bounds
+([#372](https://github.com/writeitai/remember-stack/pull/372)).
+
+**Operators:** migration `p9_26_0047` adds the canonical-bound SQL functions
+and the partial expression index used by `claims_as_of`; claim storage is
+unchanged. Observation generations roll, so rebuilding changes stored
+ingestion provenance, and `claims_as_of` results change under the corrected
+window semantics.
+
+**A release now carries the API contract beside the binaries.** The generated
+`openapi.json` is attached to the GitHub release, so client generation can pin
+the exact schema served by the installed engine rather than following `main`
+([#358](https://github.com/writeitai/remember-stack/pull/358)).
+
+**Browser uploads have their own narrow credential.** The signed perimeter now
+has `read`, `ingest`, and `write` scopes. `ingest` reaches only `POST /ingest`:
+it cannot search, list memory, run operations, or create a connector that keeps
+pulling after the browser leaves. Full `write` still reaches ingest. A narrow
+credential also cannot assert immutable principal attribution
+([#363](https://github.com/writeitai/remember-stack/pull/363),
+[#370](https://github.com/writeitai/remember-stack/pull/370)).
 
 **Managed login uses the deployment hostname it receives.** When the token
 host advertises a live data-plane hostname, `remember login` derives the query
 API URL, so managed users need only `--token-host`. An explicit `--api-url`
 still wins for self-hosted and local deployments. A missing hostname asks for
 that flag, while a hostname that is not live prints the name and asks the user
-to retry; neither refusal replaces an existing credential.
+to retry; neither refusal replaces an existing credential
+([#371](https://github.com/writeitai/remember-stack/pull/371)).
 
 ## What landed after v0.14.0 (in v0.15.0)
 
@@ -246,11 +281,12 @@ examined, and the failure looks like the deployment being down.
   v16's read surface, answer/judge seats, budgets, and content-before-`Unknown`
   guard.
 
-## Document-local exact T0 (current release behavior in v0.13.0)
+## Document-local exact T0 (current release behavior)
 
-- Resolver `resolver-2026.08f` can replay an exact canonical-name match at T0
-  only inside the same document and only after a T4 match established one
-  unambiguous live binding. Fuzzy T1/T2 signals remain candidate-only.
+- Resolver `resolver-2026.08g` can replay an exact canonical-name match at T0
+  (a behavior introduced in `08f`) only inside the same document and only after
+  a T4 match established one unambiguous live binding. Fuzzy T1/T2 signals
+  remain candidate-only.
 - The derived binding projection is generation-gated as `document-t0-v1`,
   rebuilt before it is enabled for existing deployments, and cleared by normal
   lineage deletion and hard forget.
