@@ -1,13 +1,14 @@
 # E2 / E3 — Claim Extraction and Relation Normalization (Design)
 
 > **Binding D107 amendment (2026-09-03).** E2 teaches all four D41 kinds and
-> `open` with examples and sees the full source timestamp in the header;
-> storage of windows is unchanged and precision is honoured at comparison
-> time. E3 receives each claim's resolved window and seeds a new relation's
-> or observation's verdict window from it once, by kind, with a basis per
-> endpoint, and sets the derived occurrence window; statements stay
-> source-faithful and canonical, and dated labels are derived from the
-> occurrence window. Contract: `temporal_clocks_design.md` §3–§5.
+> `open` with examples and sees the full source timestamp in the header; claim
+> storage is unchanged and comparisons use canonical bounds. E3 seeds each new
+> fact's temporal kind and verdict window once from the D90-first claim's
+> canonical D41 window (bases per endpoint, seed claim recorded), matches
+> later claims by kind — states by verdict-window overlap, occurrences by
+> occurrence-window overlap under a separate exclusion — and never revises a
+> verdict automatically; statements stay canonical and dated labels are
+> derived. Contract: `temporal_clocks_design.md` §3–§5.
 
 How the system turns a chunk of source text into **claims** (atomic, standalone, verifiable
 assertions) and then into **relations** (the distinct facts those claims are evidence for). This is

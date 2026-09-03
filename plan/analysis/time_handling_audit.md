@@ -7,8 +7,9 @@ binding contract is `plan/designs/temporal_clocks_design.md`.
 
 **Revision audited:** `02b79904` (the merge of D106). Line numbers below are
 for that revision; function and statement names are the stable anchors.
-Findings 4.2, 4.6, 4.12, 4.13 and 4.14 were narrowed after an independent
-Codex review verified each against the code; 4.18 was added from that review.
+Findings 4.2, 4.5, 4.6, 4.12, 4.13, 4.14 and 4.15 were narrowed after two
+independent Codex reviews verified each against the code; 4.18 and 4.19 were
+added from those reviews.
 
 ## 1. Question
 
@@ -135,7 +136,7 @@ reports Alice still at Acme the day before an undated CV was ingested, and
 the same ingest replayed on another day yields a different history — the
 value is not rebuild-stable (D7).
 
-### 4.5 E3 never sees the resolved window, so the fact statement keeps "last week" forever (P1, P6)
+### 4.5 Normalisation and label construction do not propagate the resolved window, so the fact statement keeps "last week" forever (P1, P6)
 
 `src/rememberstack/workers/e3.py:98-120` (normaliser prompt: `CLAIM
 (attributed=…): {claim_text}`; no valid-time fields at `:436-441`). E2's prompt
@@ -244,8 +245,10 @@ pairs the rung governs.
 
 `workers/e2.py:899-906`: `date {modified.date().isoformat()}` while
 `asserted_at` keeps the full timestamp (`:599`). LoCoMo sessions carry wall
-times; "this morning" cannot resolve, and two same-day sessions are the same
-anchor.
+times; offset expressions ("three hours ago") cannot resolve to an instant,
+and two same-day sessions are the same anchor. (Part-of-day expressions such
+as "this morning" have no precision in the D41 enum and are an expressivity
+boundary, not an anchor defect.)
 
 ### 4.16 Entity profiles and the T4 candidate list carry no dates and rank by row-touch time (P4, P5)
 
@@ -278,6 +281,16 @@ claims' *world*-time window, and the implementation filters
 is-about distinction. Under D60 the skill is part of the complete agent-facing
 surface, so agents are taught the wrong clock in the one place meant to teach
 clocks.
+
+### 4.19 The open-query confirmation surface truncates the clocks (P1, P4)
+
+`src/rememberstack/surfaces/query_sandbox/nomination.py:323-327`
+(`_CONFIRM_SQL["claims"]`) confirms claim search rows with `asserted_at`,
+`claim_valid_from`, `claim_valid_until` — and omits `claim_valid_precision`
+and `claim_valid_kind`; the fact-row confirmation carries no verdict or
+occurrence time at all. An agent on this public path cannot tell a point from
+a coarse period, an open interval, or an unknown, even after is-about filters
+exist.
 
 ## 5. Checked and sound
 
@@ -314,7 +327,7 @@ Absence of a finding above is a result, not an omission:
   every D106 coercion is recorded, so all of the above is diagnosable from
   the audit tables without a rerun.
 
-## 6. Why this is one decision, not eighteen fixes
+## 6. Why this is one decision, not nineteen fixes
 
 Every finding is the same confusion: the engine resolves world-time once, at
 extraction, and then reasons on the source's date. The fix that closes all of
