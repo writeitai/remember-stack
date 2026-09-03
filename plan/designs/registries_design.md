@@ -4,8 +4,8 @@
 > each salient fact's occurrence window and bases, ranked by evidence then
 > occurrence recency (never `updated_at`); the relation supersession prompt
 > and its evidence laterals show both clocks (`said on` / `is about`) as
-> `temporal_clocks_design.md` §6 requires; evidence-target matching, verdict
-> revision and temporal succession follow §4.2–§4.4.
+> `temporal_clocks_design.md` §7.2 requires; matching, verdict revision and
+> temporal succession follow §4.2–§4.4.
 
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only globally.
 > One current `T4_small` match may establish a derived exact-name binding inside

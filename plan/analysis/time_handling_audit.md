@@ -7,8 +7,8 @@ binding contract is `plan/designs/temporal_clocks_design.md`.
 
 **Revision audited:** `02b79904` (the merge of D106). Line numbers below are
 for that revision; function and statement names are the stable anchors.
-Findings 4.2, 4.5, 4.6, 4.12, 4.13, 4.14 and 4.15 were narrowed after two
-independent Codex reviews verified each against the code; 4.18 and 4.19 were
+Findings 4.2, 4.5, 4.6, 4.12, 4.13, 4.14 and 4.15 were narrowed after three
+independent Codex reviews verified each against the code; 4.18–4.21 were
 added from those reviews.
 
 ## 1. Question
@@ -292,6 +292,24 @@ occurrence time at all. An agent on this public path cannot tell a point from
 a coarse period, an open interval, or an unknown, even after is-about filters
 exist.
 
+### 4.20 Aggregates and predicate absence never evaluate `valid_until` (P1)
+
+`src/rememberstack/surfaces/query_engine.py` — `_AGG_COUNT` (`:4246`) and
+its group variants, and `_AGG_PREDICATE_ABSENCE` (`:4335`) select "live"
+relations by `invalidated_at IS NULL` alone. Today every relation is
+open-ended (4.2), so the omission is invisible; once a state can carry a
+finite end, an expired relation keeps counting and can block a true absence
+answer, against D49's rule that current fact-grain answers are
+validity-filtered.
+
+### 4.21 The shipped `claims_as_of` example cannot count what it excludes (P3)
+
+The saved `claims_as_of` example reports its `unknown`-precision exclusion
+by combining `precision = 'unknown'` with a non-null bound comparison; D41's
+`CHECK` makes an unknown-precision claim's bounds `NULL`, so the count is
+permanently zero. (Reported by the third independent review; the fix rides
+the query-space canonicalisation of design §5.)
+
 ## 5. Checked and sound
 
 Absence of a finding above is a result, not an omission:
@@ -311,9 +329,11 @@ Absence of a finding above is a result, not an omission:
   `claim_valid_from`, discloses `excluded_unstamped`; only 4.13's boundary
   semantics apply.
 - **The evidence-grain envelope** (`model/envelope.py:280-302`) — carries all
-  five D41 fields beside `asserted_at`; every confirmation query selects them.
-  D41's promise that evidence payloads surface `claim_valid_from/until` is
-  kept. The fact-grain `Validity` (`:171-179`) is where the conflation lives.
+  five D41 fields beside `asserted_at`, and the `EvidenceResult` hydration
+  queries select them (`query_engine.py:3881-3933`, `:3995-3996`). D41's
+  promise that evidence payloads surface `claim_valid_from/until` is kept
+  there; the open-query confirmation path is the exception (4.19). The
+  fact-grain `Validity` (`:171-179`) is where the conflation lives.
 - **Belief-time plumbing** (`query_engine.py:3463-3483`; migration
   `p9_03_0024_facts_as_of.py:92-95`) — the transaction-time axis is separate
   and sound.
@@ -327,7 +347,7 @@ Absence of a finding above is a result, not an omission:
   every D106 coercion is recorded, so all of the above is diagnosable from
   the audit tables without a rerun.
 
-## 6. Why this is one decision, not nineteen fixes
+## 6. Why this is one decision, not twenty-one fixes
 
 Every finding is the same confusion: the engine resolves world-time once, at
 extraction, and then reasons on the source's date. The fix that closes all of

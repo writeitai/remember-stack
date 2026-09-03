@@ -248,10 +248,14 @@ Entity-global merge only sees **unapplied** staging. If unit A fully applied
 materializes `{t2:B}`, a plain supersede of open A at t2 yields
 `A[t1,t2), B[t2,∞)` and loses A-at-t3.
 
-**Required:** when an apply caps open observation O at boundary T, any **evidence
-claims** (or reassertions) already attached to O with `asserted_at > T` (total
-order) must be re-materialized as subsequent open slices after the cap — not left
-only as evidence on a capped row. Concretely the staggered acceptance case:
+**Required (as amended by D107):** when an apply caps open observation O at the
+world-time boundary T, any **state evidence claims** (or reassertions) already
+attached to O whose canonical occurrence start (`temporal_clocks_design.md` §5)
+is later than T must be re-materialized as subsequent open slices after the
+cap — not left only as evidence on a capped row. `asserted_at` remains the
+total *work* order of §5.5 and plays no part in this eligibility test; undated
+attached evidence is never re-split. (Before D107 this rule compared
+`asserted_at > T`; that compared a said-on clock to a world-time boundary.) Concretely the staggered acceptance case:
 
 1. Fully succeed unit A `{t1:A, t3:A}` alone.  
 2. Later materialize/apply unit B `{t2:B}`.  
