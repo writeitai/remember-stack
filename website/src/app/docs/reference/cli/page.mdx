@@ -63,7 +63,8 @@ remember logout
 Without `--api-url`, login refuses an advertised hostname that is not live,
 prints that hostname, and asks you to run `remember login` again when it is. If
 the token host advertises no hostname, login asks for `--api-url`. Neither
-refusal writes a credential file.
+refusal writes a credential file. An advertised value that is not a plain host
+or `host:port` is also refused; pass `--api-url` to override it.
 
 `login` prints the user code and both verification URLs, then polls
 `POST {token_host}/v1/device/token`. It never prints `device_code` or

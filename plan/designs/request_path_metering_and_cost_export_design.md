@@ -653,7 +653,12 @@ host that does not advertise a hostname therefore requires the flag. The query
 API is not the device-grant host.
 
 Without the explicit override, the hostname must be present, structurally
-valid, and advertised as live. A missing hostname asks for `--api-url`; an
+valid, and advertised as live. Concretely, it is one printable ASCII host or
+`host:port`, with no scheme, path, query, fragment, userinfo, or whitespace; a
+port is 1..65535, and the host is either an IP literal or nonempty DNS labels
+of at most 63 characters and 253 characters in total. Underscore labels and
+one trailing DNS root dot are accepted; an empty label, including one left by
+a second trailing dot, is not. A missing hostname asks for `--api-url`; an
 invalid hostname or a present hostname whose live flag is false or null exits
 nonzero and prints the hostname and reason. These checks occur after the token
 is minted, so every refusal withdraws the new credential (or keeps its secret
@@ -822,7 +827,7 @@ read if the platform reports a world-readable mode.
 | Empty page inside horizon | 200 heartbeat |
 | Login without `--token-host` / env | Exit 2; no derive-from-api-url |
 | Login without `--api-url` or an advertised hostname | Exit 1; ask for `--api-url`; withdraw the mint; keep any existing file |
-| Login with an invalid advertised hostname | Exit 1; print the hostname; withdraw the mint; keep any existing file |
+| Login with an invalid advertised hostname | Exit 1; print the hostname; ask for `--api-url`; withdraw the mint; keep any existing file |
 | Login with a hostname that is not live | Exit 1; print the hostname; withdraw the mint; keep any existing file |
 | Logout revoke 5xx | Keep file; exit 1 |
 | Credential file world-readable | Refuse to read |

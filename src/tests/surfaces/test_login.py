@@ -555,7 +555,7 @@ def test_login_normalizes_a_hostname_and_treats_a_blank_override_as_absent(
     """Whitespace cannot turn a valid managed endpoint into a broken URL."""
     _isolate_config(monkeypatch, tmp_path)
     calls: list[str] = []
-    hostname = f"{_DEPLOYMENT_ID}.dp.remember.dev"
+    hostname = f"svc_1.{_DEPLOYMENT_ID}.dp.remember.dev."
     _mock_client(
         monkeypatch,
         _grant_handler(
@@ -616,6 +616,7 @@ def test_login_refuses_a_hostname_that_is_not_live(
         "evil\x1b[2m.example",
         "a\x00b",
         "xn--0.com",
+        "deployment.example.test..",
     ],
 )
 def test_login_refuses_an_invalid_advertised_hostname(
@@ -638,7 +639,9 @@ def test_login_refuses_an_invalid_advertised_hostname(
     )
 
     assert cli_main(["login", "--token-host", _TOKEN_HOST]) == 1
-    assert repr(hostname) in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert repr(hostname) in captured.err
+    assert "pass --api-url to override" in captured.err
     assert load_credentials() is None
     assert calls == ["authorize", "token", "revoke"]
 

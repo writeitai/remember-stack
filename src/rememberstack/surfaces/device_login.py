@@ -300,7 +300,8 @@ def credential_from_token(
             )
         if not _valid_data_plane_hostname(hostname):
             raise DeviceGrantError(
-                f"token host advertised an invalid data-plane hostname: {hostname!r}"
+                "token host advertised an invalid data-plane hostname: "
+                f"{hostname!r}; pass --api-url to override"
             )
         if not token.data_plane_hostname_live:
             raise DeviceGrantError(
@@ -325,7 +326,11 @@ def credential_from_token(
 
 def _valid_data_plane_hostname(hostname: str) -> bool:
     """Accept one printable URL authority with a real DNS or IP host."""
-    if not hostname.isascii() or not hostname.isprintable():
+    if (
+        not hostname.isascii()
+        or not hostname.isprintable()
+        or any(character.isspace() for character in hostname)
+    ):
         return False
     try:
         url = httpx.URL(f"https://{hostname}")
@@ -352,13 +357,14 @@ def _valid_data_plane_hostname(hostname: str) -> bool:
     except ValueError:
         if len(host) > 253:
             return False
-        labels = host.rstrip(".").split(".")
+        stem = host[:-1] if host.endswith(".") else host
+        labels = stem.split(".")
         return all(
             label
             and len(label) <= 63
-            and label[0].isalnum()
-            and label[-1].isalnum()
-            and all(character.isalnum() or character == "-" for character in label)
+            and (label[0].isalnum() or label[0] == "_")
+            and (label[-1].isalnum() or label[-1] == "_")
+            and all(character.isalnum() or character in "-_" for character in label)
             for label in labels
         )
     return True
