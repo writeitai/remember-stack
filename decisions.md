@@ -2910,7 +2910,11 @@ may proceed to its first tagged artifact proof after CLA activation.
 
 ## D78. LoCoMo measures the ordinary OSS query system, not a claims-only shortcut
 
-> **D105 amendment.** The current protocol is `RS-LoCoMo-Full-v20`. It retains
+> **D106 amendment.** The current protocol is `RS-LoCoMo-Full-v21`. It retains
+> v20's dataset, rendered documents, models, tools, budgets, prompts, and
+> scoring and pins the D106 observation adjudicator generation.
+
+> **Historical D105 amendment.** The D105 protocol was `RS-LoCoMo-Full-v20`. It retains
 > v19's surface, dataset, ingestion, models, tools, and budgets while adding the
 > D105 complete-direct-values answer instruction.
 >
@@ -4898,26 +4902,35 @@ reading the D41 valid-time each claim already carries:
 
 1. Two statements that both describe **datable events**
    (`claim_valid_kind = 'event_time'`) whose resolved windows are **disjoint**
-   describe different events. They never interact — no `evidence`, no
-   `supersede`, no `contradict` — and no verdict is bought for the pair. This
-   holds even when the wording is byte-identical: "won a tournament last week"
-   said in January and again in October is two wins.
+   are different occurrences unless the date-aware model finds they name the
+   *same* occurrence with disputed dates. Such a pair may therefore only
+   `contradict` (both stand, grouped) or stay `new`; an `evidence` or
+   `supersede` verdict is coerced to `new` and recorded. This holds even when
+   the wording is byte-identical — "won a tournament last week" said in
+   January and again in October is two wins — and identical text is then
+   kept apart without any model call.
 2. A dated event paired with an **undated** statement (a state, a period
    figure, a summary such as "has been winning a few tournaments", or
    testimony the extractor could not anchor) may still be judged for
-   `supersede`/`contradict`, but an `evidence` verdict for such a pair is
-   coerced to `new` and recorded. A specific dated event is never a
-   re-assertion of a vaguer statement, and a summary never re-asserts a
-   specific event.
+   `supersede`/`contradict` — a dated resignation can end an undated "is
+   CEO" state — but an `evidence` verdict for such a pair is coerced to `new`
+   and recorded, and identical text is kept apart without a model call. A
+   specific dated event is never a re-assertion of a vaguer statement, and a
+   summary never re-asserts a specific event.
 3. Two undated statements are adjudicated exactly as before; two dated
-   events with overlapping windows go to the ladder as before (a re-mention
-   of the same event still collapses).
+   events with overlapping windows — including a year-level and a day-level
+   window for one occurrence — go to the ladder as before, and a re-mention
+   of the same event still collapses.
+4. A D41 open interval (a resolved start with no end) is unbounded, never a
+   point: it overlaps every later window.
 
-The verdict prompt now also shows both statements' asserted dates and
-resolved event windows, and states the rule, so the small model that does
-run judges with the timeline in front of it. An observation's event window
-is the span of its supporting current-testimony event claims; it is derived
-at block time, not stored. The adjudicator generation, the
+The verdict prompt now shows, for each statement, when the source *said it*
+and what world-time it *is about* (the resolved D41 window of any kind), and
+states the rule, so the model judges with both timelines in front of it. An
+observation's windows are the span of its supporting current-testimony
+claims, derived at block time and kept current within a batch as the row
+absorbs evidence; nothing is stored. Every adjudication record carries the
+coercions that preceded it. The adjudicator generation, the
 `adjudicate_observations` flush component version, and the LoCoMo protocol
 (Full-v20 → Full-v21) roll; nothing else about D43 — the entity block, the
 novelty gate, the no-cap rule, the fail-safe-to-coexist contract — changes.
@@ -4939,17 +4952,28 @@ seven with all seven wins in its testimony context — the fact envelope's
 undercount is the plausible anchor.
 
 **Consequences.** Recurring same-shaped events survive as distinct facts, so
-entity-anchored counting and enumeration have a complete fact layer to read.
-Fewer verdict calls are bought (disjoint-event pairs cost zero). The
-fail-safe direction is preserved and slightly widened: an undated re-mention
-of a dated event now stays a separate observation rather than collapsing —
-a duplicate, never a loss. Observation `valid_from` continues to be the
-claim's `asserted_at`; using the resolved event window as the observation's
-own validity is a separate change this decision does not make. Existing
-stores re-adjudicate observations under the new generation on rebuild (D7).
+entity-anchored counting and enumeration have a complete fact layer to read,
+while a genuine same-occurrence date dispute can still surface as a
+contradiction. Verdict spend is unchanged in shape (similar pairs are still
+judged; only identical-text decisions become model-free). The fail-safe
+direction is preserved and slightly widened: an undated re-mention of a
+dated event now stays a separate observation rather than collapsing — a
+duplicate, never a loss. Observation `valid_from` continues to be the
+claim's `asserted_at`; using the resolved window as the observation's own
+validity is a separate change this decision does not make.
+
+Rollout is stop-drain-rebuild. The `adjudicate_observations` flush handler
+reports the claimed unit's *own* component generation to its barrier, so
+entity units enqueued before the roll complete under the generation their
+barrier counts and drain cleanly; readiness then reports the stage at the old
+generation until the deployment is rebuilt under the new one (D7/D12).
+Existing stores re-adjudicate observations under the new generation on that
+rebuild.
 
 **Rejected.** Fixing only the verdict prompt (a model may still merge across
-dates, and disjoint-date pairs should cost nothing); treating every
+dates; the coercions must be deterministic); skipping disjoint-date pairs
+without any verdict (would silently double-count one occurrence whose date
+two sources dispute, and suppress the contradiction group); treating every
 mixed-dating pair as non-interacting (would stop a dated event from
 superseding a state it ends); dropping vague summaries at extraction
 (source-faithful testimony is kept — D32 — the defect was absorption, not

@@ -253,8 +253,9 @@ examined, and the failure looks like the deployment being down.
 - Historical `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
   that directly satisfies the question. It does not add a retrieval or retry.
 - The current `RS-LoCoMo-Full-v21` pins the D106 observation adjudicator:
-  dated events with disjoint resolved windows never collapse onto each other,
-  and a dated event is never `evidence` for an undated statement. Recurring
+  dated events with disjoint resolved windows never collapse onto or supersede
+  each other (a same-occurrence date dispute may contradict), and a dated
+  event is never `evidence` for an undated statement. Recurring
   same-shaped events (seven tournament wins months apart) now survive as
   distinct facts. It changes ingestion provenance only; retrieval, prompts,
   budgets, and scoring are those of v20.

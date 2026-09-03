@@ -661,7 +661,11 @@ class AdjudicateObservationsHandler:
                 extractor_version=extractor_version,
                 content_hash=content_hash,
                 lane=work.lane,
-                obs_flush_component_version=OBS_FLUSH_VERSION,
+                # Report the claimed unit's own generation, not the current
+                # constant: a unit enqueued before an OBS_FLUSH_VERSION roll
+                # must complete under the generation its barrier counts, or
+                # the barrier never closes (D106 rollout contract).
+                obs_flush_component_version=work.component_version,
                 doc_id=doc_id,
             ),
         )

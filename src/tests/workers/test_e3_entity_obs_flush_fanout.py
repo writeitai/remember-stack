@@ -162,3 +162,15 @@ def test_entity_obs_flush_barrier_fields() -> None:
         "obs_flush_component_version",
     ):
         assert name in fields
+
+
+def test_entity_handler_reports_the_claimed_units_own_generation() -> None:
+    """D106 rollout: a unit enqueued before an OBS_FLUSH_VERSION roll must
+    complete under the generation its barrier counts, or the barrier never
+    closes — so the entity handler reports ``work.component_version``, not
+    the current constant, to ``EntityObsFlushBarrier``."""
+    import inspect
+
+    source = inspect.getsource(e3.AdjudicateObservationsHandler._handle_entity_unit)
+    assert "obs_flush_component_version=work.component_version" in source
+    assert "obs_flush_component_version=OBS_FLUSH_VERSION" not in source

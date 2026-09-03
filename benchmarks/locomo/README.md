@@ -65,9 +65,11 @@ candidate id or `new`. There is no insufficient-evidence result or
 confidence-routed frontier call.
 
 V21 fingerprints the D106 observation adjudicator: dated events with disjoint
-resolved windows never collapse onto each other, a dated event is never
-`evidence` for an undated statement (nor the reverse), and the verdict prompt
-shows both timelines. The `adjudicate_observations` component version pins
+resolved windows never collapse onto or supersede each other (they may only
+contradict or stay distinct), a dated event is never `evidence` for an undated
+statement (nor the reverse), open-ended windows stay unbounded, and the verdict
+prompt shows when each statement was said and what time it is about. The
+`adjudicate_observations` component version pins
 that generation; the dataset, rendered documents, retrieval surface, answer
 and judge prompts, budgets, and scoring are those of v20. V20 and v21 scores
 are directional, not a one-variable comparison — the fact layer a v21 store

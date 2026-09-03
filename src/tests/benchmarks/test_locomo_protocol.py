@@ -239,7 +239,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v20_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v21_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
     assert PROTOCOL_NAME == "RS-LoCoMo-Full-v21"
     assert DEFAULT_PROTOCOL_KEY == "full-v21"

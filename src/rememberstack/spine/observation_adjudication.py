@@ -46,18 +46,30 @@ OBSERVATION_ADJUDICATOR_VERSION: Final = (
 """The observation adjudicator generation (D12; replayed on rebuild, D7).
 07b pins temperature=0.0 — generation parameters are part of provenance.
 09a (D106) adds the temporal-compatibility rung: two dated events with
-disjoint resolved windows never interact, a dated event never collapses as
-evidence onto an undated statement (nor the reverse), and the verdict prompt
-sees both statements' asserted dates and resolved event windows."""
+disjoint resolved windows never collapse or supersede (they may only
+contradict or stay distinct), a dated event never collapses as evidence onto
+an undated statement (nor the reverse), identical text is collapsed only when
+temporally compatible, open-ended windows stay unbounded, and the verdict
+prompt shows both statements' said-on dates and is-about windows."""
 
 _VERDICT_PROMPT: Final = """You adjudicate observations for a memory system.
 Both statements are believed facts about the SAME entity:
 
 EXISTING: {existing!r}
+  said on: {existing_said_on}
+  is about: {existing_about}
 NEW: {new!r}
+  said on: {new_said_on}
+  is about: {new_about}
 
-EXISTING TIME: {existing_time}
-NEW TIME: {new_time}
+Two clocks are shown for each statement. "said on" is the source's own date —
+when the document was written or the conversation took place — and is NOT
+when the described thing happened. "is about" is the world-time the statement
+refers to, resolved from the source's wording against its said-on date: "last
+week" said on 2022-10-06 is about the week before that date, not the week
+before 2022-01-21, so two statements can both say "last week" and be about
+days months apart. When the source tied nothing to a date, "is about" says so.
+When either statement was ingested is irrelevant here and is not shown.
 
 Judge semantically (there are no typed columns — "FY2023" vs "fiscal 2023"
 and "headcount" vs "staff count" are your equivalence calls):
@@ -73,13 +85,17 @@ and "headcount" vs "staff count" are your equivalence calls):
 - new: a different property, period, or thing — no interaction.
 
 Time is decisive for EVENTS (a win, a visit, a purchase, a meeting). Two
-statements about datable events with DIFFERENT resolved event dates describe
-DIFFERENT events: always `new`, never `evidence`, even when the wording is
-identical ("won a tournament last week" said in January and again in October
-are two wins, not one re-asserted). A specific dated event is never
-`evidence` for a vaguer summary ("has won a few tournaments"), and a summary
-never re-asserts a specific event — keep both. Only a re-mention of the SAME
-event (same resolved date, same thing) is `evidence`."""
+statements about datable events whose "is about" windows do NOT overlap are
+two different occurrences — `new` — even when the wording is identical ("won
+a tournament last week" said in January and again in October are two wins,
+not one re-asserted). The one exception: when they plainly name the SAME
+single occurrence and merely disagree about its date ("the Valorant final on
+Friday" vs "the Valorant final on Saturday"), answer `contradict` so both
+stand. Overlapping windows of different precision (a year-level claim and a
+day-level one) may well be the same occurrence — judge by the wording. A
+specific dated event is never `evidence` for a vaguer summary ("has won a
+few tournaments"), and a summary never re-asserts a specific event — keep
+both."""
 
 
 class ObservationSettings(BaseSettings):
@@ -307,20 +323,61 @@ class ObservationAdjudicator:
     ) -> UUID:
         """Apply one assertion while keeping the front-loaded block current."""
         asserted_at = timing.asserted_at
-        # An identical statement is the strongest same-fact signal, with one
-        # exception (D106): the same words about two DIFFERENT dated events
-        # ("won a tournament last week" in January and in October) are two
-        # facts, not one re-asserted.
+        # An identical statement is the strongest same-fact signal — unless
+        # the two are not temporally compatible (D106): the same words about
+        # two dated events on different days ("won a tournament last week" in
+        # January and in October), or a dated event beside an undated copy,
+        # are separate rows, not one re-asserted. That decision needs no
+        # model, so it is taken here and recorded.
+        identical = [
+            candidate
+            for candidate in candidates
+            if candidate["statement"] == assertion.statement
+            and bool(candidate["is_open"])
+        ]
         exact = next(
             (
                 candidate
-                for candidate in candidates
-                if candidate["statement"] == assertion.statement
-                and bool(candidate["is_open"])
-                and not _disjoint_dated_events(timing=timing, candidate=candidate)
+                for candidate in identical
+                if _evidence_compatible(timing=timing, candidate=candidate)
             ),
             None,
         )
+        if exact is None and identical:
+            observation_id = self._insert_new(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject_entity_id,
+                statement=assertion.statement,
+                claim_id=assertion.claim_id,
+                doc_id=assertion.doc_id,
+                valid_from=asserted_at,
+                outcome="add",
+                method="exact",  # the identical-text rung decided; no model ran
+                confidence=1.0,
+                features={
+                    "reason": "identical statement, temporally incompatible -> coexist",
+                    "temporal_gate": [
+                        {
+                            "observation_id": str(candidate["observation_id"]),
+                            "relation": _temporal_relation(
+                                timing=timing, candidate=candidate
+                            ),
+                        }
+                        for candidate in identical
+                    ],
+                },
+                related=UUID(str(identical[0]["observation_id"])),
+                contradiction_group=None,
+            )
+            _remember_candidate(
+                candidates=candidates,
+                observation_id=observation_id,
+                statement=assertion.statement,
+                valid_from=asserted_at,
+                timing=timing,
+            )
+            return observation_id
         if exact is not None:
             observation_id = UUID(str(exact["observation_id"]))
             self._evidence(
@@ -330,6 +387,7 @@ class ObservationAdjudicator:
                 claim_id=assertion.claim_id,
                 doc_id=assertion.doc_id,
             )
+            _absorb_timing(candidate=exact, timing=timing)
             # D88 continuous ingest: equivalent evidence must not leave
             # valid_from dependent on which version flushed first. Pull the
             # open window back to the source-earliest assertion time.
@@ -445,10 +503,7 @@ class ObservationAdjudicator:
     ) -> tuple[ObservationOutcome, float]:
         """The bare pair-decision function — the D43 eval gate's surface."""
         verdict, method = self._ladder(
-            existing=existing,
-            new=new,
-            existing_time=_render_timing(_UNDATED),
-            new_time=_render_timing(_UNDATED),
+            existing=existing, new=new, existing_timing=_UNDATED, new_timing=_UNDATED
         )
         del method  # the gate grades outcomes; rungs are graded per-run cost
         return verdict.outcome, verdict.confidence
@@ -470,46 +525,45 @@ class ObservationAdjudicator:
     ) -> UUID:
         """Ladder the similar candidates; apply the first decisive outcome.
 
-        The temporal-compatibility rung (D106) runs before every model call.
-        Two dated events whose resolved windows are disjoint are distinct
-        events and never interact, so no verdict is bought for them. A dated
-        event paired with an undated statement (or the reverse) may still be
-        judged for supersede/contradict, but an `evidence` verdict for such a
-        pair is coerced to `new`: a specific dated event is never a
-        re-assertion of a vaguer statement, and a summary never re-asserts a
-        specific event.
+        The temporal-compatibility rung (D106) bounds what a verdict may do,
+        using the D41 windows the claims already carry. Two dated events whose
+        resolved windows are disjoint are different occurrences unless the
+        model finds they name the SAME occurrence with disputed dates: they may
+        `contradict` (both stand, grouped) or stay `new`; `evidence` and
+        `supersede` are coerced to `new` and recorded. A dated event beside an
+        undated statement may still supersede or contradict it (a dated
+        resignation ends a "is CEO" state), but `evidence` is coerced to `new`:
+        a specific dated event is never a re-assertion of a vaguer statement,
+        and a summary never re-asserts a specific event. Undated pairs and
+        overlapping dated pairs are judged exactly as before.
         """
         asserted_at = timing.asserted_at
-        temporal_skips: list[dict[str, object]] = []
+        coercions: list[dict[str, object]] = []
         for candidate, similarity in ranked:
             candidate_id = UUID(str(candidate["observation_id"]))
-            if _disjoint_dated_events(timing=timing, candidate=candidate):
-                temporal_skips.append(
-                    {
-                        "observation_id": str(candidate_id),
-                        "reason": "disjoint dated events",
-                        "similarity": similarity,
-                    }
-                )
-                continue
-            mixed_dating = _mixed_dating(timing=timing, candidate=candidate)
+            relation = _temporal_relation(timing=timing, candidate=candidate)
             verdict, method = self._ladder(
                 existing=str(candidate["statement"]),
                 new=statement,
-                existing_time=_render_timing(_candidate_timing(candidate)),
-                new_time=_render_timing(timing),
+                existing_timing=_candidate_timing(candidate),
+                new_timing=timing,
                 meter=meter,
                 call_key=f"{call_key}:verdict:{candidate['observation_id']}",
             )
             features: dict[str, object] = {
                 "similarity": similarity,
                 "rationale": verdict.rationale,
+                "temporal_relation": relation,
+                "temporal_gate": list(coercions),
             }
-            if mixed_dating and verdict.outcome is ObservationOutcome.EVIDENCE:
-                temporal_skips.append(
+            coerced = _coerced_reason(relation=relation, outcome=verdict.outcome)
+            if coerced is not None:
+                coercions.append(
                     {
                         "observation_id": str(candidate_id),
-                        "reason": "evidence coerced to new: dated event vs undated statement",
+                        "verdict": verdict.outcome.value,
+                        "relation": relation,
+                        "reason": coerced,
                         "similarity": similarity,
                         "rationale": verdict.rationale,
                     }
@@ -523,6 +577,7 @@ class ObservationAdjudicator:
                     claim_id=claim_id,
                     doc_id=doc_id,
                 )
+                _absorb_timing(candidate=candidate, timing=timing)
                 self._pull_valid_from_earlier(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -700,6 +755,7 @@ class ObservationAdjudicator:
                     observation_id=new_id,
                     statement=statement,
                     valid_from=asserted_at,
+                    timing=timing,
                 )
                 # D90 §5.5.3: evidence already on O after the incoming order
                 # key must re-enter the ladder (staggered multi-version).
@@ -749,6 +805,7 @@ class ObservationAdjudicator:
                     statement=statement,
                     contradiction_group=group,
                     valid_from=asserted_at,
+                    timing=timing,
                 )
                 return new_id
             # ObservationOutcome.NEW: no interaction with this candidate
@@ -763,10 +820,7 @@ class ObservationAdjudicator:
             outcome="add",
             method="small_model",
             confidence=1.0,
-            features={
-                "reason": "no candidate interacted",
-                "temporal_gate": temporal_skips,
-            },
+            features={"reason": "no candidate interacted", "temporal_gate": coercions},
             related=None,
             contradiction_group=None,
         )
@@ -784,14 +838,19 @@ class ObservationAdjudicator:
         *,
         existing: str,
         new: str,
-        existing_time: str,
-        new_time: str,
+        existing_timing: _ClaimTiming,
+        new_timing: _ClaimTiming,
         meter: CostMeterPort | None = None,
         call_key: str = "observation:verdict",
     ) -> tuple[ObservationVerdict, str]:
         """Small-model verdict, escalating to frontier below the floor."""
         prompt = _VERDICT_PROMPT.format(
-            existing=existing, new=new, existing_time=existing_time, new_time=new_time
+            existing=existing,
+            new=new,
+            existing_said_on=_render_said_on(existing_timing),
+            existing_about=_render_about(existing_timing),
+            new_said_on=_render_said_on(new_timing),
+            new_about=_render_about(new_timing),
         )
         verdict_call = self._model_provider.generate(
             request=ModelRequest(
@@ -1113,6 +1172,8 @@ def _remember_candidate(
             "is_open": is_open,
             "event_from": None if timing is None else timing.event_from,
             "event_until": None if timing is None else timing.event_until,
+            "about_from": None if timing is None else timing.about_from,
+            "about_until": None if timing is None else timing.about_until,
         }
     )
 
@@ -1121,66 +1182,117 @@ def _remember_candidate(
 class _ClaimTiming:
     """What the D41 record says about WHEN one piece of testimony applies.
 
-    ``asserted_at`` is the source's own timestamp (the supersession boundary
-    the layer already used). ``event_from``/``event_until`` are the resolved
-    world-time window when the claim describes a datable EVENT
-    (``claim_valid_kind = 'event_time'``); both are ``None`` for undated
-    testimony, states, and period figures, so ``is_event`` is False there.
+    Two clocks. ``asserted_at`` is when the SOURCE said it — the document's
+    or conversation's own timestamp (the supersession boundary the layer
+    already used). ``about_from``/``about_until`` is the world-time the
+    statement is ABOUT, resolved by the extractor from the source's wording
+    against that date, and ``about_kind`` is the D41 ``claim_valid_kind`` that
+    says what sort of interval it is: ``event_time`` (a datable event — the
+    only kind the temporal-compatibility rung acts on), ``measurement_period``
+    / ``effective_period`` / ``proposition_validity`` (a figure or state tied
+    to a span), or ``period`` for a block row whose supporting claims are
+    aggregated. All three are ``None`` when the source tied nothing to a date.
+    When the statement was ingested is deliberately not part of this record.
     """
 
     asserted_at: object = None
-    event_from: object = None
-    event_until: object = None
+    about_kind: str | None = None
+    about_from: object = None
+    about_until: object = None
 
     @property
     def is_event(self) -> bool:
-        """True when the testimony carries a resolved event window."""
-        return self.event_from is not None
+        """True when the testimony is a datable event with a resolved window."""
+        return self.about_kind == "event_time" and self.about_from is not None
+
+    @property
+    def event_from(self) -> object:
+        """The event window start, or ``None`` when this is not a dated event."""
+        return self.about_from if self.is_event else None
+
+    @property
+    def event_until(self) -> object:
+        """The event window end, or ``None`` when this is not a dated event."""
+        return self.about_until if self.is_event else None
 
 
 _UNDATED: Final = _ClaimTiming()
 
 
 def _timing_from_row(row: Mapping[Any, Any]) -> _ClaimTiming:
-    """Read one claim row's asserted time and resolved event window."""
-    is_event = row.get("valid_kind") == "event_time"
-    event_from = row.get("claim_valid_from") if is_event else None
-    if event_from is None:
+    """Read one claim row's said-on time and resolved about-window.
+
+    A ``NULL`` ``claim_valid_until`` beside a resolved ``claim_valid_from`` is
+    a D41 open interval: the end is unbounded and stays ``None``.
+    """
+    about_from = row.get("claim_valid_from")
+    if about_from is None:
         return _ClaimTiming(asserted_at=row.get("asserted_at"))
-    event_until = row.get("claim_valid_until")
     return _ClaimTiming(
         asserted_at=row.get("asserted_at"),
-        event_from=event_from,
-        event_until=event_from if event_until is None else event_until,
+        about_kind=row.get("valid_kind"),
+        about_from=about_from,
+        about_until=row.get("claim_valid_until"),
     )
 
 
 def _candidate_timing(candidate: Mapping[str, object]) -> _ClaimTiming:
-    """The block row's event window (aggregated over its supporting claims)."""
+    """The block row's timing, aggregated over its supporting claims.
+
+    ``valid_from`` is the earliest said-on date of its testimony. The event
+    window (dated-event claims only) drives the rung; the wider about-window
+    (any D41 kind) is shown to the model as ``period`` when no event exists.
+    A ``None`` end is an open (unbounded) window, as in the claim rows.
+    """
+    said_on = candidate.get("valid_from")
     event_from = candidate.get("event_from")
-    if event_from is None:
-        return _ClaimTiming(asserted_at=candidate.get("valid_from"))
-    event_until = candidate.get("event_until")
+    if event_from is not None:
+        return _ClaimTiming(
+            asserted_at=said_on,
+            about_kind="event_time",
+            about_from=event_from,
+            about_until=candidate.get("event_until"),
+        )
+    about_from = candidate.get("about_from")
+    if about_from is None:
+        return _ClaimTiming(asserted_at=said_on)
     return _ClaimTiming(
-        asserted_at=candidate.get("valid_from"),
-        event_from=event_from,
-        event_until=event_from if event_until is None else event_until,
+        asserted_at=said_on,
+        about_kind="period",
+        about_from=about_from,
+        about_until=candidate.get("about_until"),
     )
 
 
-def _render_timing(timing: _ClaimTiming) -> str:
-    """One prompt line describing when testimony applies, honestly."""
-    asserted = (
-        "undated"
-        if timing.asserted_at is None
-        else f"asserted {_date_text(timing.asserted_at)}"
-    )
-    if not timing.is_event:
-        return f"{asserted}; no resolved event date (a state, period figure, or undated statement)"
-    start = _date_text(timing.event_from)
-    end = _date_text(timing.event_until)
-    window = start if start == end else f"{start} to {end}"
-    return f"{asserted}; datable event resolved to {window}"
+def _render_said_on(timing: _ClaimTiming) -> str:
+    """The "said on" prompt value: the source's own date, or its absence."""
+    if timing.asserted_at is None:
+        return "unknown (the source carries no date)"
+    return _date_text(timing.asserted_at)
+
+
+def _render_about(timing: _ClaimTiming) -> str:
+    """The "is about" prompt value: the resolved world-time, or its absence."""
+    if timing.about_from is None:
+        return (
+            "no specific time given (a state, summary, or figure the source"
+            " did not tie to a date)"
+        )
+    start = _date_text(timing.about_from)
+    if timing.about_until is None:
+        span = f"from {start} onward (no end given)"
+    else:
+        end = _date_text(timing.about_until)
+        span = start if start == end else f"{start} to {end}"
+    if timing.is_event:
+        return (
+            f"a dated event on {span}"
+            if " to " not in span and "onward" not in span
+            else f"a dated event within {span}"
+        )
+    if " to " in span or "onward" in span:
+        return f"the period {span} (a state or figure tied to that span, not a dated event)"
+    return f"the day {span} (a state or figure tied to that day, not a dated event)"
 
 
 def _date_text(value: object) -> str:
@@ -1189,33 +1301,125 @@ def _date_text(value: object) -> str:
     return str(date()) if callable(date) else str(value)
 
 
-def _disjoint_dated_events(
-    *, timing: _ClaimTiming, candidate: Mapping[str, object]
-) -> bool:
-    """True when both sides are dated events whose windows never overlap.
+def _temporal_relation(*, timing: _ClaimTiming, candidate: Mapping[str, object]) -> str:
+    """How the incoming testimony's timing relates to a block row's (D106).
 
-    Two such statements describe different things that happened; they can
-    neither re-assert nor supersede nor contradict each other (D106).
+    ``undated`` — neither side is a dated event (states, figures, unanchored
+    testimony): judged as before. ``overlapping`` — both are dated events
+    whose windows touch or overlap: judged as before. ``disjoint`` — both
+    dated events, windows apart: different occurrences unless the model
+    finds one occurrence with disputed dates. ``mixed`` — exactly one side is
+    a dated event.
     """
     other = _candidate_timing(candidate)
-    if not (timing.is_event and other.is_event):
-        return False
-    return _windows_disjoint(
-        timing.event_from, timing.event_until, other.event_from, other.event_until
+    if timing.is_event and other.is_event:
+        apart = _windows_disjoint(
+            timing.event_from, timing.event_until, other.event_from, other.event_until
+        )
+        return "disjoint" if apart else "overlapping"
+    if timing.is_event or other.is_event:
+        return "mixed"
+    return "undated"
+
+
+def _coerced_reason(*, relation: str, outcome: ObservationOutcome) -> str | None:
+    """The reason a verdict is coerced to ``new`` under D106, or ``None``."""
+    if relation == "disjoint" and outcome in (
+        ObservationOutcome.EVIDENCE,
+        ObservationOutcome.SUPERSEDE,
+    ):
+        return (
+            f"{outcome.value} coerced to new: dated events on different days are"
+            " different occurrences (a same-occurrence date dispute is contradict)"
+        )
+    if relation == "mixed" and outcome is ObservationOutcome.EVIDENCE:
+        return (
+            "evidence coerced to new: a dated event never re-asserts an undated"
+            " statement, nor the reverse"
+        )
+    return None
+
+
+def _evidence_compatible(
+    *, timing: _ClaimTiming, candidate: Mapping[str, object]
+) -> bool:
+    """True when identical text may collapse without a verdict (D106).
+
+    Both undated, or both dated events whose windows overlap. Disjoint dated
+    events and mixed dating are separate rows even for identical text.
+    """
+    return _temporal_relation(timing=timing, candidate=candidate) in (
+        "undated",
+        "overlapping",
     )
 
 
-def _mixed_dating(*, timing: _ClaimTiming, candidate: Mapping[str, object]) -> bool:
-    """True when exactly one side is a dated event (the other undated)."""
-    return timing.is_event != _candidate_timing(candidate).is_event
+def _absorb_timing(*, candidate: dict[str, object], timing: _ClaimTiming) -> None:
+    """Widen a block row's in-memory windows after it absorbs new evidence.
+
+    The database aggregate widens on the next block read; within one batch
+    the front-loaded row must not go stale, or a later overlapping claim
+    would be split off as a different occurrence (D106).
+    """
+    if timing.is_event:
+        event_defined = candidate.get("event_from") is not None
+        candidate["event_from"] = _earliest(
+            candidate.get("event_from"), timing.event_from
+        )
+        candidate["event_until"] = _latest_or_open(
+            candidate.get("event_until"),
+            timing.event_until,
+            existing_defined=event_defined,
+        )
+    if timing.about_from is not None:
+        about_defined = candidate.get("about_from") is not None
+        candidate["about_from"] = _earliest(
+            candidate.get("about_from"), timing.about_from
+        )
+        candidate["about_until"] = _latest_or_open(
+            candidate.get("about_until"),
+            timing.about_until,
+            existing_defined=about_defined,
+        )
+
+
+def _earliest(left: object, right: object) -> object:
+    """The earlier of two window starts; a missing start defers to the other."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    try:
+        return left if left <= right else right  # type: ignore[operator]
+    except TypeError:
+        return left
+
+
+def _latest_or_open(left: object, right: object, *, existing_defined: bool) -> object:
+    """The later of two window ends, where ``None`` on a defined window is open."""
+    if not existing_defined:
+        return right
+    if left is None or right is None:
+        return None
+    try:
+        return left if left >= right else right  # type: ignore[operator]
+    except TypeError:
+        return left
 
 
 def _windows_disjoint(
     left_from: object, left_until: object, right_from: object, right_until: object
 ) -> bool:
-    """Closed-interval disjointness; any incomparable value counts as overlap."""
+    """Closed-interval disjointness with ``None`` ends unbounded.
+
+    Any incomparable value counts as overlap (the fail-safe direction).
+    """
     try:
-        return bool(left_until < right_from) or bool(right_until < left_from)  # type: ignore[operator]
+        if left_until is not None and bool(left_until < right_from):  # type: ignore[operator]
+            return True
+        if right_until is not None and bool(right_until < left_from):  # type: ignore[operator]
+            return True
+        return False
     except TypeError:
         return False
 
@@ -1283,21 +1487,36 @@ _BLOCK_ENTITY = text(
     """
     SELECT o.observation_id, o.statement, o.contradiction_group, o.valid_from,
            (o.valid_until IS NULL OR o.valid_until > now()) AS is_open,
-           dated.event_from, dated.event_until
+           timing.event_from, timing.event_until,
+           timing.about_from, timing.about_until
     FROM observations o
-    -- D106: the resolved event window an observation stands for is the span
-    -- of its supporting dated-event testimony (D41 event_time claims only).
+    -- D106: what an observation is ABOUT in world-time is the span of its
+    -- supporting current testimony's D41 windows. The event window (dated
+    -- event claims only) drives the rung; the wider about-window is shown
+    -- to the model.
     LEFT JOIN LATERAL (
-        SELECT min(c.claim_valid_from) AS event_from,
-               max(coalesce(c.claim_valid_until, c.claim_valid_from)) AS event_until
+        -- A NULL claim_valid_until beside a non-NULL claim_valid_from is a
+        -- D41 open interval (unbounded end); one open claim makes the
+        -- aggregate open, so the end stays NULL rather than a false maximum.
+        SELECT min(c.claim_valid_from)
+                 FILTER (WHERE c.claim_valid_kind = 'event_time') AS event_from,
+               CASE WHEN bool_or(c.claim_valid_until IS NULL)
+                         FILTER (WHERE c.claim_valid_kind = 'event_time')
+                    THEN NULL
+                    ELSE max(c.claim_valid_until)
+                         FILTER (WHERE c.claim_valid_kind = 'event_time')
+               END AS event_until,
+               min(c.claim_valid_from) AS about_from,
+               CASE WHEN bool_or(c.claim_valid_until IS NULL) THEN NULL
+                    ELSE max(c.claim_valid_until)
+               END AS about_until
         FROM observation_evidence e
         JOIN claims c ON c.claim_id = e.claim_id
         WHERE e.observation_id = o.observation_id
           AND e.stance = 'supports'
           AND c.is_current_testimony
-          AND c.claim_valid_kind = 'event_time'
           AND c.claim_valid_from IS NOT NULL
-    ) dated ON true
+    ) timing ON true
     WHERE o.deployment_id = :deployment_id
       AND o.subject_entity_id = :subject_entity_id
       AND o.invalidated_at IS NULL

@@ -6,8 +6,9 @@
 > instructions, content-before-`Unknown` harness guard, and no-review scoring
 > rule. Its pinned `adjudicate_observations` component version now carries the
 > D106 temporal-compatibility rung: dated events with disjoint resolved windows
-> never collapse onto each other, and a dated event is never `evidence` for an
-> undated statement. Ingestion provenance, protocol identity, and fingerprint
+> never collapse onto or supersede each other (a same-occurrence date dispute
+> may contradict), and a dated event is never `evidence` for an undated
+> statement. Ingestion provenance, protocol identity, and fingerprint
 > roll; no retrieval, retry, model-effort, or call-budget behavior changes.
 > V20 and v21 scores are directional because the fact layer differs.
 
@@ -64,7 +65,7 @@
 
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
-> paid v20 run.
+> paid run of the current protocol.
 
 ## 1. Acceptance boundary
 
