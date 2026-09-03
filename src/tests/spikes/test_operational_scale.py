@@ -715,12 +715,18 @@ def _provider_neutral_batching(
     expected_hydration_statements = math.ceil(
         len(claim_ids) / INTERACTIVE_HYDRATION_BATCH_SIZE
     )
+    # The front-loaded block and the batch's claim-timing read must each run
+    # once per entity batch (D43/D88). Match stable fragments of the two
+    # statements: the block reads `observations o` with its D106 timing
+    # lateral; the timing read selects `asserted_at` plus the D41 valid-time
+    # columns for the batch's claim ids.
     block_reads = sum(
-        "SELECT observation_id, statement, contradiction_group" in statement
+        "FROM observations o" in statement and "invalidated_at IS NULL" in statement
         for statement in observation_probe.statements
     )
     timestamp_reads = sum(
-        "SELECT claim_id, asserted_at FROM claims" in statement
+        "SELECT claim_id, asserted_at" in statement
+        and "FROM claims WHERE claim_id = ANY(" in statement
         for statement in observation_probe.statements
     )
     return OperationalScaleMeasurement(
