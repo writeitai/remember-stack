@@ -1,5 +1,17 @@
 # Retrieval Design — the Query Machine
 
+> **Binding D107 amendment (2026-09-03).** Testimony grouping keys on the full
+> D41 tuple (or `asserted_at` when unknown) and `EvidenceResult` lists every
+> grouped member's times; the fact-grain `Validity`, `GraphEdge`, the
+> `memory_v1` fact views and the open-query confirmation rows gain
+> per-endpoint bases, temporal kind and the occurrence window (additive), and
+> because the envelope schema is shared, `resolve_entity@2`,
+> `testimony_context@2`, `fact_context@3` and `answer_context@3` roll; P1
+> accepts is-about claim filters and an `occurs` fact mode;
+> `aggregate(form="timeline")` buckets by occurrence with an explicit
+> `undated` bucket; "current" is the single evaluated-at predicate of §7.1.
+> Contract: `temporal_clocks_design.md` §7.
+
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
 > PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
 > depth-two/variable neighborhoods, entity paths, and citation paths use bounded

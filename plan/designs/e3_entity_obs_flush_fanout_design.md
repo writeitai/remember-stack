@@ -1,5 +1,14 @@
 # Design: entity-grain observation flush fan-out
 
+> **Binding D107 amendment (2026-09-03).** The total processing order of §5.5
+> (`asserted_at NULLS LAST, claim_id, statement`) is unchanged and remains a
+> work order only. The §5.5.3 late-arrival re-split decides eligibility by the
+> attached state claim's canonical occurrence start relative to the
+> world-time cap `T`, not by `asserted_at`; undated attached evidence is never
+> re-split. The staggered acceptance case gains a variant with said-on and
+> is-about orders reversed whose final slices follow the world. Contract:
+> `temporal_clocks_design.md` §4.5.
+
 **Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS (r3+r4); Codex
 r3 ordering gap closed in this revision — binding once landed on `main`  
 **Date:** 2026-08-12  
@@ -239,17 +248,23 @@ Entity-global merge only sees **unapplied** staging. If unit A fully applied
 materializes `{t2:B}`, a plain supersede of open A at t2 yields
 `A[t1,t2), B[t2,∞)` and loses A-at-t3.
 
-**Required:** when an apply caps open observation O at boundary T, any **evidence
-claims** (or reassertions) already attached to O with `asserted_at > T` (total
-order) must be re-materialized as subsequent open slices after the cap — not left
-only as evidence on a capped row. Concretely the staggered acceptance case:
+**Required (as amended by D107):** when an apply caps open observation O at the
+world-time boundary T, any **state evidence claims** (or reassertions) already
+attached to O whose canonical occurrence start (`temporal_clocks_design.md` §5)
+is later than T must be re-materialized as subsequent open slices after the
+cap — not left only as evidence on a capped row. `asserted_at` remains the
+total *work* order of §5.5 and plays no part in this eligibility test; undated
+attached evidence is never re-split. (Before D107 this rule compared
+`asserted_at > T`; that compared a said-on clock to a world-time boundary.) Concretely the staggered acceptance case:
 
 1. Fully succeed unit A `{t1:A, t3:A}` alone.  
 2. Later materialize/apply unit B `{t2:B}`.  
 3. Final slices must still be `A[t1,t2), B[t2,t3), A[t3,∞)`.
 
-Impl may walk evidence claim `asserted_at` on O after cap, or rebuild open
-history for E from durable adjudications + claim times. This is a D43 co-requisite
+Impl may walk the evidence claims attached to O after the cap, testing each
+state claim's canonical occurrence start against T (never `asserted_at`,
+D107), or rebuild open history for E from durable adjudications + claim
+windows. This is a D43 co-requisite
 of multi-version continuous flush under D90.
 
 ### 5.6 LLM and locking (binding)

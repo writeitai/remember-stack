@@ -1,5 +1,12 @@
 # LoCoMo full-system benchmark design
 
+> **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
+> two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
+> about), and the fact-grain `validity` fields with their bases and occurrence
+> window. Each D107 work package that changes ingestion provenance or the
+> assured surface rolls this protocol; the sequencing is
+> `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
+
 > **Binding D106 amendment (2026-09-03).** The current protocol is
 > `RS-LoCoMo-Full-v21`. It retains v20's dataset, rendered documents, models,
 > tools, budgets, answer and judge prompts, counterfactual and complete-answer

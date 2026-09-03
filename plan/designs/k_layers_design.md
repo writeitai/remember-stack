@@ -1,5 +1,13 @@
 # K Plane — Compiled and Authored Knowledge (Design)
 
+> **Binding D107 amendment (2026-09-03).** The K prose writer's claim bundle
+> carries `asserted_at` and the D41 fields with the two-clock framing; the
+> deterministic fact sheet prints `valid from`/`valid until` only for
+> `world_time`/`verdict` bases, an `about` column from the occurrence window,
+> and `—` for `unknown`; observation history sorts by occurrence start; the K
+> fact model gains bases and occurrence. Contract:
+> `temporal_clocks_design.md` §6–§7.
+
 > **Binding D98 amendment (2026-08-27).** D98 supersedes D11 and removes the
 > unproved global community analytics product. The shipped K layout has entity
 > pages, source digests, root indexes, and purpose-scope pages; it has no

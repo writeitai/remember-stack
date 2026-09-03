@@ -1,5 +1,25 @@
 # The Observation Layer — Non-Graph Facts with Temporal Validity (Design)
 
+> **Binding D107 amendment (2026-09-03).** An observation carries a temporal
+> kind (`state` / `occurrence` / `undated`) and two windows: the adjudicated
+> verdict window (`valid_from`/`valid_until` with a basis per endpoint and the
+> recorded seed claim), seeded once from the D90-first claim's canonical D41
+> window — a state's span; an occurrence believed from its start onward and
+> never capped; `NULL`/`unknown` when undated — and a derived occurrence
+> window (`occurs_*`) that widens as evidence attaches. Candidate nomination
+> is unchanged (entity block, then similarity order, regardless of temporal
+> overlap); the temporal relation of canonical bounds only bounds the verdict,
+> so a disjoint pair may still contradict (D106) and recurring events stay
+> distinct rows because occurrence identity is the ladder's verdict under
+> the entity lock. The said-on
+> date is never a boundary. No verdict changes automatically (discrepancies
+> become `temporal_window` review verdicts, D24); a state is capped only at a
+> world-time instant its successor supplies, later than its own known start — a successor state's start or an ending occurrence's
+> start, so a dated resignation still ends an undated "is CEO" state — else
+> the pair coexists, never `now()`. D90's staging order is unchanged; its
+> re-split decides by occurrence start. Contract: `temporal_clocks_design.md`
+> §3–§5.
+
 > **Binding D98 amendment (2026-08-27).** Relations are the only fact kind
 > mapped as live graph edges over PostgreSQL views. Observations remain
 > PostgreSQL facts and P1 search targets but are not graph elements. There is no
