@@ -57,13 +57,14 @@ The composing profile surfaces this as `trusted_principal_source`
 (env **`REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE`** — the self-host
 settings class carries the `REMEMBERSTACK_SELFHOST_` prefix), default off.
 Enable it **only** where the deployment's network perimeter has already
-authenticated the actor it names. When the API auth perimeter is configured,
-the request must additionally carry full `write` authority before these
-headers are believed. The unscoped shared secret is unrestricted and therefore
-qualifies; a narrow signed browser `ingest` credential can add a document but
-cannot name its immutable principal. Without API auth, enabling the setting
-trusts the network perimeter by itself. On an ordinarily reachable deployment
-it makes attribution meaningless rather than merely permissive.
+authenticated the actor it names, such as a managed data plane behind a private
+transit gateway for privileged callers. When the API auth perimeter is
+configured, the request must additionally carry full `write` authority before
+these headers are believed. The unscoped shared secret is unrestricted and
+therefore qualifies; a narrow signed browser `ingest` credential can add a
+document but cannot name its immutable principal. Without API auth, enabling
+the setting trusts the network perimeter by itself. On an ordinarily reachable
+deployment it makes attribution meaningless rather than merely permissive.
 
 Full `write` is the line because such a credential can already write anything
 to this deployment, so naming a principal grants it no authority it lacks. A
