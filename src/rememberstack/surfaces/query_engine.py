@@ -44,6 +44,7 @@ from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
+from rememberstack.core.temporal import inclusive_request
 from rememberstack.model import AggregateBucket
 from rememberstack.model import AggregateReport
 from rememberstack.model import AtTemporalScope
@@ -535,6 +536,7 @@ class QueryEngine:
                 "claims_as_of 'to' must be greater than or equal to 'from'"
             )
         candidate_limit = BOUNDED_SEMANTIC_CANDIDATES if query is not None else k
+        window = inclusive_request(from_=from_, to=to)
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -543,8 +545,8 @@ class QueryEngine:
                     _CLAIMS_AS_OF_CANDIDATES,
                     {
                         "deployment_id": deployment_id,
-                        "from": from_,
-                        "to": to,
+                        "from": window.start,
+                        "to_exclusive": window.end,
                         "candidate_limit": candidate_limit,
                     },
                 )
@@ -3591,8 +3593,14 @@ _CLAIMS_AS_OF_CANDIDATES = text(
      AND d.doc_id = c.doc_id
     WHERE c.deployment_id = :deployment_id
       AND c.claim_valid_precision <> 'unknown'
-      AND c.claim_valid_from <= :to
-      AND (c.claim_valid_until IS NULL OR c.claim_valid_until >= :from)
+      -- D107 §5: half-open canonical overlap with the caller's window, whose
+      -- inclusive `to` arrives as an exclusive `to_exclusive` (to + 1 µs).
+      AND claim_canonical_start(c.claim_valid_from, c.claim_valid_precision)
+            < :to_exclusive
+      AND (claim_canonical_end(c.claim_valid_from, c.claim_valid_until,
+                               c.claim_valid_precision) IS NULL
+           OR claim_canonical_end(c.claim_valid_from, c.claim_valid_until,
+                                  c.claim_valid_precision) > :from)
       AND (d.doc_id IS NULL OR d.deleted_at IS NULL)
     ORDER BY c.claim_valid_from DESC, c.claim_id
     LIMIT :candidate_limit

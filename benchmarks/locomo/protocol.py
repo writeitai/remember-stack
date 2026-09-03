@@ -29,9 +29,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v21"
-DEFAULT_PROTOCOL_KEY: Final = "full-v21"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-temporal-gate-v21"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v22"
+DEFAULT_PROTOCOL_KEY: Final = "full-v22"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-canonical-bounds-v22"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -74,7 +74,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "no-types-1:binary-t4-1:document-t0-1"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush-2026.09a:temporal-gate-1:claim-fanout-1:entity-fanout-1"
+            "e3-obs-flush-2026.09b:canonical-bounds-1:temporal-gate-1:claim-fanout-1:entity-fanout-1"
         ),
         "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -211,8 +211,8 @@ class LoCoMoProtocol:
     answer_word_cap: int | None = None
 
 
-_FULL_V21 = LoCoMoProtocol(
-    key="full-v21",
+_FULL_V22 = LoCoMoProtocol(
+    key="full-v22",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -234,7 +234,7 @@ _FULL_V21 = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V21.key: _FULL_V21}
+    {_FULL_V22.key: _FULL_V22}
 )
 
 

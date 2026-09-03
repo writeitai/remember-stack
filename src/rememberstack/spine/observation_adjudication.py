@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from typing import Final
 from uuid import UUID
@@ -41,7 +42,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.rank_embed_cache import RankEmbedCache
 
 OBSERVATION_ADJUDICATOR_VERSION: Final = (
-    "obs-adjudicator-2026.09a:temp0-1:temporal-gate-1"
+    "obs-adjudicator-2026.09b:temp0-1:temporal-gate-1:canonical-bounds-1"
 )
 """The observation adjudicator generation (D12; replayed on rebuild, D7).
 07b pins temperature=0.0 — generation parameters are part of provenance.
@@ -50,7 +51,10 @@ disjoint resolved windows never collapse or supersede (they may only
 contradict or stay distinct), a dated event never collapses as evidence onto
 an undated statement (nor the reverse), identical text is collapsed only when
 temporally compatible, open-ended windows stay unbounded, and the verdict
-prompt shows both statements' said-on dates and is-about windows."""
+prompt shows both statements' said-on dates and is-about windows.
+09b (D107 §5, WP-T.0a) compares canonical half-open bounds: a day covers
+the whole calendar day, an instant is a non-empty point, adjacent units do
+not overlap."""
 
 _VERDICT_PROMPT: Final = """You adjudicate observations for a memory system.
 Both statements are believed facts about the SAME entity:
@@ -1182,7 +1186,9 @@ def _remember_candidate(
 class _ClaimTiming:
     """What the D41 record says about WHEN one piece of testimony applies.
 
-    Two clocks. ``asserted_at`` is when the SOURCE said it — the document's
+    Windows are D107 §5 canonical half-open intervals: ``about_from`` is the
+    inclusive start aligned to the claim's precision unit, ``about_until`` the
+    EXCLUSIVE end (``None`` = open). Two clocks. ``asserted_at`` is when the SOURCE said it — the document's
     or conversation's own timestamp (the supersession boundary the layer
     already used). ``about_from``/``about_until`` is the world-time the
     statement is ABOUT, resolved by the extractor from the source's wording
@@ -1222,8 +1228,10 @@ _UNDATED: Final = _ClaimTiming()
 def _timing_from_row(row: Mapping[Any, Any]) -> _ClaimTiming:
     """Read one claim row's said-on time and resolved about-window.
 
-    A ``NULL`` ``claim_valid_until`` beside a resolved ``claim_valid_from`` is
-    a D41 open interval: the end is unbounded and stays ``None``.
+    The row's ``claim_valid_from`` / ``claim_valid_until`` are the D107 §5
+    canonical half-open bounds (the SQL selects ``claim_canonical_start`` /
+    ``claim_canonical_end``): a ``NULL`` end is an open interval and stays
+    ``None``; an ``unknown`` precision yields a ``NULL`` start and is undated.
     """
     about_from = row.get("claim_valid_from")
     if about_from is None:
@@ -1282,7 +1290,8 @@ def _render_about(timing: _ClaimTiming) -> str:
     if timing.about_until is None:
         span = f"from {start} onward (no end given)"
     else:
-        end = _date_text(timing.about_until)
+        # the stored end is exclusive; show the last instant inside the window
+        end = _date_text(_last_inside(timing.about_until))
         span = start if start == end else f"{start} to {end}"
     if timing.is_event:
         return (
@@ -1293,6 +1302,14 @@ def _render_about(timing: _ClaimTiming) -> str:
     if " to " in span or "onward" in span:
         return f"the period {span} (a state or figure tied to that span, not a dated event)"
     return f"the day {span} (a state or figure tied to that day, not a dated event)"
+
+
+def _last_inside(end_exclusive: object) -> object:
+    """The last instant inside a half-open window, for display only."""
+    try:
+        return end_exclusive - timedelta(microseconds=1)  # type: ignore[operator]
+    except TypeError:
+        return end_exclusive
 
 
 def _date_text(value: object) -> str:
@@ -1410,14 +1427,16 @@ def _latest_or_open(left: object, right: object, *, existing_defined: bool) -> o
 def _windows_disjoint(
     left_from: object, left_until: object, right_from: object, right_until: object
 ) -> bool:
-    """Closed-interval disjointness with ``None`` ends unbounded.
+    """Half-open disjointness (D107 §5) with ``None`` ends unbounded.
 
-    Any incomparable value counts as overlap (the fail-safe direction).
+    Ends are exclusive, so two adjacent calendar days do not overlap while a
+    day and an instant inside it do. Any incomparable value counts as overlap
+    (the fail-safe direction).
     """
     try:
-        if left_until is not None and bool(left_until < right_from):  # type: ignore[operator]
+        if left_until is not None and bool(left_until <= right_from):  # type: ignore[operator]
             return True
-        if right_until is not None and bool(right_until < left_from):  # type: ignore[operator]
+        if right_until is not None and bool(right_until <= left_from):  # type: ignore[operator]
             return True
         return False
     except TypeError:
@@ -1495,27 +1514,35 @@ _BLOCK_ENTITY = text(
     -- event claims only) drives the rung; the wider about-window is shown
     -- to the model.
     LEFT JOIN LATERAL (
-        -- A NULL claim_valid_until beside a non-NULL claim_valid_from is a
-        -- D41 open interval (unbounded end); one open claim makes the
-        -- aggregate open, so the end stays NULL rather than a false maximum.
-        SELECT min(c.claim_valid_from)
-                 FILTER (WHERE c.claim_valid_kind = 'event_time') AS event_from,
-               CASE WHEN bool_or(c.claim_valid_until IS NULL)
-                         FILTER (WHERE c.claim_valid_kind = 'event_time')
+        -- Windows are compared as D107 §5 canonical half-open intervals: a
+        -- day covers the whole calendar day, an instant is a non-empty
+        -- point, an open window (NULL canonical end) makes the aggregate
+        -- open, so the end stays NULL rather than a false maximum.
+        SELECT min(w.canon_start)
+                 FILTER (WHERE w.valid_kind = 'event_time') AS event_from,
+               CASE WHEN bool_or(w.canon_end IS NULL)
+                         FILTER (WHERE w.valid_kind = 'event_time')
                     THEN NULL
-                    ELSE max(c.claim_valid_until)
-                         FILTER (WHERE c.claim_valid_kind = 'event_time')
+                    ELSE max(w.canon_end)
+                         FILTER (WHERE w.valid_kind = 'event_time')
                END AS event_until,
-               min(c.claim_valid_from) AS about_from,
-               CASE WHEN bool_or(c.claim_valid_until IS NULL) THEN NULL
-                    ELSE max(c.claim_valid_until)
+               min(w.canon_start) AS about_from,
+               CASE WHEN bool_or(w.canon_end IS NULL) THEN NULL
+                    ELSE max(w.canon_end)
                END AS about_until
         FROM observation_evidence e
-        JOIN claims c ON c.claim_id = e.claim_id
+        JOIN LATERAL (
+            SELECT c.claim_valid_kind AS valid_kind,
+                   claim_canonical_start(c.claim_valid_from,
+                                         c.claim_valid_precision) AS canon_start,
+                   claim_canonical_end(c.claim_valid_from, c.claim_valid_until,
+                                       c.claim_valid_precision) AS canon_end
+            FROM claims c
+            WHERE c.claim_id = e.claim_id AND c.is_current_testimony
+        ) w ON true
         WHERE e.observation_id = o.observation_id
           AND e.stance = 'supports'
-          AND c.is_current_testimony
-          AND c.claim_valid_from IS NOT NULL
+          AND w.canon_start IS NOT NULL
     ) timing ON true
     WHERE o.deployment_id = :deployment_id
       AND o.subject_entity_id = :subject_entity_id
@@ -1619,7 +1646,10 @@ _SELECT_EVIDENCE_FOR_OBS = text(
     """
     SELECT e.claim_id, e.doc_id, c.asserted_at,
            c.claim_valid_kind::text AS valid_kind,
-           c.claim_valid_from, c.claim_valid_until
+           claim_canonical_start(c.claim_valid_from, c.claim_valid_precision)
+             AS claim_valid_from,
+           claim_canonical_end(c.claim_valid_from, c.claim_valid_until,
+                               c.claim_valid_precision) AS claim_valid_until
     FROM observation_evidence e
     JOIN claims c ON c.claim_id = e.claim_id
     WHERE e.deployment_id = :deployment_id
@@ -1691,7 +1721,10 @@ _INSERT_ADJUDICATION = text(
 _CLAIMS_ASSERTED = text(
     """
     SELECT claim_id, asserted_at, claim_valid_kind::text AS valid_kind,
-           claim_valid_from, claim_valid_until
+           claim_canonical_start(claim_valid_from, claim_valid_precision)
+             AS claim_valid_from,
+           claim_canonical_end(claim_valid_from, claim_valid_until,
+                               claim_valid_precision) AS claim_valid_until
     FROM claims WHERE claim_id = ANY(:claim_ids)
     """
 )

@@ -7,8 +7,18 @@
 > assured surface rolls this protocol; the sequencing is
 > `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
 
-> **Binding D106 amendment (2026-09-03).** The current protocol is
-> `RS-LoCoMo-Full-v21`. It retains v20's dataset, rendered documents, models,
+> **Binding D107 amendment, WP-T.0a (2026-09-03).** The current protocol is
+> `RS-LoCoMo-Full-v22`. It retains v21's dataset, rendered documents, models,
+> tools, budgets, prompts, and scoring. Its pinned `adjudicate_observations`
+> component version now carries canonical half-open bounds (D107 §5): the
+> observation adjudicator compares a day as the whole calendar day and an
+> instant as a non-empty point, and `claims_as_of` finds a day-precision
+> claim from an intraday window. Ingestion provenance, protocol identity, and
+> fingerprint roll; no retrieval, retry, model-effort, or call-budget behavior
+> changes.
+
+> **Historical D106 amendment (2026-09-03; superseded by D107 WP-T.0a).** The
+> D106 protocol was `RS-LoCoMo-Full-v21`. It retained v20's dataset, rendered documents, models,
 > tools, budgets, answer and judge prompts, counterfactual and complete-answer
 > instructions, content-before-`Unknown` harness guard, and no-review scoring
 > rule. Its pinned `adjudicate_observations` component version now carries the
@@ -98,7 +108,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v21
+protocol                RS-LoCoMo-Full-v22
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -670,7 +680,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v21 requires to be
+- the non-secret `document_binding_generation`, which Full-v22 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -816,11 +826,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v21 \
+  --protocol full-v22 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v21`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v22`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

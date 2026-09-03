@@ -725,3 +725,75 @@ def test_entity_resolution_failure_is_unknown_entity(corpus: _Corpus) -> None:
     assert not answer.entities
     assert answer.negative is not None
     assert answer.negative.kind is NegativeKind.UNKNOWN_ENTITY
+
+
+def _insert_day_claim(
+    *, corpus: _Corpus, claim_id: UUID, day: datetime, body: str
+) -> None:
+    """One current day-precision claim stored the way E2 stores it: both ends
+    on the day's midnight (D41), which the D107 §5 canonical bounds widen to
+    the whole calendar day at comparison time."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, claim_valid_from, claim_valid_until,"
+                " claim_valid_precision, claim_valid_kind, extractor_version,"
+                " ingested_at) VALUES (:claim, :deployment, :doc, :chunk, :body,"
+                " :body, 0, 30, true, true, :day, :day, 'day', 'event_time',"
+                " 'batch-b', :ingested_at)"
+            ),
+            {
+                "claim": claim_id,
+                "deployment": _DEPLOYMENT_ID,
+                "doc": corpus.doc_id,
+                "chunk": uuid4(),
+                "body": body,
+                "day": day,
+                "ingested_at": _MENTIONED_AT,
+            },
+        )
+
+
+def test_claims_as_of_finds_a_day_precision_claim_from_an_intraday_window(
+    corpus: _Corpus,
+) -> None:
+    """D107 §5: a day is the whole calendar day, so a window strictly inside
+    it — and a point-in-time request — both find the claim; a window on the
+    next day does not."""
+    claim_id = uuid4()
+    _insert_day_claim(
+        corpus=corpus,
+        claim_id=claim_id,
+        day=datetime(2024, 6, 15, tzinfo=UTC),
+        body="Nate won a regional tournament on the fifteenth.",
+    )
+    try:
+        engine = corpus.query_engine()
+        intraday = engine.claims_as_of(
+            deployment_id=_DEPLOYMENT_ID,
+            from_=datetime(2024, 6, 15, 9, tzinfo=UTC),
+            to=datetime(2024, 6, 15, 23, tzinfo=UTC),
+            k=20,
+        )
+        assert claim_id in {claim.claim_id for claim in intraday.evidence}
+        point = engine.claims_as_of(
+            deployment_id=_DEPLOYMENT_ID,
+            from_=datetime(2024, 6, 15, 12, tzinfo=UTC),
+            to=datetime(2024, 6, 15, 12, tzinfo=UTC),
+            k=20,
+        )
+        assert claim_id in {claim.claim_id for claim in point.evidence}
+        next_day = engine.claims_as_of(
+            deployment_id=_DEPLOYMENT_ID,
+            from_=datetime(2024, 6, 16, 0, tzinfo=UTC),
+            to=datetime(2024, 6, 16, 23, tzinfo=UTC),
+            k=20,
+        )
+        assert claim_id not in {claim.claim_id for claim in next_day.evidence}
+    finally:
+        with corpus.engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM claims WHERE claim_id = :claim"), {"claim": claim_id}
+            )
