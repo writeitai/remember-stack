@@ -1,11 +1,12 @@
 # Retrieval Design — the Query Machine
 
-> **Binding D107 amendment (2026-09-03).** Testimony grouping keys include the
-> claim's D41 window, so identical wording about different dates stays two
-> evidence rows; the fact-grain `Validity` gains `validity_basis`; P1 accepts
-> is-about (`valid_from`/`valid_until`) filters beside the said-on ones; and
-> `aggregate(form="timeline")` buckets by world-time with an explicit `undated`
-> bucket. Contract: `temporal_clocks_design.md` §5.2–§5.4.
+> **Binding D107 amendment (2026-09-03).** Testimony grouping keys on the full
+> D41 tuple (or `asserted_at` when unknown) and grouped rows keep every
+> member's times; the fact-grain `Validity`, `GraphEdge` and the `memory_v1`
+> fact views gain per-endpoint bases and the occurrence window (additive;
+> `fact_context@3`, `answer_context@3`); P1 accepts is-about claim filters and
+> an `occurs` fact mode; `aggregate(form="timeline")` buckets by occurrence
+> with an explicit `undated` bucket. Contract: `temporal_clocks_design.md` §7.
 
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
 > PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;

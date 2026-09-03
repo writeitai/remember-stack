@@ -1,13 +1,17 @@
 # The Observation Layer — Non-Graph Facts with Temporal Validity (Design)
 
-> **Binding D107 amendment (2026-09-03).** An observation's `valid_from` is
-> seeded from the triggering claim's D41 window (basis `world_time`), from
-> the said-on date only when the window is unknown (basis `said_on`), and
-> otherwise stays `NULL` (basis `unknown`). Evidence widens the start earlier
-> to its is-about start, never to a said-on time. A cap uses the successor's
-> is-about start, else its said-on date, else no cap — never `now()`. The
-> staging order and predecessor/successor orientation use the shared
-> comparator of `temporal_clocks_design.md` §4.4; the D106 rung is unchanged.
+> **Binding D107 amendment (2026-09-03).** An observation carries two windows:
+> the adjudicated verdict window (`valid_from`/`valid_until` with a basis per
+> endpoint), seeded once from the triggering claim's D41 window by kind — a
+> state's span; an event or measurement believed from its occurrence start
+> onward and never capped; `NULL`/`unknown` when the source tied nothing to a
+> date — and a derived occurrence window (`occurs_*`) that widens as evidence
+> attaches. The said-on date is never a window boundary. A verdict changes only
+> by a recorded adjudication (a cap at a successor's `world_time` start, a
+> deterministic `extend_start`, D55); an undated pair coexists, never caps and
+> never `now()`. D90's staging order is unchanged; temporal succession is the
+> separate rule of `temporal_clocks_design.md` §4.4. The D106 rung is unchanged
+> and uses the precision-aware overlap of §5.
 
 > **Binding D98 amendment (2026-08-27).** Relations are the only fact kind
 > mapped as live graph edges over PostgreSQL views. Observations remain
