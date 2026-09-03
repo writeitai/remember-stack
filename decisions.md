@@ -5012,68 +5012,81 @@ missing time stays missing. Concretely:
    `state` (a span that held), `occurrence` (something happened, or a figure
    for a period), `undated` — and **two windows**: the adjudicated **verdict
    window** (`valid_from`/`valid_until`, with a basis per endpoint —
-   `world_time`, `verdict`, `source_removed`, `unknown` — and the recorded
-   `seed_claim_id`) and a derived, non-authoritative **occurrence window**
-   (`occurs_from`/`occurs_until`/`occurs_precision`: the union of its
-   evidence's canonical D41 windows). A state's verdict window is its span
-   and its identity; an occurrence is believed from its occurrence start
-   onward, never capped (D43's no-cap rule extended to events), and has an
-   **adjudicated** identity under the per-key lock — overlapping occurrence
-   windows are a candidate filter the D4/D106 ladder judges, never identity
-   by themselves and never a database exclusion — so a January and an
-   October visit are two facts, and so are two same-day visits the ladder
-   judges distinct; an unknown window stays `NULL`/`unknown`. The said-on
-   date is never written into a window.
+   `world_time`, `verdict`, `source_removed`, `legacy`, `unknown` — and the
+   recorded `seed_claim_id`) and a derived, non-authoritative **occurrence
+   window** (`occurs_from`/`occurs_until`/`occurs_precision`: the union of
+   all attached evidence's canonical D41 windows, current or withdrawn, so
+   D55 never erases a historical fact's world-time). A state's verdict
+   window is its span and its identity; an occurrence is believed from its
+   occurrence start onward, never capped (D43's no-cap rule extended to
+   events), and has an **adjudicated** identity under the per-key lock —
+   never a database exclusion — so a January and an October visit are two
+   facts, and so are two same-day visits the ladder judges distinct; an
+   unknown window stays `NULL`/`unknown`. The said-on date is never written
+   into a window.
 2. The verdict is seeded **once** from the seed claim — the claim whose
-   processing created the row, recorded in `seed_claim_id` and already in
-   the fact's `add` adjudication — and is never revised automatically.
-   Attaching evidence recomputes the occurrence window only. A discrepancy
-   between the two is surfaced as a **`temporal_window` review item** — a
-   new D24 kind whose append-only, reversible verdict records the target
-   fact, seed, old and new canonical bounds with bases, reviewer provenance,
-   reversal linkage and invariants (start earlier never later; no endpoint
-   past a neighbouring slice; a closed end never reopened, D41) and replays
-   idempotently after caps and retractions. Only such a verdict, a
-   supersede cap, or a D55 retraction changes a verdict window.
-3. Matching compares an incoming claim against **two candidate sets**:
-   same-kind facts for evidence, contradiction or novelty, and — for an
-   incoming occurrence — the open states it may end, eligible for
-   supersede or contradict only. **Temporal succession** is separate from
-   D90's processing order, which is unchanged: a state is capped only at a
-   world-time instant supplied by its successor — a successor state's
-   verdict start or an ending occurrence's start (D106's dated resignation
-   still ends an undated "is CEO" state) — and only when that instant is
-   later than the predecessor's known start; otherwise the pair contradicts
-   or coexists and a review item is raised. `now()` is never a boundary. D55
-   caps with basis `source_removed` when the source supplied the removal
-   time; when it did not, the world-time end stays `unknown` and only the
-   belief interval closes, from the persisted reconciliation instant. The
-   D90 late-arrival re-split decides eligibility by the evidence's
-   occurrence start against the world-time cap, not by `asserted_at`.
-4. Precision is honoured through one **canonical-bounds** function — shipped
+   processing created the row, recorded atomically in `seed_claim_id` and
+   as the `triggering_claim_id` of the fact's `add` adjudication on both
+   planes — and is never revised automatically. Attaching evidence
+   recomputes the occurrence window only. A discrepancy between the two is
+   surfaced as a **`temporal_window` review item** — a new D24 kind whose
+   append-only verdict relation records the D49 fact identity, seed, old and
+   new canonical bounds with bases, provenance and reversal linkage, checks
+   invariants (start earlier never later; no endpoint past a neighbouring
+   slice; a closed end never reopened, D41; a state never empty), allows a
+   reviewer's compensating reversal as the one documented exception, and
+   replays idempotently after caps and retractions. Only such a verdict, a
+   supersede cap, a D55 retraction, or a recorded migration adjudication
+   changes a verdict window.
+3. Candidate **nomination is unchanged** (block, then similarity-ranked
+   residue), so a same-occurrence date dispute between disjoint dated claims
+   still reaches the ladder (D106); the **temporal relation bounds the
+   verdict** — disjoint dated pairs may only be `new` or `contradict`, mixed
+   pairs never `evidence`. Matching compares an incoming claim against two
+   candidate sets: same-kind facts, and — for an incoming occurrence — the
+   states it may end, open-ended or finite-ended, eligible for supersede or
+   contradict only. A normalised relation claim is held unattached until
+   its verdict, which is idempotent on the triggering claim and adjudicator
+   generation.
+4. **Temporal succession** is separate from D90's processing order, which is
+   unchanged: a state is capped only at a world-time instant supplied by its
+   successor — a successor state's verdict start or an ending occurrence's
+   start (D106's dated resignation still ends an undated "is CEO" state; a
+   2027 resignation shortens "CEO 2025–2030") — and only when that instant
+   lies strictly inside the predecessor's known window; otherwise the pair
+   contradicts or coexists and a review item is raised. `now()` is never a
+   boundary. D55 caps a withdrawn state under the same guard when the source
+   supplied the removal time (basis `source_removed`); otherwise, and for
+   every withdrawn occurrence or undated fact, only the belief interval
+   closes, from the persisted reconciliation instant. The D90 late-arrival
+   re-split decides eligibility by the evidence's occurrence start against
+   the world-time cap, not by `asserted_at`.
+5. Precision is honoured through one **canonical-bounds** function — shipped
    as `memory_v1.canonical_bounds` with a `claims_canonical` view and mirrored
    in Python — that turns a stored claim window into a half-open interval
    with both ends aligned to its precision unit (a year stored
    2022-01-01…12-31 is `[2022-01-01, 2023-01-01)`; a day is the calendar day
    whatever the stored time; an `instant` is a non-empty point; `open` is
    unbounded; an inclusive request `(t, t)` is a point query). Fact windows
-   are **stored** canonical at seeding, so every fact predicate and the
-   relations exclusion read consistent bounds; claim comparisons, saved
-   examples and open SQL canonicalise through the same function; claim
-   storage and its `CHECK`s are unchanged.
-5. "Current" is one predicate evaluated at an explicit instant
-   (`invalidated_at IS NULL AND (valid_until IS NULL OR valid_until > E)`),
-   used by every current fact read — the consumers that test
-   `valid_until IS NULL` today and the aggregate/absence queries that test
-   only `invalidated_at`; cached profiles and K pages carry their earliest
-   future end as an expiry instant in their input hash and a durable,
-   idempotent `fact_expiry_schedule` regenerates them when it passes, with
-   the read-time predicate as the correctness backstop.
-6. Every prompt that compares, merges, ranks, or summarises facts shows the
+   are **stored** canonical at seeding, a state with two known endpoints
+   must be non-empty, and every fact predicate and the relations exclusion
+   read consistent bounds; claim comparisons, saved examples and open SQL
+   canonicalise through the same function; claim storage and its `CHECK`s
+   are unchanged.
+6. "Current" is the full interval-containment predicate `facts_current`
+   already uses, evaluated at an explicit instant (`ingested_at <= E`, not
+   invalidated, `valid_from` absent or `<= E`, `valid_until` absent or
+   `> E`), on every current fact read — including the aggregate and
+   predicate-absence queries that test only `invalidated_at` today; cached
+   profiles and K pages carry their earliest future activation and expiry
+   instants in their input hash and a durable, idempotent
+   `fact_expiry_schedule` regenerates them when either passes, with the
+   read-time predicate as the correctness backstop.
+7. Every prompt that compares, merges, ranks, or summarises facts shows the
    D106 two-clock block (`said on` / `is about`, defined): relation
    supersession, T4 identity candidates, the K prose writer, the benchmark
    answer agent.
-7. Testimony deduplication keys on the full D41 tuple (or `asserted_at` when
+8. Testimony deduplication keys on the full D41 tuple (or `asserted_at` when
    unknown) and grouped rows list every member's times; the fact-grain
    envelope, `GraphEdge`, the K fact model, the `memory_v1` fact views and
    the open-query confirmation surface gain bases, kind and occurrence
@@ -5082,16 +5095,22 @@ missing time stays missing. Concretely:
    `answer_context@3` roll; P1 gains is-about claim filters and an `occurs`
    fact mode; the timeline aggregate buckets by occurrence with an explicit
    `undated` bucket; profiles rank by evidence then occurrence recency.
-8. Extraction teaches all four D41 kinds and `open` with examples and shows
+9. Extraction teaches all four D41 kinds and `open` with examples and shows
    the extractor the full source timestamp. Statements stay canonical (D43);
-   dated labels are derived from the occurrence window.
-9. Consumer surfaces print a date under a world-time heading only for
-   `world_time`/`verdict` bases, and the consumption skill defines
-   `claims_as_of` over source world-time (D41), not system time.
-10. Cutover is stop → drain → migrate → **convert in place** (seed from the
-    recorded `add` adjudication, windows by kind, existing caps kept,
-    shadow-first, validated, resumable) → readiness reports the fact-layer
-    generation and refuses an older one. Fact ids and D55 historical facts
+   dated labels are derived from the occurrence window. Consumer surfaces
+   print a date under a world-time heading only for `world_time`/`verdict`
+   bases, and the consumption skill defines `claims_as_of` over source
+   world-time (D41), not system time.
+10. Cutover is stop → drain → migrate → **convert in place** with a recorded
+    migration adjudication per fact → readiness. Observations recover their
+    seed from the recorded `add` adjudication; relations never recorded a
+    creator, so a legacy relation converts under basis `legacy` with its
+    kind derived from its evidence when unanimous, else `undated`. Legacy
+    caps are not kept as they are: a recoverable supersede cap is recomputed
+    at its successor's world-time start, a cap on a converted occurrence is
+    removed, a D55 fallback cap becomes a belief-time close at the persisted
+    reconciliation instant, and the rest become `legacy_unknown_boundary`
+    review items that readiness reports. Fact ids and D55 historical facts
     are preserved; a store never mixes pre- and post-D107 fact semantics;
     re-adjudicating identities decided under old rules is a fresh rebuild
     (D7), not a migration.
@@ -5100,67 +5119,68 @@ missing time stays missing. Concretely:
 tournament last week" across a nine-month gap because it never read the
 claims' resolved windows. The follow-up audit
 (`plan/analysis/time_handling_audit.md`, revision `02b79904`) found the same
-confusion in twenty more places: relations' `valid_from` is never seeded,
-so a `valid_at` lookup cannot exclude a fact before its true beginning; the
-relation supersession prompt asks the model about "the same period" while
-showing only document dates; undated supersessions cap at the ingest
-wall-clock, so a rebuild on another day yields a different history; the two
-adjudicators orient undated testimony in opposite directions; retrieval
-dedupes identical text across dates exactly as the adjudicator did before
-D106; the K fact sheet sorts by a said-on date it does not show; the timeline
-aggregate falls back to ingest year; the answer agent is told to "use
-timestamps" without being told which; day-precision windows are compared as
-zero-width points; the consumption skill and the open-query confirmation
-surface respectively misdefine and truncate the clocks; the aggregate and
-predicate-absence queries never evaluate `valid_until`; and the shipped
-`claims_as_of` example's `unknown` count can never be non-zero. The docs
-(`/docs/concepts`, `fact_context`'s description) promise world-time
-semantics the code does not keep.
+confusion in twenty-one more places: relations' `valid_from` is never
+seeded, so a `valid_at` lookup cannot exclude a fact before its true
+beginning; the relation supersession prompt asks the model about "the same
+period" while showing only document dates; undated supersessions cap at the
+ingest wall-clock, so a rebuild on another day yields a different history;
+the two adjudicators orient undated testimony in opposite directions;
+retrieval dedupes identical text across dates exactly as the adjudicator did
+before D106; the K fact sheet sorts by a said-on date it does not show; the
+timeline aggregate falls back to ingest year; the answer agent is told to
+"use timestamps" without being told which; day-precision windows are
+compared as zero-width points; the consumption skill and the open-query
+confirmation surface respectively misdefine and truncate the clocks; the
+aggregate and predicate-absence queries never evaluate `valid_until`; the
+shipped `claims_as_of` example's `unknown` count can never be non-zero; and
+D55's observation close is shape-blind. The docs (`/docs/concepts`,
+`fact_context`'s description) promise world-time semantics the code does
+not keep.
 
-Two independent Codex design reviews shaped the mechanics. The first
-withdrew said-on seeding, mechanical evidence widening, universal half-open
-storage, and a merged ordering key. The second showed that matching every
-fact by verdict-window overlap recreates the D106 collapse for recurring
-occurrences and collides with the relations `EXCLUDE`, that an automatic
-`extend_start` is still the D41-forbidden reduction, that "+ one unit"
-over-expands normalised ends, that the D90 re-split crossed clocks, and that
-succession restricted to dated states lost D106's ending-event case. The
-third showed that an occurrence exclusion constraint contradicts adjudicated
-identity, that kind-routed matching made D106's cross-kind cap unreachable,
-that "review item" named no verdict schema, that a replay rebuild erases
-D55 history and re-picks seeds, and that belief-time was leaking into a
-world-time endpoint — hence the temporal kind, adjudicated occurrence
-identity, the two candidate sets and chronological guard, the
-`temporal_window` verdict, canonical bounds in SQL and Python, and the
-in-place conversion above.
+Four independent Codex design reviews shaped the mechanics, each withdrawing
+part of the previous revision: said-on seeding, mechanical evidence
+widening, universal half-open storage and a merged ordering key (round one);
+verdict-window identity for occurrences, an automatic `extend_start`,
+"+ one unit" ends, a clock-crossing D90 re-split and dated-states-only
+succession (round two); an occurrence exclusion constraint, kind-routed
+matching that lost D106's cross-kind cap, an unspecified review mechanism,
+a replay rebuild and a belief-time end labelled `source_removed` (round
+three); exact legacy seed recovery, preserved legacy caps, a current
+predicate without a lower bound, an overlap-only candidate filter that lost
+D106's disjoint-date contradiction, and open-states-only state-ending
+candidates (round four). Design §10 records each.
 
 **Consequences.** `valid_at` / `facts_as_of` become true on both fact planes;
 recurring occurrences stay distinct facts on both planes; histories are
-rebuild-stable (D7) because no boundary depends on ingest time and the seed
-is the replay-first claim; the two fact planes agree on undated testimony;
-readers, profiles and compiled pages see resolved dates as labels while
-statements keep source wording. Costs: one migration (seven columns, a partial exclusion, a unique key,
-an expiry schedule, a review kind, and the query-space function and view), generation rolls for the
-extractor, normaliser, both adjudicators and the flush component, four
-assured-operation version rolls, a fact-layer rebuild of existing stores
-(re-seeding reads the claim rows already present), an expiry sweep for
-finite future ends, and LoCoMo protocol rolls per landed package. Undated,
-differently worded restatements of a changing state coexist instead of
-capping at `now()`; their count per key is a reported metric and the lever
-is extraction coverage of the D41 kinds.
+rebuild-stable (D7) because no boundary depends on ingest time; the two fact
+planes agree on undated testimony; readers, profiles and compiled pages see
+resolved dates as labels while statements keep source wording. Costs: one
+migration (the new columns, the non-empty state check, a partial exclusion,
+a unique key, an expiry schedule, a review kind and verdict relation, and
+the query-space function and view), generation rolls for the extractor,
+normaliser, both adjudicators and the flush component, four
+assured-operation version rolls, an in-place conversion of existing stores
+with migration adjudications and possibly open `legacy_unknown_boundary`
+items to resolve, activation/expiry sweeps, and LoCoMo protocol rolls per
+landed package. Undated, differently worded restatements of a changing
+state coexist instead of capping at `now()`; their count per key is a
+reported metric and the lever is extraction coverage of the D41 kinds.
 
 **Rejected.** Seeding windows from the said-on date (provenance is not
 validity); seeding a measurement's or event's end from its claim (D43
-no-cap); matching every fact by verdict-window overlap (recreates D106 for
-occurrences); an occurrence exclusion constraint (contradicts adjudicated
-identity); automatic earliest-evidence start revision (D41 reduction); a
-replay rebuild (erases D55 history, replaces referenced fact ids); half-open
-claim storage (empties `instant`) and "+ one unit" ends with raw starts
-(over-expand and misalign); one coalesced
-key for processing and succession (D90); succession only between dated
-states (loses D106's ending event); capping at a retrospective's said-on
-date; baking the resolved date into the observation statement (D43
-identity); nineteen local patches; keeping `now()` as the undated cap (D7).
+no-cap); matching every fact by verdict-window overlap or an occurrence
+exclusion (recreates D106 for occurrences; distinct occurrences may
+overlap); an overlap-only candidate filter (loses D106's disjoint-date
+contradiction); automatic earliest-evidence start revision (D41 reduction);
+a replay rebuild and exact legacy seed recovery (erases D55 history;
+relation creators were never recorded); keeping legacy cap boundaries (they
+are the said-on/`now()` values removed); a current predicate without a lower
+bound; half-open claim storage (empties `instant`) and "+ one unit" ends
+with raw starts; one coalesced key for processing and succession (D90);
+succession only between dated states or only against open states; capping
+at a retrospective's said-on date; baking the resolved date into the
+observation statement (D43 identity); twenty-two local patches; keeping
+`now()` as the undated cap (D7).
 
 **Design.** `plan/designs/temporal_clocks_design.md`; amendment banners on
 `e2_e3_claims_relations_design.md`, `observations_design.md`,
@@ -5171,14 +5191,16 @@ identity); nineteen local patches; keeping `now()` as the undated cap (D7).
 
 **Sequencing.** `plan/plans/temporal_clocks.md`.
 
-**Amends.** D24 (a `temporal_window` review kind with its verdict schema);
-D41's consequences become binding mechanics (claim windows seed
-fact verdicts once; the retrospective guard holds; revisions are review
-verdicts); the observations design §3 (matching by kind, the cap boundary,
-succession, the no-cap rule extended to events); D88/D90 (processing order
-unchanged; the §5.5.3 re-split decides by occurrence start against a
-world-time cap); D106 (its two-clock prompt block becomes the engine-wide
-contract; its ending-event supersession is preserved; its `valid_from`
-seeding gap is closed); D55 (unknown source time closes on belief-time, never
-`now()`); D49 (additive envelope fields; four operation versions roll).
-Preserves D3, D6, D32, D43's untyped statement, D98, D100–D105.
+**Amends.** D24 (a `temporal_window` review kind with its verdict relation
+and the documented reversal exception); D41's consequences become binding
+mechanics (claim windows seed fact verdicts once; the retrospective guard
+holds; revisions are review verdicts); the observations design §3
+(matching by kind, the cap boundary, succession, the no-cap rule extended to
+events); D88/D90 (processing order unchanged; the §5.5.3 re-split decides by
+occurrence start against a world-time cap); D106 (its two-clock prompt block
+becomes the engine-wide contract; its disjoint-date contradiction and
+ending-event supersession are preserved; its `valid_from` seeding gap is
+closed); D55 (retraction by temporal kind; unknown source time closes on
+belief-time from the persisted reconciliation instant, never `now()`); D49
+(additive envelope fields; four operation versions roll). Preserves D3, D6,
+D32, D43's untyped statement, D98, D100–D105.

@@ -7,8 +7,8 @@ binding contract is `plan/designs/temporal_clocks_design.md`.
 
 **Revision audited:** `02b79904` (the merge of D106). Line numbers below are
 for that revision; function and statement names are the stable anchors.
-Findings 4.2, 4.5, 4.6, 4.12, 4.13, 4.14 and 4.15 were narrowed after three
-independent Codex reviews verified each against the code; 4.18–4.21 were
+Findings 4.2, 4.5, 4.6, 4.12, 4.13, 4.14 and 4.15 were narrowed after four
+independent Codex reviews verified each against the code; 4.18–4.22 were
 added from those reviews.
 
 ## 1. Question
@@ -224,10 +224,11 @@ inputs.
 intervals. A day-precision May-7 claim is `[May 7 00:00, May 7 00:00]`, so
 "what held during May 7, 09:00–23:00" returns nothing; a year-precision 2022
 claim ends at 2022-12-31 00:00. D106's `_windows_disjoint` compares with
-strict `<`, so two *equal* points do overlap; but two same-day events whose
-wordings resolve to different instants of that day, or a day-precision and an
-instant-precision claim, are points that miss each other although the day
-contains both.
+strict `<`, so two *equal* points do overlap; but a day-precision claim and an
+instant-precision claim about the same day miss each other, and two
+day-precision claims about adjacent days touch at a point neither covers.
+(Two genuinely instant-precision events at different times of one day *are*
+disjoint, and correctly so.)
 
 ### 4.14 E2 teaches only `event_time` (P4)
 
@@ -310,6 +311,18 @@ by combining `precision = 'unknown'` with a non-null bound comparison; D41's
 permanently zero. (Reported by the third independent review; the fix rides
 the query-space canonicalisation of design §5.)
 
+### 4.22 D55's observation close is shape-blind (P6)
+
+`src/rememberstack/spine/lifecycle.py:438-468` (`close_observations`)
+invalidates every withdrawn observation, by its own docstring because
+"observations are untyped (state vs measurement is semantic)" and
+`invalidated_at` is the exit safe for both shapes. D55 and
+`evidence_lifecycle_design.md:153-165` ask for a per-shape judgement — a
+withdrawn effective state caps its world-time, a withdrawn measurement keeps
+its window and closes belief only. Without a temporal kind the code cannot
+make that judgement, so a withdrawn state observation is recorded as *never
+believed* rather than *ended*.
+
 ## 5. Checked and sound
 
 Absence of a finding above is a result, not an omission:
@@ -339,15 +352,15 @@ Absence of a finding above is a result, not an omission:
   and sound.
 - **Query-space catalog typing** (`spine/query_space/catalog.py:371-434,
   447-509, 869-916`) — claim views expose all five D41 columns to open SQL.
-- **D55 retraction shape discipline** (`spine/lifecycle.py:412-468`) —
-  relations cap at the withdrawing version's source time, observations use
-  `invalidated_at`; only the `now()` fallback (4.4) is wrong.
+- **D55 retraction for relations** (`spine/lifecycle.py:412-437`) — caps at
+  the withdrawing version's source time; only the `now()` fallback (4.4) is
+  wrong. (The observation side is not sound — 4.22.)
 - **Adjudication transcripts** (`supersession.py:298-307`;
   `observation_adjudication.py:553-571, 741-751`) — every cap boundary and
   every D106 coercion is recorded, so all of the above is diagnosable from
   the audit tables without a rerun.
 
-## 6. Why this is one decision, not twenty-one fixes
+## 6. Why this is one decision, not twenty-two fixes
 
 Every finding is the same confusion: the engine resolves world-time once, at
 extraction, and then reasons on the source's date. The fix that closes all of
