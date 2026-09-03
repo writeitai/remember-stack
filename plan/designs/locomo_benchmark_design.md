@@ -13,9 +13,10 @@
 > component version now carries canonical half-open bounds (D107 §5): the
 > observation adjudicator compares a day as the whole calendar day and an
 > instant as a non-empty point, and `claims_as_of` finds a day-precision
-> claim from an intraday window. Ingestion provenance, protocol identity, and
-> fingerprint roll; no retrieval, retry, model-effort, or call-budget behavior
-> changes.
+> claim from an intraday window. Ingestion provenance, the library's
+> `claims_as_of` result set, protocol identity, and fingerprint roll; the
+> benchmark's exposed read-tool set, retry, model-effort, and call-budget
+> behavior are unchanged.
 
 > **Historical D106 amendment (2026-09-03; superseded by D107 WP-T.0a).** The
 > D106 protocol was `RS-LoCoMo-Full-v21`. It retained v20's dataset, rendered documents, models,

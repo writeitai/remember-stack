@@ -25,12 +25,17 @@ CREATE FUNCTION claim_canonical_start(
   valid_precision claim_valid_precision
 ) RETURNS timestamptz
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  -- All calendar arithmetic runs on a UTC-naive timestamp
+  -- (`AT TIME ZONE 'UTC'` in, `AT TIME ZONE 'UTC'` out), because
+  -- `timestamptz + interval` uses the SESSION time zone's calendar fields;
+  -- the result must not depend on the session that computed it (IMMUTABLE,
+  -- and it feeds an expression index).
   SELECT CASE
     WHEN valid_from IS NULL OR valid_precision = 'unknown' THEN NULL
-    WHEN valid_precision = 'day'     THEN date_trunc('day',     valid_from, 'UTC')
-    WHEN valid_precision = 'month'   THEN date_trunc('month',   valid_from, 'UTC')
-    WHEN valid_precision = 'quarter' THEN date_trunc('quarter', valid_from, 'UTC')
-    WHEN valid_precision = 'year'    THEN date_trunc('year',    valid_from, 'UTC')
+    WHEN valid_precision = 'day'     THEN date_trunc('day',     valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'month'   THEN date_trunc('month',   valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'quarter' THEN date_trunc('quarter', valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'year'    THEN date_trunc('year',    valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
     ELSE valid_from
   END
 $$;
@@ -47,10 +52,10 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     WHEN valid_from IS NULL OR valid_precision = 'unknown' THEN NULL
     WHEN valid_precision = 'open'    THEN NULL
     WHEN valid_precision = 'instant' THEN valid_from + interval '1 microsecond'
-    WHEN valid_precision = 'day'     THEN date_trunc('day',     coalesce(valid_until, valid_from), 'UTC') + interval '1 day'
-    WHEN valid_precision = 'month'   THEN date_trunc('month',   coalesce(valid_until, valid_from), 'UTC') + interval '1 month'
-    WHEN valid_precision = 'quarter' THEN date_trunc('quarter', coalesce(valid_until, valid_from), 'UTC') + interval '3 months'
-    WHEN valid_precision = 'year'    THEN date_trunc('year',    coalesce(valid_until, valid_from), 'UTC') + interval '1 year'
+    WHEN valid_precision = 'day'     THEN (date_trunc('day',     coalesce(valid_until, valid_from) AT TIME ZONE 'UTC') + interval '1 day')    AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'month'   THEN (date_trunc('month',   coalesce(valid_until, valid_from) AT TIME ZONE 'UTC') + interval '1 month')  AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'quarter' THEN (date_trunc('quarter', coalesce(valid_until, valid_from) AT TIME ZONE 'UTC') + interval '3 months') AT TIME ZONE 'UTC'
+    WHEN valid_precision = 'year'    THEN (date_trunc('year',    coalesce(valid_until, valid_from) AT TIME ZONE 'UTC') + interval '1 year')   AT TIME ZONE 'UTC'
   END
 $$;
 COMMENT ON FUNCTION claim_canonical_end(timestamptz, timestamptz, claim_valid_precision) IS

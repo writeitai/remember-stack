@@ -18,7 +18,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from typing import Any
 from typing import Final
 from uuid import UUID
@@ -1313,9 +1315,18 @@ def _last_inside(end_exclusive: object) -> object:
 
 
 def _date_text(value: object) -> str:
-    """Render a timestamp as its calendar date; anything else verbatim."""
-    date = getattr(value, "date", None)
-    return str(date()) if callable(date) else str(value)
+    """Render a timestamp as its UTC calendar date; anything else verbatim.
+
+    Driver rows arrive in the connection's session zone, and canonical bounds
+    (D107 §5) are UTC-aligned, so the date is taken after converting to UTC —
+    otherwise a canonical day could print as the evening before.
+    """
+    if isinstance(value, datetime):
+        aware = (
+            value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        )
+        return str(aware.astimezone(timezone.utc).date())
+    return str(value)
 
 
 def _temporal_relation(*, timing: _ClaimTiming, candidate: Mapping[str, object]) -> str:

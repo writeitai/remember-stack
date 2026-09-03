@@ -84,3 +84,72 @@ def test_sql_twin_unknown_precision_is_no_interval(database_engine: Engine) -> N
             )
         ).one()
     assert row.s is None and row.e is None
+
+
+@pytest.mark.parametrize(
+    "session_zone", ["America/New_York", "Asia/Kolkata", "Pacific/Auckland"]
+)
+@pytest.mark.parametrize(
+    ("precision", "valid_from", "valid_until"),
+    [
+        (
+            "month",
+            "2023-03-01T00:00",
+            "2023-03-01T00:00",
+        ),  # a month boundary that local calendars shift
+        ("day", "2023-03-12T00:00", "2023-03-12T00:00"),  # a US DST transition day
+        ("year", "2022-01-01T00:00", "2022-12-31T00:00"),
+        (
+            "quarter",
+            "2022-11-15T00:00",
+            None,
+        ),  # bounded precision with a null stored end
+        ("instant", "2022-08-21T16:30", "2022-08-21T16:30"),
+    ],
+)
+def test_sql_twin_is_session_timezone_independent(
+    database_engine: Engine,
+    session_zone: str,
+    precision: str,
+    valid_from: str,
+    valid_until: str | None,
+) -> None:
+    """IMMUTABLE must mean it: the same inputs give the same UTC-aligned bounds
+    whatever the session TimeZone, or the expression index would be unsafe."""
+    with database_engine.connect() as connection:
+        connection.execute(text(f"SET LOCAL TIME ZONE '{session_zone}'"))
+        row = connection.execute(
+            text(
+                "SELECT claim_canonical_start(CAST(:f AS timestamptz),"
+                " CAST(:p AS claim_valid_precision)) AS s,"
+                " claim_canonical_end(CAST(:f AS timestamptz),"
+                " CAST(:u AS timestamptz), CAST(:p AS claim_valid_precision)) AS e"
+            ),
+            {
+                "f": valid_from + "+00:00",
+                "u": (valid_until + "+00:00") if valid_until else None,
+                "p": precision,
+            },
+        ).one()
+    expected = canonical_bounds(
+        valid_from=_ts(valid_from),
+        valid_until=_ts(valid_until) if valid_until else None,
+        precision=precision,
+    )
+    assert row.s == expected.start, (session_zone, precision, "start")
+    assert row.e == expected.end, (session_zone, precision, "end")
+
+
+def test_prompt_dates_render_the_utc_calendar_day() -> None:
+    """A driver row in a non-UTC session zone must still print the UTC day."""
+    from zoneinfo import ZoneInfo
+
+    from rememberstack.spine.observation_adjudication import _date_text
+
+    canonical_midnight_utc = datetime(2023, 5, 7, tzinfo=timezone.utc)
+    as_new_york = canonical_midnight_utc.astimezone(ZoneInfo("America/New_York"))
+    assert as_new_york.date().isoformat() == "2023-05-06"  # the trap
+    assert _date_text(as_new_york) == "2023-05-07"
+    assert (
+        _date_text(datetime(2023, 5, 7, 12, 0)) == "2023-05-07"
+    )  # naive is read as UTC
