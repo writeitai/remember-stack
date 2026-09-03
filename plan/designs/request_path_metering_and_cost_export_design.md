@@ -652,6 +652,14 @@ deployment credential to an unrelated endpoint. A self-hosted or local token
 host that does not advertise a hostname therefore requires the flag. The query
 API is not the device-grant host.
 
+Without the explicit override, the hostname must be present, structurally
+valid, and advertised as live. A missing hostname asks for `--api-url`; an
+invalid hostname or a present hostname whose live flag is false or null exits
+nonzero and prints the hostname and reason. These checks occur after the token
+is minted, so every refusal withdraws the new credential (or keeps its secret
+in the pending-revocation journal when withdrawal cannot be confirmed) and
+does not write or replace `credentials.json`.
+
 `logout` uses `--token-host`, else `REMEMBERSTACK_TOKEN_HOST`, else the
 file’s `token_host`. It does not take `--api-url`.
 
@@ -716,9 +724,17 @@ Success **200**:
   "org_id": "<uuid>",
   "deployment_id": "<uuid>",
   "label": "<string>",
-  "token_prefix": "<string>"
+  "token_prefix": "<string>",
+  "data_plane_hostname": "<hostname or null>",
+  "data_plane_hostname_live": "<boolean or null>"
 }
 ```
+
+The two data-plane fields let login bind the new credential to its deployment.
+Older or self-hosted token services may omit them; that is the missing-hostname
+case in §6.1. A null live flag is treated as false. The response model ignores
+additional fields so the separately deployed token service can evolve without
+breaking older clients.
 
 TTL: if authorize’s `expires_in` elapses before 200, stop. Do not keep
 polling a dead grant.

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Mapping
 from datetime import datetime
+from ipaddress import ip_address
 import time
 from typing import Annotated
 from typing import Literal
@@ -297,17 +298,13 @@ def credential_from_token(
             raise DeviceGrantError(
                 "token host did not advertise a data-plane hostname; pass --api-url"
             )
-        if (
-            "://" in hostname
-            or any(character in hostname for character in "/@?#\\")
-            or any(character.isspace() for character in hostname)
-        ):
+        if not _valid_data_plane_hostname(hostname):
             raise DeviceGrantError(
                 f"token host advertised an invalid data-plane hostname: {hostname!r}"
             )
         if not token.data_plane_hostname_live:
             raise DeviceGrantError(
-                f"deployment {hostname} is not live yet; "
+                f"deployment {hostname!r} is not live yet; "
                 "run `remember login` again when it is"
             )
         api_url = f"https://{hostname}"
@@ -324,6 +321,41 @@ def credential_from_token(
         token_prefix=token.token_prefix,
         expires_at=token.expires_at,
     )
+
+
+def _valid_data_plane_hostname(hostname: str) -> bool:
+    """Accept one printable URL authority with a real DNS or IP host."""
+    if not hostname.isascii() or not hostname.isprintable():
+        return False
+    try:
+        url = httpx.URL(f"https://{hostname}")
+    except httpx.InvalidURL:
+        return False
+    if (
+        not url.host
+        or url.userinfo
+        or url.path != "/"
+        or url.query
+        or url.fragment
+        or hostname.endswith(":")
+        or (url.port is not None and not 1 <= url.port <= 65535)
+    ):
+        return False
+    try:
+        ip_address(url.host)
+    except ValueError:
+        if len(url.host) > 253:
+            return False
+        labels = url.host.rstrip(".").split(".")
+        return all(
+            label
+            and len(label) <= 63
+            and label[0].isalnum()
+            and label[-1].isalnum()
+            and all(character.isalnum() or character == "-" for character in label)
+            for label in labels
+        )
+    return True
 
 
 def request_same_origin(

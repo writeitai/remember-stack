@@ -51,7 +51,9 @@ For a self-hosted or local deployment, pass its API URL explicitly. This
 override wins even if the token host advertises a different or not-yet-live
 hostname. `REMEMBERSTACK_API_URL` remains the default for other client
 commands, but it is not a login override: login uses only an explicit
-`--api-url` or the hostname bound to the newly minted credential.
+`--api-url` or the hostname bound to the newly minted credential. When that
+environment variable points somewhere else, a successful login warns that it
+will override the stored deployment URL for subsequent commands.
 
 ```bash
 remember login --token-host https://token-host.example --api-url http://127.0.0.1:8000

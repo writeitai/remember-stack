@@ -641,6 +641,7 @@ def _login_locked(args: argparse.Namespace) -> int:
     """The login itself, with the credential lock already held."""
     from rememberstack.surfaces.credentials import append_pending_revocation
     from rememberstack.surfaces.credentials import assert_revocation_capacity
+    from rememberstack.surfaces.credentials import CliClientEnv
     from rememberstack.surfaces.credentials import credential_origin
     from rememberstack.surfaces.credentials import CredentialError
     from rememberstack.surfaces.credentials import drop_pending_revocation
@@ -852,6 +853,14 @@ def _login_locked(args: argparse.Namespace) -> int:
         print(f"api_url: {credential.api_url}")
         if credential.expires_at is not None:
             print(f"expires_at: {credential.expires_at.isoformat()}")
+        env_api_url = CliClientEnv.model_validate({}).api_url
+        if env_api_url and env_api_url != credential.api_url:
+            print(
+                f"warning: REMEMBERSTACK_API_URL={env_api_url} overrides the "
+                f"stored api_url {credential.api_url} for other commands; "
+                "unset it to use this deployment",
+                file=sys.stderr,
+            )
         return 0
 
 
