@@ -615,7 +615,8 @@ Four contracts were identified by the fifth independent review as necessary
 for implementation and as touching decisions beyond this design's current
 scope. They are recorded here as open, are gated in `plan/plans/temporal_clocks.md`
 WP-T.1, and each is a spike whose result amends the named design before that
-package starts:
+package starts. Tracking: program issue #364; spikes #365 (1), #366 (2),
+#367 (3), #368 (4).
 
 1. **Deterministic relation seeding under D88 concurrency.** D88 lets
    concurrent claim jobs upsert relations ("relation evidence attach is
