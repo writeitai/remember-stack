@@ -1,9 +1,10 @@
 # Releasing RememberStack
 
 The `Release` workflow publishes one version to PyPI and GHCR, then creates a GitHub release
-containing the Python distributions, the same version-pinned `compose.yaml`, and the example
-environment as `default.env.example` (GitHub's public asset name for the source
-`.env.example`). It accepts only tags exactly matching `vMAJOR.MINOR.PATCH`.
+containing the Python distributions, the same version-pinned `compose.yaml`, the generated
+`openapi.json`, and the example environment as `default.env.example` (GitHub's public asset
+name for the source `.env.example`). It accepts only tags exactly matching
+`vMAJOR.MINOR.PATCH`.
 
 ## One-time owner setup
 
@@ -105,7 +106,7 @@ Run these checks from a clean machine or temporary directory:
 uvx --from rememberstack==0.2.0 remember --version
 docker pull ghcr.io/writeitai/remember-stack:0.2.0
 gh release download v0.2.0 --repo writeitai/remember-stack \
-  --pattern compose.yaml --pattern default.env.example
+  --pattern compose.yaml --pattern default.env.example --pattern openapi.json
 cp default.env.example .env
 docker compose --env-file .env up --no-build --pull always --detach --wait
 curl --fail http://localhost:8000/healthz
