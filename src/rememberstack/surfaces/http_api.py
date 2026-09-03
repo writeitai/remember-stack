@@ -65,6 +65,7 @@ from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
+from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
@@ -354,12 +355,15 @@ def build_api(
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
 
-    `trusted_principal_source` declares that this deployment's perimeter is
-    reached only by a caller entitled to state who ingested a document (a
-    managed control plane). It is **off by default**: the deployment-wide
-    bearer identifies a deployment, not a caller, so elsewhere an asserted
-    `X-Ingest-Principal-*` pair is **ignored, never rejected** — metadata
-    must not be able to fail an otherwise valid ingest.
+    `trusted_principal_source` declares that this deployment's network perimeter
+    is reached only by callers entitled to state who ingested a document. It is
+    **off by default**, and a configured auth perimeter additionally requires
+    full WRITE authority before believing the headers. The unscoped shared
+    secret is unrestricted; a narrow signed browser ingest credential may add
+    a document, but its attribution headers are ignored and its own subject
+    never becomes attribution. Elsewhere an asserted `X-Ingest-Principal-*`
+    pair is **ignored, never rejected** — metadata must not be able to fail an
+    otherwise valid ingest.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -514,6 +518,7 @@ def build_api(
             deployment_id=deployment_id,
             max_body_bytes=ingest_body_max_bytes,
             trusted_principal_source=trusted_principal_source,
+            attribution_requires_write=auth is not None,
         )
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
@@ -1133,8 +1138,10 @@ def _parse_ingest_principal(
 ) -> IngestPrincipal | None:
     """Validate a trusted attribution pair, or raise a 422 explaining why.
 
-    Only reached on a trusted perimeter, so a malformed pair here is a real
-    client error worth reporting rather than metadata that should be dropped.
+    Only reached on a trusted network perimeter and, where API authentication
+    is configured, one presenting full WRITE authority. A malformed pair here
+    is therefore a real client error worth reporting rather than metadata that
+    should be dropped.
     """
     if kind is None and ref is None:
         return None
@@ -1171,12 +1178,14 @@ def _mount_ingest(
     ingest: IngestPort,
     deployment_id: UUID,
     max_body_bytes: int | None,
+    attribution_requires_write: bool,
     trusted_principal_source: bool = False,
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
     @app.post("/ingest", response_model=IngestedVersion)
     def ingest_document(
+        request: Request,
         content: Annotated[bytes, Body(media_type="application/octet-stream")],
         filename: Annotated[str, Query(min_length=1)],
         mime: Annotated[str, Query(min_length=1)],
@@ -1197,8 +1206,10 @@ def _mount_ingest(
                 description=(
                     "One of: user | api_credential | service. Sent with"
                     " X-Ingest-Principal-Ref. Ignored unless the deployment"
-                    " declares a trusted principal source; malformed values"
-                    " are 422 only on a trusted deployment."
+                    " declares a trusted principal source and, where API"
+                    " authentication is configured, the presenting credential"
+                    " carries full write authority; malformed values are 422"
+                    " only for a trusted assertion."
                 ),
             ),
         ] = None,
@@ -1221,11 +1232,13 @@ def _mount_ingest(
         reach it.
 
         The pair is honoured only when the composing profile declares its
-        perimeter trusted (``trusted_principal_source``). The deployment-wide
-        bearer identifies a deployment, not a caller, so elsewhere any client
-        could assert it was a person. Untrusted attribution is **ignored, not
-        rejected**: nothing forged is recorded either way, and refusing would
-        let a metadata concern fail an otherwise valid ingest.
+        network perimeter trusted (``trusted_principal_source``) and, where API
+        authentication is configured, the presenting credential carries full
+        WRITE authority. The unscoped shared secret is unrestricted; a narrow
+        signed ``ingest`` credential may add a document but cannot nominate its
+        principal. Untrusted attribution is **ignored, not rejected**: nothing
+        forged is recorded either way, and refusing would let a metadata
+        concern fail an otherwise valid ingest.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
@@ -1237,10 +1250,16 @@ def _mount_ingest(
                 detail="source_kind and source_ref must be supplied together",
             )
         # The headers are taken RAW and are not validated at request binding.
-        # An untrusted deployment must discard them without inspection: if
-        # malformed attribution could 422, a metadata concern would still fail
-        # an otherwise valid upload, which is exactly what ignoring is for.
-        if not trusted_principal_source:
+        # An untrusted source must discard them without inspection: if malformed
+        # attribution could 422, a metadata concern would still fail an
+        # otherwise valid upload, which is exactly what ignoring is for. A
+        # configured perimeter publishes its context before this handler; only
+        # full WRITE authority may make the immutable attribution assertion.
+        context = getattr(request.state, "perimeter_context", None)
+        may_assert_principal = not attribution_requires_write or (
+            context is not None and context.scope.covers(required=PerimeterScope.WRITE)
+        )
+        if not trusted_principal_source or not may_assert_principal:
             principal_kind, principal_ref = None, None
         ingested_by = _parse_ingest_principal(kind=principal_kind, ref=principal_ref)
         # An old structural IngestPort has no `ingested_by` keyword; passing it

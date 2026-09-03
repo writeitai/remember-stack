@@ -118,6 +118,21 @@ class SelfHostSettings(BaseSettings):
     managed host sets its published bound here so it is enforced where the
     body is actually received."""
     trusted_principal_source: bool = False
+    """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
+
+    Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
+    class carries the `REMEMBERSTACK_SELFHOST_` prefix).
+
+    Off by default. Enable only where the deployment is reachable through a
+    network perimeter that authenticates the asserted actor, such as a managed
+    data plane behind a private transit gateway for privileged callers. When
+    API auth is configured, only full ``write`` authority may supply
+    attribution: the unscoped shared secret is unrestricted and qualifies,
+    while a narrow signed credential's attribution headers are ignored even
+    when this flag is on; the upload itself still succeeds. Without API auth,
+    this setting trusts the network perimeter by itself. Enabling it on an
+    ordinarily reachable deployment makes attribution meaningless, not merely
+    permissive."""
     #: Browser origins allowed to call this deployment (D59).
     #:
     #: Empty by default, which is the self-host answer: nothing is advertised
@@ -128,18 +143,6 @@ class SelfHostSettings(BaseSettings):
     #:
     #: Comma-separated in the environment; each must be an exact https origin.
     browser_origins: str = ""
-    """Whether `X-Ingest-Principal-*` on `POST /ingest` is believed (D101).
-
-    Env: `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (this settings
-    class carries the `REMEMBERSTACK_SELFHOST_` prefix).
-
-    Off by default. The perimeter credential authenticates a *deployment*,
-    not a caller, so on an ordinary or public perimeter any client could
-    assert it was a person; attribution there is ignored. Set this **only**
-    when the deployment is reachable solely by a control plane that has
-    already authenticated the actor it names — e.g. a managed data plane
-    behind a private transit gateway. Enabling it on a publicly reachable
-    deployment makes attribution meaningless, not merely permissive."""
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )

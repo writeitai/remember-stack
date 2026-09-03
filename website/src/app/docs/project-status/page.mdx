@@ -218,7 +218,8 @@ examined, and the failure looks like the deployment being down.
   into access logs, proxies and traces.
 - It is honoured only where the deployment declares
   `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` (default off, for a
-  control-plane-only perimeter). Elsewhere attribution is **ignored, never
+  control-plane-only perimeter) and, when an API perimeter is configured, the
+  caller has full `write` authority. Elsewhere attribution is **ignored, never
   rejected** — metadata must not be able to fail an otherwise valid ingest.
 - Deleting a principal nulls attribution and never destroys the document
   version. This is row deletion, **not** a D74-grade hard forget; a

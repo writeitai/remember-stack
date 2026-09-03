@@ -55,25 +55,31 @@ co-uploader list and no re-attribution path.
 
 The composing profile surfaces this as `trusted_principal_source`
 (env **`REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE`** — the self-host
-settings class carries the `REMEMBERSTACK_SELFHOST_` prefix), default off. Enable it **only**
-where the deployment is reachable solely by a control plane that has
-already authenticated the actor it names — a managed data plane behind a
-private transit gateway. On a publicly reachable deployment it makes
-attribution meaningless rather than merely permissive.
+settings class carries the `REMEMBERSTACK_SELFHOST_` prefix), default off.
+Enable it **only** where the deployment's network perimeter has already
+authenticated the actor it names, such as a managed data plane behind a private
+transit gateway for privileged callers. When the API auth perimeter is
+configured, the request must additionally carry full `write` authority before
+these headers are believed. The unscoped shared secret is unrestricted and
+therefore qualifies; a narrow signed browser `ingest` credential can add a
+document but cannot name its immutable principal. Without API auth, enabling
+the setting trusts the network perimeter by itself. On an ordinarily reachable
+deployment it makes attribution meaningless rather than merely permissive.
 
-Attribution is honoured only when the composing profile declares
-`trusted_principal_source=True`. The deployment-wide bearer identifies a
-*deployment*, not a caller, so elsewhere any client could assert it was a
-person. Untrusted attribution is **ignored, not rejected**: nothing forged
-is recorded either way, so refusing buys no safety while adding a failure
-mode where a merely misconfigured deployment rejects real documents.
+Full `write` is the line because such a credential can already write anything
+to this deployment, so naming a principal grants it no authority it lacks. A
+narrow credential's issuer deliberately withheld everything else, and
+attribution must not be the one fact it can still forge. Untrusted attribution
+is **ignored, not rejected**: nothing forged is recorded either way, so refusing
+buys no safety while adding a failure mode where a merely misconfigured
+deployment rejects real documents.
 **Metadata must never break ingest.** Default is off, so the self-host
 posture is unchanged.
 
-This bounds the trust rather than eliminating it: within a trusted
-perimeter the caller is still asserting the principal. Deriving identity
-from a per-caller credential would require a per-caller perimeter, which
-the engine does not have and this slice does not add.
+This bounds the trust rather than eliminating it: a full-write caller within a
+trusted perimeter is still asserting the principal. Narrow credentials never
+turn their own subject into attribution implicitly; doing so would conflate
+the credential holder with the immutable creator claim.
 
 ### 2.4 Transport: headers, never the query string
 

@@ -1,10 +1,11 @@
-"""The signed perimeter credential, and what it refuses.
+"""Signed perimeter credentials and shared-secret compatibility at their boundary.
 
 These tests are mostly about refusal. A verifier that accepts good credentials
 is easy; the interesting question is whether it can be talked into accepting
 something it should not — a token signed with the wrong key, one aimed at
 another deployment, one asking to be verified with no algorithm at all, or one
-whose expiry has passed.
+whose expiry has passed. The HTTP proofs also pin compatibility with the legacy
+unscoped shared secret wherever narrow signed authority changes behaviour.
 """
 
 from __future__ import annotations
@@ -27,11 +28,15 @@ import pytest
 from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenUnusable
+from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
+from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
+from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.http_api import build_api
 
 
@@ -121,6 +126,7 @@ class _RecordingIngest:
         """Bind the receipt to the served deployment."""
         self.deployment_id = deployment_id
         self.calls = 0
+        self.last_principal: IngestPrincipal | None = None
 
     def ingest(
         self,
@@ -132,8 +138,8 @@ class _RecordingIngest:
         """Record one accepted upload."""
         assert deployment_id == self.deployment_id
         assert upload.content == b"memory"
-        assert ingested_by is None
         self.calls += 1
+        self.last_principal = ingested_by
         return IngestedVersion(
             deployment_id=deployment_id,
             doc_id=uuid4(),
@@ -157,6 +163,26 @@ class _RecordingIngest:
     ) -> IngestedVersion:
         """This proof exercises only the one-shot browser upload path."""
         raise AssertionError("unexpected observed-source ingest")
+
+
+def _ingest_client(
+    *, deployment_id: UUID, auth: AuthPerimeterPort
+) -> tuple[TestClient, _RecordingIngest]:
+    """Compose the real HTTP perimeter around one recording ingest port."""
+    ingest = _RecordingIngest(deployment_id=deployment_id)
+    boundary = _OpenBoundary()
+    app = build_api(
+        engine=_UnusedEngine(),  # type: ignore[arg-type]
+        deployment_id=deployment_id,
+        admission=boundary,  # type: ignore[arg-type]
+        readiness=boundary,  # type: ignore[arg-type]
+        surface=_EmptyOperations(deployment_id=deployment_id),  # type: ignore[arg-type]
+        ingest=ingest,
+        connectors=object(),  # type: ignore[arg-type]
+        auth=auth,
+        trusted_principal_source=True,
+    )
+    return TestClient(app), ingest
 
 
 def test_a_valid_credential_names_its_subject_and_scope() -> None:
@@ -201,19 +227,7 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     auth = SignedTokenAuth(
         deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
     )
-    ingest = _RecordingIngest(deployment_id=deployment_id)
-    boundary = _OpenBoundary()
-    app = build_api(
-        engine=_UnusedEngine(),  # type: ignore[arg-type]
-        deployment_id=deployment_id,
-        admission=boundary,  # type: ignore[arg-type]
-        readiness=boundary,  # type: ignore[arg-type]
-        surface=_EmptyOperations(deployment_id=deployment_id),  # type: ignore[arg-type]
-        ingest=ingest,
-        connectors=object(),  # type: ignore[arg-type]
-        auth=auth,
-    )
-    client = TestClient(app)
+    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
     ingest_token = _token(
         private=private, kid="k1", audience=str(deployment_id), scope="ingest"
     )
@@ -226,6 +240,7 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     )
     assert accepted.status_code == 200, accepted.text
     assert ingest.calls == 1
+    assert ingest.last_principal is None
 
     refused = (
         client.post(
@@ -245,6 +260,20 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     assert [response.status_code for response in refused] == [403] * len(refused)
     assert ingest.calls == 1
 
+    read_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="read"
+    )
+    read_response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {read_token}",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    assert read_response.status_code == 403
+    assert ingest.calls == 1
+
     write_token = _token(
         private=private, kid="k1", audience=str(deployment_id), scope="write"
     )
@@ -258,6 +287,76 @@ def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
     )
     assert write_response.status_code == 200, write_response.text
     assert ingest.calls == 2
+
+
+def test_a_narrow_ingest_credential_cannot_assert_attribution() -> None:
+    """Direct browser upload does not grant authority to name its creator."""
+    deployment_id = uuid4()
+    private, jwks = _keypair(kid="k1")
+    auth = SignedTokenAuth(
+        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
+    )
+    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+
+    ingest_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="ingest"
+    )
+    narrow_response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {ingest_token}",
+            "Content-Type": "application/octet-stream",
+            "X-Ingest-Principal-Kind": "user",
+            "X-Ingest-Principal-Ref": "user:forged",
+        },
+    )
+    assert narrow_response.status_code == 200, narrow_response.text
+    assert ingest.last_principal is None
+
+    write_token = _token(
+        private=private, kid="k1", audience=str(deployment_id), scope="write"
+    )
+    write_response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {write_token}",
+            "Content-Type": "application/octet-stream",
+            "X-Ingest-Principal-Kind": "user",
+            "X-Ingest-Principal-Ref": "user:trusted-control-plane",
+        },
+    )
+    assert write_response.status_code == 200, write_response.text
+    assert ingest.last_principal == IngestPrincipal(
+        kind=IngestPrincipalKind.USER, external_ref="user:trusted-control-plane"
+    )
+
+
+def test_the_unscoped_shared_secret_retains_attribution_authority() -> None:
+    """The legacy shared secret remains unrestricted for compatibility."""
+    deployment_id = uuid4()
+    secret = "legacy-shared-secret"
+    auth = HashedBearerAuth(
+        issued_deployment_id=deployment_id, digest=digest_bearer_secret(secret=secret)
+    )
+    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+
+    response = client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/octet-stream",
+            "X-Ingest-Principal-Kind": "service",
+            "X-Ingest-Principal-Ref": "service:legacy-control-plane",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert ingest.last_principal == IngestPrincipal(
+        kind=IngestPrincipalKind.SERVICE, external_ref="service:legacy-control-plane"
+    )
 
 
 def test_a_credential_for_another_deployment_is_refused() -> None:

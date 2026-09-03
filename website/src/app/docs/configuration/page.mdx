@@ -49,6 +49,7 @@ Authoritative template: repository [`.env.example`](https://github.com/writeitai
 | `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | Optional JWKS (Ed25519 public keys only) this deployment verifies signed credentials against. Set beside or instead of `API_BEARER_BIND`: a caller may present a shared secret, a signed credential, or either. Refused at startup if it carries private key material, a non-Ed25519 key, or a key that half loads |
 | `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | Optional comma-separated credential ids to refuse. A signature is verified by arithmetic, so its issuer cannot withdraw one — this is how a revoked but unexpired credential is refused. Meaningless without `API_SIGNING_KEYS`, and rejected if set alone |
 | `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | When `true`, the API process refuses to start unless it has a perimeter — `API_BEARER_BIND`, `API_SIGNING_KEYS`, or both. Default `false` (open quickstart) |
+| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | Whether `X-Ingest-Principal-*` attribution is believed. Default `false`; enable only behind a network perimeter that authenticates the asserted actor. With API auth configured, the presenting credential also needs full `write` authority |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | Optional comma-separated `https://` origins allowed to call this deployment from a browser. Empty by default, which advertises no CORS at all. Each entry must be an exact scheme-and-host origin — no wildcard, no path, no `http://` |
 | `REMEMBERSTACK_API_URL` | Client target; defaults to `http://127.0.0.1:8000` — **must match** if you change the port |
 | `REMEMBERSTACK_TOKEN_HOST` | Device-grant host for `remember login` (required unless `--token-host` is passed). Never derived from the query API URL |
@@ -63,13 +64,20 @@ exactly one of three scopes:
 
 | Scope | What it reaches |
 | --- | --- |
-| `read` | Retrieval, search, inventory, readiness, and other non-mutating routes. It cannot ingest or change configuration |
+| `read` | The enumerated retrieval, search, inventory, readiness, and operation/connector listing routes. It cannot ingest, run an assured operation that has not declared itself non-mutating, or change configuration |
 | `ingest` | Only `POST /ingest`. It cannot search or inspect memory, run an assured operation, or create a connector that keeps pulling after the caller leaves |
 | `write` | The complete deployment API, including `POST /ingest`; it also satisfies every `read` requirement |
 
 Unlisted routes require `write`. A new route therefore stays unavailable to
 narrow credentials until it is classified deliberately, and an unknown scope
 on a signed credential is refused rather than downgraded.
+
+An `ingest` credential also cannot assert `X-Ingest-Principal-Kind` or
+`X-Ingest-Principal-Ref`. Those immutable attribution headers are ignored
+unless `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` is enabled and the
+caller has full `write` authority. The unscoped `API_BEARER_BIND` shared secret
+is unrestricted and qualifies; a narrow credential's attribution headers are
+ignored while its otherwise valid upload still succeeds.
 
 #### Calling a deployment from a browser
 
