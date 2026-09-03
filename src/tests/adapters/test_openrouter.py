@@ -1007,15 +1007,14 @@ def test_chat_provider_only_restricts_generation_to_the_allowlist(
 def test_chat_provider_sort_moves_load_off_the_cheapest_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: price-first routing sent every retry to one overloaded host.
+    """Sorting biases routing toward the fastest ELIGIBLE provider.
 
-    A conv-48 ingestion dead-lettered 28 items, all with
-    provider_error_code=engine_overloaded from the single CHEAPEST allowed
-    provider. OpenRouter's default routing weights price, so it was chosen
-    first on every call and on all three engine retries; `allow_fallbacks`
-    did not help because a provider-returned 429 arrives as "Provider
-    returned error" rather than as the provider being unavailable.
-    Sorting by throughput spreads load off whichever host is congested.
+    Deliberately modest about what this buys. A conv-48 ingestion
+    dead-lettered 28 items on one overloaded host and sorting did NOT fix it:
+    the strict json_schema every chat call sends left exactly one
+    schema-capable provider in the allowlist, so there was nothing to
+    reorder. Sorting helps only when the eligible set has more than one
+    member -- see plan/analysis/openrouter_provider_routing_overload.md.
     """
     provider = OpenRouterModelProvider(
         settings=OpenRouterSettings(

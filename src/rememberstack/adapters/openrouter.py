@@ -137,16 +137,16 @@ class OpenRouterSettings(BaseSettings):
 
     Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_SORT``.
 
-    Unset uses OpenRouter's default routing, which weights price heavily. That
-    default is a trap for long ingestion runs: the cheapest endpoint is also
-    the most contended, so every call AND every retry lands on the same host
-    and dead-letters together when it is overloaded. ``allow_fallbacks`` does
-    not save you -- a provider-returned 429 is surfaced as "Provider returned
-    error", not treated as the provider being unavailable.
+    Unset uses OpenRouter's default routing, which weights price heavily;
+    ``throughput`` prefers the fastest eligible endpoint instead.
 
-    ``throughput`` prefers the fastest endpoint instead, which moves load off
-    whichever host is congested at the time rather than hard-coding today's
-    slowest one into a denylist.
+    This only helps when more than one provider is actually eligible.
+    ``chat_provider_only`` bounds the pool by NAME while the request bounds
+    it by CAPABILITY: every chat call here sends a strict ``json_schema``, so
+    only providers advertising ``structured_outputs`` can serve it. An
+    allowlist can therefore collapse to a single host, after which neither
+    this setting nor ``allow_fallbacks`` has anywhere to go -- see
+    plan/analysis/openrouter_provider_routing_overload.md.
     """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
