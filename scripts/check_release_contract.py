@@ -21,6 +21,7 @@ def main() -> None:
     version = _package_version(root=root)
     _validate_semver(version=version)
     _validate_compose_pin(root=root, version=version)
+    _validate_release_docs(root=root, version=version)
     _validate_postgres_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
@@ -76,6 +77,35 @@ def _validate_tag(*, tag: str, version: str) -> None:
     expected = f"v{version}"
     if tag != expected:
         raise ValueError(f"release tag must be {expected!r}, found {tag!r}")
+
+
+def _validate_release_docs(*, root: Path, version: str) -> None:
+    """Keep public version claims on the same coordinate as the artifacts."""
+    image = f"ghcr.io/writeitai/remember-stack:{version}"
+    markers = {
+        Path("README.md"): (
+            f"[v{version}](https://github.com/writeitai/remember-stack/releases/tag/v{version})",
+        ),
+        Path("website/src/app/docs/getting-started/page.mdx"): (image,),
+        Path("website/src/app/docs/deployment/page.mdx"): (
+            f"`v{version}` release",
+            image,
+        ),
+        Path("website/src/app/docs/reference/cli/page.mdx"): (
+            f"# RememberStack {version}",
+        ),
+        Path("website/src/app/docs/project-status/page.mdx"): (
+            f"releases/tag/v{version}",
+            f"rememberstack/{version}/",
+        ),
+    }
+    for relative_path, expected_markers in markers.items():
+        document = (root / relative_path).read_text(encoding="utf-8")
+        for marker in expected_markers:
+            if marker not in document:
+                raise ValueError(
+                    f"{relative_path} must contain release coordinate {marker!r}"
+                )
 
 
 def _validate_postgres_release(*, root: Path) -> None:

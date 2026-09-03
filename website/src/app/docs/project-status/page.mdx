@@ -158,6 +158,27 @@ Current public release: [`v0.16.0`](https://github.com/writeitai/remember-stack/
 
 ## What landed after v0.15.0 (in v0.16.0)
 
+**Dated events no longer collapse merely because their words match.** The
+observation adjudicator now uses each claim's resolved world-time window.
+Events with disjoint dates stay distinct unless a date-aware verdict identifies
+one occurrence with disputed dates; a dated event also cannot serve as
+`evidence` for an undated summary. Recurring same-shaped events therefore
+survive as separate facts, and ingestion provenance changes
+([#360](https://github.com/writeitai/remember-stack/pull/360)).
+
+**Claim windows have one canonical half-open meaning.** Day, month, quarter,
+and year precision cover their complete calendar unit; instants remain
+non-empty points; open and unknown bounds stay explicit. `claims_as_of` now
+finds a day-precision claim from an intraday or point query, and observation
+adjudication uses the same bounds
+([#372](https://github.com/writeitai/remember-stack/pull/372)).
+
+**Operators:** migration `p9_26_0047` adds the canonical-bound SQL functions
+and the partial expression index used by `claims_as_of`; claim storage is
+unchanged. Observation generations roll, so rebuilding changes stored
+ingestion provenance, and `claims_as_of` results change under the corrected
+window semantics.
+
 **A release now carries the API contract beside the binaries.** The generated
 `openapi.json` is attached to the GitHub release, so client generation can pin
 the exact schema served by the installed engine rather than following `main`
@@ -260,7 +281,7 @@ examined, and the failure looks like the deployment being down.
   v16's read surface, answer/judge seats, budgets, and content-before-`Unknown`
   guard.
 
-## Document-local exact T0 (current release behavior in v0.13.0)
+## Document-local exact T0 (current release behavior)
 
 - Resolver `resolver-2026.08f` can replay an exact canonical-name match at T0
   only inside the same document and only after a T4 match established one
