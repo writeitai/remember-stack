@@ -1,4 +1,4 @@
-"""Which routes a read-only credential may reach.
+"""Which routes each narrow perimeter credential may reach.
 
 The table exists because the obvious rule is wrong here: this API uses POST for
 reads whose arguments do not fit in a query string. These tests pin that, and
@@ -38,7 +38,6 @@ def test_reads_are_reachable_by_a_read_credential(method: str, path: str) -> Non
 @pytest.mark.parametrize(
     ("method", "path"),
     [
-        ("POST", "/ingest"),
         ("POST", "/connectors"),
         ("POST", "/connectors/abc/pause"),
         ("DELETE", "/search/claims"),
@@ -47,6 +46,11 @@ def test_reads_are_reachable_by_a_read_credential(method: str, path: str) -> Non
 def test_writes_require_write(method: str, path: str) -> None:
     """A read-only credential cannot change the memory."""
     assert required_scope(method=method, path=path) is PerimeterScope.WRITE
+
+
+def test_ingest_requires_the_narrow_ingest_scope() -> None:
+    """D62 separates one upload from every other way to change memory."""
+    assert required_scope(method="POST", path="/ingest") is PerimeterScope.INGEST
 
 
 def test_an_unknown_route_requires_write() -> None:
@@ -98,9 +102,47 @@ def test_an_undeclared_operation_requires_write() -> None:
     assert operation_scope(mutates=False) is PerimeterScope.READ
 
 
-def test_write_covers_read_but_not_the_reverse() -> None:
-    """A credential that may change the memory may obviously also read it."""
-    assert PerimeterScope.WRITE.covers(required=PerimeterScope.READ)
-    assert PerimeterScope.WRITE.covers(required=PerimeterScope.WRITE)
-    assert PerimeterScope.READ.covers(required=PerimeterScope.READ)
-    assert not PerimeterScope.READ.covers(required=PerimeterScope.WRITE)
+@pytest.mark.parametrize(
+    ("credential", "required", "allowed"),
+    [
+        (PerimeterScope.READ, PerimeterScope.READ, True),
+        (PerimeterScope.READ, PerimeterScope.INGEST, False),
+        (PerimeterScope.READ, PerimeterScope.WRITE, False),
+        (PerimeterScope.INGEST, PerimeterScope.READ, False),
+        (PerimeterScope.INGEST, PerimeterScope.INGEST, True),
+        (PerimeterScope.INGEST, PerimeterScope.WRITE, False),
+        (PerimeterScope.WRITE, PerimeterScope.READ, True),
+        (PerimeterScope.WRITE, PerimeterScope.INGEST, True),
+        (PerimeterScope.WRITE, PerimeterScope.WRITE, True),
+    ],
+)
+def test_scope_satisfaction_is_closed(
+    credential: PerimeterScope, required: PerimeterScope, allowed: bool
+) -> None:
+    """Only WRITE crosses scope classes; every narrower pair fails closed."""
+    assert credential.covers(required=required) is allowed
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/connectors"),
+        ("POST", "/connectors/abc/pause"),
+        ("GET", "/search/claims"),
+        ("GET", "/search/chunks"),
+        ("POST", "/some/new/write"),
+    ],
+)
+def test_an_ingest_credential_reaches_no_other_route(method: str, path: str) -> None:
+    """The upload credential cannot configure pull or inspect memory."""
+    required = required_scope(method=method, path=path)
+    assert required is not None
+    assert not PerimeterScope.INGEST.covers(required=required)
+
+
+@pytest.mark.parametrize("mutates", [None, False, True])
+def test_an_ingest_credential_reaches_no_assured_operation(
+    mutates: bool | None,
+) -> None:
+    """Dynamic operations are outside D62 whether they read or mutate."""
+    assert not PerimeterScope.INGEST.covers(required=operation_scope(mutates=mutates))
