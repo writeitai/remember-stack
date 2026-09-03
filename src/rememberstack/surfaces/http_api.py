@@ -359,10 +359,11 @@ def build_api(
     is reached only by callers entitled to state who ingested a document. It is
     **off by default**, and a configured auth perimeter additionally requires
     full WRITE authority before believing the headers. The unscoped shared
-    secret is unrestricted; a narrow signed browser ingest credential
-    identifies its holder but cannot nominate some other immutable principal.
-    Elsewhere an asserted `X-Ingest-Principal-*` pair is **ignored, never
-    rejected** — metadata must not be able to fail an otherwise valid ingest.
+    secret is unrestricted; a narrow signed browser ingest credential may add
+    a document, but its attribution headers are ignored and its own subject
+    never becomes attribution. Elsewhere an asserted `X-Ingest-Principal-*`
+    pair is **ignored, never rejected** — metadata must not be able to fail an
+    otherwise valid ingest.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).

@@ -64,7 +64,7 @@ exactly one of three scopes:
 
 | Scope | What it reaches |
 | --- | --- |
-| `read` | The enumerated retrieval, search, inventory, and readiness routes. It cannot ingest or change configuration |
+| `read` | The enumerated retrieval, search, inventory, readiness, and operation/connector listing routes. It cannot ingest, run an assured operation that has not declared itself non-mutating, or change configuration |
 | `ingest` | Only `POST /ingest`. It cannot search or inspect memory, run an assured operation, or create a connector that keeps pulling after the caller leaves |
 | `write` | The complete deployment API, including `POST /ingest`; it also satisfies every `read` requirement |
 
