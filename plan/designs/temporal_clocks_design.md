@@ -2,8 +2,9 @@
 
 **Status:** binding under D107
 
-**Date:** 2026-09-03 (fifth revision the same day, after four independent
-Codex design reviews; §10 records what each round withdrew)
+**Date:** 2026-09-03 (sixth revision the same day, after five independent
+Codex design reviews; §10 records what each round withdrew, §12 what is
+still open)
 
 **Analysis:** `plan/analysis/time_handling_audit.md` (twenty-two findings at
 `02b79904`, each cited by file and function)
