@@ -1,5 +1,14 @@
 # The Observation Layer — Non-Graph Facts with Temporal Validity (Design)
 
+> **Binding D107 amendment (2026-09-03).** An observation's `valid_from` is
+> seeded from the triggering claim's D41 window (basis `world_time`), from
+> the said-on date only when the window is unknown (basis `said_on`), and
+> otherwise stays `NULL` (basis `unknown`). Evidence widens the start earlier
+> to its is-about start, never to a said-on time. A cap uses the successor's
+> is-about start, else its said-on date, else no cap — never `now()`. The
+> staging order and predecessor/successor orientation use the shared
+> comparator of `temporal_clocks_design.md` §4.4; the D106 rung is unchanged.
+
 > **Binding D98 amendment (2026-08-27).** Relations are the only fact kind
 > mapped as live graph edges over PostgreSQL views. Observations remain
 > PostgreSQL facts and P1 search targets but are not graph elements. There is no

@@ -1,5 +1,13 @@
 # E2 / E3 — Claim Extraction and Relation Normalization (Design)
 
+> **Binding D107 amendment (2026-09-03).** E2 emits all four D41 kinds and
+> `open` with examples, stores precision-derived ends half-open, and sees the
+> full source timestamp in the header. E3 receives each claim's resolved
+> window, seeds a new relation's or observation's validity window from it by
+> kind (with `validity_basis`), and writes the absolute date into the fact's
+> statement when the window is known while the claim text stays source-
+> faithful. Contract: `temporal_clocks_design.md` §3–§4.
+
 How the system turns a chunk of source text into **claims** (atomic, standalone, verifiable
 assertions) and then into **relations** (the distinct facts those claims are evidence for). This is
 the cost center and the quality bottleneck of plane E, so the design is opinionated about *what* to
