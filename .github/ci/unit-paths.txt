@@ -39,6 +39,7 @@ src/tests/core/test_knowledge_planner.py
 src/tests/core/test_knowledge_writer.py
 src/tests/core/test_section_snap.py
 src/tests/core/test_structure_skeleton.py
+src/tests/core/test_temporal.py
 src/tests/core/test_text_metering.py
 src/tests/eval/test_s55_hard_forget.py
 src/tests/eval/test_s55_selfhost_restore.py

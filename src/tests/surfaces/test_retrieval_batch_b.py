@@ -732,7 +732,8 @@ def _insert_day_claim(
 ) -> None:
     """One current day-precision claim stored the way E2 stores it: both ends
     on the day's midnight (D41), which the D107 §5 canonical bounds widen to
-    the whole calendar day at comparison time."""
+    the whole calendar day at comparison time. It hangs off a live chunk of
+    the live document so hydration (``claims_visible_history``) keeps it."""
     with corpus.engine.begin() as connection:
         connection.execute(
             text(
@@ -748,7 +749,7 @@ def _insert_day_claim(
                 "claim": claim_id,
                 "deployment": _DEPLOYMENT_ID,
                 "doc": corpus.doc_id,
-                "chunk": uuid4(),
+                "chunk": corpus.chunk_ids[0],
                 "body": body,
                 "day": day,
                 "ingested_at": _MENTIONED_AT,
