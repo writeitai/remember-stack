@@ -58,15 +58,17 @@ The composing profile surfaces this as `trusted_principal_source`
 settings class carries the `REMEMBERSTACK_SELFHOST_` prefix), default off.
 Enable it **only** where the deployment's network perimeter has already
 authenticated the actor it names. When the API auth perimeter is configured,
-the request must additionally carry full `write` scope before these headers
-are believed; a narrow browser `ingest` credential can add a document but
+the request must additionally carry full `write` authority before these
+headers are believed. The unscoped shared secret is unrestricted and therefore
+qualifies; a narrow signed browser `ingest` credential can add a document but
 cannot name its immutable principal. Without API auth, enabling the setting
 trusts the network perimeter by itself. On an ordinarily reachable deployment
 it makes attribution meaningless rather than merely permissive.
 
 Attribution is honoured only when the composing profile declares
 `trusted_principal_source=True` and, when present, the API credential carries
-`write` scope. A narrow credential identifies its own caller but has no
+full `write` authority. The legacy shared secret has that unrestricted
+authority; a narrow signed credential identifies its own caller but has no
 authority to assert an arbitrary principal. Untrusted attribution is **ignored,
 not rejected**: nothing forged is recorded either way, so refusing buys no
 safety while adding a failure mode where a merely misconfigured deployment

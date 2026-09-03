@@ -73,8 +73,9 @@ on a signed credential is refused rather than downgraded.
 
 An `ingest` credential also cannot assert `X-Ingest-Principal-Kind` or
 `X-Ingest-Principal-Ref`. Those immutable attribution headers are ignored
-unless the deployment trusts their network source and the API credential has
-full `write` scope.
+unless the deployment trusts their network source and the caller has full
+`write` authority. The unscoped `API_BEARER_BIND` shared secret is unrestricted
+and qualifies; only narrow signed credentials are refused.
 
 #### Calling a deployment from a browser
 

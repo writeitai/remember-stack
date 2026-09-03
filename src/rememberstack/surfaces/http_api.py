@@ -357,11 +357,12 @@ def build_api(
 
     `trusted_principal_source` declares that the deployment's network perimeter
     is entitled to state who ingested a document. It is **off by default**,
-    and a configured auth perimeter additionally requires WRITE scope before
-    believing the headers: a narrow browser ingest credential identifies its
-    holder but cannot nominate some other immutable principal. Elsewhere an
-    asserted `X-Ingest-Principal-*` pair is **ignored, never rejected** —
-    metadata must not be able to fail an otherwise valid ingest.
+    and a configured auth perimeter additionally requires full WRITE authority
+    before believing the headers. The unscoped shared secret is unrestricted;
+    a narrow signed browser ingest credential identifies its holder but cannot
+    nominate some other immutable principal. Elsewhere an asserted
+    `X-Ingest-Principal-*` pair is **ignored, never rejected** — metadata must
+    not be able to fail an otherwise valid ingest.
 
     `ingest_body_max_bytes` bounds `POST /ingest` request bodies before they
     are buffered (413 over the cap; 411 when no Content-Length is declared).
@@ -516,6 +517,7 @@ def build_api(
             deployment_id=deployment_id,
             max_body_bytes=ingest_body_max_bytes,
             trusted_principal_source=trusted_principal_source,
+            attribution_requires_write=auth is not None,
         )
         if ingest_body_max_bytes is not None:
             app.add_middleware(_IngestBodyLimit, max_bytes=ingest_body_max_bytes)
@@ -1135,8 +1137,9 @@ def _parse_ingest_principal(
 ) -> IngestPrincipal | None:
     """Validate a trusted attribution pair, or raise a 422 explaining why.
 
-    Only reached on a trusted perimeter, so a malformed pair here is a real
-    client error worth reporting rather than metadata that should be dropped.
+    Only reached on a trusted perimeter presenting full WRITE authority, so a
+    malformed pair here is a real client error worth reporting rather than
+    metadata that should be dropped.
     """
     if kind is None and ref is None:
         return None
@@ -1174,6 +1177,7 @@ def _mount_ingest(
     deployment_id: UUID,
     max_body_bytes: int | None,
     trusted_principal_source: bool = False,
+    attribution_requires_write: bool = False,
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
@@ -1201,7 +1205,7 @@ def _mount_ingest(
                     "One of: user | api_credential | service. Sent with"
                     " X-Ingest-Principal-Ref. Ignored unless the deployment"
                     " declares a trusted principal source and any configured"
-                    " API credential has write scope; malformed values are"
+                    " API credential has full write authority; malformed values are"
                     " 422 only for a trusted assertion."
                 ),
             ),
@@ -1226,11 +1230,11 @@ def _mount_ingest(
 
         The pair is honoured only when the composing profile declares its
         network perimeter trusted (``trusted_principal_source``) and any
-        configured API credential has full WRITE scope. Narrow credentials may
-        add or read data, but cannot nominate an immutable principal. Untrusted
-        attribution is **ignored, not rejected**: nothing forged is recorded
-        either way, and refusing would let a metadata concern fail an otherwise
-        valid ingest.
+        configured API credential has full WRITE authority. The unscoped shared
+        secret is unrestricted; narrow signed credentials may add or read data,
+        but cannot nominate an immutable principal. Untrusted attribution is
+        **ignored, not rejected**: nothing forged is recorded either way, and
+        refusing would let a metadata concern fail an otherwise valid ingest.
         """
         if max_body_bytes is not None and len(content) > max_body_bytes:
             # the ASGI guard already refused honest requests; this backstop
@@ -1248,8 +1252,8 @@ def _mount_ingest(
         # configured perimeter publishes its context before this handler; only
         # full WRITE authority may make the immutable attribution assertion.
         context = getattr(request.state, "perimeter_context", None)
-        may_assert_principal = context is None or context.scope.covers(
-            required=PerimeterScope.WRITE
+        may_assert_principal = not attribution_requires_write or (
+            context is not None and context.scope.covers(required=PerimeterScope.WRITE)
         )
         if not trusted_principal_source or not may_assert_principal:
             principal_kind, principal_ref = None, None

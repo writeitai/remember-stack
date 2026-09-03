@@ -3669,7 +3669,7 @@
     },
     "/ingest": {
       "post": {
-        "description": "Push one file through E0, optionally as a stable lineage version.\n\nAttribution travels in **headers, never the query string**: the\nreference is erasable PII and a URL is copied verbatim into access\nlogs, proxies and traces, where a later principal deletion cannot\nreach it.\n\nThe pair is honoured only when the composing profile declares its\nnetwork perimeter trusted (``trusted_principal_source``) and any\nconfigured API credential has full WRITE scope. Narrow credentials may\nadd or read data, but cannot nominate an immutable principal. Untrusted\nattribution is **ignored, not rejected**: nothing forged is recorded\neither way, and refusing would let a metadata concern fail an otherwise\nvalid ingest.",
+        "description": "Push one file through E0, optionally as a stable lineage version.\n\nAttribution travels in **headers, never the query string**: the\nreference is erasable PII and a URL is copied verbatim into access\nlogs, proxies and traces, where a later principal deletion cannot\nreach it.\n\nThe pair is honoured only when the composing profile declares its\nnetwork perimeter trusted (``trusted_principal_source``) and any\nconfigured API credential has full WRITE authority. The unscoped shared\nsecret is unrestricted; narrow signed credentials may add or read data,\nbut cannot nominate an immutable principal. Untrusted attribution is\n**ignored, not rejected**: nothing forged is recorded either way, and\nrefusing would let a metadata concern fail an otherwise valid ingest.",
         "operationId": "ingest_document_ingest_post",
         "parameters": [
           {
@@ -3790,7 +3790,7 @@
             }
           },
           {
-            "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and any configured API credential has write scope; malformed values are 422 only for a trusted assertion.",
+            "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and any configured API credential has full write authority; malformed values are 422 only for a trusted assertion.",
             "in": "header",
             "name": "X-Ingest-Principal-Kind",
             "required": false,
@@ -3803,7 +3803,7 @@
                   "type": "null"
                 }
               ],
-              "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and any configured API credential has write scope; malformed values are 422 only for a trusted assertion.",
+              "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and any configured API credential has full write authority; malformed values are 422 only for a trusted assertion.",
               "title": "X-Ingest-Principal-Kind"
             }
           },
