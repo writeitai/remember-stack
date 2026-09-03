@@ -6,12 +6,13 @@
 > recorded seed claim), seeded once from the D90-first claim's canonical D41
 > window — a state's span; an occurrence believed from its start onward and
 > never capped; `NULL`/`unknown` when undated — and a derived occurrence
-> window (`occurs_*`) that widens as evidence attaches. Occurrences are
-> identified by occurrence-window overlap, so recurring events stay distinct
-> rows; the D106 rung is unchanged and compares canonical bounds. The said-on
+> window (`occurs_*`) that widens as evidence attaches. Occurrence identity
+> is adjudicated under the entity lock — overlapping windows are a candidate
+> filter the D106 rung judges, never identity — so recurring events stay
+> distinct rows; the rung compares canonical bounds. The said-on
 > date is never a boundary. No verdict changes automatically (discrepancies
-> become review items); a state is capped only at a world-time instant its
-> successor supplies — a successor state's start or an ending occurrence's
+> become `temporal_window` review verdicts, D24); a state is capped only at a
+> world-time instant its successor supplies, later than its own known start — a successor state's start or an ending occurrence's
 > start, so a dated resignation still ends an undated "is CEO" state — else
 > the pair coexists, never `now()`. D90's staging order is unchanged; its
 > re-split decides by occurrence start. Contract: `temporal_clocks_design.md`
