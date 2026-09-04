@@ -34,9 +34,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v22"
-DEFAULT_PROTOCOL_KEY: Final = "full-v22"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-canonical-bounds-v22"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v23"
+DEFAULT_PROTOCOL_KEY: Final = "full-v23"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-query-space-canonical-bounds-v23"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -45,7 +45,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
+    "0b9e8091dea477a4f6e4c3ff99c9031971395edb8797cd5576bba9dce773d2fa"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -118,12 +118,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v22-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v22-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v23-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v23-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v22 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v23 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -235,8 +235,8 @@ class LoCoMoProtocol:
     """Which adapter serves the judge; kept on OpenRouter for comparability."""
 
 
-_FULL_V22 = LoCoMoProtocol(
-    key="full-v22",
+_FULL_V23 = LoCoMoProtocol(
+    key="full-v23",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -257,7 +257,7 @@ _FULL_V22 = LoCoMoProtocol(
     answer_word_cap=None,
 )
 
-_FULL_V22_GEMMA_VERTEX = LoCoMoProtocol(
+_FULL_V23_GEMMA_VERTEX = LoCoMoProtocol(
     key=GEMMA_VERTEX_PROTOCOL_KEY,
     name=GEMMA_VERTEX_PROTOCOL_NAME,
     answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
@@ -282,7 +282,7 @@ _FULL_V22_GEMMA_VERTEX = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V22.key: _FULL_V22, _FULL_V22_GEMMA_VERTEX.key: _FULL_V22_GEMMA_VERTEX}
+    {_FULL_V23.key: _FULL_V23, _FULL_V23_GEMMA_VERTEX.key: _FULL_V23_GEMMA_VERTEX}
 )
 
 

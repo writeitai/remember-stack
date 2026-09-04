@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.core.temporal import inclusive_request
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NegativeKind
@@ -546,6 +547,40 @@ def test_claims_as_of_intersects_open_windows_and_counts_unknown(
     ).is_current_testimony
     assert corpus.claim_ids[2] not in returned
     assert answer.excluded_unstamped == 1
+
+
+def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
+    corpus: _Corpus,
+) -> None:
+    """WP-T.0b: the open-SQL view matches the engine as-of set and counts unknown."""
+    answer = corpus.query_engine().claims_as_of(
+        deployment_id=_DEPLOYMENT_ID, from_=_WINDOW_FROM, to=_WINDOW_TO, k=20
+    )
+    window = inclusive_request(from_=_WINDOW_FROM, to=_WINDOW_TO)
+    with corpus.engine.connect() as connection:
+        unknown = int(
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM memory_v1.claims_canonical"
+                    " WHERE claim_valid_precision = 'unknown'"
+                )
+            ).scalar_one()
+        )
+        overlap = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT claim_id FROM memory_v1.claims_canonical"
+                    " WHERE claim_valid_precision <> 'unknown'"
+                    "   AND canon_start < :to_exclusive"
+                    "   AND (canon_end IS NULL OR canon_end > :from_instant)"
+                ),
+                {"from_instant": window.start, "to_exclusive": window.end},
+            )
+        }
+    assert unknown > 0
+    assert unknown == answer.excluded_unstamped
+    assert overlap == {claim.claim_id for claim in answer.evidence}
 
 
 def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(

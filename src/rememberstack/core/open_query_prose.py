@@ -127,6 +127,31 @@ FROM graph_path($1::uuid, $2::uuid, $3::uuid, 6) AS g
 ORDER BY g.hops, g.relation_ids;\
 """
 
+#: Purpose string for the shipped ``examples.claims_as_of`` identity.
+CLAIMS_AS_OF_PURPOSE: Final = (
+    "Claims whose canonical world-time window overlaps an inclusive interval;"
+    " unknown-precision claims are counted by precision, not by bounds"
+)
+
+#: SQL body for the shipped ``examples.claims_as_of`` identity (byte-stable).
+#: Overlap is half-open on ``canon_start`` / ``canon_end``; the caller's
+#: inclusive ``to`` becomes ``to + 1 µs`` so ``($1, $1)`` is a point query.
+CLAIMS_AS_OF_SQL: Final = (
+    "SELECT c.claim_id, c.claim_text, c.source_handle,"
+    "       c.claim_valid_from, c.claim_valid_until, c.claim_valid_precision,"
+    "       c.canon_start, c.canon_end,"
+    "       ("
+    "         SELECT count(*) FROM claims_canonical AS u"
+    "         WHERE u.claim_valid_precision = 'unknown'"
+    "       ) AS unknown_precision_excluded"
+    " FROM claims_canonical AS c"
+    " WHERE c.claim_valid_precision <> 'unknown'"
+    "   AND c.canon_start < ($2::timestamptz + '1 microsecond'::interval)"
+    "   AND (c.canon_end IS NULL OR c.canon_end > $1::timestamptz)"
+    " ORDER BY c.claim_valid_from DESC, c.claim_id"
+    " LIMIT 50"
+)
+
 #: Purpose string for the shipped ``examples.claims_verbatim`` identity.
 CLAIMS_VERBATIM_PURPOSE: Final = (
     "Claims as asserted, nominated semantically and joined to live testimony"
@@ -145,6 +170,9 @@ CLAIMS_VERBATIM_SQL: Final = (
 HONESTY_WARNINGS: Final[tuple[str, ...]] = (
     "Claims are immutable source testimony; they do not answer current-truth"
     " questions.",
+    "Claim world-time overlap is half-open on claims_canonical.canon_start /"
+    " canon_end (or memory_v1.canonical_bounds); unknown-precision claims have"
+    " no interval and are counted by precision, never by bounds.",
     "Empty SQL is untyped exploratory_tabular: a view's source grain is never"
     " a claim about an arbitrary outer query's result grain.",
     "Graph helper absence is bounded by the disclosed traversal budgets; inspect"
