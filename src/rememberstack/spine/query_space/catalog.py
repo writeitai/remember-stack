@@ -517,12 +517,7 @@ VIEW_CONTRACTS: Final = (
             "canon_start": "timestamp with time zone",
             "canon_end": "timestamp with time zone",
         },
-        indexes_used=(
-            "ix_claims_doc",
-            "ix_claims_chunk",
-            "ix_claims_valid_window",
-            "ix_claims_canonical_window",
-        ),
+        indexes_used=("ix_claims_doc", "ix_claims_chunk", "ix_claims_valid_window"),
         positive_fixture="claims_canonical.superseded_testimony_present",
         negative_fixture="claims_canonical.forgotten_lineage_claim_absent",
     ),

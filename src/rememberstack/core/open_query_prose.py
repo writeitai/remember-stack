@@ -171,8 +171,10 @@ HONESTY_WARNINGS: Final[tuple[str, ...]] = (
     "Claims are immutable source testimony; they do not answer current-truth"
     " questions.",
     "Claim world-time overlap is half-open on claims_canonical.canon_start /"
-    " canon_end (or memory_v1.canonical_bounds); unknown-precision claims have"
-    " no interval and are counted by precision, never by bounds.",
+    " canon_end. memory_v1.canonical_bounds is a top-level FROM function that"
+    " canonicalises an explicit window; it is not a row expression. Unknown-"
+    "precision claims have no interval and are counted by precision, never by"
+    " bounds.",
     "Empty SQL is untyped exploratory_tabular: a view's source grain is never"
     " a claim about an arbitrary outer query's result grain.",
     "Graph helper absence is bounded by the disclosed traversal budgets; inspect"

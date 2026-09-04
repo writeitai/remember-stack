@@ -163,9 +163,9 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
-## Gemma 4 on Vertex as the answer agent (`full-v22-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v23-gemma-vertex`)
 
-`full-v22-gemma-vertex` is a *variant* of `full-v22`, not a new benchmark
+`full-v23-gemma-vertex` is a *variant* of `full-v23`, not a new benchmark
 identity: every pin is identical -- ingestion bindings, prompts, tool catalog,
 budgets, temperature, and the frozen Luna judge -- except that the answer
 agent is `google/gemma-4-26b-a4b-it-maas`, Google's managed Gemma 4 26B-A4B
@@ -194,7 +194,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v22-gemma-vertex \
+  --protocol full-v23-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 

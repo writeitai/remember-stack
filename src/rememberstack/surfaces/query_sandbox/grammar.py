@@ -118,7 +118,6 @@ FUNCTION_ALLOWLIST: Final = frozenset(
         "date_trunc",
         "extract",
         "make_interval",
-        "canonical_bounds",
         "array_length",
         "cardinality",
         "jsonb_typeof",

@@ -3166,8 +3166,13 @@ def test_no_claim_row_is_ever_accepted_as_a_current_fact(corpus: _Corpus) -> Non
     assert not claim_columns & {"evaluated_at", "support_state", "evidence_count"}
 
 
-def test_claim_evidence_overlap_is_inclusive_at_both_endpoints(corpus: _Corpus) -> None:
-    """An instant claim has equal endpoints a half-open rule would erase."""
+def test_stored_claim_windows_keep_inclusive_instant_endpoints(
+    corpus: _Corpus,
+) -> None:
+    """D41 storage is inclusive: an instant has equal endpoints on the raw columns.
+
+    World-time overlap belongs on claims_canonical, not this predicate.
+    """
     overlap = (
         "SELECT coalesce(array_agg(claim_id ORDER BY claim_id), '{}'::uuid[])"
         " FROM memory_v1.claims_visible_history"

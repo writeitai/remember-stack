@@ -42,8 +42,7 @@
         "indexes_used": [
           "ix_claims_doc",
           "ix_claims_chunk",
-          "ix_claims_valid_window",
-          "ix_claims_canonical_window"
+          "ix_claims_valid_window"
         ]
       },
       "claims_live": {
@@ -8592,7 +8591,6 @@
           "bool_and",
           "bool_or",
           "btrim",
-          "canonical_bounds",
           "cardinality",
           "ceil",
           "coalesce",
@@ -19074,101 +19072,15 @@
               "all": false,
               "fromClause": [
                 {
-                  "@": "JoinExpr",
-                  "isNatural": false,
-                  "jointype": {
-                    "#": "JoinType",
-                    "name": "JOIN_INNER"
+                  "@": "RangeVar",
+                  "alias": {
+                    "@": "Alias",
+                    "aliasname": "h"
                   },
-                  "larg": {
-                    "@": "RangeVar",
-                    "alias": {
-                      "@": "Alias",
-                      "aliasname": "h"
-                    },
-                    "inh": true,
-                    "relname": "claims_visible_history",
-                    "relpersistence": "p",
-                    "schemaname": "memory_v1"
-                  },
-                  "rarg": {
-                    "@": "RangeFunction",
-                    "alias": {
-                      "@": "Alias",
-                      "aliasname": "b"
-                    },
-                    "functions": [
-                      [
-                        {
-                          "@": "FuncCall",
-                          "agg_distinct": false,
-                          "agg_star": false,
-                          "agg_within_group": false,
-                          "args": [
-                            {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "h"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "claim_valid_from"
-                                }
-                              ]
-                            },
-                            {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "h"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "claim_valid_until"
-                                }
-                              ]
-                            },
-                            {
-                              "@": "ColumnRef",
-                              "fields": [
-                                {
-                                  "@": "String",
-                                  "sval": "h"
-                                },
-                                {
-                                  "@": "String",
-                                  "sval": "claim_valid_precision"
-                                }
-                              ]
-                            }
-                          ],
-                          "func_variadic": false,
-                          "funcformat": {
-                            "#": "CoercionForm",
-                            "name": "COERCE_EXPLICIT_CALL"
-                          },
-                          "funcname": [
-                            {
-                              "@": "String",
-                              "sval": "memory_v1"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "canonical_bounds"
-                            }
-                          ]
-                        },
-                        null
-                      ]
-                    ],
-                    "is_rowsfrom": false,
-                    "lateral": true,
-                    "ordinality": false
-                  },
-                  "rtindex": 0
+                  "inh": true,
+                  "relname": "claims_visible_history",
+                  "relpersistence": "p",
+                  "schemaname": "memory_v1"
                 }
               ],
               "groupDistinct": false,
@@ -19584,15 +19496,62 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
+                    "@": "FuncCall",
+                    "agg_distinct": false,
+                    "agg_star": false,
+                    "agg_within_group": false,
+                    "args": [
                       {
-                        "@": "String",
-                        "sval": "b"
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "h"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "claim_valid_from"
+                          }
+                        ]
                       },
                       {
+                        "@": "TypeCast",
+                        "arg": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "h"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "claim_valid_precision"
+                            }
+                          ]
+                        },
+                        "typeName": {
+                          "@": "TypeName",
+                          "names": [
+                            {
+                              "@": "String",
+                              "sval": "claim_valid_precision"
+                            }
+                          ],
+                          "pct_type": false,
+                          "setof": false,
+                          "typemod": -1
+                        }
+                      }
+                    ],
+                    "func_variadic": false,
+                    "funcformat": {
+                      "#": "CoercionForm",
+                      "name": "COERCE_EXPLICIT_CALL"
+                    },
+                    "funcname": [
+                      {
                         "@": "String",
-                        "sval": "canon_start"
+                        "sval": "claim_canonical_start"
                       }
                     ]
                   }
@@ -19600,15 +19559,75 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
+                    "@": "FuncCall",
+                    "agg_distinct": false,
+                    "agg_star": false,
+                    "agg_within_group": false,
+                    "args": [
                       {
-                        "@": "String",
-                        "sval": "b"
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "h"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "claim_valid_from"
+                          }
+                        ]
                       },
                       {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "h"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "claim_valid_until"
+                          }
+                        ]
+                      },
+                      {
+                        "@": "TypeCast",
+                        "arg": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "h"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "claim_valid_precision"
+                            }
+                          ]
+                        },
+                        "typeName": {
+                          "@": "TypeName",
+                          "names": [
+                            {
+                              "@": "String",
+                              "sval": "claim_valid_precision"
+                            }
+                          ],
+                          "pct_type": false,
+                          "setof": false,
+                          "typemod": -1
+                        }
+                      }
+                    ],
+                    "func_variadic": false,
+                    "funcformat": {
+                      "#": "CoercionForm",
+                      "name": "COERCE_EXPLICIT_CALL"
+                    },
+                    "funcname": [
+                      {
                         "@": "String",
-                        "sval": "canon_end"
+                        "sval": "claim_canonical_end"
                       }
                     ]
                   }
@@ -19847,7 +19866,7 @@
               "type": "text"
             }
           ],
-          "comment": "One row per current-testimony claim, keyed by (deployment_id, claim_id): the subset of claims_visible_history whose D54 currency flag is still set. Like every claim relation this is IMMUTABLE SOURCE TESTIMONY, and \"live\" here means current transcription of a live source, never current truth: a claim in this relation can be contradicted by the adjudicated worldview, and querying its validity window to answer what holds now is the wrong query — start from facts_current and follow fact_claim_evidence_live back to here. Claim-evidence overlap is inclusive at both endpoints; a null endpoint is unbounded or unknown per claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent, and this relation is the sole claim input to the D54 counting path. The view carries no counts.",
+          "comment": "One row per current-testimony claim, keyed by (deployment_id, claim_id): the subset of claims_visible_history whose D54 currency flag is still set. Like every claim relation this is IMMUTABLE SOURCE TESTIMONY, and \"live\" here means current transcription of a live source, never current truth: a claim in this relation can be contradicted by the adjudicated worldview, and querying its validity window to answer what holds now is the wrong query — start from facts_current and follow fact_claim_evidence_live back to here. The stored claim_valid_* window is inclusive D41 storage; world-time overlap belongs on claims_canonical. Claims of forgotten lineages and tombstoned versions are absent, and this relation is the sole claim input to the D54 counting path. The view carries no counts.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -20612,7 +20631,7 @@
               "type": "boolean"
             }
           ],
-          "comment": "One row per claim whose source lineage is live and whose source version is not tombstoned, keyed by (deployment_id, claim_id) and joined to documents_live on (deployment_id, doc_id) and to document_versions_visible on (deployment_id, version_id). This relation is IMMUTABLE SOURCE TESTIMONY and never answers what currently holds: claim_valid_from and claim_valid_until say when a source asserted a proposition applied, not what the system believes now, and filtering them by an instant is the classic wrong current-truth query — use facts_current instead. Claim-evidence overlap is INCLUSIVE at both endpoints, because an instant-precision claim has equal endpoints that a half-open convention would make empty. A null claim_valid_from means unbounded-before or unknown and a null claim_valid_until means open-per-source or unknown, disambiguated by claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent; is_current_testimony is D54 bookkeeping and never validity. The view carries no counts.",
+          "comment": "One row per claim whose source lineage is live and whose source version is not tombstoned, keyed by (deployment_id, claim_id) and joined to documents_live on (deployment_id, doc_id) and to document_versions_visible on (deployment_id, version_id). This relation is IMMUTABLE SOURCE TESTIMONY and never answers what currently holds: claim_valid_from and claim_valid_until are the inclusive stored D41 window (an instant has equal endpoints). World-time overlap MUST use claims_canonical.canon_start / canon_end, which are the half-open canonical bounds; filtering these raw columns as a current-truth or overlap predicate is the wrong query — use facts_current for what holds now, and claims_canonical for as-of testimony. A null claim_valid_from means unbounded-before or unknown and a null claim_valid_until means open-per-source or unknown, disambiguated by claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent; is_current_testimony is D54 bookkeeping and never validity. The view carries no counts.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -38456,5 +38475,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "0b9e8091dea477a4f6e4c3ff99c9031971395edb8797cd5576bba9dce773d2fa"
+  "surface_manifest_hash": "2fff3177fd6adb35c8f6a248db1d9c698cc716dc8461c818865bb3c36c752870"
 }
