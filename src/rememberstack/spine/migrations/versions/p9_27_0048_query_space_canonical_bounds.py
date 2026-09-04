@@ -32,6 +32,7 @@ IMMUTABLE
 PARALLEL SAFE
 SECURITY DEFINER
 SET search_path = public, pg_catalog
+ROWS 1
 AS $$
   SELECT
     claim_canonical_start(
@@ -99,16 +100,25 @@ SELECT
   h.source_kind,
   h.source_handle,
   h.is_current_testimony,
-  b.canon_start,
-  b.canon_end
-FROM memory_v1.claims_visible_history AS h
-CROSS JOIN LATERAL memory_v1.canonical_bounds(
-  h.claim_valid_from,
-  h.claim_valid_until,
-  h.claim_valid_precision
-) AS b;
+  claim_canonical_start(
+    h.claim_valid_from,
+    h.claim_valid_precision::claim_valid_precision
+  ),
+  claim_canonical_end(
+    h.claim_valid_from,
+    h.claim_valid_until,
+    h.claim_valid_precision::claim_valid_precision
+  )
+FROM memory_v1.claims_visible_history AS h;
 COMMENT ON VIEW memory_v1.claims_canonical IS
   'One row per historically visible claim with surviving lineage, keyed by (deployment_id, claim_id), carrying the stored inclusive D41 window beside the half-open canonical bounds that every overlap predicate must use (D107 §5). canon_start is inclusive and canon_end exclusive; both are null when precision is unknown, and canon_end is also null for an open window. Overlap is a.start < b.end AND b.start < a.end with a null end as unbounded. This relation is IMMUTABLE SOURCE TESTIMONY: it never answers what currently holds. Claims of forgotten lineages and tombstoned versions are absent.';
+"""
+
+CLAIMS_CLOCK_COMMENT_DDL = r"""
+COMMENT ON VIEW memory_v1.claims_visible_history IS
+  'One row per claim whose source lineage is live and whose source version is not tombstoned, keyed by (deployment_id, claim_id) and joined to documents_live on (deployment_id, doc_id) and to document_versions_visible on (deployment_id, version_id). This relation is IMMUTABLE SOURCE TESTIMONY and never answers what currently holds: claim_valid_from and claim_valid_until are the inclusive stored D41 window (an instant has equal endpoints). World-time overlap MUST use claims_canonical.canon_start / canon_end, which are the half-open canonical bounds; filtering these raw columns as a current-truth or overlap predicate is the wrong query — use facts_current for what holds now, and claims_canonical for as-of testimony. A null claim_valid_from means unbounded-before or unknown and a null claim_valid_until means open-per-source or unknown, disambiguated by claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent; is_current_testimony is D54 bookkeeping and never validity. The view carries no counts.';
+COMMENT ON VIEW memory_v1.claims_live IS
+  'One row per current-testimony claim, keyed by (deployment_id, claim_id): the subset of claims_visible_history whose D54 currency flag is still set. Like every claim relation this is IMMUTABLE SOURCE TESTIMONY, and "live" here means current transcription of a live source, never current truth: a claim in this relation can be contradicted by the adjudicated worldview, and querying its validity window to answer what holds now is the wrong query — start from facts_current and follow fact_claim_evidence_live back to here. The stored claim_valid_* window is inclusive D41 storage; world-time overlap belongs on claims_canonical. Claims of forgotten lineages and tombstoned versions are absent, and this relation is the sole claim input to the D54 counting path. The view carries no counts.';
 """
 
 
@@ -141,6 +151,7 @@ def upgrade() -> None:
         f" OWNER TO {_VIEW_OWNER}"
     )
     apply_view_ddl(sql=CLAIMS_CANONICAL_VIEW_DDL)
+    op.execute(CLAIMS_CLOCK_COMMENT_DDL)
     op.execute(f"ALTER VIEW memory_v1.claims_canonical OWNER TO {_VIEW_OWNER}")
     op.execute(
         """
@@ -169,6 +180,16 @@ def downgrade() -> None:
     op.execute(
         "DROP FUNCTION IF EXISTS"
         " memory_v1.canonical_bounds(timestamptz, timestamptz, text)"
+    )
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION"
+        " claim_canonical_start(timestamptz, claim_valid_precision)"
+        f" FROM {_VIEW_OWNER}"
+    )
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION"
+        " claim_canonical_end(timestamptz, timestamptz, claim_valid_precision)"
+        f" FROM {_VIEW_OWNER}"
     )
 
 
