@@ -8,21 +8,25 @@ from uuid import uuid4
 
 from benchmarks.locomo import cli
 from benchmarks.locomo.model import AnswerAgentStep
+from benchmarks.locomo.model import DiscriminatedAnswerAgentStep
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
+from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
+from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
+from benchmarks.locomo.protocol import schema_sha256
 from benchmarks.locomo.protocol import session_diagnostic
 from benchmarks.locomo.retrieval import answer_tool_catalog
 from benchmarks.locomo.retrieval import assured_tool_catalog
@@ -30,6 +34,9 @@ from benchmarks.locomo.retrieval import tool_catalog_sha256
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.adapters import ModelRoutedProvider
+from rememberstack.adapters import OpenRouterModelProvider
+from rememberstack.adapters import VertexSettings
 from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -274,7 +281,7 @@ def test_protocol_is_v22_and_answer_prompt_has_reasoning_and_loop_guards() -> No
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v22",)
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v22", "full-v22-gemma-vertex")
     protocol = PROTOCOL_REGISTRY["full-v22"]
 
     assert protocol.name == "RS-LoCoMo-Full-v22"
@@ -450,3 +457,193 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
     """A fragment or non-object payload fails the tool step at validation time."""
     with pytest.raises(ValidationError):
         AnswerAgentStep(action="tool", tool_name="claims_verbatim", arguments_json=raw)
+
+
+def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
+    """The variant is a provider swap over identical v22 pins, so its scores are
+    an answer-agent comparison rather than a new benchmark identity."""
+    base = PROTOCOL_REGISTRY["full-v22"]
+    variant = PROTOCOL_REGISTRY["full-v22-gemma-vertex"]
+
+    assert variant.name == "RS-LoCoMo-Full-v22-GemmaVertex"
+    assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
+    assert variant.answer_agent_provider == "vertex"
+    assert variant.answer_agent_reasoning_effort == "none"
+    assert base.answer_agent_provider == "openrouter"
+    assert variant.judge_model == base.judge_model
+    assert variant.judge_provider == "openrouter"
+    assert variant.judge_reasoning_effort == base.judge_reasoning_effort
+    assert prompt_sha256(template=variant.answer_prompt_template) == prompt_sha256(
+        template=base.answer_prompt_template
+    )
+    assert prompt_sha256(template=variant.judge_prompt_template) == prompt_sha256(
+        template=base.judge_prompt_template
+    )
+    assert base.answer_schema is AnswerAgentStep
+    assert variant.answer_schema is DiscriminatedAnswerAgentStep
+    assert schema_sha256(model=variant.answer_schema) != schema_sha256(
+        model=base.answer_schema
+    )
+    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
+    assert variant.surface_manifest_hash == base.surface_manifest_hash
+    assert (
+        variant.max_tool_calls_per_question,
+        variant.max_agent_calls_per_question,
+        variant.answer_reader_retry_budget,
+        variant.answer_agent_temperature,
+        variant.judge_temperature,
+        variant.judge_repetitions,
+        variant.answer_word_cap,
+    ) == (
+        base.max_tool_calls_per_question,
+        base.max_agent_calls_per_question,
+        base.answer_reader_retry_budget,
+        base.answer_agent_temperature,
+        base.judge_temperature,
+        base.judge_repetitions,
+        base.answer_word_cap,
+    )
+    assert DEFAULT_PROTOCOL_KEY == "full-v22"
+
+
+def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
+    """Persist the minimum run identity the CLI reads to compose providers."""
+    protocol = PROTOCOL_REGISTRY[protocol_key]  # type: ignore[index]
+    configuration = RunConfiguration(
+        protocol_name=protocol.name,
+        adapter_version="synthetic",
+        prepared_at=datetime(2026, 9, 4, tzinfo=timezone.utc),
+        repository_revision="deadbeef",
+        dataset_path="/data/locomo10.json",
+        dataset_commit="commit",
+        dataset_sha256="dataset",
+        tier="smoke",
+        manifest_sha256="manifest",
+        item_ids_sha256="items",
+        documents_sha256="documents",
+        item_count=1,
+        sample_ids=("conv-1",),
+        answer_agent_model=protocol.answer_agent_model,
+        surface_manifest_hash="surface",
+        tool_catalog_sha256="tools",
+        answer_prompt_sha256="answer-prompt",
+        judge_prompt_sha256="judge-prompt",
+        answer_schema_sha256="answer-schema",
+        judge_schema_sha256="judge-schema",
+        protocol_fingerprint="fingerprint",
+    )
+    (run_dir / "run.json").write_text(configuration.model_dump_json(), encoding="utf-8")
+
+
+def test_cli_composes_vertex_only_for_the_seats_the_protocol_pins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Gemma routes to Vertex; the judge and embeddings stay on OpenRouter."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v22-gemma-vertex")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
+    built: list[VertexSettings] = []
+
+    class _FakeVertex:
+        def __init__(self, *, settings: VertexSettings) -> None:
+            built.append(settings)
+
+    monkeypatch.setattr(cli, "VertexModelProvider", _FakeVertex)
+
+    provider = cli._provider(run_dir=tmp_path)
+
+    assert isinstance(provider, ModelRoutedProvider)
+    assert isinstance(
+        provider.provider_for(model="google/gemma-4-26b-a4b-it-maas"), _FakeVertex
+    )
+    assert isinstance(
+        provider.provider_for(model="openai/gpt-5.6-luna"), OpenRouterModelProvider
+    )
+    assert isinstance(
+        provider.provider_for(model="qwen/qwen3-embedding-8b"), OpenRouterModelProvider
+    )
+    assert [settings.project_id for settings in built] == ["umc-locomo-vertex-lab"]
+
+
+def test_cli_keeps_plain_openrouter_for_the_default_protocol(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No Vertex settings are required, or even read, for an OpenRouter-only run."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v22")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
+
+    def refuse(**_values: object) -> object:  # pragma: no cover
+        raise AssertionError("Vertex must not be composed for full-v22")
+
+    monkeypatch.setattr(cli, "VertexModelProvider", refuse)
+
+    assert isinstance(cli._provider(run_dir=tmp_path), OpenRouterModelProvider)
+
+
+def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing project id is caught before any stage work or paid call."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v22-gemma-vertex")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
+
+    with pytest.raises(ValidationError, match="project_id"):
+        cli._provider(run_dir=tmp_path)
+
+
+def test_discriminated_step_reads_exactly_like_the_flat_step() -> None:
+    """Same field names and reading interface; only the JSON shape differs."""
+    tool = DiscriminatedAnswerAgentStep.model_validate_json(
+        '{"action":"tool","arguments_json":"{\\"query\\":\\"Where?\\"} .",'
+        '"tool_name":"testimony_context"}'
+    )
+    assert tool.action == "tool"
+    assert tool.tool_name == "testimony_context"
+    assert tool.answer is None
+    assert tool.parsed_arguments() == ({"query": "Where?"}, ".")
+
+    answer = DiscriminatedAnswerAgentStep.model_validate_json(
+        '{"action":"answer","answer":"Berlin"}'
+    )
+    assert answer.action == "answer"
+    assert answer.answer == "Berlin"
+    assert answer.tool_name is None
+    assert answer.arguments_json == "{}"
+    assert answer.parsed_arguments() == ({}, "")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        '{"action":"tool","tool_name":"testimony_context"}',
+        '{"action":"tool","tool_name":"","arguments_json":"{}"}',
+        '{"action":"tool","tool_name":"t","arguments_json":"[1]"}',
+        '{"action":"tool","tool_name":"t","arguments_json":"{}","answer":"x"}',
+        '{"action":"answer","answer":""}',
+        '{"action":"answer","answer":"Berlin","tool_name":"t"}',
+        '{"action":"maybe","answer":"Berlin"}',
+    ),
+)
+def test_discriminated_step_rejects_every_mixed_or_incomplete_shape(
+    payload: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        DiscriminatedAnswerAgentStep.model_validate_json(payload)
+
+
+def test_discriminated_schema_branches_carry_only_their_own_keys() -> None:
+    """The union is what lets an alphabetical, all-required decoder finish."""
+    schema = DiscriminatedAnswerAgentStep.model_json_schema()
+    branches = {
+        definition["properties"]["action"]["const"]: definition
+        for definition in schema["$defs"].values()
+    }
+    assert set(branches["tool"]["required"]) == {
+        "action",
+        "tool_name",
+        "arguments_json",
+    }
+    assert set(branches["answer"]["required"]) == {"action", "answer"}
+    assert schema["discriminator"]["propertyName"] == "action"

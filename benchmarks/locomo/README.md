@@ -157,6 +157,77 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
+## Gemma 4 on Vertex as the answer agent (`full-v22-gemma-vertex`)
+
+`full-v22-gemma-vertex` is a *variant* of `full-v22`, not a new benchmark
+identity: every pin is identical -- ingestion bindings, prompts, tool catalog,
+budgets, temperature, and the frozen Luna judge -- except that the answer
+agent is `google/gemma-4-26b-a4b-it-maas`, Google's managed Gemma 4 26B-A4B
+model on the Gemini Enterprise Agent Platform (formerly Vertex AI), and the
+answer step is pinned as `DiscriminatedAnswerAgentStep`. Its scores therefore
+compare answer agents over the same stores. The judge and the preflight
+embedding stay on OpenRouter, so the OpenRouter key is still required; only
+the answer-agent model name routes to Vertex.
+
+The step shape differs for a measured reason. Vertex's constrained decoder
+emits object keys in **alphabetical** order and demands every required key,
+so under the flat `AnswerAgentStep` schema (`action`, `answer`,
+`arguments_json`, `tool_name` in that order) Gemma is forced to fill `answer`
+before `tool_name`, writes the tool name there, cannot close the object, and
+pads whitespace until the output cap (observed 2026-09-04 on every flat
+variant tried, including plain-string and type-array nullables). The
+discriminated form is the same decision with the same field names as a
+two-branch union -- `{action:"tool", tool_name, arguments_json}` or
+`{action:"answer", answer}` -- so no branch has a key the model must invent,
+and the model completes in a few tokens. The prompt is byte-identical to
+v22; only `answer_schema_sha256` differs.
+
+Prepare it explicitly; every later stage reads the immutable choice:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare \
+  --dataset /absolute/path/locomo10.json \
+  --tier smoke \
+  --protocol full-v22-gemma-vertex \
+  --output .benchmark-runs/locomo-gemma-smoke
+```
+
+The Vertex binding uses no API key or service-account key. The adapter takes
+short-lived access tokens from Google Application Default Credentials; on the
+benchmark hosts an X.509 client certificate and root-only private key are
+exchanged with Google STS (Workload Identity Federation). Export the workload
+credential the same way the GCS backup path does, plus the project:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/etc/rememberstack/locomo-vertex/credentials.json
+export GOOGLE_API_CERTIFICATE_CONFIG=/etc/rememberstack/locomo-vertex/certificate-config.json
+export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
+export REMEMBERSTACK_VERTEX_PROJECT_ID=<the isolated lab project id>
+# optional: REMEMBERSTACK_VERTEX_LOCATION (default global),
+#           REMEMBERSTACK_VERTEX_MAX_COMPLETION_TOKENS (default 4096),
+#           REMEMBERSTACK_VERTEX_PRICE_TABLE_USD_PER_MILLION (JSON; default pins Gemma 4 26B)
+```
+
+Accounting differs from OpenRouter and the run records say so by construction:
+Vertex reports token counts but no charge, so every `cost_usd` for a Vertex
+call is **computed** from the pinned price table (input $0.15, output $0.60
+per million tokens, retrieved 2026-09-04), with every prompt token billed at
+the full input rate and cached-token discounts ignored. The value can only
+over-report. The adapter refuses to call any model without a pinned price and
+refuses any reasoning-effort pin other than `none`; the variant deliberately
+does not use Vertex-specific thinking controls, and silently dropping a pin
+would misstate the protocol. The `--max-evaluator-cost-usd` stop threshold applies to the shared
+ledger exactly as before; the project-level spend cap and guardian in the
+cloud repository are the hard monetary boundary for this provider.
+
+A Vertex `401`/`403` -- a revoked federated identity, a disabled API, or
+unlinked billing, which is what the spend guardian does -- stops the stage
+before the next checkpoint, like an exhausted OpenRouter balance. Any other
+Vertex failure is one failed item after bounded retries for `429` queue-full
+responses, which report no usage. `ingest` still runs the preflight: the chat probe now goes
+to Vertex and proves the certificate, project, and model entitlement before
+any upload.
+
 ## Sharded runs
 
 Publication samples can run concurrently on independent hosts while preserving the required

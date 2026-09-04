@@ -39,6 +39,7 @@ from benchmarks.locomo.dataset import validate_manifest
 from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
+from benchmarks.locomo.model import AnswerStepSchema
 from benchmarks.locomo.model import BenchmarkFailure
 from benchmarks.locomo.model import CategorySummary
 from benchmarks.locomo.model import FailureKind
@@ -70,6 +71,7 @@ from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
+from benchmarks.locomo.protocol import LoCoMoProtocol
 from benchmarks.locomo.protocol import MAX_AGENT_CALLS
 from benchmarks.locomo.protocol import MAX_TOOL_CALLS
 from benchmarks.locomo.protocol import official_f1
@@ -92,12 +94,14 @@ from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from rememberstack.adapters.openrouter import OpenRouterProviderError
+from rememberstack.adapters.vertex import VertexAccessError
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import Envelope
 from rememberstack.model import ModelRequest
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
+from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import ReadinessRequirements
@@ -322,7 +326,7 @@ def preflight_provider(
             ),
             response_type=PreflightProbe,
         )
-    except OpenRouterProviderError as error:
+    except ProviderCallError as error:
         if error.usage is not None:
             record_usage(error.usage)
         raise ProviderPreflightError(
@@ -350,7 +354,7 @@ def preflight_provider(
         embedding = provider.embed(
             request=EmbeddingRequest(model=embedding_model, texts=("preflight",))
         )
-    except OpenRouterProviderError as error:
+    except ProviderCallError as error:
         if error.usage is not None:
             record_usage(error.usage)
         raise ProviderPreflightError(
@@ -602,6 +606,9 @@ def answer_sample(
     worst_case = (
         called + len(remaining) * context.configuration.max_agent_calls_per_question
     )
+    # The step shape is a protocol pin, not a run-configuration field: the
+    # fingerprint already binds its schema hash, so resolve it from the name.
+    answer_schema = protocol_for_name(context.configuration.protocol_name).answer_schema
     if worst_case > max_agent_calls:
         raise ExecutionGuardError(
             f"max-agent-calls {max_agent_calls} cannot cover at most"
@@ -656,6 +663,7 @@ def answer_sample(
                         context.configuration.answer_reader_retry_budget
                     ),
                     answer_word_cap=context.configuration.answer_word_cap,
+                    answer_schema=answer_schema,
                 )
             else:
                 with tracer.question(
@@ -689,6 +697,7 @@ def answer_sample(
                             context.configuration.answer_reader_retry_budget
                         ),
                         answer_word_cap=context.configuration.answer_word_cap,
+                        answer_schema=answer_schema,
                         question_trace=question_trace,
                     )
                     if question_trace is not None:
@@ -1123,6 +1132,18 @@ def _prepare_documents(
                 )
             )
     return tuple(documents)
+
+
+def run_protocol(*, run_dir: Path) -> LoCoMoProtocol:
+    """Resolve the immutable protocol a prepared run was created under.
+
+    Reads only ``run.json`` so a command can compose the right providers
+    before the stage itself performs full run validation.
+    """
+    configuration = RunConfiguration.model_validate_json(
+        (run_dir / _RUN_FILE).read_text(encoding="utf-8")
+    )
+    return protocol_for_name(configuration.protocol_name)
 
 
 def _load_run(*, run_dir: Path) -> _RunContext:
@@ -1636,6 +1657,7 @@ def _answer_one(
     max_agent_calls_per_question: int = MAX_AGENT_CALLS,
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
     answer_word_cap: int | None = None,
+    answer_schema: AnswerStepSchema = AnswerAgentStep,
     p3: P3Mount | None = None,
     p3_error: str | None = None,
     question_trace: QuestionTrace | None = None,
@@ -1694,7 +1716,7 @@ def _answer_one(
                     temperature=answer_agent_temperature,
                     reasoning_effort=answer_agent_reasoning_effort,
                 ),
-                response_type=AnswerAgentStep,
+                response_type=answer_schema,
             )
         except ProviderAccountingError as error:
             call_latency_ms = _elapsed_ms(started)
@@ -1795,7 +1817,7 @@ def _answer_one(
                 tool_calls=tuple(trace),
                 usages=tuple(usages),
             )
-        except OpenRouterProviderError as error:
+        except ProviderCallError as error:
             call_latency_ms = _elapsed_ms(started)
             if error.usage is not None:
                 usages.append(error.usage)
@@ -1811,12 +1833,13 @@ def _answer_one(
                         "accounting_error" if model_mismatch else "provider_error"
                     ),
                 )
-            if _is_openrouter_credit_exhaustion(error=error):
+            unavailable = _provider_unavailable_reason(error=error)
+            if unavailable is not None:
                 _record_interrupted_answer(
                     state=state, usages=tuple(usages), call_count=agent_call_count
                 )
                 raise ProviderInfrastructureError(
-                    "OpenRouter credits unavailable; stopping before answer checkpoint"
+                    f"{unavailable}; stopping before answer checkpoint"
                 ) from error
             return _failed_answer(
                 question=question,
@@ -2359,14 +2382,15 @@ def _judge_one(
             latency_ms=latency_ms,
             failure=_failure(kind="accounting", message=str(error)),
         )
-    except OpenRouterProviderError as error:
+    except ProviderCallError as error:
         latency_ms = _elapsed_ms(started)
         if error.usage is not None:
             state.evaluator_cost_usd += error.usage.cost_usd
         model_mismatch = (
             error.usage is not None and error.usage.model_name != judge_model
         )
-        credit_exhausted = _is_openrouter_credit_exhaustion(error=error)
+        unavailable = _provider_unavailable_reason(error=error)
+        credit_exhausted = unavailable is not None
         if judge_observation is not None:
             judge_observation.finish(
                 usage=error.usage,
@@ -2385,7 +2409,7 @@ def _judge_one(
                 state.interrupted_usages.append(error.usage)
             state.interrupted_judge_calls += 1
             raise ProviderInfrastructureError(
-                "OpenRouter credits unavailable; stopping before judge checkpoint"
+                f"{unavailable}; stopping before judge checkpoint"
             ) from error
         return JudgeRecord(
             item_id=question.item_id,
@@ -2696,9 +2720,20 @@ def _all_usages(*, state: RunState) -> tuple[ProviderCallUsage, ...]:
     )
 
 
-def _is_openrouter_credit_exhaustion(*, error: OpenRouterProviderError) -> bool:
-    """Recognize OpenRouter's stable HTTP status prefix without parsing its body."""
-    return " returned 402:" in str(error)
+def _provider_unavailable_reason(*, error: ProviderCallError) -> str | None:
+    """Name an infrastructure outage that must stop the run, or None.
+
+    OpenRouter signals an empty credit balance with HTTP 402, recognized by its
+    stable status prefix without parsing the body. Vertex signals lost access
+    -- a revoked federated identity, a disabled API, or unlinked billing, which
+    is exactly what the spend guardian does -- with a typed access error.
+    Anything else is one failed item, not a stopped run.
+    """
+    if isinstance(error, VertexAccessError):
+        return "Vertex access unavailable"
+    if isinstance(error, OpenRouterProviderError) and " returned 402:" in str(error):
+        return "OpenRouter credits unavailable"
+    return None
 
 
 def _record_interrupted_answer(

@@ -11,6 +11,12 @@ from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
+from rememberstack.adapters.routed import ModelRoutedProvider
+from rememberstack.adapters.vertex import VertexAccessError
+from rememberstack.adapters.vertex import VertexModelProvider
+from rememberstack.adapters.vertex import VertexProviderError
+from rememberstack.adapters.vertex import VertexRequestError
+from rememberstack.adapters.vertex import VertexSettings
 
 if TYPE_CHECKING:
     from rememberstack.adapters.converters import build_conversion_routes
@@ -31,11 +37,17 @@ __all__ = (
     "MarkitdownConverter",
     "MistralOcrConverter",
     "MistralOcrSettings",
+    "ModelRoutedProvider",
     "build_conversion_routes",
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",
     "PostgresP1Index",
+    "VertexAccessError",
+    "VertexModelProvider",
+    "VertexProviderError",
+    "VertexRequestError",
+    "VertexSettings",
 )
 
 

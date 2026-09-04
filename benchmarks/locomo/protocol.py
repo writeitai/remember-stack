@@ -16,12 +16,15 @@ import regex
 
 from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
+from benchmarks.locomo.model import AnswerStepSchema
+from benchmarks.locomo.model import DiscriminatedAnswerAgentStep
 from benchmarks.locomo.model import JudgeModel
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
+from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
@@ -113,6 +116,19 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v22-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v22-gemma-vertex"
+GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
+"""Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
+
+The variant protocol keeps every v22 pin -- ingestion bindings, prompts,
+tool catalog, budgets, judge -- and swaps only the answer agent to this model
+on Vertex, with thinking deliberately pinned off and the answer step pinned as
+`DiscriminatedAnswerAgentStep`, the
+same decision in a two-branch JSON shape that Vertex's order-enforcing
+decoder completes. Scores are therefore an answer-agent comparison over the
+same stores, not a new benchmark identity.
+"""
 
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
@@ -196,7 +212,9 @@ class LoCoMoProtocol:
     judge_model: JudgeModel
     answer_prompt_template: str
     judge_prompt_template: str
-    answer_schema: type[AnswerAgentStep]
+    answer_schema: AnswerStepSchema
+    """Which step shape the answer model must complete; see
+    `DiscriminatedAnswerAgentStep` for why a protocol may pin the union."""
     judge_schema: type[JudgeOutput]
     surface_manifest_hash: str
     tool_catalog_sha256: str
@@ -209,6 +227,10 @@ class LoCoMoProtocol:
     answer_agent_reasoning_effort: str | None
     judge_reasoning_effort: str | None
     answer_word_cap: int | None = None
+    answer_agent_provider: ProviderKey = "openrouter"
+    """Which adapter serves the answer agent; the CLI composes it from this."""
+    judge_provider: ProviderKey = "openrouter"
+    """Which adapter serves the judge; kept on OpenRouter for comparability."""
 
 
 _FULL_V22 = LoCoMoProtocol(
@@ -233,8 +255,32 @@ _FULL_V22 = LoCoMoProtocol(
     answer_word_cap=None,
 )
 
+_FULL_V22_GEMMA_VERTEX = LoCoMoProtocol(
+    key=GEMMA_VERTEX_PROTOCOL_KEY,
+    name=GEMMA_VERTEX_PROTOCOL_NAME,
+    answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
+    judge_model=JUDGE_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=DiscriminatedAnswerAgentStep,
+    judge_schema=JudgeOutput,
+    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
+    tool_catalog_sha256=tool_catalog_sha256(),
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=TEMPERATURE,
+    judge_temperature=TEMPERATURE,
+    judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
+    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
+    answer_word_cap=None,
+    answer_agent_provider="vertex",
+    judge_provider="openrouter",
+)
+
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V22.key: _FULL_V22}
+    {_FULL_V22.key: _FULL_V22, _FULL_V22_GEMMA_VERTEX.key: _FULL_V22_GEMMA_VERTEX}
 )
 
 
@@ -388,7 +434,7 @@ def prompt_sha256(*, template: str) -> str:
     return hashlib.sha256(template.encode()).hexdigest()
 
 
-def schema_sha256(*, model: type[AnswerAgentStep] | type[JudgeOutput]) -> str:
+def schema_sha256(*, model: AnswerStepSchema | type[JudgeOutput]) -> str:
     """Hash a canonical strict-output JSON schema."""
     canonical = json.dumps(
         model.model_json_schema(),
