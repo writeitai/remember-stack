@@ -34,6 +34,18 @@
           "chunk_claims_pkey"
         ]
       },
+      "claims_canonical": {
+        "fixtures": {
+          "negative": "claims_canonical.forgotten_lineage_claim_absent",
+          "positive": "claims_canonical.superseded_testimony_present"
+        },
+        "indexes_used": [
+          "ix_claims_doc",
+          "ix_claims_chunk",
+          "ix_claims_valid_window",
+          "ix_claims_canonical_window"
+        ]
+      },
       "claims_live": {
         "fixtures": {
           "negative": "claims_live.superseded_testimony_absent",
@@ -7601,6 +7613,43 @@
         {
           "arguments": [
             {
+              "name": "valid_from",
+              "required": true,
+              "type": "timestamptz"
+            },
+            {
+              "name": "valid_until",
+              "required": true,
+              "type": "timestamptz"
+            },
+            {
+              "name": "valid_precision",
+              "required": true,
+              "type": "text"
+            }
+          ],
+          "arguments_max": 3,
+          "arguments_min": 3,
+          "channel": "temporal",
+          "column_types": [
+            "timestamptz",
+            "timestamptz"
+          ],
+          "columns": [
+            "canon_start",
+            "canon_end"
+          ],
+          "filters": [],
+          "name": "canonical_bounds",
+          "parallel": "safe",
+          "pre_rank_filters": [],
+          "security": "definer",
+          "target": "claims",
+          "volatility": "immutable"
+        },
+        {
+          "arguments": [
+            {
               "name": "valid_at",
               "required": true,
               "type": "timestamptz"
@@ -8543,6 +8592,7 @@
           "bool_and",
           "bool_or",
           "btrim",
+          "canonical_bounds",
           "cardinality",
           "ceil",
           "coalesce",
@@ -8614,6 +8664,7 @@
           "~~*"
         ],
         "public_functions": [
+          "canonical_bounds",
           "facts_as_of",
           "fetch_chunk_bodies",
           "graph_citation_path",
@@ -8628,6 +8679,7 @@
         ],
         "recursion_depth_max": 6,
         "srf_categories": {
+          "canonical_bounds": "temporal",
           "facts_as_of": "bitemporal",
           "fetch_chunk_bodies": "body_fetch",
           "graph_citation_path": "graph",
@@ -18687,6 +18739,918 @@
             "claim_id",
             "chunk_id",
             "derivation_kind"
+          ]
+        },
+        {
+          "clock_semantics": "claim_validity_immutable",
+          "columns": [
+            {
+              "comment": "The deployment that owns the claim.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this immutable claim.",
+              "enum_values": null,
+              "name": "claim_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage that asserted the claim.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The non-tombstoned version the claim was extracted from.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The reading whose character offsets the claim's anchors use.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The chunk the claim was extracted from.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The standalone assertion as extracted, which is source testimony rather than adjudicated truth.",
+              "enum_values": null,
+              "name": "claim_text",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The verbatim slice of the source the claim derives from.",
+              "enum_values": null,
+              "name": "source_span",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Start character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of source_span within the named representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "The substrings decontextualization added, each with the bundle source it came from.",
+              "enum_values": null,
+              "name": "added_context",
+              "nullable": false,
+              "type": "jsonb"
+            },
+            {
+              "comment": "How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified.",
+              "enum_values": [
+                "static",
+                "dynamic",
+                "atemporal"
+              ],
+              "name": "temporal_class",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "True when the claim preserves an attribution, so it entails that someone said it rather than that it holds.",
+              "enum_values": null,
+              "name": "is_attributed",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Result of the sampled independent grounding audit, defaulting to unaudited.",
+              "enum_values": [
+                "unaudited",
+                "sampled_pass",
+                "sampled_fail",
+                "escalated"
+              ],
+              "name": "audit_status",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "True when selection kept the claim but marked it for review.",
+              "enum_values": null,
+              "name": "kept_flagged",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "The extractor generation that produced the claim, which is part of the D54 extraction basis.",
+              "enum_values": null,
+              "name": "extractor_version",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Assertion-event time: when the source asserted this, null when the source carries no date.",
+              "enum_values": null,
+              "name": "asserted_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable inclusive start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown.",
+              "enum_values": null,
+              "name": "claim_valid_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Immutable inclusive end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision.",
+              "enum_values": null,
+              "name": "claim_valid_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open.",
+              "enum_values": [
+                "unknown",
+                "instant",
+                "day",
+                "month",
+                "quarter",
+                "year",
+                "open"
+              ],
+              "name": "claim_valid_precision",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Which world-interval was asserted, such as event_time or measurement_period; null when unclassified.",
+              "enum_values": [
+                "proposition_validity",
+                "event_time",
+                "measurement_period",
+                "effective_period"
+              ],
+              "name": "claim_valid_kind",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Transaction-time: when this deployment extracted the claim.",
+              "enum_values": null,
+              "name": "ingested_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The connector family of the asserting lineage.",
+              "enum_values": null,
+              "name": "source_kind",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Stable human-usable handle for the asserting lineage, formed from its connector-native identity.",
+              "enum_values": null,
+              "name": "source_handle",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "True while this claim is the current transcription of its chunk under D54; false once a newer extraction generation or a living-mode version move superseded it.",
+              "enum_values": null,
+              "name": "is_current_testimony",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "Inclusive start of the half-open canonical window (D107 §5); null when precision is unknown.",
+              "enum_values": null,
+              "name": "canon_start",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Exclusive end of the half-open canonical window; null when the window is open or unknown.",
+              "enum_values": null,
+              "name": "canon_end",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per historically visible claim with surviving lineage, keyed by (deployment_id, claim_id), carrying the stored inclusive D41 window beside the half-open canonical bounds that every overlap predicate must use (D107 §5). canon_start is inclusive and canon_end exclusive; both are null when precision is unknown, and canon_end is also null for an open window. Overlap is a.start < b.end AND b.start < a.end with a null end as unbounded. This relation is IMMUTABLE SOURCE TESTIMONY: it never answers what currently holds. Claims of forgotten lineages and tombstoned versions are absent.",
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "claim_id"
+              },
+              {
+                "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "version_id"
+              },
+              {
+                "@": "String",
+                "sval": "representation_id"
+              },
+              {
+                "@": "String",
+                "sval": "chunk_id"
+              },
+              {
+                "@": "String",
+                "sval": "claim_text"
+              },
+              {
+                "@": "String",
+                "sval": "source_span"
+              },
+              {
+                "@": "String",
+                "sval": "char_start"
+              },
+              {
+                "@": "String",
+                "sval": "char_end"
+              },
+              {
+                "@": "String",
+                "sval": "added_context"
+              },
+              {
+                "@": "String",
+                "sval": "temporal_class"
+              },
+              {
+                "@": "String",
+                "sval": "is_attributed"
+              },
+              {
+                "@": "String",
+                "sval": "audit_status"
+              },
+              {
+                "@": "String",
+                "sval": "kept_flagged"
+              },
+              {
+                "@": "String",
+                "sval": "extractor_version"
+              },
+              {
+                "@": "String",
+                "sval": "asserted_at"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_from"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_until"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_precision"
+              },
+              {
+                "@": "String",
+                "sval": "claim_valid_kind"
+              },
+              {
+                "@": "String",
+                "sval": "ingested_at"
+              },
+              {
+                "@": "String",
+                "sval": "source_kind"
+              },
+              {
+                "@": "String",
+                "sval": "source_handle"
+              },
+              {
+                "@": "String",
+                "sval": "is_current_testimony"
+              },
+              {
+                "@": "String",
+                "sval": "canon_start"
+              },
+              {
+                "@": "String",
+                "sval": "canon_end"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
+                  },
+                  "larg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "h"
+                    },
+                    "inh": true,
+                    "relname": "claims_visible_history",
+                    "relpersistence": "p",
+                    "schemaname": "memory_v1"
+                  },
+                  "rarg": {
+                    "@": "RangeFunction",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "b"
+                    },
+                    "functions": [
+                      [
+                        {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "claim_valid_from"
+                                }
+                              ]
+                            },
+                            {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "claim_valid_until"
+                                }
+                              ]
+                            },
+                            {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "h"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "claim_valid_precision"
+                                }
+                              ]
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_EXPLICIT_CALL"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "memory_v1"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "canonical_bounds"
+                            }
+                          ]
+                        },
+                        null
+                      ]
+                    ],
+                    "is_rowsfrom": false,
+                    "lateral": true,
+                    "ordinality": false
+                  },
+                  "rtindex": 0
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "doc_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "version_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "representation_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "chunk_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_text"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_span"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "char_start"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "char_end"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "added_context"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "temporal_class"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "is_attributed"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "audit_status"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "kept_flagged"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "extractor_version"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "asserted_at"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_valid_from"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_valid_until"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_valid_precision"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "claim_valid_kind"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "ingested_at"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_kind"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_handle"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "is_current_testimony"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "b"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "canon_start"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "b"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "canon_end"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "claims_canonical",
+              "relpersistence": "p",
+              "schemaname": "memory_v1"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "grain": "one historically visible claim with surviving lineage and its half-open canonical window",
+          "grain_tag": "claim_visible_history_canonical",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "claims_canonical",
+          "qualified_name": "memory_v1.claims_canonical",
+          "row_key": [
+            "deployment_id",
+            "claim_id"
           ]
         },
         {
@@ -37492,5 +38456,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "3583f86ac5bb883481ba2cf4d9e7a0da1ac5e650ada140b97998fe273aa7edeb"
+  "surface_manifest_hash": "0b9e8091dea477a4f6e4c3ff99c9031971395edb8797cd5576bba9dce773d2fa"
 }

@@ -1578,9 +1578,9 @@ _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "claims_verbatim": ("semantic_claims", "claims_live", "JOIN"),
     "claims_about": ("mentions_live", "claim_occurrences_live", "claims_live"),
     "claims_as_of": (
-        "claims_visible_history",
-        "claim_valid_from <= $2",
-        "claim_valid_until >= $1",
+        "claims_canonical",
+        "canon_start <",
+        "canon_end > $1",
         "unknown",
     ),
     "claims_hybrid_rrf": ("semantic_claims", "lexical_claims"),
@@ -1628,9 +1628,13 @@ def test_example_bodies_match_section_2_mappings() -> None:
 def test_claims_as_of_uses_two_parameter_inclusive_overlap() -> None:
     sql = EXAMPLE_QUERIES["claims_as_of"][1]
     assert "$1::timestamptz" in sql and "$2::timestamptz" in sql
-    assert "claim_valid_from <= $2" in sql
-    assert "claim_valid_until >= $1" in sql
+    assert "claims_canonical" in sql
+    assert "canon_start <" in sql
+    assert "canon_end > $1" in sql
+    assert "1 microsecond" in sql
     assert "unknown" in sql
+    assert "claim_valid_from <=" not in sql
+    assert "claim_valid_until >=" not in sql
 
 
 def test_always_empty_substitution_fails_positive(registry_url: str) -> None:

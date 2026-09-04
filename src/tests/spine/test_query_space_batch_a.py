@@ -1198,6 +1198,17 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             " WHERE claim_id = :claim)",
             {"claim": corpus.claim["erased"]},
         ),
+        "claims_canonical.superseded_testimony_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim AND NOT is_current_testimony"
+            " AND (claim_valid_precision = 'unknown' OR canon_start IS NOT NULL))",
+            {"claim": corpus.claim["old"]},
+        ),
+        "claims_canonical.forgotten_lineage_claim_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim)",
+            {"claim": corpus.claim["erased"]},
+        ),
         "claims_live.current_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_live"
             " WHERE claim_id = :claim)",
@@ -2689,7 +2700,7 @@ def test_corrupt_coordinates_leak_no_identifier_through_any_surface(
         public_surfaces = tuple(
             surface for surface in MATRIX_SURFACES if surface.caller_reachable
         )
-        assert len(public_surfaces) == 24
+        assert len(public_surfaces) == len(VIEW_CONTRACTS)
         leaks = {
             surface.name: _reachable_values(
                 connection=connection, relation=surface.name, forbidden=forbidden

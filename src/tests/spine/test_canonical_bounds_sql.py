@@ -140,6 +140,38 @@ def test_sql_twin_is_session_timezone_independent(
     assert row.e == expected.end, (session_zone, precision, "end")
 
 
+def test_query_space_canonical_bounds_wraps_the_public_twins(
+    database_engine: Engine,
+) -> None:
+    """memory_v1.canonical_bounds is the public twins, published as text precision."""
+    valid_from = _ts("2022-01-01T00:00")
+    valid_until = _ts("2022-12-31T00:00")
+    expected = canonical_bounds(
+        valid_from=valid_from, valid_until=valid_until, precision="year"
+    )
+    with database_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT canon_start, canon_end"
+                " FROM memory_v1.canonical_bounds("
+                " CAST(:f AS timestamptz), CAST(:u AS timestamptz), 'year')"
+            ),
+            {"f": "2022-01-01T00:00+00:00", "u": "2022-12-31T00:00+00:00"},
+        ).one()
+        unknown = connection.execute(
+            text(
+                "SELECT canon_start, canon_end"
+                " FROM memory_v1.canonical_bounds("
+                " CAST(:f AS timestamptz), CAST(:u AS timestamptz), 'unknown')"
+            ),
+            {"f": "2022-01-01T00:00+00:00", "u": "2022-12-31T00:00+00:00"},
+        ).one()
+    assert row.canon_start == expected.start
+    assert row.canon_end == expected.end
+    assert unknown.canon_start is None
+    assert unknown.canon_end is None
+
+
 def test_prompt_dates_render_the_utc_calendar_day() -> None:
     """A driver row in a non-UTC session zone must still print the UTC day."""
     from zoneinfo import ZoneInfo
