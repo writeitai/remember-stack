@@ -18,6 +18,8 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.core.open_query_prose import CLAIMS_AS_OF_SQL
+from rememberstack.core.temporal import inclusive_request
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NegativeKind
@@ -546,6 +548,50 @@ def test_claims_as_of_intersects_open_windows_and_counts_unknown(
     ).is_current_testimony
     assert corpus.claim_ids[2] not in returned
     assert answer.excluded_unstamped == 1
+
+
+def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
+    corpus: _Corpus,
+) -> None:
+    """WP-T.0b: the shipped example counts unknown by precision and overlaps canonically.
+
+    Engine ``claims_as_of`` reads ``claims`` plus ``documents.deleted_at``;
+    ``claims_canonical`` additionally requires a surviving version. This corpus
+    is live-lineage, so the claim-id sets match; a tombstoned version would
+    diverge by design.
+    """
+    answer = corpus.query_engine().claims_as_of(
+        deployment_id=_DEPLOYMENT_ID, from_=_WINDOW_FROM, to=_WINDOW_TO, k=50
+    )
+    example_sql = CLAIMS_AS_OF_SQL.replace("$1::timestamptz", ":from_instant").replace(
+        "$2::timestamptz", ":to_instant"
+    )
+    point = datetime(2024, 6, 15, 12, tzinfo=UTC)
+    with corpus.engine.connect() as connection:
+        rows = list(
+            connection.execute(
+                text(example_sql),
+                {"from_instant": _WINDOW_FROM, "to_instant": _WINDOW_TO},
+            )
+        )
+        point_rows = list(
+            connection.execute(
+                text(example_sql),
+                {"from_instant": point, "to_instant": point},
+            )
+        )
+    assert rows
+    unknown = int(rows[0].unknown_precision_excluded)
+    assert unknown > 0
+    assert unknown == answer.excluded_unstamped
+    assert {row.claim_id for row in rows} == {claim.claim_id for claim in answer.evidence}
+    assert all(row.unknown_precision_excluded == unknown for row in rows)
+    window = inclusive_request(from_=point, to=point)
+    assert all(
+        row.canon_start is not None and row.canon_start < window.end
+        and (row.canon_end is None or row.canon_end > window.start)
+        for row in point_rows
+    )
 
 
 def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(

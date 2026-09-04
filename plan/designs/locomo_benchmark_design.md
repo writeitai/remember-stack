@@ -7,7 +7,16 @@
 > assured surface rolls this protocol; the sequencing is
 > `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
 
-> **Binding D107 amendment, WP-T.0a (2026-09-03).** The current protocol is
+> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
+> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> tools, budgets, prompts, scoring, and ingest component versions. The query
+> space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
+> `examples.claims_as_of` overlaps the half-open canonical window and counts
+> unknown precision by precision alone (audit 4.21). The surface manifest
+> hash, protocol identity, and fingerprint roll; ingestion provenance and the
+> library `claims_as_of` result set do not.
+
+> **Historical D107 amendment, WP-T.0a (2026-09-03).** The WP-T.0a protocol was
 > `RS-LoCoMo-Full-v22`. It retains v21's dataset, rendered documents, models,
 > tools, budgets, prompts, and scoring. Its pinned `adjudicate_observations`
 > component version now carries canonical half-open bounds (D107 §5): the
@@ -109,7 +118,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v22
+protocol                RS-LoCoMo-Full-v23
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -681,7 +690,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v22 requires to be
+- the non-secret `document_binding_generation`, which Full-v23 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -827,11 +836,11 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v22 \
+  --protocol full-v23 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v22`; ingest,
+`--protocol` exists only on `prepare`. The sole choice is `full-v23`; ingest,
 answer, judge, and summarize read it from the prepared run and expose no
 protocol override.
 

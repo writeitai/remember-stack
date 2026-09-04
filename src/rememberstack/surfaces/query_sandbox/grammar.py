@@ -50,6 +50,7 @@ MEMORY_V1_VIEW_NAMES: Final = frozenset(VIEW_CONTRACTS_BY_NAME)
 # exists, with the store-phase taxonomy).
 PUBLIC_SRF_NAMES: Final = frozenset(
     {
+        "canonical_bounds",
         "facts_as_of",
         "semantic_claims",
         "semantic_chunks",
@@ -78,6 +79,7 @@ SRF_CATEGORIES: Final[dict[str, str]] = {
     "lexical_chunks": "nomination",
     "fetch_chunk_bodies": "body_fetch",
     "facts_as_of": "bitemporal",
+    "canonical_bounds": "temporal",
     "graph_neighborhood": "graph",
     "graph_path": "graph",
     "graph_citation_path": "graph",

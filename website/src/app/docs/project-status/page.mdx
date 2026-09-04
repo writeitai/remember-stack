@@ -177,7 +177,10 @@ adjudication uses the same bounds
 and the partial expression index used by `claims_as_of`; claim storage is
 unchanged. Observation generations roll, so rebuilding changes stored
 ingestion provenance, and `claims_as_of` results change under the corrected
-window semantics.
+window semantics. Migration `p9_27_0048` publishes those bounds to open SQL as
+`memory_v1.canonical_bounds` and `claims_canonical`; the shipped
+`examples.claims_as_of` query overlaps the canonical window and counts
+unknown-precision claims by precision.
 
 **A release now carries the API contract beside the binaries.** The generated
 `openapi.json` is attached to the GitHub release, so client generation can pin
@@ -298,7 +301,11 @@ examined, and the failure looks like the deployment being down.
   retrieval, retry, reasoning-effort, or call-budget work.
 - Historical `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
   that directly satisfies the question. It does not add a retrieval or retry.
-- The current `RS-LoCoMo-Full-v22` pins canonical half-open claim bounds
+- The current `RS-LoCoMo-Full-v23` pins the query-space publication of those
+  bounds (D107 WP-T.0b): `memory_v1.canonical_bounds`, `claims_canonical`, and
+  the rewritten `examples.claims_as_of`. Ingestion and the library
+  `claims_as_of` path are unchanged from v22; the surface manifest hash rolls.
+- Historical `RS-LoCoMo-Full-v22` pins canonical half-open claim bounds
   (D107 WP-T.0a): a day-precision claim is found from an intraday `claims_as_of`
   window and the observation adjudicator no longer treats a day as a
   zero-width point. Ingestion provenance and `claims_as_of` results change; the

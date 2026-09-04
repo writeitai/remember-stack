@@ -53,6 +53,15 @@ WHERE claim_valid_from <= $1::timestamptz
 
 Claim validity is **source-asserted testimony**, not system belief.
 
+World-time overlap on claims uses the **half-open canonical window** on
+`claims_canonical.canon_start` / `canon_end`. A stored day is the whole
+calendar day; an instant is a non-empty point; unknown precision has no
+interval and is counted by precision, not by bounds. The shipped
+`examples.claims_as_of` query is the honest pattern.
+`memory_v1.canonical_bounds` is a top-level `FROM` function for an explicit
+window (`SELECT * FROM canonical_bounds($1, $2, $3)`), not a per-row
+expression.
+
 **RIGHT — start from adjudicated current facts, join testimony:**
 
 ```sql

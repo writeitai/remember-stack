@@ -1198,6 +1198,17 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             " WHERE claim_id = :claim)",
             {"claim": corpus.claim["erased"]},
         ),
+        "claims_canonical.superseded_testimony_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim AND NOT is_current_testimony"
+            " AND (claim_valid_precision = 'unknown' OR canon_start IS NOT NULL))",
+            {"claim": corpus.claim["old"]},
+        ),
+        "claims_canonical.forgotten_lineage_claim_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim)",
+            {"claim": corpus.claim["erased"]},
+        ),
         "claims_live.current_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_live"
             " WHERE claim_id = :claim)",
@@ -2689,7 +2700,7 @@ def test_corrupt_coordinates_leak_no_identifier_through_any_surface(
         public_surfaces = tuple(
             surface for surface in MATRIX_SURFACES if surface.caller_reachable
         )
-        assert len(public_surfaces) == 24
+        assert len(public_surfaces) == len(VIEW_CONTRACTS)
         leaks = {
             surface.name: _reachable_values(
                 connection=connection, relation=surface.name, forbidden=forbidden
@@ -3155,8 +3166,13 @@ def test_no_claim_row_is_ever_accepted_as_a_current_fact(corpus: _Corpus) -> Non
     assert not claim_columns & {"evaluated_at", "support_state", "evidence_count"}
 
 
-def test_claim_evidence_overlap_is_inclusive_at_both_endpoints(corpus: _Corpus) -> None:
-    """An instant claim has equal endpoints a half-open rule would erase."""
+def test_stored_claim_windows_keep_inclusive_instant_endpoints(
+    corpus: _Corpus,
+) -> None:
+    """D41 storage is inclusive: an instant has equal endpoints on the raw columns.
+
+    World-time overlap belongs on claims_canonical, not this predicate.
+    """
     overlap = (
         "SELECT coalesce(array_agg(claim_id ORDER BY claim_id), '{}'::uuid[])"
         " FROM memory_v1.claims_visible_history"

@@ -215,6 +215,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.changes_visible",
             "memory_v1.chunks_live",
             "memory_v1.claim_occurrences_live",
+            "memory_v1.claims_canonical",
             "memory_v1.claims_live",
             "memory_v1.claims_visible_history",
             "memory_v1.contradiction_members_current",
@@ -265,6 +266,7 @@ DELETION_TARGETS: Final = (
         executed_in="A",
         applicable_surfaces=(
             "memory_v1.changes_visible",
+            "memory_v1.claims_canonical",
             "memory_v1.claims_visible_history",
             "memory_v1.document_versions_visible",
             "memory_v1.testimony_currency_events_visible",
@@ -309,6 +311,7 @@ DELETION_TARGETS: Final = (
         applicable_surfaces=(
             "memory_v1.changes_visible",
             "memory_v1.claim_occurrences_live",
+            "memory_v1.claims_canonical",
             "memory_v1.claims_live",
             "memory_v1.claims_visible_history",
             "memory_v1.evidence_lineage",
@@ -361,6 +364,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.changes_visible",
             "memory_v1.chunks_live",
             "memory_v1.claim_occurrences_live",
+            "memory_v1.claims_canonical",
             "memory_v1.claims_live",
             "memory_v1.claims_visible_history",
             "memory_v1.document_versions_visible",

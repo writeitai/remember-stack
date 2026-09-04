@@ -140,6 +140,45 @@ def test_sql_twin_is_session_timezone_independent(
     assert row.e == expected.end, (session_zone, precision, "end")
 
 
+@pytest.mark.parametrize(
+    ("precision", "valid_from", "valid_until"),
+    [
+        ("year", "2022-01-01T00:00", "2022-12-31T00:00"),
+        ("day", "2023-05-07T12:00", "2023-05-07T12:00"),
+        ("instant", "2023-05-07T12:00:00.000001", "2023-05-07T12:00:00.000001"),
+        ("open", "2019-01-01T00:00", None),
+        ("unknown", "2022-01-01T00:00", "2022-12-31T00:00"),
+    ],
+)
+def test_query_space_canonical_bounds_wraps_the_public_twins(
+    database_engine: Engine,
+    precision: str,
+    valid_from: str,
+    valid_until: str | None,
+) -> None:
+    """memory_v1.canonical_bounds is the public twins, published as text precision."""
+    expected = canonical_bounds(
+        valid_from=_ts(valid_from),
+        valid_until=_ts(valid_until) if valid_until else None,
+        precision=precision,
+    )
+    with database_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT canon_start, canon_end"
+                " FROM memory_v1.canonical_bounds("
+                " CAST(:f AS timestamptz), CAST(:u AS timestamptz), :p)"
+            ),
+            {
+                "f": valid_from + "+00:00",
+                "u": (valid_until + "+00:00") if valid_until else None,
+                "p": precision,
+            },
+        ).one()
+    assert row.canon_start == expected.start
+    assert row.canon_end == expected.end
+
+
 def test_prompt_dates_render_the_utc_calendar_day() -> None:
     """A driver row in a non-UTC session zone must still print the UTC day."""
     from zoneinfo import ZoneInfo

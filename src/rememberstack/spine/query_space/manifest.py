@@ -233,6 +233,27 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
         )
     functions.append(
         {
+            "name": "canonical_bounds",
+            "target": "claims",
+            "channel": "temporal",
+            "arguments_min": 3,
+            "arguments_max": 3,
+            "arguments": [
+                {"name": "valid_from", "type": "timestamptz", "required": True},
+                {"name": "valid_until", "type": "timestamptz", "required": True},
+                {"name": "valid_precision", "type": "text", "required": True},
+            ],
+            "volatility": "immutable",
+            "security": "definer",
+            "filters": [],
+            "pre_rank_filters": [],
+            "columns": ["canon_start", "canon_end"],
+            "column_types": ["timestamptz", "timestamptz"],
+            "parallel": "safe",
+        }
+    )
+    functions.append(
+        {
             # Pure SQL: it needs no projection, so PostgreSQL runs it directly
             # and its arity is enforced by the function itself.
             "name": "facts_as_of",
