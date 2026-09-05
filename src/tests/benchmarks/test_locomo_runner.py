@@ -20,6 +20,7 @@ from benchmarks.locomo.dataset import DATASET_SHA256
 from benchmarks.locomo.dataset import item_ids_hash
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
+from benchmarks.locomo.model import DiscriminatedAnswerAgentStep
 from benchmarks.locomo.model import IngestRecord
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import JudgeRecord
@@ -30,6 +31,7 @@ from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import LoCoMoTurn
 from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import QuestionManifest
+from benchmarks.locomo.model import RunConfiguration
 from benchmarks.locomo.model import RunState
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
@@ -40,6 +42,7 @@ from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import PROTOCOL_NAME
+from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.retrieval import answer_tool_catalog
 from benchmarks.locomo.retrieval import assured_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
@@ -51,9 +54,11 @@ from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ExecutionGuardError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
+from benchmarks.locomo.runner import preflight_provider
 from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import ProviderInfrastructureError
 from benchmarks.locomo.runner import ProviderPreflightError
+from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
 import httpx
@@ -62,6 +67,8 @@ import pytest
 from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.vertex import VertexAccessError
+from rememberstack.adapters.vertex import VertexProviderError
 from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import EmbeddingRequest
@@ -3262,3 +3269,231 @@ def test_preflight_rejects_a_reachable_but_unusable_chat_model(
         raw_client.close()
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["ingests"] == {}
+
+
+class _RaisingProvider:
+    """Provider whose every generation raises one prepared error."""
+
+    def __init__(self, *, error: Exception) -> None:
+        self.error = error
+
+    def generate(
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        del request, response_type
+        raise self.error
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        raise AssertionError(f"unexpected embed call: {request.model}")
+
+
+def test_vertex_access_loss_stops_without_an_answer_checkpoint() -> None:
+    """A revoked federation or disabled API must halt, exactly like empty credit."""
+    client, raw_client = _memory_client()
+    state = _run_state()
+    provider = _RaisingProvider(
+        error=VertexAccessError(
+            "Vertex /chat/completions returned 403: PERMISSION_DENIED"
+        )
+    )
+    try:
+        with pytest.raises(
+            ProviderInfrastructureError, match="Vertex access unavailable"
+        ):
+            _answer_one(
+                question=_question(),
+                client=client,
+                provider=provider,
+                tools=(_tool(),),
+                doc_sessions={},
+                state=state,
+                max_agent_calls=9,
+                max_evaluator_cost_usd=Decimal("1"),
+            )
+    finally:
+        raw_client.close()
+
+    assert state.answers == {}
+    assert state.interrupted_answer_calls == 1
+    assert state.interrupted_usages == []
+    assert state.evaluator_cost_usd == 0
+
+
+def test_vertex_access_loss_stops_without_a_judge_checkpoint() -> None:
+    state = _run_state()
+    with pytest.raises(ProviderInfrastructureError, match="Vertex access unavailable"):
+        _judge_one(
+            question=_question(),
+            answer=AnswerRecord(
+                item_id="conv-test/qa/0000",
+                sample_id="conv-test",
+                category=4,
+                question="Where?",
+                gold_answer="Prague",
+                gold_evidence=("D1:1",),
+                retrieval_succeeded=True,
+                retrieval_latency_ms=1,
+                generated_answer="Prague",
+                reader_called=True,
+                agent_call_count=1,
+                reader_attempts=1,
+            ),
+            provider=_RaisingProvider(
+                error=VertexAccessError(
+                    "Vertex /chat/completions returned 403: PERMISSION_DENIED"
+                )
+            ),
+            state=state,
+            max_judge_calls=1,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+
+    assert state.judges == {}
+    assert state.interrupted_judge_calls == 1
+    assert state.evaluator_cost_usd == 0
+
+
+def test_vertex_throttling_is_one_failed_answer_not_a_stopped_run() -> None:
+    """Ordinary Vertex failures keep the OpenRouter contract: no retry, one record."""
+    client, raw_client = _memory_client()
+    state = _run_state()
+    try:
+        record = _answer_one(
+            question=_question(),
+            client=client,
+            provider=_RaisingProvider(
+                error=VertexProviderError(
+                    "Vertex /chat/completions returned 429: RESOURCE_EXHAUSTED"
+                )
+            ),
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+        )
+    finally:
+        raw_client.close()
+
+    assert record.failure is not None
+    assert record.failure.kind == "reader"
+    assert "returned 429" in record.failure.message
+    assert record.agent_call_count == 1
+    assert state.interrupted_answer_calls == 0
+
+
+def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
+    """The pre-ingest probe surfaces a bad federated identity in seconds."""
+    recorded: list[ProviderCallUsage] = []
+
+    with pytest.raises(ProviderPreflightError, match="is not usable"):
+        preflight_provider(
+            provider=_RaisingProvider(
+                error=VertexAccessError(
+                    "Vertex /chat/completions returned 403: SERVICE_DISABLED"
+                )
+            ),
+            embedding_model="qwen/qwen3-embedding-8b",
+            before_call=lambda: None,
+            record_usage=recorded.append,
+            answer_agent_model="google/gemma-4-26b-a4b-it-maas",
+        )
+    assert recorded == []
+
+
+def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
+    """The CLI composes providers from the frozen choice, not from ambient env."""
+    protocol = PROTOCOL_REGISTRY["full-v22-gemma-vertex"]
+    configuration = RunConfiguration(
+        protocol_name=protocol.name,
+        adapter_version="synthetic",
+        prepared_at=datetime(2026, 9, 4, tzinfo=timezone.utc),
+        repository_revision="deadbeef",
+        dataset_path="/data/locomo10.json",
+        dataset_commit="commit",
+        dataset_sha256="dataset",
+        tier="smoke",
+        manifest_sha256="manifest",
+        item_ids_sha256="items",
+        documents_sha256="documents",
+        item_count=1,
+        sample_ids=("conv-1",),
+        answer_agent_model=protocol.answer_agent_model,
+        surface_manifest_hash="surface",
+        tool_catalog_sha256="tools",
+        answer_prompt_sha256="answer-prompt",
+        judge_prompt_sha256="judge-prompt",
+        answer_schema_sha256="answer-schema",
+        judge_schema_sha256="judge-schema",
+        protocol_fingerprint="fingerprint",
+    )
+    (tmp_path / "run.json").write_text(
+        configuration.model_dump_json(), encoding="utf-8"
+    )
+
+    resolved = run_protocol(run_dir=tmp_path)
+
+    assert resolved is protocol
+    assert resolved.answer_agent_provider == "vertex"
+    assert resolved.judge_provider == "openrouter"
+
+
+class _DiscriminatedProvider:
+    """Provider that emits branch-shaped steps, as the Vertex route does."""
+
+    def __init__(self) -> None:
+        self.schemas: list[type[object]] = []
+
+    def generate(
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        self.schemas.append(response_type)
+        if "TOOL TRACE SO FAR:\n[]" in request.prompt:
+            payload = (
+                '{"action":"tool","arguments_json":"{\\"query\\":\\"Where?\\"}",'
+                '"tool_name":"testimony_context"}'
+            )
+        else:
+            payload = '{"action":"answer","answer":"Prague"}'
+        return GeneratedResponse(
+            output=response_type.model_validate_json(payload),
+            usage=ProviderCallUsage(
+                model_name=request.model,
+                tokens_in=10,
+                tokens_out=1,
+                cost_usd=Decimal("0.00001"),
+                latency_ms=1,
+            ),
+        )
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        raise AssertionError(f"unexpected embed call: {request.model}")
+
+
+def test_answer_loop_completes_with_the_discriminated_step_schema() -> None:
+    """A protocol pinning the union shape runs the same tool-then-answer loop."""
+    client, raw_client = _memory_client()
+    state = _run_state()
+    provider = _DiscriminatedProvider()
+    try:
+        record = _answer_one(
+            question=_question(),
+            client=client,
+            provider=provider,
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            answer_agent_model="google/gemma-4-26b-a4b-it-maas",
+            answer_schema=DiscriminatedAnswerAgentStep,
+        )
+    finally:
+        raw_client.close()
+
+    assert provider.schemas == [DiscriminatedAnswerAgentStep] * 2
+    assert record.failure is None
+    assert record.generated_answer == "Prague"
+    assert record.agent_call_count == 2
+    assert [call.name for call in record.tool_calls] == ["testimony_context"]
+    assert record.tool_calls[0].arguments == {"query": "Where?"}

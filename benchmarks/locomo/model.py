@@ -15,6 +15,7 @@ from pydantic import Field
 from pydantic import JsonValue
 from pydantic import model_serializer
 from pydantic import model_validator
+from pydantic import RootModel
 from pydantic import SerializerFunctionWrapHandler
 
 from rememberstack.model import ContextBundleV1
@@ -28,11 +29,14 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v22"]
-ProtocolName = Literal["RS-LoCoMo-Full-v22"]
+ProtocolKey = Literal["full-v22", "full-v22-gemma-vertex"]
+ProtocolName = Literal["RS-LoCoMo-Full-v22", "RS-LoCoMo-Full-v22-GemmaVertex"]
 SourceTimezoneBasis = Literal["assumed_utc"]
-AnswerAgentModel = Literal["openai/gpt-5.6-luna"]
+AnswerAgentModel = Literal["openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it-maas"]
 JudgeModel = Literal["openai/gpt-5.6-luna"]
+ProviderKey = Literal["openrouter", "vertex"]
+"""Which adapter family serves a protocol seat: the shipped OpenRouter binding
+or the keyless Vertex managed-open-model binding."""
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]
@@ -238,13 +242,7 @@ class AnswerAgentStep(FrozenModel):
         the agent's tool-call envelope must not masquerade as a retrieval
         failure, but it must not vanish either.
         """
-        raw = self.arguments_json.strip()
-        if not raw:
-            return {}, ""
-        decoded, end = json.JSONDecoder().raw_decode(raw)
-        if not isinstance(decoded, dict):
-            raise ValueError("arguments_json must encode a JSON object")
-        return decoded, raw[end:].strip()
+        return _parse_arguments_json(raw=self.arguments_json)
 
     @model_validator(mode="after")
     def require_one_action_shape(self) -> "AnswerAgentStep":
@@ -261,6 +259,85 @@ class AnswerAgentStep(FrozenModel):
         elif not self.answer or self.tool_name is not None:
             raise ValueError("an answer step requires only a non-empty answer")
         return self
+
+
+def _parse_arguments_json(*, raw: str) -> tuple[dict[str, object], str]:
+    """Decode the first JSON object in a tool-arguments string, keeping the rest."""
+    stripped = raw.strip()
+    if not stripped:
+        return {}, ""
+    decoded, end = json.JSONDecoder().raw_decode(stripped)
+    if not isinstance(decoded, dict):
+        raise ValueError("arguments_json must encode a JSON object")
+    return decoded, stripped[end:].strip()
+
+
+class ToolStep(FrozenModel):
+    """The tool branch of a discriminated answer-agent step."""
+
+    action: Literal["tool"]
+    tool_name: NonEmpty
+    arguments_json: str
+
+
+class AnswerStep(FrozenModel):
+    """The answer branch of a discriminated answer-agent step."""
+
+    action: Literal["answer"]
+    answer: NonEmpty
+
+
+class DiscriminatedAnswerAgentStep(
+    RootModel[Annotated[ToolStep | AnswerStep, Field(discriminator="action")]]
+):
+    """`AnswerAgentStep` as a two-branch union, for order-enforcing decoders.
+
+    Same decision, same field names, same reading interface as
+    `AnswerAgentStep`; only the JSON *shape* differs. Some constrained decoders
+    (observed on Google's managed Gemma route, 2026-09-04) emit object keys in
+    alphabetical order and demand every required key, so the flat step forces
+    the model to fill `answer` before `tool_name`; the model then writes the
+    tool name into `answer` and dead-ends on the missing key, padding
+    whitespace until the output cap. A union whose branches each carry only the
+    keys that branch needs has no key the model must invent, so it completes.
+    Protocols pin whichever shape their answer model completes reliably; the
+    prompt is unchanged because the key names are unchanged.
+    """
+
+    @property
+    def action(self) -> Literal["tool", "answer"]:
+        """The branch the model chose."""
+        return self.root.action
+
+    @property
+    def tool_name(self) -> str | None:
+        """The requested tool on a tool step; None on an answer step."""
+        return self.root.tool_name if isinstance(self.root, ToolStep) else None
+
+    @property
+    def arguments_json(self) -> str:
+        """The encoded tool arguments on a tool step; "{}" on an answer step."""
+        return self.root.arguments_json if isinstance(self.root, ToolStep) else "{}"
+
+    @property
+    def answer(self) -> str | None:
+        """The final answer on an answer step; None on a tool step."""
+        return self.root.answer if isinstance(self.root, AnswerStep) else None
+
+    def parsed_arguments(self) -> tuple[dict[str, object], str]:
+        """Decode the tool arguments exactly as `AnswerAgentStep` does."""
+        return _parse_arguments_json(raw=self.arguments_json)
+
+    @model_validator(mode="after")
+    def require_parseable_tool_arguments(self) -> "DiscriminatedAnswerAgentStep":
+        """Reject a tool step whose arguments are not a JSON object up front."""
+        if isinstance(self.root, ToolStep):
+            self.parsed_arguments()
+        return self
+
+
+AnswerStepSchema = type[AnswerAgentStep] | type[DiscriminatedAnswerAgentStep]
+"""The step shapes a protocol may pin; both expose the same reading interface."""
 
 
 class ToolCallRecord(FrozenModel):

@@ -16,10 +16,15 @@ from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
+from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
+from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters import VertexModelProvider
+from rememberstack.adapters import VertexSettings
+from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -48,13 +53,13 @@ def main(argv: list[str] | None = None) -> int:
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
-                    provider=_provider(),
+                    provider=_provider(run_dir=args.run),
                 )
             for record in records:
                 print(record.model_dump_json())
             return 0
         if args.command == "answer":
-            provider = _provider()
+            provider = _provider(run_dir=args.run)
             with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                 records = answer_sample(
                     run_dir=args.run,
@@ -77,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_judge_calls=args.max_judge_calls,
                 max_evaluator_cost_usd=args.max_evaluator_cost_usd,
                 execute=args.execute,
-                provider=_provider(),
+                provider=_provider(run_dir=args.run),
             )
             for record in records:
                 print(record.model_dump_json())
@@ -97,9 +102,31 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _provider() -> OpenRouterModelProvider:
-    """Compose the existing typed OpenRouter adapter from settings."""
-    return OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
+def _provider(*, run_dir: Path) -> ModelProviderPort:
+    """Compose the adapters the run's frozen protocol needs, from settings.
+
+    OpenRouter is always composed: it serves embeddings for the preflight and
+    every seat the protocol leaves on it. When the protocol pins a seat to
+    Vertex, the keyless Vertex adapter is composed eagerly -- so a missing
+    project id or credential fails here, before any stage work -- and the
+    pinned model names route to it while everything else stays on OpenRouter.
+    """
+    protocol = run_protocol(run_dir=run_dir)
+    openrouter = OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
+    vertex_models = {
+        model
+        for model, provider in (
+            (protocol.answer_agent_model, protocol.answer_agent_provider),
+            (protocol.judge_model, protocol.judge_provider),
+        )
+        if provider == "vertex"
+    }
+    if not vertex_models:
+        return openrouter
+    vertex = VertexModelProvider(settings=VertexSettings.model_validate({}))
+    return ModelRoutedProvider(
+        routes={model: vertex for model in vertex_models}, default=openrouter
+    )
 
 
 def _positive_decimal(value: str) -> Decimal:
