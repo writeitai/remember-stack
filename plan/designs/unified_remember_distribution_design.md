@@ -139,7 +139,7 @@ D92 originally modeled `remember login` as a flat client storing a single deploy
 3. **Preshared Secret Parity for Self-Hosted Engines**:
    - Self-hosted engines authenticate via `HashedBearerAuth` matching the SHA-256 digest of the presented bearer secret against `API_BEARER_BIND`.
    - Possessing this bearer secret grants full authority over the instance.
-   - Consequently, self-hosted tokens are treated with the **exact same confidentiality and secret-isolation protections** (D61/D92/D108) as cloud tokens: zero git commits, `0600` disk permissions, and process-isolated environment variables.
+   - Consequently, self-hosted tokens are treated with the **exact same confidentiality and secret-isolation protections** (D92/D108) as cloud tokens: zero git commits, `0600` disk permissions, and process-isolated environment variables.
 
 ---
 
@@ -159,33 +159,37 @@ Options:
   --help                           Show this message and exit
 ```
 
-### 4.2 Credential Safety & Invariants (D61 / D92 / D108)
+### 4.2 Credential Safety & Invariants (D92 / D108)
 1. **Zero Secret Leakage in Git**: Project-local configuration files (`.cursor/mcp.json`, `.agents/mcp_config.json`, `.codex/config.toml`) must **never** embed plaintext API tokens.
 2. **Ambient Credential Resolution**:
    - The CLI executable resolves credentials dynamically at runtime via the precedence cascade in §3.4.
    - Injected harness configuration delegates entirely to the local CLI binary or references standard environment variable interpolation (`${env:REMEMBER_TOKEN}`).
 
 ### 4.3 Durable Harness Launcher Strategy (`uvx` vs System PATH)
-A common pitfall with ephemeral package runners and GUI editors (e.g. Cursor, VS Code, Claude Desktop) is that GUI applications on macOS and Linux are launched with a minimal system environment (`PATH=/usr/bin:/bin`) that does not inherit interactive shell paths (such as `~/.local/bin` where `uvx` and `uv` reside, or an active virtualenv). Naively emitting bare `remember` or bare `uvx` results in immediate `FileNotFoundError` upon editor restart.
+A common pitfall with ephemeral package runners and GUI editors (e.g. Cursor, VS Code, Claude Desktop) is that GUI applications on macOS and Linux are launched with a minimal system environment (`PATH=/usr/bin:/bin`) that does not inherit interactive shell paths (such as `~/.local/bin` where `uvx` and `uv` reside, or an active virtualenv). Naively emitting bare `remember` or bare `uvx` results in immediate `FileNotFoundError` upon editor restart or background agent invocation.
 
 To guarantee zero-friction, permanent launcher operation across all harness execution contexts:
 1. **Durable Binary Resolution**:
    - `remember setup` inspects the environment to locate the absolute path to the launcher:
      - `resolved_remember = shutil.which("remember")` (persistent CLI install).
      - `resolved_uvx = shutil.which("uvx")` (uv tool runner).
-2. **Durable Launcher Emission**:
-   - **When `remember` is on persistent system PATH** (e.g. `/usr/local/bin/remember` or `/opt/homebrew/bin/remember` outside temporary cache):
-     - Uses `"command": resolved_remember` (or bare `"remember"` if in standard system `/usr/local/bin`), `"args": ["mcp"]`.
+2. **Universal Absolute Launcher Emission**:
+   - **When `remember` is installed on persistent system PATH**:
+     - Emits the fully-resolved absolute binary path:
+       - `"command": resolved_remember` (e.g. `"/usr/local/bin/remember"` or `"/opt/homebrew/bin/remember"`).
+       - `"args": ["mcp"]`.
    - **When invoked via `uvx` or when `remember` is not globally installed**:
-     - Uses the resolved absolute path to `uvx`:
+     - Emits the fully-resolved absolute binary path to `uvx`:
        ```json
        {
          "command": "/Users/<user>/.local/bin/uvx",
          "args": ["remember", "mcp"]
        }
        ```
-     - For harnesses that support explicit environment blocks (e.g. Cursor, Claude Desktop), optionally injects the resolved directory into `"env": { "PATH": "..." }` to safeguard child processes.
-     - For CLI-driven harness configuration (such as `claude mcp add` in an active shell session), bare `uvx remember mcp` is used because the shell environment already contains the user's PATH.
+   - **For CLI Registration Harnesses (e.g. Claude Code CLI)**:
+     - Always registers with the resolved absolute path (`claude mcp add remember -- <resolved_launcher_path> [remember] mcp`) so that subsequent Claude sessions launched from IDE extensions or minimal-PATH environments do not fail when the registering shell's PATH is absent.
+   - **Environment Guarding**:
+     - For harnesses supporting explicit environment blocks (e.g. Cursor, Claude Desktop), optionally injects the resolved directory into `"env": { "PATH": "..." }` to safeguard child processes.
    - Outputs a friendly hint:
      > *"Tip: Run `uv tool install remember` to install the `remember` CLI permanently to your shell PATH."*
 
@@ -193,11 +197,13 @@ To guarantee zero-friction, permanent launcher operation across all harness exec
 
 | Harness | Detection Trigger | Configuration Action | Launch Command Emitted |
 | :--- | :--- | :--- | :--- |
-| **Cursor** | `.cursor/` directory exists | 1. Merges `remember` into `.cursor/mcp.json`<br>2. Writes `.cursor/rules/remember.mdc` | `<resolved_uvx_path> remember mcp` *(or `remember mcp` if in system PATH)* |
-| **Claude Code** | `claude` CLI on PATH | Executes native `claude mcp add remember -- <command>` | `claude mcp add remember -- uvx remember mcp` |
-| **Claude Desktop** | `claude_desktop_config.json` exists | Merges `mcpServers.remember` into configuration | `<resolved_uvx_path> remember mcp` |
-| **Codex** | `.codex/` or `config.toml` exists | Configures `[mcp_servers.remember]` table in `config.toml` | `command = "<resolved_uvx_path>"`, `args = ["remember", "mcp"]` |
-| **Antigravity** | `.agents/` directory exists | Writes `.agents/skills/remember/SKILL.md` and updates `mcp_config.json` | `<resolved_uvx_path> remember mcp` |
+| **Cursor** | `.cursor/` directory exists | 1. Merges `remember` into `.cursor/mcp.json`<br>2. Writes `.cursor/rules/remember.mdc` | `"command": "<resolved_launcher_path>"` |
+| **Claude Code** | `claude` CLI on PATH | Executes native `claude mcp add` registration | `claude mcp add remember -- <resolved_launcher_path> [remember] mcp` |
+| **Claude Desktop** | `claude_desktop_config.json` exists | Merges `mcpServers.remember` into configuration | `"command": "<resolved_launcher_path>"` |
+| **Codex** | `.codex/` or `config.toml` exists | Configures `[mcp_servers.remember]` table in `config.toml` | `command = "<resolved_launcher_path>"` |
+| **Antigravity** | `.agents/` directory exists | Writes `.agents/skills/remember/SKILL.md` and updates `mcp_config.json` | `"command": "<resolved_launcher_path>"` |
+
+*Note on `<resolved_launcher_path>`*: In all configurations, `<resolved_launcher_path>` is strictly the resolved absolute path to the binary (e.g. `/Users/<user>/.local/bin/uvx` with args `["remember", "mcp"]`, or `/usr/local/bin/remember` with args `["mcp"]`). Bare executable names are never emitted.
 
 ---
 
@@ -237,9 +243,9 @@ Decoupling client delivery from internal engine implementation requires strict, 
 
 ## 7. Consequences & Preserved Invariants
 
-- **D61, D91, D92 & D108 (Secret Isolation)**: API tokens and bearer secrets (both cloud and self-hosted) are never written into committed git repositories or project-local files.
+- **D92 & D108 (Secret Isolation)**: API tokens and bearer secrets (both cloud and self-hosted) are never written into committed git repositories or project-local files.
 - **D43 (Autonomous Bitemporal Memory)**: All recall and truth adjudication operates autonomously without blocking on human queues.
 - **D66 (Honest Status & Balance)**: Balance and credit transparency is maintained across both web UI and CLI (`remember balance`).
 - **D92 (CLI Credential Storage)**: Amended to store structured credentials with strict separation between the control-plane user session and per-project data-plane tokens.
-- **Durable Zero-Friction Onboarding**: `uvx remember setup` automatically configures persistent, absolute-path launchers (`<resolved_uvx_path> remember mcp`) that operate seamlessly without manual `$PATH` intervention or GUI editor `FileNotFoundError` failures.
+- **Durable Zero-Friction Onboarding**: `uvx remember setup` automatically configures persistent, absolute-path launchers (`<resolved_launcher_path> [remember] mcp`) that operate seamlessly without manual `$PATH` intervention or GUI editor `FileNotFoundError` failures.
 - **Zero Host-Dependency Friction**: Developers and AI agents never encounter C-extension compilation errors when adopting Remember.
