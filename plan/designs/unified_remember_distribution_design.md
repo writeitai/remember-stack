@@ -169,17 +169,18 @@ Options:
 A common pitfall with ephemeral package runners and GUI editors (e.g. Cursor, VS Code, Claude Desktop) is that GUI applications on macOS and Linux are launched with a minimal system environment (`PATH=/usr/bin:/bin`) that does not inherit interactive shell paths (such as `~/.local/bin` where `uvx` and `uv` reside, or an active virtualenv). Naively emitting bare `remember` or bare `uvx` results in immediate `FileNotFoundError` upon editor restart or background agent invocation.
 
 To guarantee zero-friction, permanent launcher operation across all harness execution contexts:
-1. **Durable Binary Resolution**:
-   - `remember setup` inspects the environment to locate the absolute path to the launcher:
-     - `resolved_remember = shutil.which("remember")` (persistent CLI install).
-     - `resolved_uvx = shutil.which("uvx")` (uv tool runner).
+1. **Durable Binary Resolution & Absolute Normalization**:
+   - `remember setup` locates launcher candidates and strictly normalizes and validates them into canonical absolute paths (`Path(candidate).resolve().as_posix()`), explicitly rejecting relative paths to ensure executions remain valid regardless of the process working directory:
+     - `candidate = shutil.which("remember")` -> `resolved_remember = Path(candidate).resolve().as_posix() if candidate else None`
+     - `candidate_uvx = shutil.which("uvx")` -> `resolved_uvx = Path(candidate_uvx).resolve().as_posix() if candidate_uvx else None`
+   - If neither candidate can be resolved to a verified absolute executable, `remember setup` halts with clear operator instructions to install `uv` or run `uv tool install remember`.
 2. **Universal Absolute Launcher Emission**:
    - **When `remember` is installed on persistent system PATH**:
-     - Emits the fully-resolved absolute binary path:
+     - Emits the fully-resolved, canonical absolute binary path:
        - `"command": resolved_remember` (e.g. `"/usr/local/bin/remember"` or `"/opt/homebrew/bin/remember"`).
        - `"args": ["mcp"]`.
    - **When invoked via `uvx` or when `remember` is not globally installed**:
-     - Emits the fully-resolved absolute binary path to `uvx`:
+     - Emits the fully-resolved, canonical absolute binary path to `uvx`:
        ```json
        {
          "command": "/Users/<user>/.local/bin/uvx",
