@@ -78,20 +78,20 @@ The `remember` binary becomes the single command-line interface for the entire R
 
 ### 3.1 Control Plane Commands (`https://api.remember.dev`)
 Authenticated via user session credentials obtained through OAuth device-grant login:
-- **`remember login`**: Initiates device-code OAuth flow against `remember.dev`, prompts in terminal or opens browser, writes owner-only `0600` credential file to `~/.config/remember/credentials.json`.
-- **`remember logout`**: Idempotently revokes the active token at the control plane and removes stored credentials.
+- **`remember login`**: Initiates device-code OAuth flow against `https://api.remember.dev` (or explicit `--control-plane-url`), prompts in terminal or opens browser, receives user session credentials and active tenant bindings, and writes owner-only `0600` credential file to `~/.config/remember/credentials.json`.
+- **`remember logout`**: Idempotently revokes the active session token at the control plane and removes stored credentials.
 - **`remember whoami`**: Displays authenticated identity, active organization, and current project context.
 - **`remember balance`** (or `remember billing`): Fetches current credit balance and subscription status (e.g. `Current balance: €15.00 [Active]`).
 - **`remember projects list`**: Enumerates available tenant deployments in the user's organization.
-- **`remember projects create <name>`**: Provisions a new tenant data plane via the control-plane API.
-- **`remember switch <project>`**: Sets the default active project in local configuration.
+- **`remember projects create <name>`**: Provisions a new tenant data plane via the control-plane API and registers its scoped access token.
+- **`remember switch <project>`**: Sets the default active project and selects its corresponding tenant data-plane token in local configuration.
 - **`remember members list`** / **`remember members invite <email>`**: Manages team organization seats.
 
 *Self-Hosted Behavior*: When configured in self-hosted mode (`--self-hosted`), executing control-plane commands prints a clean, honest notice:
 > *"Note: You are connected to a self-hosted engine (http://localhost:8000). Projects, team members, and billing are cloud-managed services on remember.dev."*
 
 ### 3.2 Data Plane Commands (`https://<tenant>.dp.remember.dev` or `http://localhost:8000`)
-Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or non-secret bearer tokens (self-hosted):
+Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or pre-shared bearer secrets (`API_BEARER_BIND` in self-hosted mode):
 - **`remember setup [OPTIONS]`**: The Sentry-like AI harness bootstrapper (see §4).
 - **`remember ingest <path> [OPTIONS]`**: Streams markdown or source files through the E0 ingestion endpoint.
 - **`remember query <text> [OPTIONS]`**: Executes assured context retrieval (`fact_context` or `answer_context`) and prints formatted JSON or markdown summaries.
@@ -103,6 +103,43 @@ Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or non-secret
 - **`remember review` (Retired)**: The D24 human review queue (`review list`, `review decide`) was built for early prototype cluster curation. The production engine uses autonomous bitemporal adjudication (D3/D43/D107). Human review has been removed from all documentation and is not part of the public product.
 - **`remember budget` (Retired from Client)**: Spend ceiling inspection on local database ledgers is an internal worker detail, replaced on the platform level by `remember balance`.
 - **`remember ops` (Confined to Internal/Docker)**: SRE tasks (`ops replay`, `ops rebuild`) are executed inside the server container environment via internal scripts, not exposed on the developer client CLI.
+
+### 3.4 Credential Architecture & Token Isolation (Amending D92)
+D92 originally modeled `remember login` as a flat client storing a single deployment-bound token. D108 amends D92 to establish structured, multi-tenant credential storage with strict audience isolation:
+
+```json
+{
+  "version": 1,
+  "control_plane": {
+    "url": "https://api.remember.dev",
+    "access_token": "umc_usr_...",
+    "org_id": "0191...",
+    "user_id": "0191...",
+    "email": "dev@example.com"
+  },
+  "active_project_id": "0191-proj-alpha",
+  "projects": {
+    "0191-proj-alpha": {
+      "name": "production",
+      "data_plane_url": "https://tenant-alpha.dp.remember.dev",
+      "data_plane_token": "umc_dp_..."
+    }
+  }
+}
+```
+
+1. **Strict Transport & Audience Isolation**:
+   - Control-plane credentials (`control_plane.access_token`) are used **exclusively** against `https://api.remember.dev` and are **never** forwarded to tenant data planes.
+   - Tenant data-plane tokens (`umc_dp_...`) are presented **only** to the tenant's data plane (`https://<tenant>.dp.remember.dev`).
+2. **Resolution Precedence for Data Plane Operations**:
+   - Explicit CLI flag: `--token <token>` and `--url <url>`.
+   - Explicit environment: `REMEMBER_TOKEN` and `REMEMBER_DATA_PLANE_URL`.
+   - Ambient stored project: `projects[active_project_id]`.
+   - Fallback self-hosted: `http://localhost:8000` with `REMEMBER_TOKEN`.
+3. **Preshared Secret Parity for Self-Hosted Engines**:
+   - Self-hosted engines authenticate via `HashedBearerAuth` matching the SHA-256 digest of the presented bearer secret against `API_BEARER_BIND`.
+   - Possessing this bearer secret grants full authority over the instance.
+   - Consequently, self-hosted tokens are treated with the **exact same confidentiality and secret-isolation protections** (D35/D65) as cloud tokens: zero git commits, `0600` disk permissions, and process-isolated environment variables.
 
 ---
 
@@ -123,34 +160,35 @@ Options:
 ```
 
 ### 4.2 Credential Safety & Invariants (D35 / D65)
-1. **Zero Secret Leakage in Git**: Project-local configuration files (`.cursor/mcp.json`, `.agents/mcp_config.json`) must **never** embed plaintext API tokens.
-2. **Resolution Cascade**:
-   - The CLI executable resolves credentials dynamically at runtime from:
-     1. Environment variables (`REMEMBER_TOKEN` / `REMEMBER_DATA_PLANE_URL`).
-     2. Stored user credentials (`~/.config/remember/credentials.json`, file mode `0600`).
-     3. Interactive device login prompt (`remember login`).
-   - Injected harness configuration simply invokes the local binary:
-     ```json
-     {
-       "mcpServers": {
-         "remember": {
-           "command": "remember",
-           "args": ["mcp", "--profile", "default"]
-         }
-       }
-     }
-     ```
-     or references standard environment interpolation (`${env:REMEMBER_TOKEN}`).
+1. **Zero Secret Leakage in Git**: Project-local configuration files (`.cursor/mcp.json`, `.agents/mcp_config.json`, `.codex/config.toml`) must **never** embed plaintext API tokens.
+2. **Ambient Credential Resolution**:
+   - The CLI executable resolves credentials dynamically at runtime via the precedence cascade in §3.4.
+   - Injected harness configuration delegates entirely to the local CLI binary or references standard environment variable interpolation (`${env:REMEMBER_TOKEN}`).
 
-### 4.3 Harness Configuration Matrix
+### 4.3 Durable Harness Launcher Strategy (`uvx` vs System PATH)
+A common pitfall with ephemeral package runners like `uvx` is that `uvx remember setup` executes in a temporary cache environment without adding `remember` to the user's persistent shell `$PATH`. If generated MCP configurations naively reference `"command": "remember"`, downstream coding agents fail to start the server upon restart.
 
-| Harness | Detection Trigger | Configuration Action |
-| :--- | :--- | :--- |
-| **Cursor** | `.cursor/` directory exists | 1. Merges `remember` into `.cursor/mcp.json`<br>2. Writes `.cursor/rules/remember.mdc` |
-| **Claude Code** | `claude` CLI on PATH | Executes native `claude mcp add remember -- remember mcp` |
-| **Claude Desktop** | `claude_desktop_config.json` exists | Merges `mcpServers.remember` into configuration |
-| **Codex** | `.codex/` or `config.toml` exists | Configures `[mcp_servers.remember]` table in `config.toml` |
-| **Antigravity** | `.agents/` directory exists | Writes `.agents/skills/remember/SKILL.md` and updates `mcp_config.json` |
+To guarantee zero-friction, permanent launcher operation:
+1. **Runtime PATH Detection**:
+   - `remember setup` probes whether `remember` exists on the host's persistent `$PATH` (e.g. via `shutil.which("remember")` outside temporary uv cache directories).
+2. **Durable Launcher Emission**:
+   - **When `remember` is on persistent `$PATH`** (installed via `uv tool install remember`, `pipx`, or `pip` in active venv):
+     - Uses `"command": "remember"`, `"args": ["mcp"]`.
+   - **When invoked via `uvx` or when `remember` is not on `$PATH`**:
+     - Uses `"command": "uvx"`, `"args": ["remember", "mcp"]` (or `"command": "uv", "args": ["tool", "run", "remember", "mcp"]`).
+     - Because the user already has `uv` installed (having invoked `uvx remember setup`), this configuration is guaranteed to succeed across all editor sessions and IDE reboots without requiring any manual PATH tampering.
+   - Outputs a friendly hint:
+     > *"Tip: Run `uv tool install remember` to install the `remember` CLI permanently to your shell PATH."*
+
+### 4.4 Harness Configuration Matrix
+
+| Harness | Detection Trigger | Configuration Action | Launch Command Emitted |
+| :--- | :--- | :--- | :--- |
+| **Cursor** | `.cursor/` directory exists | 1. Merges `remember` into `.cursor/mcp.json`<br>2. Writes `.cursor/rules/remember.mdc` | `uvx remember mcp` *(or `remember mcp` if on PATH)* |
+| **Claude Code** | `claude` CLI on PATH | Executes native `claude mcp add remember -- <command>` | `claude mcp add remember -- uvx remember mcp` |
+| **Claude Desktop** | `claude_desktop_config.json` exists | Merges `mcpServers.remember` into configuration | `uvx remember mcp` *(or `remember mcp` if on PATH)* |
+| **Codex** | `.codex/` or `config.toml` exists | Configures `[mcp_servers.remember]` table in `config.toml` | `command = "uvx"`, `args = ["remember", "mcp"]` |
+| **Antigravity** | `.agents/` directory exists | Writes `.agents/skills/remember/SKILL.md` and updates `mcp_config.json` | `uvx remember mcp` *(or `remember mcp` if on PATH)* |
 
 ---
 
@@ -190,7 +228,9 @@ Decoupling client delivery from internal engine implementation requires strict, 
 
 ## 7. Consequences & Preserved Invariants
 
-- **D35 & D65 (Secret Isolation)**: API tokens are never written into committed git repositories or project-local files.
+- **D35 & D65 (Secret Isolation)**: API tokens and bearer secrets (both cloud and self-hosted) are never written into committed git repositories or project-local files.
 - **D43 (Autonomous Bitemporal Memory)**: All recall and truth adjudication operates autonomously without blocking on human queues.
 - **D66 (Honest Status & Balance)**: Balance and credit transparency is maintained across both web UI and CLI (`remember balance`).
+- **D92 (CLI Credential Storage)**: Amended to store structured credentials with strict separation between the control-plane user session and per-project data-plane tokens.
+- **Durable Zero-Friction Onboarding**: `uvx remember setup` automatically configures persistent launchers (`uvx remember mcp`) that operate seamlessly without manual `$PATH` intervention.
 - **Zero Host-Dependency Friction**: Developers and AI agents never encounter C-extension compilation errors when adopting Remember.

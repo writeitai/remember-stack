@@ -5226,6 +5226,8 @@ D32, D43's untyped statement, D98, D100–D105.
 4. **Binary Ownership & Platform CLI**: The `remember` executable is owned exclusively by the `remember` package. It unifies:
    - **Control Plane**: `remember login`, `logout`, `whoami`, `balance`, `projects`, `members` (talking to `https://api.remember.dev`).
    - **Data Plane**: `remember setup`, `ingest`, `query`, `operations`, `mcp`, `doctor` (defaulting to Managed Cloud with `--self-hosted` for `http://localhost:8000`).
+   - **Credential Separation & Project Context**: Amends D92 to structure `credentials.json` with strict separation between control-plane user session tokens and per-project data-plane tokens. Control tokens are never forwarded to data planes; data-plane tokens never authorize control actions. Self-hosted bearer secrets receive identical secret-isolation guarantees (D35/D65).
+   - **Resilient Agent Bootstrapper (`remember setup`)**: When bootstrapping agent harnesses via `uvx`, generates durable launch commands (`uvx remember mcp` or persistent binary PATH detection) so configured MCP servers launch reliably across environment reboots.
 5. **Retirement of Legacy Surfaces**: `review` and `budget` commands are retired from public CLI surfaces.
 
 **Consequences.** Developers and AI coding agents have a single canonical package name (`remember`) with sub-second installation and zero C-extension compilation friction; `uvx remember setup` serves as the primary universal onboarding command; self-hosters run verified Docker Compose environments; the cloud control plane (projects, balance, members) is directly manageable from the terminal; and binary collisions are eliminated. Costs: migrating existing `rememberstack` PyPI users via deprecation notice, reorganizing repository packaging, and establishing cross-image CI contract tests between client and released engine containers.
@@ -5233,6 +5235,4 @@ D32, D43's untyped statement, D98, D100–D105.
 **Rejected.** Keeping two active packages on PyPI (perpetuates consumer confusion and collision); distributing the server as a bare-metal pip wheel (leads to host compilation failures; real deployments use Docker); splitting into a separate repository (unnecessary overhead for a focused team; monorepo guarantees atomic PRs and zero contract drift); renaming the `remember-stack` repository; maintaining human review queues in public interfaces (adjudication is autonomous).
 
 **Design.** `plan/designs/unified_remember_distribution_design.md`; amendment banner on `plan/designs/packaging_distribution_design.md`.
-
-**Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority). Preserves D35, D65, D66, D98, D107.
-
+**Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D35, D65, D66, D98, D107.
