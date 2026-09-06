@@ -5258,3 +5258,57 @@ D32, D43's untyped statement, D98, D100–D105.
 **Design.** `plan/designs/unified_documentation_and_query_space_design.md`.
 
 **Amends.** D66 (broadens in-repo documentation scope to serve as the unified authority for both OSS and Managed Cloud at `remember.dev/docs`). Replaces unsupported status of `open_query_execute` in cloud compatibility matrices. Preserves D61, D62, D91, D92, D98, D107, D108.
+
+
+## D110. Ordered temporal writes, autonomous corrections, and certified cache/forget lifecycle
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D107 separates source, world and belief clocks but leaves four
+implementation gates (#365–#368). D108 subsequently makes autonomous
+adjudication the truth authority, conflicting with D107's human temporal-review
+mechanism. Concurrent relation upsert also collapses events before identity
+judgment; a timer alone cannot certify cached text; forgotten source dates can
+survive in derived windows and replay records.
+
+**Decision.** Publish complete normalization answers and stage each relation
+assertion until ordered identity application. Freeze finite admission sets and
+preserve committed history under one block sequence; guarantee exact recorded
+replay without claiming an immutable seed can anticipate unseen future inputs.
+Use one guarded prepare/infer/revalidate mutation protocol for both fact planes,
+with existing adjudication logs as narrative authority. Autonomous corrections
+select evidence-backed canonical endpoints, preserve uncertainty, and compensate
+only components still owned by the reversed operation. Use complete future
+candidate/routing dependencies and checked text/vector freshness certificates;
+the existing work ledger alone schedules corrections and refresh events.
+
+Extend D74 in the same implementation: preserve independently supported
+endpoints, mark unsupported erased dates NULL/erased in the existing basis
+fields, and establish sanitized closed-block replay roots before scrubbing
+source-bearing history. An erased boundary produces disclosed temporal-membership
+uncertainty, including in counts/absence, rather than a fabricated current fact.
+Conversion preserves fact IDs and explicit legacy uncertainty while blocking
+incomplete generations; remove the legacy exclusion before applying uncapped
+occurrence conversions, then validate the final state-only constraint.
+
+**Alternatives and consequences.** Earliest-evidence reduction would create a
+second validity authority; human approval conflicts with D108; timer-only refresh
+can serve false current summaries; postponing deletion retains forgotten data.
+Dedicated locks across every provider call lose useful concurrency when complete
+revision validation and a durable input frontier suffice. Receipts and routing
+membership add storage; conservative block checkpoints can approach deployment
+size on connected history. Bounded enumeration, existing budget/retry limits,
+source-bearing data inventory and explicit uncertainty are required costs of
+correctness. No second scheduler, arbitrary edit API or public mutation grant is
+introduced.
+
+**Authority.** [Temporal writes and lifecycle design](plan/designs/temporal_write_and_lifecycle_design.md)
+and its [complete DDL](plan/designs/temporal_write_and_lifecycle_schema.sql),
+incorporated by `plan/designs/postgres_schema_design.md`. Analysis:
+[synthesis](plan/analysis/temporal_contract_synthesis.md),
+[relation ordering](plan/analysis/temporal_relation_staging.md),
+[corrections](plan/analysis/temporal_autonomous_corrections.md),
+[cache and forget](plan/analysis/temporal_cache_and_forget.md).
+Amends D107/D108, D88/D90, D55, D67 and D74; preserves the D60/D61 library
+boundary. Build order is `plan/plans/temporal_clocks.md`. This decision resolves
+the design gates; it does not certify T.1 implementation, conversion or release.

@@ -190,6 +190,9 @@ The managed cloud runs **this same engine**. Cloud adds operations and product c
 
 ## Contributing
 
+Architecture and delivery authority: [planning corpus](plan/README.md) and
+[decision log](decisions.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). Pull requests need the contributor-agreement checkbox in the PR template.
 
 ---

@@ -1,5 +1,8 @@
 # Design: claim-level E3 normalize fan-out
 
+> **Binding D110 amendment (2026-09-07).** D110 §§2–3 replace direct relation upsert in claim normalization with complete normalization receipts, assertion staging, closed admission and guarded ordered application. Observation flush precedes relation block units; fact-dependent follow-ups wait for their barrier. Claim-level concurrency remains.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 **Status:** revised after Codex design review — binding once review findings
 absorbed and PR lands on `main`  
 **Date:** 2026-08-10  

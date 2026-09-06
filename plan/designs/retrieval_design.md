@@ -1,5 +1,8 @@
 # Retrieval Design — the Query Machine
 
+> **Binding D110 amendment (2026-09-07).** D110 §§5–6 require checked cache text/vector freshness and explicit temporal-membership uncertainty when an endpoint basis is erased. Current aggregates and absence cannot turn omitted uncertain facts into complete counts or confident negatives; D107 source/occurrence clocks remain.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 > **Binding D107 amendment (2026-09-03).** Testimony grouping keys on the full
 > D41 tuple (or `asserted_at` when unknown) and `EvidenceResult` lists every
 > grouped member's times; the fact-grain `Validity`, `GraphEdge`, the

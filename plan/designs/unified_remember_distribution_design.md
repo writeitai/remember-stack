@@ -1,5 +1,8 @@
 # Unified `remember` Distribution, Container-First Engine, and Platform CLI (Design)
 
+> **Binding D110 amendment (2026-09-07).** D110 §§2, 4 supply the explicit autonomous temporal-correction contract that reconciles D108 authority with the superseded human mechanism in D107 §4.3. Existing plane adjudication logs record decisions; uncertainty does not create a public human queue.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 > **Binding D108 decision (2026-09-05).** The single canonical package on PyPI is **`remember`**.
 > The database and worker engine is distributed exclusively via Docker container images (`ghcr.io/writeitai/remember-stack:<tag>`)
 > and Docker Compose. `rememberstack` is retired from standalone PyPI distribution. The binary command

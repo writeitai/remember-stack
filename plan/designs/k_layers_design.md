@@ -1,5 +1,8 @@
 # K Plane — Compiled and Authored Knowledge (Design)
 
+> **Binding D110 amendment (2026-09-07).** D110 §5 requires checked freshness certificates over future candidates/routing and child dependencies, refresh through existing workers, and publication revalidation. Late work cannot expose stale generated text as current; authored pages retain their existing authority.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 > **Binding D107 amendment (2026-09-03).** The K prose writer's claim bundle
 > carries `asserted_at` and the D41 fields with the two-clock framing; the
 > deterministic fact sheet prints `valid from`/`valid until` only for
