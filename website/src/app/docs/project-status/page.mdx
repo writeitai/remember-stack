@@ -302,7 +302,10 @@ examined, and the failure looks like the deployment being down.
   retrieval, retry, reasoning-effort, or call-budget work.
 - Historical `RS-LoCoMo-Full-v20` also requires every distinct retrieved value
   that directly satisfies the question. It does not add a retrieval or retry.
-- The current `RS-LoCoMo-Full-v23` pins the query-space publication of those
+- The current `RS-LoCoMo-Full-v24` pins D107 WP-T.4: all four claim temporal
+  kinds, open-ended state windows, and full source timestamp headers. The
+  extractor generation rolls; the fact schema and query-space contract do not.
+- Historical `RS-LoCoMo-Full-v23` pins the query-space publication of those
   bounds (D107 WP-T.0b): `memory_v1.canonical_bounds`, `claims_canonical`, and
   the rewritten `examples.claims_as_of`. Ingestion and the library
   `claims_as_of` path are unchanged from v22; the surface manifest hash rolls.

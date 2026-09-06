@@ -1,5 +1,13 @@
 # LoCoMo full-system benchmark design
 
+> **D107 WP-T.4 protocol amendment (2026-09-06).** Full-v24 retains the
+> existing query-space contract and rolls extraction to teach all four D41
+> kinds and open-ended windows with full source timestamps. Both the default
+> and Gemma/Vertex variants use this extraction generation. Protocol identity
+> and fingerprints change; earlier protocol scores are directional comparisons.
+> Binding extraction semantics: `temporal_clocks_design.md` §6.
+
+
 > **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
 > two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
 > about), and the fact-grain `validity` fields with their bases and occurrence

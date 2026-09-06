@@ -586,6 +586,14 @@ def _require_all_object_properties(node: object) -> None:
         return
 
     node.pop("default", None)
+    if (
+        "$ref" in node
+        and set(node).issubset({"$ref", "description", "title"})
+        and len(node) > 1
+    ):
+        # Azure strict output rejects metadata siblings on $ref. A one-branch
+        # anyOf preserves the referenced type and the field-specific guidance.
+        node["anyOf"] = [{"$ref": node.pop("$ref")}]
     properties = node.get("properties")
     if isinstance(properties, dict):
         node["required"] = list(properties)
