@@ -923,13 +923,6 @@ def _run_review(args: argparse.Namespace) -> int:
         engine.dispose()
 
 
-def _inspect_budgets(*, ledger: Any, deployment_id: UUID) -> int:
-    """Print one current-window JSON record per configured deployment budget."""
-    for status in ledger.budget_status(deployment_id=deployment_id):
-        print(status.model_dump_json())
-    return 0
-
-
 def _run_budget(args: argparse.Namespace) -> int:
     """Compose the local WorkLedger and print configured budget state or show retirement notice."""
     try:
