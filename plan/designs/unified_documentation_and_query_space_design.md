@@ -127,21 +127,23 @@ The open query space is fully enabled on all Remember Cloud tenant deployments. 
    - Raw SQL queries never touch PostgreSQL unexamined.
    - The query AST is parsed using PostgreSQL's own grammar (`pglast 8.x`).
    - Mutations (`INSERT`, `UPDATE`, `DELETE`), DDL (`DROP`, `CREATE`, `ALTER`), administrative commands (`VACUUM`, `SET`, `GRANT`), and multi-statement queries are unconditionally rejected before execution.
-3. **Whitelisted `memory_v1` Views**:
-   - Queries are constrained strictly to the declared public schema views:
-     - `facts_current`, `facts_as_of`
-     - `graph_edges_current`, `graph_edges_as_of`
-     - `contradiction_members_current`, `contradiction_members_as_of`
-   - Direct queries against internal engine spine tables (`spine_facts`, `p1_lance_*`, `worker_leases`) fail immediately at parse time.
+3. **Authoritative `memory_v1` Schema Contract**:
+   - Queries are strictly validated against the authoritative `memory_v1` public surface defined in `plan/designs/open_query_space_design.md` §3.3 & §3.4 and `src/rememberstack/surfaces/query_sandbox/manifest.py`:
+     - **24 Public Relations (Views)**: The facts-layer surface (`facts_current`, `facts_visible_history`, `fact_claim_evidence_live`, `evidence_lineage`, `contradiction_members_current`, `testimony_currency_events_visible`, `graph_edges_current`, `graph_edges_visible_history`, `semantic_facts`), evidence & claim relations (`claims_current`, `claims_visible_history`, `claim_grounding_live`, `evidence_current`, `evidence_history`), chunk & document relations (`chunks_current`, `chunks_visible_history`, `documents_current`, `document_crossrefs_live`, `changes_visible`, `pages_live`, `page_evidence_visible`), and resolution relations (`identity_events_visible`, `resolution_decisions_visible`).
+     - **Allowlisted SQL-Callable Functions**: Schema-qualified and bounded functions: `facts_as_of(valid_at, believed_at, max_rows)` (the bitemporal point-in-time facts SRF), graph traversal helpers (`graph_neighborhood`, `graph_path`, `graph_citation_path`), and projection-backed calls (`semantic_claims`, `lexical_claims`, `semantic_chunks`, `lexical_chunks`, `fetch_chunk_bodies`, `semantic_facts`).
+   - Direct access to internal engine spine tables (`spine_facts`, `p1_lance_*`, `worker_leases`), non-public base evidence tables, or system catalogs is blocked at parse time.
+   - 100% data-plane parity: Cloud tenants have access to the exact same 24 relations and allowlisted functions as Self-Hosted deployments.
 4. **Sandboxed Execution Runtime (`QuerySandboxExecutor`)**:
    - Queries run inside explicit `READ ONLY` transaction blocks under a sandboxed, low-privilege role.
    - Hard clamps are applied via `SET LOCAL` session variables:
      - `statement_timeout = clamp_timeout_ms` (interactive default: 5,000ms).
      - Row count capped at `clamp_rows` (default: 100 rows).
      - Byte payload capped at `clamp_bytes` (default: 1 MB).
-5. **Spend Safety & Usage Metering**:
-   - Cloud data plane proxies count query executions under `path_id=search` / `open_query`.
-   - Rate limiting and balance decrements apply transparently, protecting tenants against rogue agent query loops.
+5. **Spend Safety, Request Admission & Usage Metering**:
+   - Request admission and spend protection are enforced at two levels:
+     - **Engine Level (Spend Lease Port)**: Update `_spend_gated_route` in `src/rememberstack/surfaces/http_api.py` to gate `/query/sql`, `/query/sql/explain`, and `/query/space`, reserving spend under `path_id="search"` (or dedicated `"open_query"`) with D46 spend lease reservation on entry and commit on 2xx response.
+     - **Cloud Gateway Level**: Proxy ingress validates tenant token balance and active project status before routing execution to the project's dedicated data plane pod.
+   - Rate limiting and query timeouts (5,000ms default) prevent runaway agent query loops or accidental high-resource scans.
 
 ### 4.2 Updated Cloud Compatibility Matrix
 The following SDK surfaces and endpoints move from `unsupported` to `supported` across all cloud compatibility manifests:
@@ -166,9 +168,13 @@ The following SDK surfaces and endpoints move from `unsupported` to `supported` 
 
 ### 5.2 Routing & Canonical Domain
 - **Canonical Address**: `https://remember.dev/docs` is the primary public entry point.
-- **Subdomain Redirect**: `https://docs.remember.dev/*` issues an HTTP 301 Permanent Redirect to `https://remember.dev/docs/*`.
+- **Subdomain Redirects (301 Permanent)**:
+  - Root: `https://docs.remember.dev/` → `https://remember.dev/docs`
+  - Existing paths already prefixed with `/docs/`: `https://docs.remember.dev/docs/:path*` → `https://remember.dev/docs/:path*` (avoids duplicate `/docs/docs/...`).
+  - Legacy bare paths: `https://docs.remember.dev/:path*` (where `:path` is not `docs/*`, `llms.txt`, etc.) → `https://remember.dev/docs/:path*`.
+  - Machine discovery: `https://docs.remember.dev/llms.txt` → `https://remember.dev/llms.txt` and `https://docs.remember.dev/llms-full.txt` → `https://remember.dev/llms-full.txt`.
 - **Cloud Gateway Routing**: The Cloud web router at `remember.dev` forwards requests matching `/docs*` to the Next.js documentation service built from `remember-stack/website`.
-- **Machine Discovery**: `https://remember.dev/llms.txt` and `https://remember.dev/llms-full.txt` are served directly from the canonical docs asset manifest.
+- **Canonical Link Tags & Machine Discovery**: All documentation pages emit `<link rel="canonical" href="https://remember.dev/docs/..." />` to consolidate search authority. `https://remember.dev/llms.txt` and `https://remember.dev/llms-full.txt` are served directly from the canonical docs asset manifest.
 
 ### 5.3 Deprecation of Duplicate Docs in `ultimate-memory-cloud`
 - The static documentation pages in `ultimate-memory-cloud/fe/src/app/(public)/docs` are retired.
@@ -180,9 +186,10 @@ The following SDK surfaces and endpoints move from `unsupported` to `supported` 
 
 1. **Phase 1: Merge D109 Design & Decision**:
    - Merge this design and D109 into `writeitai/remember-stack`.
-2. **Phase 2: Enable `open_query` on Cloud**:
-   - Update `ultimate-memory-cloud` compatibility matrices (`docs/compatibility/managed-compat-2026-09.yaml` and `.md`) to mark `open_query_execute` and `/query/*` as supported.
-   - Deploy engine v0.16.0+ with `open_query` composed on tenant data-plane pods.
+2. **Phase 2: Engine Spend Gating & Cloud Parity Enablement**:
+   - **Engine Route Spend Gating**: Update `_spend_gated_route` in `src/rememberstack/surfaces/http_api.py` to register `/query/sql`, `/query/sql/explain`, and `/query/space` under `path_id="search"` (or `"open_query"`). Add integration tests verifying spend reservation, 2xx commit, and non-2xx lease release under `SpendLeasePort`.
+   - **Cloud Gateway & Compatibility Manifests**: Update `ultimate-memory-cloud` compatibility matrices (`docs/compatibility/managed-compat-2026-09.yaml` and `.md`) marking `open_query_execute` and `/query/*` as supported.
+   - **Deployment**: Deploy engine v0.16.0+ with `open_query` composed on tenant data-plane pods with verified spend metering and AST sandbox execution.
 3. **Phase 3: Docs Consolidation & Narrative Polish**:
    - Reorganize `website/` in `remember-stack` according to the 5-layer Qdrant taxonomy.
    - Point Cloud web ingress for `remember.dev/docs` to the canonical docs build.
