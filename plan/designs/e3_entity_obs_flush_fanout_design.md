@@ -1,5 +1,8 @@
 # Design: entity-grain observation flush fan-out
 
+> **Binding D110 amendment (2026-09-07).** D110 §§2–3 qualify global order as closed-admission order plus exact recorded-history replay and require the common lock/revision protocol on both planes. No claim is made that an immutable seed is invariant across unseen future inputs. D107 world-time late-arrival re-splitting remains.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 > **Binding D107 amendment (2026-09-03).** The total processing order of §5.5
 > (`asserted_at NULLS LAST, claim_id, statement`) is unchanged and remains a
 > work order only. The §5.5.3 late-arrival re-split decides eligibility by the
