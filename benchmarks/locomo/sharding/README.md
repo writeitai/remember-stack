@@ -199,6 +199,8 @@ as source-derived data.
 | `LOCOMO_EMBED_CLAIM_WORKERS` | `2` | P1 claim/fact embedding worker replicas |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
 | `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` | `/etc/rememberstack/locomo-gcs/certificate-config.json` | public client-certificate path configuration |
+| `LOCOMO_VERTEX_GCP_CREDENTIALS_FILE` | unset | optional process-wide generation credential configuration; backups continue to use `LOCOMO_GCP_CREDENTIALS_FILE` |
+| `LOCOMO_VERTEX_GCP_CERTIFICATE_CONFIG_FILE` | unset | optional process-wide generation certificate configuration; backups continue to use `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` |
 
 The call ceilings cover the whole prepared publication manifest, not merely one sample. Lower
 values must still satisfy the harness's run-absolute guards. If a command fails, leave the stack

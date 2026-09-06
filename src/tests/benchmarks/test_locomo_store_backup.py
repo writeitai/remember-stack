@@ -1013,7 +1013,10 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert 'backup_sample "$sample_id" final' in loop
     assert 'require_verified_final_backup "$sample_id"' in loop
     assert "stop_store_after_failed_scoring_authorization" in script
-    assert 'if ! "$python_bin" "$backup_tool" authorize-scoring' in script
+    assert 'if ! backup_python "$backup_tool" authorize-scoring' in script
+    assert 'backup_python "$backup_tool" preflight' in script
+    assert 'LOCOMO_VERTEX_GCP_CREDENTIALS_FILE' in script
+    assert 'GOOGLE_APPLICATION_CREDENTIALS="$backup_credentials_file"' in script
     assert "^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$" in script
     assert '[[ "$sample_id" == "$marked_sample" ]] && marked_pending=true' in script
     assert "LOCOMO_BACKUP_DESTINATION must be" in script
