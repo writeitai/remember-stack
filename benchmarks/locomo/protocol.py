@@ -36,6 +36,7 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24"
 DEFAULT_PROTOCOL_KEY: Final = "full-v24"
+# T.4 changes extraction; the query-space adapter remains the v23 generation.
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-query-space-canonical-bounds-v23"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -123,7 +124,7 @@ GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v24-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v23 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v24 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the

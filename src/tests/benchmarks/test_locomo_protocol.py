@@ -46,6 +46,7 @@ from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.workers import E3_NORMALIZER_VERSION
+from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers import OBS_FLUSH_VERSION
 
 
@@ -184,6 +185,11 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert call.response.ranking  # durable raw record is unchanged
 
 
+def test_protocol_pins_the_shipping_extractor_generation() -> None:
+    """The benchmark cannot silently ingest a different temporal extraction policy."""
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS["extract_claims"] == E2_EXTRACTOR_VERSION
+
+
 def test_protocol_pins_the_shipping_observation_flush_generation() -> None:
     """The score guard cannot reject the entity-fanout generation it ingested."""
     assert (
@@ -246,7 +252,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v23_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v24_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
     assert PROTOCOL_NAME == "RS-LoCoMo-Full-v24"
     assert DEFAULT_PROTOCOL_KEY == "full-v24"
@@ -460,7 +466,7 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v23 pins, so its scores are
+    """The variant is a provider swap over identical v24 pins, so its scores are
     an answer-agent comparison rather than a new benchmark identity."""
     base = PROTOCOL_REGISTRY["full-v24"]
     variant = PROTOCOL_REGISTRY["full-v24-gemma-vertex"]
