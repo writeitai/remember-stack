@@ -62,3 +62,46 @@ forget inventory and repeated-forget checkpoints; bounded in-place conversion,
 startup orchestration and readiness; versions/protocol and user documentation;
 full acceptance and Antigravity review. No release is authorized by the
 foundation evidence alone.
+
+## Guarded journal implementation
+
+The shared application context now acquires the deployment fence, identity
+lock, sorted full canonical blocks, sorted facts, and one combined sorted
+cache-source set. It checks the actual fact subject against the declared
+canonical block, rejects source registry collisions, and mirrors fact revisions
+into cache leaves. A savepoint and failed-session guard prevent an application
+error from committing earlier effects in the same group, even when a caller
+catches the error. New identities must receive their seed receipt atomically.
+
+Typed effects constrain ordinary field authority. The journal writes existing
+narrative adjudications, exact temporal effects, consumed evidence, support
+attestations, and complete read/write block sequences in one transaction.
+Read-only witnesses advance ordering without changing truth revisions.
+Correction endpoints must match current linked supporting candidates.
+Compensation validates the recorded target and restores only still-owned
+components, preserving an independent later cap. These mechanisms do not
+replace the still-required identity ladder, semantic adjudication, complete
+candidate discovery, or authority participation by existing writers.
+
+Seventeen tracked integration cases were exercised on a private local
+PostgreSQL15 instance using original table constraints from migrations
+0001–0005/0017 plus the exact temporal enum/expansion DDL. The checks cover both
+fact planes, correction→cap→compensation, atomic rollback after a caught error,
+foreign canonical blocks, redirect resolution, missing generation, source key
+collisions, concurrent reverse input ordering, stale currency, unselected dates,
+read-only witnesses, and session-timezone invariance. This probe found and fixed
+a real issue: decoded timestamptz values and evidence fingerprints now normalize
+to UTC regardless of the connection display timezone. The private server was
+stopped after each run; the shared Docker daemon was not changed.
+
+This local scope omits unrelated projections/indexes and is **not** a full
+Alembic or supported PostgreSQL19 proof. The tracked test module uses the full
+migration graph in CI and is included in the integration inventory. Local Ruff,
+Pyright, import boundaries, inventory checks and the existing 49 temporal rule
+cases pass. PostgreSQL19 validation and Antigravity journal review remain pending
+at this entry. Full T.1, T.2/T.3/T.5 and release remain unfinished.
+
+CI34065359766 subsequently completed: quality, unit, surfaces and adapters passed;
+contract smoke, workers and Compose failed. The successful surfaces/adapters runs
+provide additional evidence for the complete-schema teardown fix. Populated
+conversion/startup remains an explicit implementation gap; no guard was weakened.
