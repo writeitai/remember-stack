@@ -5,7 +5,7 @@
 | Name                                                                                          |    Stmts |     Miss |   Branch |   BrPart |     Cover |   Missing |
 |---------------------------------------------------------------------------------------------- | -------: | -------: | -------: | -------: | --------: | --------: |
 | src/rememberstack/\_\_init\_\_.py                                                             |        6 |        2 |        0 |        0 |     66.7% |       8-9 |
-| src/rememberstack/adapters/\_\_init\_\_.py                                                    |       28 |        8 |       10 |        4 |     68.4% |45-49, 55-57, 59-61, 63-65 |
+| src/rememberstack/adapters/\_\_init\_\_.py                                                    |       34 |        8 |       10 |        4 |     72.7% |57-61, 67-69, 71-73, 75-77 |
 | src/rememberstack/adapters/bounded\_postgres\_read.py                                         |       56 |        5 |       18 |        6 |     85.1% |22, 24, 50, 71-\>78, 74, 84 |
 | src/rememberstack/adapters/codex\_writer.py                                                   |       82 |        3 |       20 |        3 |     94.1% |172, 203, 215 |
 | src/rememberstack/adapters/converters/\_\_init\_\_.py                                         |       27 |        0 |        6 |        0 |    100.0% |           |
@@ -14,8 +14,9 @@
 | src/rememberstack/adapters/managed/\_\_init\_\_.py                                            |        0 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/managed/composite\_auth.py                                         |       19 |        0 |        4 |        0 |    100.0% |           |
 | src/rememberstack/adapters/managed/signed\_token\_auth.py                                     |      113 |       10 |       42 |        9 |     87.7% |136, 207, 262-263, 265, 268, 288, 298, 325, 336, 347-\>exit |
-| src/rememberstack/adapters/openrouter.py                                                      |      341 |       30 |      114 |       13 |     90.1% |64-65, 71, 153, 349-352, 412, 474-477, 481, 500-506, 516, 521-522, 526, 574-575, 596-597, 599, 603-\>605, 606-\>615, 619, 644-645, 647, 717 |
+| src/rememberstack/adapters/openrouter.py                                                      |      371 |       32 |      126 |       16 |     90.3% |66-67, 73, 155, 351-354, 414, 476-479, 483, 518, 528, 533-534, 538, 551-552, 559-\>561, 565-566, 568, 614-615, 636-637, 639, 643-\>645, 646-\>655, 659, 684-685, 687, 757 |
 | src/rememberstack/adapters/postgres\_p1.py                                                    |      435 |       79 |      138 |       38 |     76.8% |147, 187, 201, 233, 262, 295, 327, 361, 408, 496-497, 545, 553-563, 565-566, 617-\>629, 630-631, 688-698, 700-701, 743, 763, 772, 797, 812, 860, 907, 930, 1033, 1056, 1121-1133, 1225, 1230, 1237-1241, 1342-1344, 1361, 1378-1399, 1419, 1439-1445, 1477-1492, 1521, 1529, 1543 |
+| src/rememberstack/adapters/routed.py                                                          |       19 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/selfhost/\_\_init\_\_.py                                           |       23 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/selfhost/control\_plane\_spend\_lease.py                           |       60 |       20 |       20 |        9 |     63.8% |40, 42, 44, 48-49, 55, 63, 75, 82-85, 92, 94, 97-98, 100, 108-109, 114 |
 | src/rememberstack/adapters/selfhost/forget.py                                                 |       43 |        1 |       10 |        1 |     96.2% |        19 |
@@ -36,6 +37,7 @@
 | src/rememberstack/adapters/testing/profile\_refresher.py                                      |       15 |        2 |        0 |        0 |     86.7% |     25-26 |
 | src/rememberstack/adapters/testing/queue.py                                                   |       12 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/adapters/testing/telemetry.py                                               |        9 |        0 |        0 |        0 |    100.0% |           |
+| src/rememberstack/adapters/vertex.py                                                          |      162 |       25 |       30 |        3 |     83.3% |186-221, 282-\>285, 350, 408-\>412, 410-411 |
 | src/rememberstack/client.py                                                                   |       13 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/core/\_\_init\_\_.py                                                        |       79 |        0 |        0 |        0 |    100.0% |           |
 | src/rememberstack/core/assured\_operation\_linter.py                                          |       33 |        4 |       18 |        4 |     84.3% |58, 81, 85, 90 |
@@ -232,7 +234,7 @@
 | src/rememberstack/surfaces/cost\_export\_api.py                                               |      112 |       37 |       24 |        1 |     63.2% |121-125, 146-162, 167-192, 201 |
 | src/rememberstack/surfaces/credentials.py                                                     |      350 |       44 |       80 |       15 |     84.0% |130, 145-\>147, 154-156, 162, 167-168, 190, 202-209, 243-247, 272-276, 333, 349-350, 441, 460, 477-480, 520-\>522, 526-531, 562, 617-619, 649-\>exit, 676, 759-763, 774-777, 803, 804-\>exit |
 | src/rememberstack/surfaces/device\_login.py                                                   |      189 |       22 |       52 |        9 |     84.6% |164, 167-168, 169-\>exit, 207, 250-251, 259-273, 361, 372, 402, 435-436, 438-\>440 |
-| src/rememberstack/surfaces/graph\_queries.py                                                  |      358 |       34 |      114 |       29 |     86.2% |66, 84, 86, 88, 117, 169-176, 247, 278, 306, 317, 366, 368, 415-416, 426-\>431, 429, 432, 441, 475-\>478, 629, 635, 730, 734, 743, 792-794, 820, 858, 883, 906, 998, 1000, 1026-1027 |
+| src/rememberstack/surfaces/graph\_queries.py                                                  |      358 |       35 |      114 |       30 |     85.8% |66, 84, 86, 88, 117, 169-176, 247, 278, 306, 317, 366, 368, 415-416, 426-\>431, 429, 432, 441, 475-\>478, 629, 635, 672, 730, 734, 743, 792-794, 820, 858, 883, 906, 998, 1000, 1026-1027 |
 | src/rememberstack/surfaces/http\_api.py                                                       |      491 |       59 |      112 |       10 |     86.6% |263, 379, 440, 685, 725-731, 742-748, 832-835, 856-861, 931-937, 944-972, 1053-\>1057, 1102, 1108-1109, 1169-1172, 1246, 1248, 1284, 1295-1296, 1309-1310, 1332-1333, 1430-1432, 1440, 1443-1444, 1457, 1477-1481, 1487-1495 |
 | src/rememberstack/surfaces/mcp.py                                                             |       72 |        2 |       18 |        2 |     95.6% |   70, 171 |
 | src/rememberstack/surfaces/mcp\_memory\_tools.py                                              |      383 |       55 |      160 |       33 |     82.0% |292, 294-302, 305, 372, 417, 484, 488, 498, 509, 517, 672, 730, 751, 762, 884-885, 946, 961-964, 981, 995, 1003, 1015-1016, 1026, 1037, 1048, 1140, 1152, 1159-1160, 1166, 1227, 1351, 1373, 1389-1399, 1406-\>1418, 1458, 1473, 1477, 1481, 1495 |
@@ -275,7 +277,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      166 |       10 |       40 |       12 |     89.3% |125, 206-207, 214, 261, 266, 300-\>292, 302, 336, 337-\>342, 346, 424-\>435, 461-\>465, 567 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **26115** | **2544** | **6526** | **1178** | **87.3%** |           |
+| **TOTAL**                                                                                     | **26332** | **2572** | **6568** | **1185** | **87.3%** |           |
 
 
 ## Setup coverage badge
