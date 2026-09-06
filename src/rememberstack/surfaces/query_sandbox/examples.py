@@ -19,6 +19,8 @@ from datetime import timezone
 from typing import Final
 from uuid import UUID
 
+from rememberstack.core.open_query_prose import CLAIMS_AS_OF_PURPOSE
+from rememberstack.core.open_query_prose import CLAIMS_AS_OF_SQL
 from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_PURPOSE
 from rememberstack.core.open_query_prose import CLAIMS_VERBATIM_SQL
 
@@ -48,25 +50,7 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
         " ORDER BY c.asserted_at DESC, c.claim_id"
         " LIMIT 50",
     ),
-    "claims_as_of": (
-        "Claims whose immutable validity window overlaps an inclusive interval",
-        "SELECT c.claim_id, c.claim_text, c.source_handle,"
-        "       c.claim_valid_from, c.claim_valid_until, c.claim_valid_precision,"
-        "       ("
-        "         SELECT count(*) FROM claims_visible_history AS u"
-        "         WHERE u.claim_valid_precision = 'unknown'"
-        "           AND u.claim_valid_from <= $2::timestamptz"
-        "           AND (u.claim_valid_until IS NULL"
-        "                OR u.claim_valid_until >= $1::timestamptz)"
-        "       ) AS unknown_precision_excluded"
-        " FROM claims_visible_history AS c"
-        " WHERE c.claim_valid_precision <> 'unknown'"
-        "   AND c.claim_valid_from <= $2::timestamptz"
-        "   AND (c.claim_valid_until IS NULL"
-        "        OR c.claim_valid_until >= $1::timestamptz)"
-        " ORDER BY c.claim_valid_from DESC, c.claim_id"
-        " LIMIT 50",
-    ),
+    "claims_as_of": (CLAIMS_AS_OF_PURPOSE, CLAIMS_AS_OF_SQL),
     "claims_hybrid_rrf": (
         "Semantic and lexical claim channels fused by reciprocal rank",
         "WITH semantic AS (SELECT claim_id, rank FROM semantic_claims($1, 20)),"
