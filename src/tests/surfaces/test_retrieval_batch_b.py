@@ -619,19 +619,62 @@ def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 connection.execute(statement)
             connection.rollback()
-        # Tiny fixtures favor sequential scans. Disabling them proves that a
-        # canonical bound can be an index condition, not only a residual filter.
-        connection.execute("SET LOCAL enable_seqscan = off")
-        plan = connection.execute(
-            "EXPLAIN (FORMAT JSON) SELECT claim_id FROM memory_v1.claims_canonical"
-            " WHERE deployment_id = %s AND canon_start < %s"
-            " AND (canon_end IS NULL OR canon_end > %s)",
-            (_DEPLOYMENT_ID, _WINDOW_TO, _WINDOW_FROM),
-        ).fetchone()
-        assert plan is not None
-        rendered = json.dumps(plan[0], default=str)
-        assert "ix_claims_canonical_window" in rendered, rendered
-        assert "Index Cond" in rendered, rendered
+
+
+def test_claims_canonical_uses_range_index_for_selective_window(
+    corpus: _Corpus,
+) -> None:
+    """The restricted role can use canonical bounds as index conditions at scale."""
+    role = f"rememberstack_query_{corpus.engine.url.database}"
+    quoted_role = corpus.engine.dialect.identifier_preparer.quote(role)
+    # Keep the shared corpus unchanged. Many dated claims in one live chunk make
+    # its chunk index unselective, while the requested window matches four rows.
+    # Planner settings remain at their defaults: this proves a useful access path.
+    with corpus.engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                    " section_id, claim_text, source_span, char_start, char_end,"
+                    " anchor_ok, window_membership_ok, claim_valid_from,"
+                    " claim_valid_until, claim_valid_precision, claim_valid_kind,"
+                    " extractor_version, ingested_at)"
+                    " SELECT gen_random_uuid(), deployment_id, doc_id, chunk_id,"
+                    " section_id, claim_text, source_span, char_start, char_end,"
+                    " anchor_ok, window_membership_ok,"
+                    " TIMESTAMPTZ '2030-01-01 00:00:00+00' + n * INTERVAL '1 day',"
+                    " TIMESTAMPTZ '2030-01-01 00:00:00+00' + n * INTERVAL '1 day',"
+                    " 'day', 'event_time', extractor_version, ingested_at"
+                    " FROM claims CROSS JOIN generate_series(1, 10000) AS n"
+                    " WHERE claim_id = :claim"
+                ),
+                {"claim": corpus.claim_ids[0]},
+            )
+            connection.exec_driver_sql("ANALYZE claims")
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_role}")
+            plan = connection.execute(
+                text(
+                    "EXPLAIN (FORMAT JSON) SELECT claim_id"
+                    " FROM memory_v1.claims_canonical"
+                    " WHERE deployment_id = :deployment AND canon_start < :to"
+                    " AND (canon_end IS NULL OR canon_end > :from_)"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "to": _WINDOW_TO, "from_": _WINDOW_FROM},
+            ).scalar_one()
+            nodes = [plan[0]["Plan"]]
+            canonical_conditions: list[str] = []
+            while nodes:
+                node = nodes.pop()
+                nodes.extend(node.get("Plans", []))
+                if node.get("Index Name") == "ix_claims_canonical_window":
+                    canonical_conditions.append(node.get("Index Cond", ""))
+            assert any(
+                "CASE" in condition and " < " in condition
+                for condition in canonical_conditions
+            ), json.dumps(plan, default=str)
+        finally:
+            transaction.rollback()
 
 
 def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(
