@@ -59,6 +59,7 @@ src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
 src/tests/surfaces/test_assured_operation_authorities.py
 src/tests/surfaces/test_browser_origin_cors.py
+src/tests/surfaces/test_cli_platform.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_device_login_contract.py
@@ -71,6 +72,8 @@ src/tests/surfaces/test_openapi_export.py
 src/tests/surfaces/test_post_search.py
 src/tests/surfaces/test_postgres_graph_sql.py
 src/tests/surfaces/test_query_sandbox_graph_d98.py
+src/tests/surfaces/test_remember_cloud_client.py
+src/tests/surfaces/test_remember_facade.py
 src/tests/surfaces/test_route_scope.py
 src/tests/test_d98_removal_audit.py
 src/tests/test_forget_port_contract.py
