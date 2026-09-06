@@ -46,8 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         subcmd = effective_argv[0]
         if subcmd == "review":
             print(
-                "error: 'remember review' is retired. The engine uses autonomous "
-                "bitemporal adjudication (D3/D43/D107). See https://remember.dev/docs",
+                "error: 'remember review' is retired. The engine adjudicates contradictions "
+                "autonomously without human review queues. See https://remember.dev/docs/architecture",
                 file=sys.stderr,
             )
             return 1
@@ -154,7 +154,11 @@ def _run_setup(args: argparse.Namespace) -> int:
     """Bootstrap AI coding agent harnesses (D108)."""
     from remember.setup import run_setup
 
-    return run_setup(args)
+    try:
+        return run_setup(args)
+    except (RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
@@ -536,7 +540,7 @@ def _run_projects(args: argparse.Namespace) -> int:
         print(
             f"error: Project pods cannot be provisioned via the CLI data-plane session.\n"
             f"Administrative provisioning and pod sizing take place in the web console:\n"
-            f"  https://remember.dev/app/projects/new\n\n"
+            f"  https://remember.dev/app/projects\n\n"
             f"After creating project '{name}' in the console, authenticate and link it locally:\n"
             f"  remember login",
             file=sys.stderr,

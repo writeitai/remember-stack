@@ -119,27 +119,9 @@ Diagrams for top pages live under `public/docs/diagrams/`.
 
 ## Deploy
 
-`.github/workflows/docs-deploy.yml` builds and deploys to GitHub Pages on every push
-to `main` that touches `website/**` (pull requests run the build as a check only).
-`public/.nojekyll` keeps GitHub Pages from stripping Next's `_next/` assets.
+The documentation site is deployed canonically at **`https://remember.dev/docs`** per D109.
 
-### One-time setup (required before the first deploy)
-
-The workflow publishes the artifact, but the Pages site and its custom domain must be
-provisioned once in the repository — the `public/CNAME` file does **not** configure the
-domain on its own for an Actions-based deployment:
-
-1. **Organization Settings → Pages:** verify `remember.dev` with GitHub's TXT record
-   and leave that record in DNS.
-2. **Repository Settings → Pages → Build and deployment → Source:** select
-   **GitHub Actions**.
-3. **Repository Settings → Pages → Custom domain:** enter `docs.remember.dev` and save (this is
-   what actually binds the domain; the committed `CNAME` file just records the intent).
-4. **DNS** (in the `remember.dev` zone): point `docs` directly to
-   `writeitai.github.io` with a DNS-only `CNAME`. Do not include the repository
-   name in the target, proxy the record, or add a wildcard.
-5. Once DNS resolves, enable **Enforce HTTPS** in Settings → Pages.
-
-Until the custom domain is bound, the site would be served under
-`https://writeitai.github.io/remember-stack/`, where the root-relative `/_next/` and
-`/pagefind/` URLs do not resolve — so complete the steps above before sharing the link.
+- Next.js exports static HTML with `basePath: "/docs"` into `website/out/`.
+- All static assets are served under `/docs/_next/...` and `/docs/pagefind/...`, ensuring zero asset collisions with the root Cloud web application at `remember.dev`.
+- Ingress routing on `remember.dev` routes `/docs*` traffic directly to the static documentation artifact.
+- The legacy subdomain `https://docs.remember.dev/` issues permanent 301 redirects to `https://remember.dev/docs/`.

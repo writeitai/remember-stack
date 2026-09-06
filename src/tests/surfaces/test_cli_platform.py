@@ -325,7 +325,7 @@ def test_structured_credentials_workflow(
     # 3. Projects create (administrative command directed to web console)
     assert main(["projects", "create", "test-project"]) == 1
     err_create = capsys.readouterr().err
-    assert "https://remember.dev/app/projects/new" in err_create
+    assert "https://remember.dev/app/projects" in err_create
     assert "test-project" in err_create
 
     # 4. Switch
@@ -387,7 +387,7 @@ def test_control_plane_error_handling_and_audience_isolation(
 
     # projects create and members invite provide console guidance and exit 1
     assert main(["projects", "create", "fail-proj"]) == 1
-    assert "https://remember.dev/app/projects/new" in capsys.readouterr().err
+    assert "https://remember.dev/app/projects" in capsys.readouterr().err
 
     assert main(["members", "invite", "test@example.com"]) == 1
     assert "https://remember.dev/app/team" in capsys.readouterr().err
@@ -1170,3 +1170,42 @@ def test_setup_with_token_overwrites_active_project_and_journals_revocation(
     assert len(revoked_calls) == 1
     assert revoked_calls[0] == f"Bearer {initial_token}"
     assert len(load_pending_revocations().entries) == 0
+
+
+def test_setup_handles_malformed_cursor_json_gracefully(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Malformed existing .cursor/mcp.json prints concise remediation and exits 1 without traceback."""
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    (cursor_dir / "mcp.json").write_text(
+        "{malformed_json: true, broken", encoding="utf-8"
+    )
+
+    exit_code = main(
+        ["setup", "--self-hosted", "--dir", str(tmp_path), "--agent", "cursor"]
+    )
+    assert exit_code == 1
+
+    captured = capsys.readouterr()
+    assert "error: Existing" in captured.err
+    assert "contains invalid JSON" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_setup_explicit_requested_harness_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a requested harness fails to register, setup returns exit code 1."""
+    monkeypatch.setattr("remember.setup.configure_claude_code", lambda **kwargs: False)
+    monkeypatch.setattr(
+        "remember.setup.configure_claude_desktop", lambda **kwargs: False
+    )
+
+    exit_code = main(
+        ["setup", "--self-hosted", "--dir", str(tmp_path), "--agent", "claude"]
+    )
+    assert exit_code == 1
+
+    captured = capsys.readouterr()
+    assert "error: Failed to configure Claude harness" in captured.err

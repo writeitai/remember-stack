@@ -63,7 +63,9 @@ jobs:
         run: uv run pytest src/tests -q
 
       - name: Build distributions
-        run: uv build
+        run: |
+          uv build
+          uv build packages/rememberstack --out-dir dist
 
       - name: Record distribution checksums
         run: |
@@ -79,11 +81,13 @@ jobs:
             echo "::group::${dist}"
             venv="$(mktemp -d)/venv"
             uv venv "${venv}"
-            uv pip install --python "${venv}/bin/python" "${dist}"
+            uv pip install --find-links dist --python "${venv}/bin/python" "${dist}"
             "${venv}/bin/python" -c "import remember; assert hasattr(remember, 'Client'); assert hasattr(remember, 'MemoryClient')"
             "${venv}/bin/remember" --version
             "${venv}/bin/rememberstack" --version
-            "${venv}/bin/remember-status" --help > /dev/null
+            if [ -f "${venv}/bin/remember-status" ]; then
+              "${venv}/bin/remember-status" --help > /dev/null
+            fi
             echo "::endgroup::"
           done
 

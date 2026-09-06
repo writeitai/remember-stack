@@ -311,3 +311,120 @@ def test_wheel_contains_only_remember_and_no_rememberstack_collision(
         capture_output=True,
         text=True,
     )
+
+
+def test_terminal_rememberstack_migration_and_coexistence(tmp_path: Path) -> None:
+    """The terminal rememberstack 0.17.0 package smoothly upgrades and avoids bin/remember deletion."""
+    project_root = Path(__file__).resolve().parents[3]
+    remember_dist = tmp_path / "remember_dist"
+    rememberstack_dist = tmp_path / "rememberstack_dist"
+
+    # 1. Build remember wheel
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(remember_dist)],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    remember_wheel = next(remember_dist.glob("remember-*.whl"))
+
+    # 2. Build terminal rememberstack deprecation wheel
+    packages_rememberstack = project_root / "packages" / "rememberstack"
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(rememberstack_dist)],
+        cwd=packages_rememberstack,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rememberstack_wheel = next(rememberstack_dist.glob("rememberstack-*.whl"))
+
+    # 3. Test co-installation and Envelope model identity in clean venv
+    venv_clean = tmp_path / "venv_clean"
+    subprocess.run(
+        ["uv", "venv", str(venv_clean)], check=True, capture_output=True, text=True
+    )
+    python_clean = venv_clean / "bin" / "python"
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python_clean),
+            str(remember_wheel),
+            str(rememberstack_wheel),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Check model identity and client re-exports
+    subprocess.run(
+        [
+            str(python_clean),
+            "-I",
+            "-c",
+            (
+                "import remember; "
+                "import rememberstack; "
+                "from rememberstack.model import Envelope; "
+                "from rememberstack.client import MemoryClient; "
+                "assert remember.Envelope is Envelope, 'Envelope identity mismatch'; "
+                "assert remember.MemoryClient is MemoryClient, 'MemoryClient mismatch'; "
+                "assert hasattr(rememberstack, 'Client'); "
+                "assert hasattr(rememberstack, 'CloudClient')"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Check CLI launchers
+    rem_bin = venv_clean / "bin" / "remember"
+    remstack_bin = venv_clean / "bin" / "rememberstack"
+    assert rem_bin.exists()
+    assert remstack_bin.exists()
+
+    rem_proc = subprocess.run(
+        [str(rem_bin), "--version"], check=True, capture_output=True, text=True
+    )
+    assert f"remember {_declared_version()}" in rem_proc.stdout
+
+    remstack_proc = subprocess.run(
+        [str(remstack_bin), "--version"], check=True, capture_output=True, text=True
+    )
+    assert (
+        "DeprecationWarning: 'rememberstack' CLI is deprecated" in remstack_proc.stderr
+    )
+    assert f"remember {_declared_version()}" in remstack_proc.stdout
+
+    # 4. Uninstall terminal rememberstack package; bin/remember MUST remain intact
+    subprocess.run(
+        ["uv", "pip", "uninstall", "--python", str(python_clean), "rememberstack"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert rem_bin.exists(), (
+        "bin/remember was unexpectedly deleted on rememberstack uninstall"
+    )
+    rem_proc_after = subprocess.run(
+        [str(rem_bin), "--version"], check=True, capture_output=True, text=True
+    )
+    assert f"remember {_declared_version()}" in rem_proc_after.stdout
+
+    subprocess.run(
+        [
+            str(python_clean),
+            "-I",
+            "-c",
+            "import remember; assert hasattr(remember, 'Client')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

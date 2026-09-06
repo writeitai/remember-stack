@@ -3,6 +3,7 @@ import createMDX from "@next/mdx";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  assetPrefix: "/docs",
   // Fully static site — exported to `out/` and served at remember.dev/docs.
   output: "export",
   // Directory-style URLs (`/docs/getting-started/`) resolve to index.html on a

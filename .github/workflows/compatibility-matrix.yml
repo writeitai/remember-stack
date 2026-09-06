@@ -1,0 +1,56 @@
+name: Client-Engine Compatibility Matrix
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths:
+      - "src/remember/**"
+      - "src/tests/surfaces/**"
+      - "src/tests/packaging/**"
+      - ".github/workflows/compatibility-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: Client vs Engine (${{ matrix.engine-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        engine-version: ["0.15.0", "0.16.0", "candidate"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.6"
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Build candidate client wheel
+        run: |
+          uv build --wheel --out-dir dist/
+          uv build packages/rememberstack --wheel --out-dir dist/
+
+      - name: Verify wheel packaging integrity
+        run: |
+          uv venv test-venv
+          uv pip install --find-links dist --python test-venv/bin/python remember
+          test-venv/bin/python -c "import remember; assert hasattr(remember, 'Client'); assert hasattr(remember, 'MemoryClient')"
+          test-venv/bin/remember --version
+
+      - name: Run cross-version compatibility checks (${{ matrix.engine-version }})
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          uv run pytest src/tests/packaging/test_client_wheel.py -v
+          uv run pytest src/tests/surfaces/test_remember_facade.py -v
+          uv run pytest src/tests/surfaces/test_remember_cloud_client.py -v

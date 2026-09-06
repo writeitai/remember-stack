@@ -147,17 +147,18 @@ The open query space is active on the Self-Hosted Engine (v0.17.0+) and planned 
      - **Cloud Gateway Level**: Proxy ingress validates tenant token balance and active project status before routing execution to the project's dedicated data plane pod.
    - Rate limiting and query timeouts (5,000ms default) prevent runaway agent query loops or accidental high-resource scans.
 
-### 4.2 Updated Cloud Compatibility Matrix
-The following SDK surfaces and endpoints move from `unsupported` to `supported` across all cloud compatibility manifests:
+### 4.2 Updated Compatibility Matrix and Rollout Posture
+Open query surfaces are active and fully supported on Self-Hosted Engine v0.17.0+. On Remember Cloud, these routes are planned following operator dogfooding and will transition to supported upon deployment of v0.17.0+ data plane pods:
 
-| Surface / Route | Previous Status | D109 Cloud Status | Rationale |
-| :--- | :--- | :--- | :--- |
-| `POST /query/sql` | `unsupported` | **`supported`** | AST-validated, read-only sandboxed SQL execution. |
-| `POST /query/sql/explain` | `unsupported` | **`supported`** | Sandboxed execution plan inspection. |
-| `GET /query/space` | `unsupported` | **`supported`** | Dynamic manifest-backed schema discovery. |
-| `GET /query/space/search` | `unsupported` | **`supported`** | Semantic and lexical search over schema manifest text. |
-| `open_query_execute` (SDK) | `unsupported` | **`supported`** | Enables `RememberClient.open_query` in Python. |
-| Open Query MCP Tools | Omitted | **`advertised`** | The 7 open-query tools appear in `remember mcp` on Cloud. |
+| Surface / Route | Previous Cloud Status | Self-Hosted v0.17.0+ Status | D109 Cloud Target Status | Rationale |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST /query/sql` | `unsupported` | **`supported`** | **`planned`** | AST-validated, read-only sandboxed SQL execution. |
+| `POST /query/sql/explain` | `unsupported` | **`supported`** | **`planned`** | Sandboxed execution plan inspection. |
+| `GET /query/space` | `unsupported` | **`supported`** | **`planned`** | Dynamic manifest-backed schema discovery. |
+| `GET /query/space/search` | `unsupported` | **`supported`** | **`planned`** | Semantic and lexical search over schema manifest text. |
+| `open_query_execute` (SDK) | `unsupported` | **`supported`** | **`planned`** | Enables `RememberClient.open_query` in Python. |
+| Open Query MCP Tools | Omitted | **`advertised`** | **`planned`** | The 7 open-query tools appear in `remember mcp`. |
+
 
 ---
 

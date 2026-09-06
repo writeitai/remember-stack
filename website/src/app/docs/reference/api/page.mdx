@@ -482,7 +482,7 @@ worker, projection, or adapter dependencies:
 ```python
 from pathlib import Path
 
-from rememberstack.client import MemoryClient, ReadinessRequirements
+from remember import MemoryClient, ReadinessRequirements
 
 with MemoryClient.from_settings() as memory:
     tools = memory.list_operations()

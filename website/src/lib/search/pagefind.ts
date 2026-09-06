@@ -39,10 +39,14 @@ const dynamicImport = new Function(
 let pagefindPromise: Promise<PagefindApi | null> | null = null;
 
 function importPagefind(): Promise<PagefindApi | null> {
-  // Build a fully-qualified URL from the current origin so the dynamic import
-  // never resolves against an ambiguous base URL.
-  const url = new URL("/pagefind/pagefind.js", window.location.href).href;
-  return dynamicImport(url)
+  // Try canonical /docs/pagefind/pagefind.js first to prevent collisions with the
+  // root application, falling back to /pagefind/pagefind.js for standalone previews.
+  const docsUrl = new URL("/docs/pagefind/pagefind.js", window.location.href).href;
+  return dynamicImport(docsUrl)
+    .catch(() => {
+      const rootUrl = new URL("/pagefind/pagefind.js", window.location.href).href;
+      return dynamicImport(rootUrl);
+    })
     .then(async (mod) => {
       if (mod.init) await mod.init();
       return mod;

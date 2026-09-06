@@ -86,7 +86,7 @@ Authenticated via user session credentials obtained through OAuth device-grant l
 - **`remember projects list`**: Enumerates available tenant deployments in the user's organization.
 - **`remember projects create <name>`**: Directs operators to the cloud console at `https://remember.dev/app/projects` to provision new tenant projects (exit code 1).
 - **`remember switch <project>`**: Sets the default active project and selects its corresponding tenant data-plane token in local configuration.
-- **`remember members list`** / **`remember members invite <email>`**: Directs operators to the cloud console at `https://remember.dev/app/members` to manage team organization seats (exit code 1).
+- **`remember members list`** / **`remember members invite <email>`**: Directs operators to the cloud console at `https://remember.dev/app/team` to manage team organization seats (exit code 1).
 
 *Self-Hosted Behavior*: When configured in self-hosted mode (`--self-hosted`), executing control-plane commands prints a clean, honest notice:
 > *"Note: You are connected to a self-hosted engine (http://localhost:8000). Projects, team members, and billing are cloud-managed services on remember.dev."*

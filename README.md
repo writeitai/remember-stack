@@ -103,7 +103,7 @@ Ask both honestly:
 - Document versions and watched sources — reprocess cost proportional to the *edit*  
 - Support that cannot be gamed by re-extracting the same file  
 
-Deep dive: [Ingestion](https://docs.remember.dev/docs/ingestion)
+Deep dive: [Ingestion](https://remember.dev/docs/ingestion)
 
 ---
 
@@ -128,7 +128,7 @@ Plus open SQL, typed live-graph helpers, saved examples, and schema discovery.
 
 Every assured answer self-accounts: grain, freshness, contradictions, truncation, typed “no”s.
 
-Deep dive: [Retrieval](https://docs.remember.dev/docs/retrieval)
+Deep dive: [Retrieval](https://remember.dev/docs/retrieval)
 
 ---
 
@@ -138,20 +138,23 @@ Deep dive: [Retrieval](https://docs.remember.dev/docs/retrieval)
 | --- | --- |
 | **Filesystem mounts** | `ls` / read / `grep` the corpus and knowledge like a codebase |
 | **MCP · CLI · API** | Semantic search, graph, time-travel, open query — one operation set |
-| **Consumption skill** | Deployment-rendered `SKILL.md` that keeps grains straight |
-
-Primary consumers are coding harnesses (Claude Code, Codex, OpenCode, and peers). Humans get the same audit trail.
+| **Skill bundle** | Dynamic prompt for agents to self-learn Remember |
 
 ---
 
 ## Quick start
 
 ```bash
-git clone https://github.com/writeitai/remember-stack.git
-cd remember-stack
-cp .env.example .env   # set your OpenRouter (or provider) key
-docker compose up --build --detach --wait
+# 1. Run the self-hosted engine (Postgres 19 + MinIO + workers)
+docker compose up -d
 
+# 2. Configure your AI agent in one command
+uvx remember setup
+```
+
+Verify everything is running:
+
+```bash
 curl --fail http://localhost:8000/healthz
 curl --fail http://localhost:8000/operations
 ```
@@ -165,7 +168,7 @@ Client package:
 
 ```bash
 pip install remember
-# server / connectors / knowledge extras named in the package
+# Run the full server engine via Docker: ghcr.io/writeitai/remember-stack
 ```
 
 ---

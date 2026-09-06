@@ -298,6 +298,9 @@ def configure_codex(
 
     config_file.write_text(new_content, encoding="utf-8")
     print(f"[✓] Configured Codex: {config_file}")
+    print(
+        "    Note: Project-local Codex MCP servers require the project directory to be trusted by Codex."
+    )
     return True
 
 
@@ -538,46 +541,61 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     configured_any = False
 
     if target_agent == "cursor":
-        configure_cursor(
+        ok = configure_cursor(
             cwd=target_dir,
             launcher_cmd=launcher_cmd,
             launcher_args=launcher_args,
             env=env if env else None,
             dry_run=dry_run,
         )
+        if not ok:
+            print("error: Failed to configure Cursor harness.", file=sys.stderr)
+            return 1
         configured_any = True
     elif target_agent == "agy":
-        configure_antigravity(
+        ok = configure_antigravity(
             cwd=target_dir,
             launcher_cmd=launcher_cmd,
             launcher_args=launcher_args,
             env=env if env else None,
             dry_run=dry_run,
         )
+        if not ok:
+            print("error: Failed to configure Antigravity harness.", file=sys.stderr)
+            return 1
         configured_any = True
     elif target_agent == "codex":
-        configure_codex(
+        ok = configure_codex(
             cwd=target_dir,
             launcher_cmd=launcher_cmd,
             launcher_args=launcher_args,
             env=env if env else None,
             dry_run=dry_run,
         )
+        if not ok:
+            print("error: Failed to configure OpenAI Codex harness.", file=sys.stderr)
+            return 1
         configured_any = True
     elif target_agent == "claude":
-        configure_claude_code(
+        ok_code = configure_claude_code(
             launcher_cmd=launcher_cmd,
             launcher_args=launcher_args,
             env=env if env else None,
             dry_run=dry_run,
         )
         desktop_config = get_claude_desktop_config_path()
-        configure_claude_desktop(
+        ok_desktop = configure_claude_desktop(
             launcher_cmd=launcher_cmd,
             launcher_args=launcher_args,
             env=env if env else None,
             dry_run=dry_run,
         )
+        if not (ok_code or ok_desktop):
+            print(
+                "error: Failed to configure Claude harness (neither Claude Code CLI nor Claude Desktop succeeded).",
+                file=sys.stderr,
+            )
+            return 1
         configured_any = True
     else:
         # target_agent == "all": auto-detect existing harnesses
