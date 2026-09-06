@@ -162,6 +162,20 @@ COMMENT ON VIEW memory_v1.claims_live IS
 
 def upgrade() -> None:
     """Publish the wrapper function and the claims_canonical view."""
+    # Per-schema default ACLs cannot subtract PostgreSQL's global PUBLIC
+    # EXECUTE default. Explicitly protect these private twins even on stores
+    # where 0047 ran after 0023's per-schema default-privilege statement.
+    # Schema USAGE remains a separate boundary, not a substitute for this ACL.
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION"
+        " public.claim_canonical_start(timestamptz, public.claim_valid_precision)"
+        " FROM PUBLIC"
+    )
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION"
+        " public.claim_canonical_end(timestamptz, timestamptz, public.claim_valid_precision)"
+        " FROM PUBLIC"
+    )
     op.execute(
         "GRANT EXECUTE ON FUNCTION"
         " claim_canonical_start(timestamptz, claim_valid_precision)"
@@ -224,6 +238,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop the published view and wrapper; public twins stay."""
+    # Keep the explicit private-function PUBLIC revocations: downgrading the
+    # published contract must not restore the earlier unintended execute ACL.
     op.execute("DROP VIEW IF EXISTS memory_v1.claims_canonical")
     for block in MEMORY_V1_AUTHORED_DDL:
         for statement in _split_sql(sql=block):

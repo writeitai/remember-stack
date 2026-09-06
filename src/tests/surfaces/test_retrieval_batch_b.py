@@ -571,6 +571,20 @@ def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
         connection.exec_driver_sql(
             f"ALTER ROLE {quoted_role} PASSWORD 'temporal-test-only'"
         )
+        # A missing schema USAGE grant can hide a leaked function EXECUTE ACL.
+        # Check both permission layers independently before authenticating.
+        assert not connection.execute(
+            text("SELECT has_schema_privilege(:role, 'public', 'USAGE')"),
+            {"role": role},
+        ).scalar_one()
+        for signature in (
+            "public.claim_canonical_start(timestamptz, public.claim_valid_precision)",
+            "public.claim_canonical_end(timestamptz, timestamptz, public.claim_valid_precision)",
+        ):
+            assert not connection.execute(
+                text("SELECT has_function_privilege(:role, :signature, 'EXECUTE')"),
+                {"role": role, "signature": signature},
+            ).scalar_one()
     query_url = corpus.engine.url.set(
         drivername="postgresql", username=role, password="temporal-test-only"
     ).render_as_string(hide_password=False)
