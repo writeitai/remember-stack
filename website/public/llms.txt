@@ -1,0 +1,23 @@
+# Remember
+
+> Open memory infrastructure for autonomous AI coding agents. Bitemporal knowledge graph, autonomous contradiction adjudication, and assured retrieval over PostgreSQL 19 with open query space parity.
+
+## Documentation Overview
+
+- [Why Remember](https://remember.dev/docs): Architectural overview of bitemporal memory, testimony vs truth, and why vector RAG fails.
+- [vs Vector RAG](https://remember.dev/docs/why): Detailed comparison between standard passage embeddings and bitemporal claim extraction.
+- [Concepts](https://remember.dev/docs/concepts): Core vocabulary: claims, relations, observations, bitemporal clocks, and validity windows.
+- [Architecture](https://remember.dev/docs/architecture): End-to-end architecture: Plane E (Evidence), Plane K (Knowledge), Plane P (Projections).
+- [Getting Started](https://remember.dev/docs/getting-started): 2-minute quickstart with `uvx remember setup`.
+- [Agent Harnesses](https://remember.dev/docs/harnesses): Connecting Cursor, Claude Code, Claude Desktop, Codex, and Google Antigravity.
+- [Python SDK Reference](https://remember.dev/docs/reference/sdk): Official `remember` Python package documentation (`RememberClient`).
+- [Platform CLI Reference](https://remember.dev/docs/reference/cli): Comprehensive manual for `remember setup`, `doctor`, `whoami`, `balance`, `projects`, `ingest`, and `query`.
+- [Model Context Protocol (MCP)](https://remember.dev/docs/reference/mcp): MCP tool specifications and agent integration contracts.
+- [Assured Retrieval](https://remember.dev/docs/retrieval): The four assured retrieval operations (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`).
+- [Response Envelope](https://remember.dev/docs/retrieval/envelope): Envelope structure, freshness timestamps, typed negatives, and evidence bridges.
+- [Open Query Space](https://remember.dev/docs/retrieval/open-query): AST-sandboxed SQL and graph traversal over the `memory_v1` public schema.
+- [Docker Compose Quickstart](https://remember.dev/docs/deployment): Self-hosting the full engine, PostgreSQL 19 with SQL/PGQ, and MinIO storage.
+- [Remember Cloud Platform](https://remember.dev/docs/cloud/architecture): Dedicated private database pods, AST query sandbox safety, and spend lease protection.
+- [Remember Cloud CLI](https://remember.dev/docs/cloud/cli): Terminal workflows for authentication, project context, switching, and console links.
+- [Billing & Credits](https://remember.dev/docs/cloud/billing): Transparent usage-based credit model and spend lease mechanics.
+- [Security & Isolation](https://remember.dev/docs/cloud/security): Dedicated pod isolation, token audience separation, and AST query sandboxing.

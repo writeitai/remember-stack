@@ -414,6 +414,7 @@ def test_budget_settings_are_unique_and_cli_inspection_uses_them(
         "ceiling_usd": "2.50",
     }
     monkeypatch.setenv("REMEMBERSTACK_WORK_BUDGETS", json.dumps([configured]))
+    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "1")
     settings = WorkLedgerSettings()
     assert settings.budgets[0].ceiling_usd == Decimal("2.50")
     with pytest.raises(ValidationError, match="only one cost budget"):

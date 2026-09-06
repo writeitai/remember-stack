@@ -17,7 +17,7 @@ from benchmarks.locomo.retrieval import RetrievalToolError
 import httpx
 import pytest
 
-from rememberstack.model import Envelope
+from remember.models import Envelope
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 

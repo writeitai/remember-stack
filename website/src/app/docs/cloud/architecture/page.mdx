@@ -1,0 +1,90 @@
+export const metadata = {
+  title: "Remember Cloud Architecture",
+  description:
+    "How Remember Cloud delivers dedicated physical database isolation, AST-sandboxed SQL, and automated operations with dedicated per-project database pods.",
+};
+
+# Remember Cloud Architecture
+
+Remember Cloud is the managed platform being built around the open-source Remember engine. It provides the same open-source engine and bitemporal spine as self-hosted instances, but removes database administration, storage maintenance, worker tuning, and backup operations.
+
+---
+
+## 1. Physical Database Isolation
+
+Many multi-tenant cloud databases share tables across customers, relying on `tenant_id` columns and row-level security (RLS) policies.
+
+Remember Cloud uses **physical database isolation**:
+
+```
+                 ┌──────────────────────────────────────┐
+                 │       Cloud Ingress Gateway          │
+                 │   - TLS Termination                  │
+                 │   - Device Grant Authentication      │
+                 │   - Spend Lease Request Admission    │
+                 └──────────────────┬───────────────────┘
+                                    │
+         ┌──────────────────────────┴──────────────────────────┐
+         ▼                                                     ▼
+┌──────────────────────────────┐              ┌──────────────────────────────┐
+│ Dedicated Pod: Project Alpha │              │ Dedicated Pod: Project Beta  │
+│                              │              │                              │
+│  - Dedicated Engine Container│              │  - Dedicated Engine Container│
+│  - Isolated PostgreSQL 19    │              │  - Isolated PostgreSQL 19    │
+│    Instance + SQL/PGQ        │              │    Instance + SQL/PGQ        │
+│  - Private S3 Blob Storage   │              │  - Private S3 Blob Storage   │
+│  - Private Vector Indices    │              │  - Private Vector Indices    │
+└──────────────────────────────┘              └──────────────────────────────┘
+```
+
+- **Zero Shared Tables**: Each project runs inside its own dedicated container pod with an isolated PostgreSQL 19 instance.
+- **Data Boundary Guarantee**: A query running in Project Alpha physically cannot access or scan rows belonging to Project Beta.
+- **Dedicated Pod Resources**: Dedicated database pods provide physical separation of data and compute per project.
+
+---
+
+## 2. Planned Open Query Space Parity (`open_query`)
+
+Per the D109 design architecture, the open query space is being deployed to Remember Cloud with the same security model as Self-Hosted:
+- Dedicated private database pods prevent cross-tenant visibility.
+- AST-validated query sandboxing (`pglast 8.x`) rejects mutations and restricts execution to `memory_v1` views.
+- Metered execution under request spend leases (`_spend_gated_route`).
+
+Active operator dogfooding is underway; check the published [compatibility profile](/docs/project-status) for route availability.
+
+---
+
+## 3. The Query Sandbox Defense Model
+
+To ensure queries remain non-destructive and predictable, the engine enforces a four-tier sandbox defense:
+
+1. **Deny-by-Default AST Parsing (`pglast 8.x`)**:
+   - Queries are parsed with PostgreSQL's official C grammar before execution.
+   - DDL (`DROP`, `CREATE`, `ALTER`), DML mutations (`INSERT`, `UPDATE`, `DELETE`), administrative utilities (`VACUUM`, `SET`, `GRANT`), and multi-statement queries are rejected at parse time.
+2. **Authoritative `memory_v1` Surface**:
+   - Queries can only reference the 24 public views and 11 allowlisted functions documented in the schema manifest.
+   - Direct access to internal engine tables, worker leases, or system catalogs is strictly blocked.
+3. **Low-Privilege `READ ONLY` Transactions**:
+   - Queries execute inside an explicit `READ ONLY` transaction block under a restricted database role.
+4. **Hard Execution Clamps**:
+   - Interactive statement timeout: **5,000 ms**.
+   - Maximum row clamp: **100 rows** per query (unless explicitly paged).
+   - Maximum byte payload: **1 MB**.
+
+---
+
+## 4. Spend Safety & Spend Leases
+
+To prevent runaway agent loops or accidental high-resource scans from draining your balance:
+1. **Spend Lease Admission (D46)**: Every data-plane query and ingestion request reserves an ephemeral spend lease before execution.
+2. **Commit on Success**: Leases are committed against project credits only upon successful 2xx response.
+3. **Auto-Release on Failure**: If a query errors or times out, the lease is automatically released without deducting credits.
+4. **Visibility at Cap**: Work pauses visibly at the cap the organization sets.
+
+---
+
+## 5. Automated Compaction & Maintenance
+
+In self-hosted environments, operators periodically run maintenance and compaction routines. On Remember Cloud:
+- **Autonomous Bitemporal Compaction**: Historical claim windows and entity clusters are automatically optimized in the background.
+- **Managed Storage Substrate**: Content-addressed blobs, chunk representations, and bitemporal graph state are maintained without manual intervention.

@@ -7,13 +7,13 @@ the composing profile binds one `ObjectStorePort` per bucket.
 
 from enum import StrEnum
 from typing import Annotated
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from remember.models import IngestedVersion as IngestedVersion  # noqa: F401
 from rememberstack.model.queue import UTCDateTime
 
 NonEmptyString = Annotated[str, Field(min_length=1)]
@@ -62,25 +62,6 @@ class DocumentUpload(BaseModel):
     mime: NonEmptyString
     content: bytes
     title: str | None = None
-
-
-class IngestedVersion(BaseModel):
-    """What one ingest did: the lineage/version it landed on, and whether it was new.
-
-    `created=False` is the D55 content-hash no-op: identical bytes re-ingested
-    never create a second version or re-run the chain.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    deployment_id: UUID
-    doc_id: UUID
-    version_id: UUID
-    content_hash: str
-    created: bool
-    processing_admission: Literal["not_required", "pending"] = Field(
-        default="not_required", exclude=True
-    )
 
 
 class UploadRecord(BaseModel):

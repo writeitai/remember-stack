@@ -28,6 +28,8 @@ from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
+from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import Envelope as RememberEnvelope
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
@@ -387,11 +389,11 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
     meaningful default values such as a zero hydration-drop count or an
     unknown temporal precision.
     """
-    if isinstance(record.response, Envelope):
+    if isinstance(record.response, (Envelope, RememberEnvelope)):
         response: object = record.response.model_dump(
             mode="json", exclude_none=True, exclude={"ranking"}
         )
-    elif isinstance(record.response, ContextBundleV1):
+    elif isinstance(record.response, (ContextBundleV1, RememberContextBundleV1)):
         response = record.response.model_dump(
             mode="json",
             exclude_none=True,

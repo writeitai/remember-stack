@@ -37,6 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check documentation truth and metadata
+        run: python ../scripts/check_docs_truth.py
+
       # `next build` type-checks the project and generates .next/types, so a
       # separate pre-build `tsc` step is intentionally omitted (it would run
       # before those generated types exist).

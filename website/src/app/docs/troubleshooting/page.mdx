@@ -66,7 +66,7 @@ Extraction and embeddings need a live provider. Bad credentials surface as stage
 remember ops inspect --deployment <deployment-uuid>
 ```
 
-Needs `rememberstack[server]` + `REMEMBERSTACK_DATABASE_URL`.
+Run inside the engine container (e.g. `docker compose exec api remember ops inspect --deployment <deployment-uuid>`) with `REMEMBERSTACK_DATABASE_URL`.
 
 | Field in report | Meaning |
 | --- | --- |

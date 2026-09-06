@@ -19,8 +19,8 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
-from rememberstack.model import ContextBundleV1
-from rememberstack.model import Envelope
+from remember.models import ContextBundleV1
+from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors

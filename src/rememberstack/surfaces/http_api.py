@@ -1430,6 +1430,18 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         name = normalized.removeprefix("/operations/")
         if name and "/" not in name:
             return ("recipe", name)
+    # D109: Open-query space spend gating. SQL execution, plan inspection,
+    # and query-space schema discovery are gated under path_id="search".
+    if method == "POST" and normalized in {"/query/sql", "/query/sql/explain"}:
+        return ("search", None)
+    if method == "GET" and normalized in {"/query/space", "/query/space/search"}:
+        return ("search", None)
+    if (
+        method == "POST"
+        and normalized.startswith("/query/saved/")
+        and normalized.endswith("/run")
+    ):
+        return ("search", None)
     return None
 
 

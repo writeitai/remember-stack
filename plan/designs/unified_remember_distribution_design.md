@@ -5,9 +5,10 @@
 > and Docker Compose. `rememberstack` is retired from standalone PyPI distribution. The binary command
 > **`remember`** is owned exclusively by the `remember` package. Legacy human-review queue commands (`review`)
 > and spend-ceiling inspection (`budget`) are retired from public client surfaces; autonomous bitemporal
-> adjudication (D3/D43/D107) is the sole engine truth authority. The `remember` CLI operates as a full platform
-> tool supporting both Cloud control-plane management (`login`, `whoami`, `balance`, `projects`, `members`) and data-plane
-> operations (`setup`, `ingest`, `query`, `mcp`), defaulting to Managed Cloud (`remember.dev`) with `--self-hosted` for local engines.
+> adjudication (D3/D43/D107) is the sole engine truth authority. The `remember` CLI operates as a developer
+> and data-plane tool supporting authentication and project context (`login`, `whoami`, `switch`) and data-plane
+> operations (`setup`, `ingest`, `query`, `mcp`), while administrative management tasks (`projects create`, `members list|invite`, `balance` billing top-ups) provide direct web console guidance to `https://remember.dev/app/...`.
+
 
 ---
 
@@ -39,7 +40,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  - Python SDK: `from remember import RememberClient`                         │
 │  - Platform CLI: `remember` (setup, login, balance, projects, ingest, query)  │
 │  - MCP Adapter: `remember mcp` (stdio & Streamable HTTP)                     │
-│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.11` (zero server dependencies)│
+│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` (zero server dependencies)│
 │  - Install footprint: < 2 MB, sub-second installation                        │
 └──────────────────────────────────────────────────────────────────────────────┘
                                      │
@@ -81,11 +82,11 @@ Authenticated via user session credentials obtained through OAuth device-grant l
 - **`remember login`**: Initiates device-code OAuth flow against `https://api.remember.dev` (or explicit `--control-plane-url`), prompts in terminal or opens browser, receives user session credentials and active tenant bindings, and writes owner-only `0600` credential file to `~/.config/remember/credentials.json`.
 - **`remember logout`**: Idempotently revokes the active session token at the control plane and removes stored credentials.
 - **`remember whoami`**: Displays authenticated identity, active organization, and current project context.
-- **`remember balance`** (or `remember billing`): Fetches current credit balance and subscription status (e.g. `Current balance: €15.00 [Active]`).
+- **`remember balance`** (or `remember billing`): Directs operators to the cloud console at `https://remember.dev/app/billing` to view balances and top up credits (reports status code 1 when no control token is configured).
 - **`remember projects list`**: Enumerates available tenant deployments in the user's organization.
-- **`remember projects create <name>`**: Provisions a new tenant data plane via the control-plane API and registers its scoped access token.
+- **`remember projects create <name>`**: Directs operators to the cloud console at `https://remember.dev/app/projects` to provision new tenant projects (exit code 1).
 - **`remember switch <project>`**: Sets the default active project and selects its corresponding tenant data-plane token in local configuration.
-- **`remember members list`** / **`remember members invite <email>`**: Manages team organization seats.
+- **`remember members list`** / **`remember members invite <email>`**: Directs operators to the cloud console at `https://remember.dev/app/team` to manage team organization seats (exit code 1).
 
 *Self-Hosted Behavior*: When configured in self-hosted mode (`--self-hosted`), executing control-plane commands prints a clean, honest notice:
 > *"Note: You are connected to a self-hosted engine (http://localhost:8000). Projects, team members, and billing are cloud-managed services on remember.dev."*
@@ -232,7 +233,7 @@ Decoupling client delivery from internal engine implementation requires strict, 
 
 1. **Phase 1: Package Reorganization in `remember-stack`**:
    - Restructure repository root to house the `remember` client package alongside engine modules (or clean `packages/remember` layout).
-   - Ensure `pyproject.toml` for `remember` declares only `httpx` and `pydantic`.
+   - Ensure `pyproject.toml` for `remember` declares only `httpx`, `pydantic`, and `pydantic-settings`.
 2. **Phase 2: PyPI Cutover**:
    - Release `remember 0.4.0` owning the `remember` CLI binary.
    - Release a final `rememberstack` update (e.g. `0.16.1` or `1.0.0`) containing a clear terminal deprecation warning directing users to `remember` for client usage and Docker Compose for server deployments.

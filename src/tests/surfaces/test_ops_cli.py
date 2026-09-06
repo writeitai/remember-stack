@@ -36,6 +36,7 @@ def test_ops_rebuild_invokes_the_existing_builder(
     """The admin surface adds no second rebuild implementation."""
     engine = _Engine()
     calls: list[dict[str, object]] = []
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
     monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
     monkeypatch.setattr(
@@ -77,6 +78,7 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
 ) -> None:
     """The operator command exposes semantic repair evidence as JSON."""
     engine = _Engine()
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
     monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
     monkeypatch.setattr(

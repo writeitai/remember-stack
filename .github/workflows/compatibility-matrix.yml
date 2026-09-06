@@ -1,0 +1,157 @@
+name: Client-Engine Compatibility Matrix
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths:
+      - "src/remember/**"
+      - "src/tests/surfaces/**"
+      - "src/tests/packaging/**"
+      - ".github/workflows/compatibility-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: Client vs Engine (${{ matrix.engine-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        engine-version: ["0.15.0", "0.16.0", "candidate"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.6"
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Build candidate client wheel
+        run: |
+          uv build --wheel --out-dir dist/
+          uv build packages/rememberstack --wheel --out-dir dist/
+
+      - name: Verify wheel packaging integrity
+        run: |
+          uv venv test-venv
+          uv pip install --find-links dist --python test-venv/bin/python remember
+          test-venv/bin/python -c "import remember; assert hasattr(remember, 'Client'); assert hasattr(remember, 'MemoryClient')"
+          test-venv/bin/remember --version
+
+      - name: Run cross-version compatibility checks (${{ matrix.engine-version }})
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          uv run pytest src/tests/packaging/test_client_wheel.py -v
+          uv run pytest src/tests/surfaces/test_remember_facade.py -v
+          uv run pytest src/tests/surfaces/test_remember_cloud_client.py -v
+
+      - name: Start PostgreSQL 19 with required extensions
+        run: .github/ci/start-postgres.sh
+
+      - name: Start MinIO Object Store
+        run: |
+          docker run --detach --name remember-minio \
+            --publish 9000:9000 --publish 9001:9001 \
+            --env MINIO_ROOT_USER=rememberstack \
+            --env MINIO_ROOT_PASSWORD=rememberstack_test \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            server /data --console-address :9001
+          for attempt in $(seq 1 30); do
+            if curl -s -f http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO is healthy"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Pull or build engine image (${{ matrix.engine-version }})
+        id: engine
+        run: |
+          if [ "${{ matrix.engine-version }}" = "candidate" ]; then
+            docker build --tag remember-stack:candidate .
+            echo "image=remember-stack:candidate" >> "$GITHUB_OUTPUT"
+          else
+            image="ghcr.io/writeitai/remember-stack:${{ matrix.engine-version }}"
+            docker pull "$image"
+            echo "image=$image" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run engine setup and migrations (${{ matrix.engine-version }})
+        run: |
+          docker run --rm --network host \
+            --env REMEMBERSTACK_DATABASE_URL="postgresql+psycopg://rememberstack:rememberstack_test@127.0.0.1:5432/rememberstack_test" \
+            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="http://127.0.0.1:9000" \
+            --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
+            --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
+            --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
+            "${{ steps.engine.outputs.image }}" setup
+
+      - name: Start engine API container and verify client operations (${{ matrix.engine-version }})
+        run: |
+          docker run --detach --name remember-engine --network host \
+            --env REMEMBERSTACK_DATABASE_URL="postgresql+psycopg://rememberstack:rememberstack_test@127.0.0.1:5432/rememberstack_test" \
+            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="http://127.0.0.1:9000" \
+            --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
+            --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
+            --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
+            --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
+            --env REMEMBERSTACK_SELFHOST_API_PORT="8000" \
+            "${{ steps.engine.outputs.image }}" api
+
+          for attempt in $(seq 1 30); do
+            if curl -s -f http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              echo "Engine API is healthy at http://127.0.0.1:8000/healthz"
+              break
+            fi
+            sleep 1
+            if [ "$attempt" -eq 30 ]; then
+              echo "::error::Engine failed to become healthy within 30 seconds"
+              docker logs remember-engine
+              exit 1
+            fi
+          done
+
+          # Verify candidate client wheel interacting with live engine
+          test-venv/bin/remember --version
+          test-venv/bin/remember whoami --self-hosted
+          test-venv/bin/remember projects list --self-hosted
+          test-venv/bin/remember doctor --self-hosted --api-url http://127.0.0.1:8000
+          test-venv/bin/remember operations list --api-url http://127.0.0.1:8000
+
+          # Validate programmatic SDK contract against live engine
+          test-venv/bin/python -c "
+          import remember
+          client = remember.Client(data_plane_url='http://127.0.0.1:8000', api_key='test-compatibility-key')
+          ops = client.list_operations()
+          assert isinstance(ops, tuple) and len(ops) > 0, f'expected operations tuple, got {ops}'
+          version = client.ingest(source=b'# Test\nLive engine compatibility probe.\n', filename='probe.md')
+          readiness = client.pipeline_readiness(
+              version_ids=(version.version_id,),
+              require=remember.ReadinessRequirements(pipeline=True, p1=False, live_graph=False, p3=False),
+          )
+          assert hasattr(readiness, 'ready') and hasattr(readiness, 'versions') and hasattr(readiness, 'capabilities'), f'expected readiness report: {readiness}'
+          # Validate error envelope and structured API error handling
+          try:
+              client.run_operation(name='nonexistent_operation', arguments={})
+          except remember.MemoryApiError as err:
+              assert err.status_code == 404 or err.code is not None, f'unexpected error shape: {err}'
+          else:
+              raise AssertionError('expected nonexistent_operation to raise MemoryApiError')
+          "
+
+          docker rm --force remember-engine remember-minio >/dev/null 2>&1 || true

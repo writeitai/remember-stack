@@ -1,0 +1,59 @@
+export const metadata = {
+  title: "Security & Isolation",
+  description:
+    "Security architecture in Remember Cloud: dedicated database pod isolation, token audience separation, AST query sandboxing, and secret-free harness configuration.",
+};
+
+# Security & Isolation
+
+Remember Cloud is architected for strict data isolation, zero secret leakage, and deterministic data lifecycle management.
+
+---
+
+## 1. Physical Database Isolation
+
+We do not use shared multi-tenant tables with `tenant_id` columns. In Remember Cloud:
+- **Dedicated Container Pods**: Every customer project runs inside an independent container pod.
+- **Dedicated PostgreSQL 19 Instances**: Databases are physically distinct instances with their own storage volumes and process boundaries.
+- **Data Boundary Guarantee**: Queries in one project cannot access or scan rows belonging to another project.
+
+---
+
+## 2. Secret Isolation Architecture (D92/D108)
+
+Security for AI coding agents requires preventing secrets from leaking into source control or reaching unauthorized systems:
+
+### Two-Tier Token Isolation
+1. **Control-Plane Session Tokens**:
+   - Issued during browser-based `remember login`.
+   - Used only to manage projects, members, and billing at `https://api.remember.dev`.
+   - Never forwarded to individual data-plane pods.
+2. **Data-Plane Project Tokens**:
+   - Cryptographically scoped to a single dedicated project pod.
+   - Authorized only for ingestion and querying.
+   - Cannot create projects, invite users, or view billing.
+
+### Zero Git Leakage
+When running `remember setup` to configure Cursor, Claude, Codex, or Antigravity:
+- The bootstrapper writes configuration files that reference environment variables or local credentials.
+- Secrets are never committed into git-tracked configuration files.
+- Local credentials live in `~/.config/remember/credentials.json` with strict directory permissions (`0700`) and file permissions (`0600`).
+
+---
+
+## 3. Transport Security & Network Boundaries
+
+- **Transport Security**: TLS is enforced across external network entry points.
+- **Data Plane Direct Addressing**: Data-plane traffic routes directly to the project deployment host rather than traversing control-plane proxies.
+
+---
+
+## 4. Deterministic Invalidation & Provenance Erasure
+
+In standard vector databases, deleting a document is often incomplete because embedding clusters cannot be readily decoupled from index graphs.
+
+In Remember's three-plane architecture:
+- Deleting a document removes original bytes from object storage (E0).
+- Prunes all derived chunks and vector embeddings (E1).
+- Marks source claims forgotten and removes them from live counting (E2).
+- Re-adjudicates affected entity relations in the bitemporal spine, closing valid-time intervals or removing facts that have no surviving provenance (E3).

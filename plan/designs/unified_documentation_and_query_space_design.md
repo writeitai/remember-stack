@@ -7,9 +7,10 @@
 > narrative combining deep conceptual foundations (bitemporal memory, contradiction adjudication, graph retrieval),
 > a universal quickstart (`uvx remember setup`), identical client/MCP surfaces (`remember`), and an honest,
 > transparent deployment choice (Self-Hosted Docker Compose vs. Managed Cloud). The SQL and bitemporal
-> graph query space (`open_query_execute`) is **fully enabled on Remember Cloud**, establishing 100% data-plane
-> parity with self-hosted instances backed by dedicated per-project database pods and the AST-validated
-> query sandbox (`QuerySandboxExecutor`). Duplicate documentation pages in `ultimate-memory-cloud` are retired.
+> graph query space (`open_query_execute`) is **fully implemented and active on Self-Hosted Engine (v0.17.0+)**,
+> with complete local-to-cloud parity planned for Remember Cloud under active operator dogfooding, backed
+> In Phase 1, canonical documentation is authored exclusively in `writeitai/remember-stack` under `website/` with automated CI truth enforcement across both repositories (`check_docs_truth.py --strict --docs-dir`). Duplicate static pages in `ultimate-memory-cloud` are scheduled for physical retirement in Phase 3 following Cloud web-ingress proxy cutover.
+
 
 ---
 
@@ -118,7 +119,7 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 ## 4. Full Cloud Query Space Parity (`open_query`)
 
 ### 4.1 Architecture & Tenant Isolation Guarantees
-The open query space is fully enabled on all Remember Cloud tenant deployments. The security model relies on physical pod isolation and three layers of query sandbox defense:
+The open query space is active on the Self-Hosted Engine (v0.17.0+) and planned for Remember Cloud tenant deployments following operator dogfooding. The security model relies on physical pod isolation and three layers of query sandbox defense:
 
 1. **Physical Database & Pod Isolation**:
    - Remember Cloud allocates a **private, dedicated PostgreSQL instance** for every project.
@@ -145,17 +146,18 @@ The open query space is fully enabled on all Remember Cloud tenant deployments. 
      - **Cloud Gateway Level**: Proxy ingress validates tenant token balance and active project status before routing execution to the project's dedicated data plane pod.
    - Rate limiting and query timeouts (5,000ms default) prevent runaway agent query loops or accidental high-resource scans.
 
-### 4.2 Updated Cloud Compatibility Matrix
-The following SDK surfaces and endpoints move from `unsupported` to `supported` across all cloud compatibility manifests:
+### 4.2 Updated Compatibility Matrix and Rollout Posture
+Open query surfaces are active and fully supported on Self-Hosted Engine v0.17.0+. On Remember Cloud, these routes are planned following operator dogfooding and will transition to supported upon deployment of v0.17.0+ data plane pods:
 
-| Surface / Route | Previous Status | D109 Cloud Status | Rationale |
-| :--- | :--- | :--- | :--- |
-| `POST /query/sql` | `unsupported` | **`supported`** | AST-validated, read-only sandboxed SQL execution. |
-| `POST /query/sql/explain` | `unsupported` | **`supported`** | Sandboxed execution plan inspection. |
-| `GET /query/space` | `unsupported` | **`supported`** | Dynamic manifest-backed schema discovery. |
-| `GET /query/space/search` | `unsupported` | **`supported`** | Semantic and lexical search over schema manifest text. |
-| `open_query_execute` (SDK) | `unsupported` | **`supported`** | Enables `RememberClient.open_query` in Python. |
-| Open Query MCP Tools | Omitted | **`advertised`** | The 7 open-query tools appear in `remember mcp` on Cloud. |
+| Surface / Route | Previous Cloud Status | Self-Hosted v0.17.0+ Status | D109 Cloud Target Status | Rationale |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST /query/sql` | `unsupported` | **`supported`** | **`planned`** | AST-validated, read-only sandboxed SQL execution. |
+| `POST /query/sql/explain` | `unsupported` | **`supported`** | **`planned`** | Sandboxed execution plan inspection. |
+| `GET /query/space` | `unsupported` | **`supported`** | **`planned`** | Dynamic manifest-backed schema discovery. |
+| `GET /query/space/search` | `unsupported` | **`supported`** | **`planned`** | Semantic and lexical search over schema manifest text. |
+| `open_query_execute` (SDK) | `unsupported` | **`supported`** | **`planned`** | Enables `RememberClient.open_query` in Python. |
+| Open Query MCP Tools | Omitted | **`advertised`** | **`planned`** | The 7 open-query tools appear in `remember mcp`. |
+
 
 ---
 
@@ -176,24 +178,27 @@ The following SDK surfaces and endpoints move from `unsupported` to `supported` 
 - **Cloud Gateway Routing**: The Cloud web router at `remember.dev` forwards requests matching `/docs*` to the Next.js documentation service built from `remember-stack/website`.
 - **Canonical Link Tags & Machine Discovery**: All documentation pages emit `<link rel="canonical" href="https://remember.dev/docs/..." />` to consolidate search authority. `https://remember.dev/llms.txt` and `https://remember.dev/llms-full.txt` are served directly from the canonical docs asset manifest.
 
-### 5.3 Deprecation of Duplicate Docs in `ultimate-memory-cloud`
-- The static documentation pages in `ultimate-memory-cloud/fe/src/app/(public)/docs` are retired.
+### 5.3 Staged Retirement of Duplicate Docs in `ultimate-memory-cloud`
+- **Phase 1 (Current State)**: Authoritative documentation content is authored exclusively in `remember-stack/website/`. Both repositories validate documentation claims against this canonical tree via `check_docs_truth.py --strict --docs-dir`. The legacy static pages in `fe/src/app/(public)/docs` remain temporarily present in `ultimate-memory-cloud` to support existing dashboard builds until the edge proxy cutover.
+- **Phase 3 (Cutover & Physical Deletion)**: Once Cloud web ingress proxies `remember.dev/docs` directly to the Next.js docs container and Cloudflare edge redirect rules are activated in production, the 49 static routes under `fe/src/app/(public)/docs` and their associated tests will be deleted in a coordinated ops cutover PR.
 - In-app links in the Cloud dashboard (e.g. `/app/onboarding`, `/app/settings`) link directly to `https://remember.dev/docs/...`.
 
 ---
 
 ## 6. Migration Plan
 
-1. **Phase 1: Merge D109 Design & Decision**:
-   - Merge this design and D109 into `writeitai/remember-stack`.
+1. **Phase 1: Canonical In-Repo Docs & Strict Truth Validation (Implemented in this PR)**:
+   - Authoritative documentation unified in `writeitai/remember-stack/website` under the Qdrant 5-layer model.
+   - Grounded truth claims in `ugm` and `umc-ops-impl` verified by CI (`check_docs_truth.py --strict --docs-dir`).
+   - Edge routing rules documented in `infra/prod.yaml` and `docs/operations/cloudflare-edge.md` with strict path preservation.
 2. **Phase 2: Engine Spend Gating & Cloud Parity Enablement**:
    - **Engine Route Spend Gating**: Update `_spend_gated_route` in `src/rememberstack/surfaces/http_api.py` to register `/query/sql`, `/query/sql/explain`, and `/query/space` under `path_id="search"` (or `"open_query"`). Add integration tests verifying spend reservation, 2xx commit, and non-2xx lease release under `SpendLeasePort`.
    - **Cloud Gateway & Compatibility Manifests**: Update `ultimate-memory-cloud` compatibility matrices (`docs/compatibility/managed-compat-2026-09.yaml` and `.md`) marking `open_query_execute` and `/query/*` as supported.
    - **Deployment**: Deploy engine v0.16.0+ with `open_query` composed on tenant data-plane pods with verified spend metering and AST sandbox execution.
-3. **Phase 3: Docs Consolidation & Narrative Polish**:
-   - Reorganize `website/` in `remember-stack` according to the 5-layer Qdrant taxonomy.
-   - Point Cloud web ingress for `remember.dev/docs` to the canonical docs build.
-   - Issue 301 redirects from `docs.remember.dev`.
+3. **Phase 3: Production Ingress Cutover & Static Docs Deletion**:
+   - Point Cloud web ingress for `remember.dev/docs` to the canonical Next.js docs service.
+   - Activate Cloudflare 301 redirect rules for `docs.remember.dev` (with path preservation and machine discovery mappings).
+   - Physically remove the legacy static pages in `fe/src/app/(public)/docs` and retire `test_docs_page_tree.py` in `ultimate-memory-cloud`.
 
 ---
 

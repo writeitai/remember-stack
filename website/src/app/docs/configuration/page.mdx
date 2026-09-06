@@ -14,22 +14,21 @@ How to bind a **single deployment** to stores, model seats, budgets, and optiona
 | --- | --- |
 | Local full stack | Copy `.env.example` → `.env`, set OpenRouter key, `docker compose up` |
 | Reproducible models | Pin **explicit** model IDs — never a rotating free router |
-| Client only | `pip install rememberstack` + `REMEMBERSTACK_API_URL` |
-| Ops / budgets / DLQ | `rememberstack[server]` + `REMEMBERSTACK_DATABASE_URL` |
+| Client / MCP only | `pip install remember` (or `uvx remember setup`) |
+| Production engine | Docker Compose / `ghcr.io/writeitai/remember-stack:0.17.0` |
 | Secrets | Never commit real keys; local examples are disposable |
 
 One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` creates a different deployment identity.
 
-## Install surfaces
+## Distribution surfaces
 
-| Extra / artifact | Role |
-| --- | --- |
-| `rememberstack` (base) | Typed SDK, remote CLI/MCP, lineage-aware remote ingest |
-| `rememberstack[server]` | API, workers, PostgreSQL 19 adapters, local ops CLI |
-| `rememberstack[connectors-watched-directory]` | Names the watched-dir connector surface (stdlib) |
-| `rememberstack[k]` | Names the Plane K install surface |
-| `rememberstack[benchmark]` | LoCoMo / scorer deps |
-| `rememberstack[observability]` | Sentry-protocol + Langfuse SDKs (still opt-in by env) |
+| Distribution / Artifact | Role |
+| :--- | :--- |
+| `remember` (PyPI package) | Client SDK (`RememberClient`), platform CLI (`remember`), MCP server (`remember mcp`), and agent setup (`remember setup`). Sub-second install, zero C-extension compilation. |
+| `ghcr.io/writeitai/remember-stack` (Docker) | Pre-built engine container: HTTP API, workers (E0–E3), PostgreSQL 19 migrations, and bitemporal spine. |
+| Docker Compose (`docker-compose.yml`) | Single-command local orchestration: PostgreSQL 19 + SQL/PGQ, MinIO object store, API, and workers. |
+| `remember[benchmark]` | LoCoMo / scorer deps |
+| `remember[observability]` | Sentry-protocol + Langfuse SDKs (still opt-in by env) |
 | GHCR image / Compose | Fresh single-deployment self-host |
 
 ## Environment map (self-host)

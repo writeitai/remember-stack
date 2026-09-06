@@ -23,6 +23,7 @@ def main() -> None:
     _validate_compose_pin(root=root, version=version)
     _validate_release_docs(root=root, version=version)
     _validate_postgres_release(root=root)
+    _validate_terminal_package_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
     print(f"release contract valid for RememberStack {version}")
@@ -92,7 +93,7 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
             image,
         ),
         Path("website/src/app/docs/reference/cli/page.mdx"): (
-            f"# RememberStack {version}",
+            f"`remember` CLI (v{version}",
         ),
         Path("website/src/app/docs/reference/api/page.mdx"): (
             f"Release v{version} and later",
@@ -100,7 +101,7 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
         ),
         Path("website/src/app/docs/project-status/page.mdx"): (
             f"releases/tag/v{version}",
-            f"rememberstack/{version}/",
+            f"remember/{version}/",
         ),
     }
     for relative_path, expected_markers in markers.items():
@@ -143,6 +144,38 @@ def _validate_postgres_release(*, root: Path) -> None:
             raise ValueError(
                 f"release workflow is missing PostgreSQL image contract {required!r}"
             )
+
+
+def _validate_terminal_package_release(*, root: Path) -> None:
+    """Validate that the terminal transition package is one-time gated on v0.17.0 (D108)."""
+    terminal_pyproject = root / "packages" / "rememberstack" / "pyproject.toml"
+    if not terminal_pyproject.is_file():
+        raise ValueError(f"missing terminal package manifest: {terminal_pyproject}")
+    with terminal_pyproject.open("rb") as pyproject:
+        document = tomllib.load(pyproject)
+    project = document.get("project", {})
+    version = project.get("version")
+    if version != "0.17.0":
+        raise ValueError(
+            f"packages/rememberstack version must remain terminal 0.17.0, found {version!r}"
+        )
+    deps = project.get("dependencies", [])
+    if "remember>=0.17.0" not in deps:
+        raise ValueError(
+            "packages/rememberstack must depend on 'remember>=0.17.0'"
+        )
+
+    workflow = (root / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    if 'if [ "${GITHUB_REF_NAME}" = "v0.17.0" ]; then' not in workflow:
+        raise ValueError(
+            "release workflow must gate packages/rememberstack build strictly on v0.17.0"
+        )
+    if "skip-existing: true" not in workflow:
+        raise ValueError(
+            "release workflow publish-pypi step must set skip-existing: true"
+        )
 
 
 if __name__ == "__main__":

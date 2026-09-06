@@ -120,7 +120,7 @@ def _load_sdk() -> _SentrySdk:
         module = import_module("sentry_sdk")
     except ModuleNotFoundError as error:
         raise RuntimeError(
-            "REMEMBERSTACK_SENTRY_DSN requires rememberstack[observability]"
+            "REMEMBERSTACK_SENTRY_DSN requires remember[observability]"
         ) from error
     return module  # type: ignore[return-value]
 
