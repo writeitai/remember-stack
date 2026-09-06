@@ -60,6 +60,22 @@ def main(argv: list[str] | None = None) -> int:
                         file=sys.stderr,
                     )
                     return 1
+            if subcmd in ("review", "budget"):
+                env = CliClientEnv.model_validate({})
+                if not env.internal_ops:
+                    if subcmd == "review":
+                        print(
+                            "error: 'remember review' is retired. The engine uses autonomous "
+                            "bitemporal adjudication (D3/D43/D107). See https://remember.dev/docs",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            "error: 'remember budget' is retired from the client CLI. "
+                            "Use 'remember balance' to check account credits. See https://remember.dev/docs",
+                            file=sys.stderr,
+                        )
+                    return 1
             if subcmd == "query":
                 known_query_subcmds = {
                     "text",
@@ -815,7 +831,7 @@ _TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
 
 def _list_reviews(*, queue: Any, deployment_id: UUID) -> int:
     """Print one JSON record per open item in impact-ranked order."""
-    for item in queue.list_open(deployment_id=deployment_id):
+    for item in queue.pending(deployment_id=deployment_id):
         print(
             json.dumps(
                 {
@@ -1610,22 +1626,39 @@ def _login_locked(args: argparse.Namespace) -> int:
                     _retry_pending_revocation()
                     raise
                 if existing is not None:
-                    dep_str = str(credential.deployment_id)
-                    if existing.deployment_id == credential.deployment_id:
-                        predecessor_to_revoke = PendingRevocation(
-                            version=1,
-                            token_host=existing.token_host,
-                            access_token=existing.access_token,
-                            token_id=existing.token_id,
-                        )
-                    elif existing.projects and dep_str in existing.projects:
-                        old_p = existing.projects[dep_str]
-                        predecessor_to_revoke = PendingRevocation(
-                            version=1,
-                            token_host=old_p.token_host or existing.token_host,
-                            access_token=old_p.data_plane_token,
-                            token_id=old_p.token_id or existing.token_id,
-                        )
+                    if (
+                        getattr(token, "token_prefix", "") == "umc_cp"
+                        or audience == "control"
+                    ):
+                        if (
+                            existing.control_plane
+                            and existing.control_plane.access_token
+                        ):
+                            predecessor_to_revoke = PendingRevocation(
+                                version=1,
+                                token_host=existing.control_plane.url
+                                or existing.token_host,
+                                access_token=existing.control_plane.access_token,
+                                token_id=existing.control_plane.token_id
+                                or existing.token_id,
+                            )
+                    else:
+                        dep_str = str(credential.deployment_id)
+                        if existing.deployment_id == credential.deployment_id:
+                            predecessor_to_revoke = PendingRevocation(
+                                version=1,
+                                token_host=existing.token_host,
+                                access_token=existing.access_token,
+                                token_id=existing.token_id,
+                            )
+                        elif existing.projects and dep_str in existing.projects:
+                            old_p = existing.projects[dep_str]
+                            predecessor_to_revoke = PendingRevocation(
+                                version=1,
+                                token_host=old_p.token_host or existing.token_host,
+                                access_token=old_p.data_plane_token,
+                                token_id=old_p.token_id or existing.token_id,
+                            )
 
                 if predecessor_to_revoke is not None:
                     # Written before the file is overwritten, because

@@ -118,6 +118,8 @@ class ControlPlaneCredentials(BaseModel):
     org_id: str | UUID | None = None
     user_id: str | UUID | None = None
     email: str | None = None
+    token_id: UUID | None = None
+    expires_at: datetime | None = None
 
 
 class ProjectCredentials(BaseModel):

@@ -336,7 +336,11 @@ def credential_from_token(
         or token.deployment_id is None
     ):
         control_cred = ControlPlaneCredentials(
-            url=token_host, access_token=token.access_token, org_id=token.org_id
+            url=token_host,
+            access_token=token.access_token,
+            org_id=token.org_id,
+            token_id=token.token_id,
+            expires_at=token.expires_at,
         )
         if existing is not None:
             return existing.model_copy(
@@ -349,7 +353,7 @@ def credential_from_token(
             api_url="https://api.remember.dev",
             token_host=token_host,
             access_token=SecretStr(""),
-            token_id=uuid4(),
+            token_id=token.token_id or uuid4(),
             org_id=token.org_id,
             deployment_id=uuid4(),
             control_plane=control_cred,

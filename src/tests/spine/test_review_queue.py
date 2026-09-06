@@ -881,6 +881,7 @@ def test_cli_lists_and_decides_through_the_same_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
+    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "1")
     monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
     survivor = _entity(engine=database_engine, name="CLI Survivor")
     absorbed = _entity(engine=database_engine, name="CLI Absorbed")
