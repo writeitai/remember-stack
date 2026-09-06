@@ -5236,3 +5236,25 @@ D32, D43's untyped statement, D98, D100–D105.
 
 **Design.** `plan/designs/unified_remember_distribution_design.md`; amendment banner on `plan/designs/packaging_distribution_design.md`.
 **Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D66, D98, D107.
+
+## D109. Unified documentation architecture (the Qdrant model) and full cloud query space parity
+
+**Context.** Prior to D109, documentation was divided across two repositories: `remember-stack` (`website/` deployed to `docs.remember.dev`) and `ultimate-memory-cloud` (`fe/src/app/(public)/docs` deployed to `remember.dev/docs`). This caused continuous maintenance drift between engine features and cloud documentation, fragmented brand SEO, and confused developers and AI agents. Concurrently, early cloud compatibility matrices marked `open_query_execute` (`POST /query/sql`, `GET /query/space`, and open-query MCP tools) as unsupported on Remember Cloud out of initial conservative scoping, creating an artificial divide where agents lost relational and graph query tools when moving from local Docker to Cloud.
+
+**Decision.**
+1. **Canonical Docs In-Repo (`writeitai/remember-stack/website`)**: The single canonical documentation site lives inside the `remember-stack` monorepo under `website/`. It is published canonically at `https://remember.dev/docs` (with `docs.remember.dev` 301-redirecting with path preservation to avoid double-prefixing). Duplicate static documentation pages in `ultimate-memory-cloud` are retired. Same-PR truthfulness (D66) is strictly reinforced across all platform changes.
+2. **The Qdrant Unified Narrative Model**:
+   - **Concepts First**: Deep conceptual explanation of bitemporal memory, why vector RAG fails, contradiction adjudication, and graph relationships.
+   - **Universal Onboarding**: Single `uvx remember setup` quickstart auto-configuring Cursor, Claude Code, Claude Desktop, Codex, and Antigravity with a clear choice between Cloud and Self-Hosted.
+   - **Identical Client Surface**: Python SDK (`remember`) and MCP server (`remember mcp`) work identically across all deployment targets with zero code changes.
+   - **Transparent Deployment Choice**: Clear, honest separation between Self-Hosted OSS (Docker Compose, Kubernetes Helm, PostgreSQL 19 + SQL/PGQ) and Managed Cloud (`remember login`, `balance`, dedicated private database pods, zero-ops maintenance).
+3. **Full Cloud Data-Plane Parity (`open_query`)**: The open query space is fully enabled on Remember Cloud. Every cloud project runs in a dedicated private pod and database instance (physical pod isolation, zero shared multi-tenant tables). Queries are AST-validated with PostgreSQL's parser (`pglast`), deny-by-default read-only transaction sandboxed (`QuerySandboxExecutor`), constrained strictly to the authoritative `memory_v1` surface (24 public relations and 11 allowlisted functions per `src/rememberstack/spine/query_space/memory_v1_manifest.json`), and metered under request spend leases (`_spend_gated_route` prerequisite in Phase 2), guaranteeing complete feature parity with self-hosted instances.
+4. **Unified Machine Discovery**: `https://remember.dev/llms.txt` and `https://remember.dev/llms-full.txt` are served directly from the canonical documentation build.
+
+**Consequences.** Developers and AI coding agents experience a single cohesive documentation home; engine features and documentation evolve with same-PR guarantees; duplicate maintenance across repositories is eliminated; and paying Cloud customers gain the full bitemporal SQL and graph query space with complete local-to-cloud parity.
+
+**Rejected.** Maintaining two separate documentation websites (perpetuates divergence and cannibalizes search ranking); storing documentation in the cloud repository (violates D66 same-PR truthfulness for OSS engine contributors); disabling SQL query space in Cloud (deprives customers of Remember's core bitemporal relational advantage despite complete physical pod isolation and AST sandbox safety).
+
+**Design.** `plan/designs/unified_documentation_and_query_space_design.md`.
+
+**Amends.** D66 (broadens in-repo documentation scope to serve as the unified authority for both OSS and Managed Cloud at `remember.dev/docs`). Replaces unsupported status of `open_query_execute` in cloud compatibility matrices. Preserves D61, D62, D91, D92, D98, D107, D108.
