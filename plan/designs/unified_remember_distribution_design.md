@@ -40,7 +40,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  - Python SDK: `from remember import RememberClient`                         │
 │  - Platform CLI: `remember` (setup, login, balance, projects, ingest, query)  │
 │  - MCP Adapter: `remember mcp` (stdio & Streamable HTTP)                     │
-│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.11` (zero server dependencies)│
+│  - Dependencies: `httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` (zero server dependencies)│
 │  - Install footprint: < 2 MB, sub-second installation                        │
 └──────────────────────────────────────────────────────────────────────────────┘
                                      │
@@ -233,7 +233,7 @@ Decoupling client delivery from internal engine implementation requires strict, 
 
 1. **Phase 1: Package Reorganization in `remember-stack`**:
    - Restructure repository root to house the `remember` client package alongside engine modules (or clean `packages/remember` layout).
-   - Ensure `pyproject.toml` for `remember` declares only `httpx` and `pydantic`.
+   - Ensure `pyproject.toml` for `remember` declares only `httpx`, `pydantic`, and `pydantic-settings`.
 2. **Phase 2: PyPI Cutover**:
    - Release `remember 0.4.0` owning the `remember` CLI binary.
    - Release a final `rememberstack` update (e.g. `0.16.1` or `1.0.0`) containing a clear terminal deprecation warning directing users to `remember` for client usage and Docker Compose for server deployments.

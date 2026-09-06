@@ -77,7 +77,8 @@ pip install remember
 ```python
 from remember import RememberClient
 
-# Automatically loads credentials from ~/.config/remember or REMEMBER_TOKEN
+# Connects using environment variables (REMEMBER_DATA_PLANE_URL, REMEMBER_API_KEY)
+# or explicit parameters. Defaults to local self-hosted engine (http://localhost:8000).
 client = RememberClient()
 
 result = client.ingest(

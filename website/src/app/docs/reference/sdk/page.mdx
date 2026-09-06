@@ -21,7 +21,8 @@ pip install remember
 ```python
 from remember import RememberClient
 
-# 1. Automatic resolution (uses ambient credentials from 'remember login' or REMEMBER_DATA_PLANE_URL)
+# 1. Environment resolution (uses REMEMBER_DATA_PLANE_URL and REMEMBER_API_KEY / REMEMBER_TOKEN)
+# Defaults to local engine (http://127.0.0.1:8000) when unconfigured.
 client = RememberClient()
 
 # 2. Explicit Self-Hosted engine initialization (Docker Compose)
@@ -36,7 +37,9 @@ client = RememberClient(
 # )
 ```
 
-> **Backwards Compatibility**: The class name `MemoryClient` remains fully supported as an alias for `RememberClient`.
+> **D92 Credential Isolation**: Programmatic SDK clients (`RememberClient`) never read ambient CLI session files (`~/.config/remember/credentials.json`). Headless services, backend workers, and CI pipelines authenticate exclusively via explicit constructor parameters or environment variables (`REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_KEY`). For interactive terminal commands, credentials are automatically resolved by the `remember` CLI.
+
+> **Naming**: Both `RememberClient` and `Client` are exported for programmatic use; the underlying engine class `MemoryClient` remains fully supported for backward compatibility.
 
 ---
 
@@ -85,7 +88,7 @@ envelope = client.fact_context(
 
 for fact in envelope.facts:
     print(f"Fact: {fact.label} (evidence count: {fact.evidence_count})")
-    
+
 for ev in envelope.evidence:
     print(f"  Source claim: {ev.claim_text}")
 ```
@@ -127,7 +130,7 @@ for candidate in entities.entities:
 
 ## 4. Open Query Space (SQL)
 
-The open query space allows AI agents and data engineers to run sandboxed, read-only SQL queries directly against the bitemporal graph views (`memory_v1`). 
+The open query space allows AI agents and data engineers to run sandboxed, read-only SQL queries directly against the bitemporal graph views (`memory_v1`).
 
 The open query space is fully supported on Self-Hosted engines, with cloud query space parity in planned development.
 

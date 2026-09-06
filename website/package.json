@@ -2,7 +2,7 @@
   "name": "rememberstack-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "RememberStack documentation, published at docs.remember.dev",
+  "description": "Remember documentation, published at remember.dev/docs",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

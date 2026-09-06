@@ -53,7 +53,7 @@ Carries zero heavy database or C-extension compilation dependencies (`httpx>=0.2
 ```python
 from remember import RememberClient
 
-# Automatically reads credentials from ~/.config/remember/credentials.json or REMEMBER_TOKEN
+# Connects via REMEMBER_DATA_PLANE_URL and REMEMBER_API_KEY / REMEMBER_TOKEN (defaults to http://127.0.0.1:8000)
 client = RememberClient()
 
 # Ingest document

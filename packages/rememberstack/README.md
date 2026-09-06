@@ -22,7 +22,7 @@ from remember import RememberClient, MemoryClient, Client, CloudClient
 Engine server deployments are distributed container-first via GitHub Packages and Docker Compose:
 
 ```bash
-docker pull ghcr.io/writeitai/remember-stack:v0.17.0
+docker pull ghcr.io/writeitai/remember-stack:0.17.0
 ```
 
 For more information, see the official documentation at [remember.dev/docs](https://remember.dev/docs).

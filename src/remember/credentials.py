@@ -283,7 +283,9 @@ def load_credentials(
             try:
                 return CredentialFile.model_validate_json(stream.read())
             except Exception as error:
-                raise CredentialError("credentials file is unreadable") from error
+                raise CredentialError(
+                    "credentials file is unreadable or malformed; re-authenticate with 'remember login' or 'remember setup'"
+                ) from error
     finally:
         if handle >= 0:
             os.close(handle)

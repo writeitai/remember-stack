@@ -20,9 +20,11 @@ from pydantic import BaseModel
 from pydantic import BeforeValidator
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 from pydantic import SecretStr
 from pydantic import ValidationError
 
+from remember.credentials import ControlPlaneCredentials
 from remember.credentials import CredentialFile
 from remember.credentials import DeferredInterrupts
 from remember.credentials import ProjectCredentials
@@ -85,9 +87,10 @@ class DeviceTokenSuccess(BaseModel):
     token_type: Literal["Bearer"]
     token_id: UUID
     org_id: UUID
-    deployment_id: UUID
-    label: str
-    token_prefix: str
+    deployment_id: UUID | None = None
+    label: str = "default"
+    token_prefix: str = "umc_dp"
+    audience: str = "deployment"
     #: Where this deployment answers, and whether that name resolves yet (D33).
     #: Advertised by the control plane; the CLI stores it so a caller does not
     #: have to be told the host separately.
@@ -99,6 +102,13 @@ class DeviceTokenSuccess(BaseModel):
     #: tokens minted before that decision, which is why it is optional rather
     #: than required — a client that demanded it would refuse today's tokens.
     expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _validate_deployment_for_audience(self) -> DeviceTokenSuccess:
+        if self.audience == "deployment" and self.token_prefix != "umc_cp":
+            if self.deployment_id is None:
+                raise ValueError("deployment_id is required for deployment tokens")
+        return self
 
 
 class DeviceTokenErrorBody(BaseModel):
@@ -118,13 +128,18 @@ def normalize_token_host(*, token_host: str) -> str:
     return token_host.strip().rstrip("/")
 
 
-def authorize_device(*, client: httpx.Client) -> DeviceAuthorizeResponse:
-    """POST ``/v1/device/authorize`` and return the grant."""
+def authorize_device(
+    *,
+    client: httpx.Client,
+    audience: str = "deployment",
+    control_profile: str | None = None,
+) -> DeviceAuthorizeResponse:
+    """POST ``/v1/device/authorize`` and return the grant (D56)."""
+    payload: dict[str, str] = {"client_name": "remember-cli", "audience": audience}
+    if control_profile:
+        payload["control_profile"] = control_profile
     response = request_same_origin(
-        client=client,
-        method="POST",
-        url="/v1/device/authorize",
-        json={"client_name": "remember-cli"},
+        client=client, method="POST", url="/v1/device/authorize", json=payload
     )
     if response.status_code != 200:
         raise DeviceGrantError(
@@ -280,13 +295,26 @@ def poll_device_token(
     raise DeviceGrantError("device grant expired before authorization", exit_code=1)
 
 
-def revoke_self(*, client: httpx.Client, access_token: str) -> int:
-    """DELETE ``/v1/api-tokens/self``. Returns the HTTP status, or 0 on network."""
+def revoke_self(
+    *, client: httpx.Client, access_token: str, path: str | None = None
+) -> int:
+    """DELETE self-revocation route.
+
+    Uses ``/v1/control-tokens/self`` for control-plane tokens (`umc_cp_...`),
+    and ``/v1/api-tokens/self`` for deployment tokens (`umc_dt_...`).
+    Returns the HTTP status, or 0 on network error.
+    """
+    if path is None:
+        path = (
+            "/v1/control-tokens/self"
+            if access_token.startswith("umc_cp_")
+            else "/v1/api-tokens/self"
+        )
     try:
         response = request_same_origin(
             client=client,
             method="DELETE",
-            url="/v1/api-tokens/self",
+            url=path,
             headers={"Authorization": f"Bearer {access_token}"},
         )
     except (httpx.HTTPError, DeviceGrantError):
@@ -301,7 +329,32 @@ def credential_from_token(
     token_host: str,
     existing: CredentialFile | None = None,
 ) -> CredentialFile:
-    """Build the v1 credential document, deriving its managed API URL."""
+    """Build the v1 credential document, deriving its managed API URL (D56/D108)."""
+    if (
+        getattr(token, "audience", "deployment") == "control"
+        or token.token_prefix == "umc_cp"
+        or token.deployment_id is None
+    ):
+        control_cred = ControlPlaneCredentials(
+            url=token_host, access_token=token.access_token, org_id=token.org_id
+        )
+        if existing is not None:
+            return existing.model_copy(
+                update={"control_plane": control_cred, "token_host": token_host}
+            )
+        from uuid import uuid4
+
+        return CredentialFile(
+            version=1,
+            api_url="https://api.remember.dev",
+            token_host=token_host,
+            access_token=SecretStr(""),
+            token_id=uuid4(),
+            org_id=token.org_id,
+            deployment_id=uuid4(),
+            control_plane=control_cred,
+        )
+
     api_url = (api_url or "").strip()
     if not api_url:
         hostname = (token.data_plane_hostname or "").strip()

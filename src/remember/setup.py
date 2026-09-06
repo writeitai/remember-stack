@@ -273,36 +273,16 @@ def configure_codex(
     dry_run: bool = False,
 ) -> bool:
     """Configure Codex MCP servers in .codex/config.toml."""
+    import re
+    import tomllib
+
     codex_dir = cwd / ".codex"
     config_file = codex_dir / "config.toml"
 
-    args_repr = json.dumps(launcher_args)
-    block_lines = [
-        "",
-        "[mcp_servers.remember]",
-        f'command = "{launcher_cmd}"',
-        f"args = {args_repr}",
-    ]
-    if env:
-        block_lines.append("")
-        block_lines.append("[mcp_servers.remember.env]")
-        for k, v in env.items():
-            block_lines.append(f'{k} = "{v}"')
-    block = "\n".join(block_lines) + "\n"
-
-    if dry_run:
-        print(f"[dry-run] Would update {config_file} with [mcp_servers.remember]")
-        return True
-
-    import re
-
-    codex_dir.mkdir(parents=True, exist_ok=True)
     existing_content = (
         config_file.read_text(encoding="utf-8") if config_file.is_file() else ""
     )
     if config_file.is_file():
-        import tomllib
-
         try:
             tomllib.loads(existing_content)
         except Exception as error:
@@ -310,6 +290,21 @@ def configure_codex(
                 f"Existing {config_file} contains invalid TOML: {error}. "
                 "Please fix or remove it before configuring Remember."
             ) from error
+
+    cmd_repr = json.dumps(launcher_cmd)
+    args_repr = json.dumps(launcher_args)
+    block_lines = [
+        "",
+        "[mcp_servers.remember]",
+        f"command = {cmd_repr}",
+        f"args = {args_repr}",
+    ]
+    if env:
+        block_lines.append("")
+        block_lines.append("[mcp_servers.remember.env]")
+        for k, v in env.items():
+            block_lines.append(f"{k} = {json.dumps(v)}")
+    block = "\n".join(block_lines) + "\n"
 
     # Strip any existing [mcp_servers.remember] and [mcp_servers.remember.*] sections (cleans stale configs and leaked secrets)
     pattern = r"(?ms)^\[mcp_servers\.remember(?:\.[^\]]+)?\].*?(?=(?:^\[|\Z))"
@@ -320,6 +315,19 @@ def configure_codex(
     else:
         new_content = block.lstrip()
 
+    # Validate that resulting document parses cleanly
+    try:
+        tomllib.loads(new_content)
+    except Exception as error:
+        raise RuntimeError(
+            f"Generated configuration for {config_file} contains invalid TOML: {error}."
+        ) from error
+
+    if dry_run:
+        print(f"[dry-run] Would update {config_file} with [mcp_servers.remember]")
+        return True
+
+    codex_dir.mkdir(parents=True, exist_ok=True)
     config_file.write_text(new_content, encoding="utf-8")
     print(f"[✓] Configured Codex: {config_file}")
     print(
@@ -447,8 +455,8 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                     "      (Your AI coding agents will connect once 'remember login' completes.)"
                 )
 
-    if target_token:
-        # Securely persist token to user's credential file (~/.config/remember/credentials.json, mode 0600)
+    if target_token or target_env == "self_hosted":
+        # Securely persist token/endpoint to user's credential file (~/.config/remember/credentials.json, mode 0600)
         # NEVER leak bearer secrets into repository configuration files (D92/D108)!
         if (
             is_cloud
@@ -477,6 +485,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
             )
             or "http://localhost:8000"
         )
+        token_str: str = target_token or ""
         if not dry_run:
             is_local = (
                 target_env == "self_hosted"
@@ -488,7 +497,11 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                 updated_projects = (
                     dict(stored.projects) if stored.projects is not None else {}
                 )
-                active_id = stored.active_project_id or "default"
+                active_id = (
+                    "self_hosted"
+                    if target_env == "self_hosted"
+                    else (stored.active_project_id or "default")
+                )
                 old_p = updated_projects.get(active_id)
                 old_token = (
                     old_p.data_plane_token.get_secret_value()
@@ -518,12 +531,10 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                 )
                 if (
                     old_token
+                    and target_token
                     and old_token != target_token
-                    and (
-                        old_token_id
-                        or "api.remember.dev" in old_host
-                        or "remember.dev" in old_host
-                    )
+                    and not is_local
+                    and ("api.remember.dev" in old_host or "remember.dev" in old_host)
                 ):
                     from remember.credentials import append_pending_revocation
                     from remember.credentials import PendingRevocation
@@ -538,10 +549,15 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                     )
 
                 new_token_id = uuid4()
+                proj_name = (
+                    "self_hosted"
+                    if target_env == "self_hosted"
+                    else (old_p.name if old_p else "default")
+                )
                 updated_projects[active_id] = ProjectCredentials(
-                    name=old_p.name if old_p else "default",
+                    name=proj_name,
                     data_plane_url=effective_url,
-                    data_plane_token=SecretStr(target_token),
+                    data_plane_token=SecretStr(token_str),
                     token_host=token_host,
                     token_id=new_token_id,
                 )
@@ -552,7 +568,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                         "active_project_id": active_id,
                         "api_url": effective_url,
                         "token_host": token_host,
-                        "access_token": SecretStr(target_token),
+                        "access_token": SecretStr(token_str),
                         "token_id": new_token_id,
                     }
                 )
@@ -561,27 +577,33 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                 from uuid import uuid4
 
                 new_token_id = uuid4()
+                proj_id = "self_hosted" if target_env == "self_hosted" else "default"
                 cred = CredentialFile(
                     version=1,
                     api_url=effective_url,
                     token_host=token_host,
-                    access_token=SecretStr(target_token),
+                    access_token=SecretStr(token_str),
                     token_id=new_token_id,
-                    active_project_id="default",
+                    active_project_id=proj_id,
                     projects={
-                        "default": ProjectCredentials(
-                            name="default",
+                        proj_id: ProjectCredentials(
+                            name=proj_id,
                             data_plane_url=effective_url,
-                            data_plane_token=SecretStr(target_token),
+                            data_plane_token=SecretStr(token_str),
                             token_host=token_host,
                             token_id=new_token_id,
                         )
                     },
                 )
                 write_credentials(credential=cred)
-        print(
-            "[✓] Stored access token securely in ~/.config/remember/credentials.json (mode 0600)"
-        )
+            if target_token:
+                print(
+                    "[✓] Stored access token securely in ~/.config/remember/credentials.json (mode 0600)"
+                )
+            elif target_env == "self_hosted":
+                print(
+                    f"[✓] Configured self-hosted endpoint ({effective_url}) in ~/.config/remember/credentials.json (mode 0600)"
+                )
 
     print("Configuring AI coding harnesses for Remember:")
     print(f"  Launcher command: {launcher_cmd} {' '.join(launcher_args)}")

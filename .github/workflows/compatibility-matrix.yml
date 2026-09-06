@@ -133,4 +133,25 @@ jobs:
           test-venv/bin/remember doctor --self-hosted --api-url http://127.0.0.1:8000
           test-venv/bin/remember operations list --api-url http://127.0.0.1:8000
 
+          # Validate programmatic SDK contract against live engine
+          test-venv/bin/python -c "
+          import remember
+          client = remember.Client(data_plane_url='http://127.0.0.1:8000', api_key='test-compatibility-key')
+          ops = client.list_operations()
+          assert isinstance(ops, tuple) and len(ops) > 0, f'expected operations tuple, got {ops}'
+          version = client.ingest(source=b'# Test\nLive engine compatibility probe.\n', filename='probe.md')
+          readiness = client.pipeline_readiness(
+              version_ids=(version.version_id,),
+              require=remember.ReadinessRequirements(pipeline=True, p1=False, live_graph=False, p3=False),
+          )
+          assert hasattr(readiness, 'ready') and hasattr(readiness, 'versions') and hasattr(readiness, 'capabilities'), f'expected readiness report: {readiness}'
+          # Validate error envelope and structured API error handling
+          try:
+              client.run_operation(name='nonexistent_operation', arguments={})
+          except remember.MemoryApiError as err:
+              assert err.status_code == 404 or err.code is not None, f'unexpected error shape: {err}'
+          else:
+              raise AssertionError('expected nonexistent_operation to raise MemoryApiError')
+          "
+
           docker rm --force remember-engine remember-minio >/dev/null 2>&1 || true

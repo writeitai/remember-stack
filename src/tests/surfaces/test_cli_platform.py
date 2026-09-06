@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
 from pydantic import SecretStr
 import pytest
 
+from remember import Client
 from remember import RememberClient
 from rememberstack.surfaces.cli import main
 from rememberstack.surfaces.credentials import ControlPlaneCredentials
 from rememberstack.surfaces.credentials import CredentialFile
+from rememberstack.surfaces.credentials import load_credentials
 from rememberstack.surfaces.credentials import ProjectCredentials
 from rememberstack.surfaces.credentials import write_credentials
 from rememberstack.surfaces.sdk import MemoryClient
@@ -24,8 +27,9 @@ from rememberstack.surfaces.setup import resolve_launcher
 
 
 def test_remember_client_import_and_alias() -> None:
-    """The canonical Remember package exports RememberClient aliasing MemoryClient."""
-    assert RememberClient is MemoryClient
+    """The canonical Remember package exports RememberClient aliasing Client."""
+    assert RememberClient is Client
+    assert issubclass(RememberClient, MemoryClient)
     client = RememberClient(base_url="http://localhost:8000")
     assert hasattr(client, "open_query")
     assert hasattr(client, "query_sql")
@@ -1460,3 +1464,457 @@ def test_multi_project_manual_rotation_preserves_token_identity(
     )
     assert uuid_a in journaled_ids
     assert token_id_a_v2 in journaled_ids
+
+
+def test_persisted_self_hosted_whoami_and_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Commands run after `setup --self-hosted` respect the persisted self-hosted environment."""
+    config_dir = tmp_path / "cfg-self-hosted"
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    # 1. Run setup --self-hosted
+    setup_code = main(
+        [
+            "setup",
+            "--self-hosted",
+            "--token",
+            "local-dev-tok",
+            "--dir",
+            str(tmp_path),
+            "--agent",
+            "cursor",
+        ]
+    )
+    assert setup_code == 0
+    capsys.readouterr()
+
+    # 2. whoami without --self-hosted must recognize self-hosted state
+    assert main(["whoami"]) == 0
+    out_whoami = capsys.readouterr().out
+    assert "Identity: self-hosted (local)" in out_whoami
+    assert "Endpoint: http://localhost:8000" in out_whoami
+    assert (
+        "You are connected to a self-hosted engine (http://localhost:8000)"
+        in out_whoami
+    )
+
+    # 3. projects list without --self-hosted must print local namespace and exit 0
+    assert main(["projects", "list"]) == 0
+    out_proj = capsys.readouterr().out
+    assert "Self-hosted engine operates in a single local project namespace" in out_proj
+
+    # 4. projects create without --self-hosted must explain multi-tenant restriction and exit 1
+    assert main(["projects", "create", "new-team"]) == 1
+    err_create = capsys.readouterr().err
+    assert (
+        "Multi-tenant project provisioning is not supported on a self-hosted engine"
+        in err_create
+    )
+    assert "(http://localhost:8000)" in err_create
+
+    # 5. balance without --self-hosted must exit 1 with self-hosted notice
+    assert main(["balance"]) == 1
+    err_balance = capsys.readouterr().err
+    assert "cloud-managed services on remember.dev" in err_balance
+    assert "(http://localhost:8000)" in err_balance
+
+    # 6. switch without --self-hosted must exit 1 with self-hosted notice
+    assert main(["switch", "foo"]) == 1
+    err_switch = capsys.readouterr().err
+    assert "Project switching is not applicable to a self-hosted engine" in err_switch
+
+
+def test_persisted_self_hosted_custom_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A self-hosted engine on a custom IP/host dynamically formats the active URL."""
+    config_dir = tmp_path / "cfg-custom-url"
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    setup_code = main(
+        [
+            "setup",
+            "--url",
+            "http://192.168.1.100:8000",
+            "--token",
+            "custom-tok",
+            "--dir",
+            str(tmp_path),
+            "--agent",
+            "cursor",
+        ]
+    )
+    assert setup_code == 0
+    capsys.readouterr()
+
+    assert main(["whoami"]) == 0
+    out_whoami = capsys.readouterr().out
+    assert "Identity: self-hosted (local)" in out_whoami
+    assert "Endpoint: http://192.168.1.100:8000" in out_whoami
+    assert "(http://192.168.1.100:8000)" in out_whoami
+
+
+def test_self_hosted_rotation_does_not_journal_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rotating self-hosted tokens never writes predecessor into cloud revocation journal."""
+    from remember.credentials import load_pending_revocations
+
+    config_dir = tmp_path / "cfg-no-journal"
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    # Token 1
+    assert (
+        main(
+            [
+                "setup",
+                "--self-hosted",
+                "--token",
+                "tok-v1",
+                "--dir",
+                str(tmp_path),
+                "--agent",
+                "cursor",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # Token 2 (rotation)
+    assert (
+        main(
+            [
+                "setup",
+                "--self-hosted",
+                "--token",
+                "tok-v2",
+                "--dir",
+                str(tmp_path),
+                "--agent",
+                "cursor",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # Verify pending revocations journal has zero entries
+    revocations = load_pending_revocations().entries
+    assert len(revocations) == 0, (
+        f"Self-hosted token rotation unexpectedly journaled cloud revocations: {revocations}"
+    )
+
+
+def test_malformed_credentials_cli_error_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mode-0600 malformed credentials.json exits 1 with clean error and zero traceback."""
+    config_dir = tmp_path / "cfg-malformed"
+    config_dir.mkdir(parents=True, mode=0o700)
+    cred_file = config_dir / "credentials.json"
+    cred_file.write_text("{ broken: json, invalid", encoding="utf-8")
+    cred_file.chmod(0o600)
+
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    code = main(["whoami"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "error: credentials file is unreadable or malformed" in err
+    assert "Traceback" not in err
+
+    code_proj = main(["projects", "list"])
+    assert code_proj == 1
+    err_proj = capsys.readouterr().err
+    assert "error: credentials file is unreadable or malformed" in err_proj
+    assert "Traceback" not in err_proj
+
+
+def test_setup_self_hosted_tokenless_persists_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Tokenless remember setup --self-hosted persists credentials and informs whoami."""
+    config_dir = tmp_path / "cfg-selfhosted"
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    ret = main(["setup", "--self-hosted", "--dir", str(tmp_path), "--agent", "cursor"])
+    assert ret == 0
+    out = capsys.readouterr().out
+    assert "Configured self-hosted endpoint" in out
+
+    cred_file = config_dir / "credentials.json"
+    assert cred_file.is_file()
+
+    # Verify remember whoami recognizes self-hosted
+    whoami_code = main(["whoami"])
+    assert whoami_code == 0
+    whoami_out = capsys.readouterr().out
+    assert "Identity: self-hosted (local)" in whoami_out
+    assert "Endpoint: http://localhost:8000" in whoami_out
+
+
+def test_malformed_url_cli_error_boundary(capsys: pytest.CaptureFixture[str]) -> None:
+    """Malformed URL raises httpx.InvalidURL caught by top-level CLI error boundary."""
+    code = main(["operations", "list", "--api-url", "::::"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "Traceback" not in err
+
+
+def test_invalid_env_zero_traceback_cli_error_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed environment configuration exits 1 with actionable diagnostic and zero traceback."""
+    import subprocess
+    import sys
+
+    src_dir = str(Path(__file__).parents[2] / "src")
+    monkeypatch.setenv("PYTHONPATH", src_dir)
+    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "banana")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "remember", "--help"], capture_output=True, text=True
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "error: Invalid environment configuration" in proc.stderr
+    assert "INTERNAL_OPS" in proc.stderr.upper()
+
+
+def test_doctor_honors_explicit_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """remember doctor --token passes the explicit token in Authorization header."""
+    config_dir = tmp_path / "cfg-doctor-token"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    recorded_headers: list[dict[str, str]] = []
+
+    def mock_get(self: Any, url: str, **kwargs: Any) -> httpx.Response:
+        headers = kwargs.get("headers", {})
+        recorded_headers.append(dict(headers))
+        return httpx.Response(200, json={"version": "0.17.0"})
+
+    monkeypatch.setattr(httpx.Client, "get", mock_get)
+
+    code = main(
+        [
+            "doctor",
+            "--api-url",
+            "http://127.0.0.1:8000",
+            "--token",
+            "explicit-probe-secret",
+        ]
+    )
+    assert code == 0
+    assert any(
+        h.get("Authorization") == "Bearer explicit-probe-secret"
+        for h in recorded_headers
+    )
+
+
+def test_login_audience_control_stores_control_plane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """remember login --audience control requests control audience and saves control_plane."""
+    config_dir = tmp_path / "cfg-login-control"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    recorded_requests: list[tuple[str, str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_path = request.url.path
+        if url_path.endswith("/v1/device/authorize"):
+            json_body = json.loads(request.read()) if request.read() else {}
+            recorded_requests.append(("POST", str(request.url), json_body))
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code-control-123",
+                    "user_code": "CTRL-8888",
+                    "verification_uri": "https://remember.dev/app/device",
+                    "verification_uri_complete": "https://remember.dev/app/device?user_code=CTRL-8888",
+                    "expires_in": 900,
+                    "interval": 1,
+                },
+            )
+        if url_path.endswith("/v1/device/token"):
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "umc_cp_live_control_secret",
+                    "token_type": "Bearer",
+                    "token_id": "0191ffff-0000-7000-8000-000000000001",
+                    "org_id": "0191ffff-0000-7000-8000-000000000002",
+                    "deployment_id": None,
+                    "label": "cli-control-session",
+                    "token_prefix": "umc_cp",
+                    "data_plane_hostname": "",
+                    "data_plane_hostname_live": True,
+                    "audience": "control",
+                    "expires_at": None,
+                },
+            )
+        if url_path.endswith("/v1/control-tokens/self") and request.method == "DELETE":
+            recorded_requests.append(
+                ("DELETE", str(request.url), dict(request.headers))
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "token_id": "0191ffff-0000-7000-8000-000000000001",
+                    "state": "revoked",
+                },
+            )
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    code = main(
+        ["login", "--audience", "control", "--token-host", "https://api.remember.dev"]
+    )
+    assert code == 0
+
+    # Verify authorize request included audience='control'
+    auth_req = [r for r in recorded_requests if r[1].endswith("/v1/device/authorize")]
+    assert len(auth_req) == 1
+    assert auth_req[0][2].get("audience") == "control"
+
+    # Verify credentials.json has control_plane populated
+    cred = load_credentials()
+    assert cred is not None
+    assert cred.control_plane is not None
+    assert (
+        cred.control_plane.access_token.get_secret_value()
+        == "umc_cp_live_control_secret"
+    )
+    assert str(cred.control_plane.org_id) == "0191ffff-0000-7000-8000-000000000002"
+
+    # Verify logout surrenders control token via DELETE /v1/control-tokens/self
+    logout_code = main(["logout"])
+    assert logout_code == 0
+    revoke_reqs = [
+        r
+        for r in recorded_requests
+        if r[0] == "DELETE" and r[1].endswith("/v1/control-tokens/self")
+    ]
+    assert len(revoke_reqs) == 1
+    auth_header = revoke_reqs[0][2].get("authorization", "")
+    assert auth_header == "Bearer umc_cp_live_control_secret"
+
+
+def test_login_audience_deployment_preserves_control_plane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Subsequent remember login with deployment audience retains existing control_plane."""
+    config_dir = tmp_path / "cfg-login-deployment"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    # Pre-populate control plane credentials
+    initial_cred = CredentialFile(
+        version=1,
+        control_plane=ControlPlaneCredentials(
+            url="https://api.remember.dev",
+            access_token=SecretStr("umc_cp_existing_secret"),
+            org_id="0191ffff-0000-7000-8000-000000000002",
+        ),
+    )
+    write_credentials(credential=initial_cred)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_path = request.url.path
+        if url_path.endswith("/v1/device/authorize"):
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code-dp-123",
+                    "user_code": "DPDP-9999",
+                    "verification_uri": "https://remember.dev/app/device",
+                    "verification_uri_complete": "https://remember.dev/app/device?user_code=DPDP-9999",
+                    "expires_in": 900,
+                    "interval": 1,
+                },
+            )
+        if url_path.endswith("/v1/device/token"):
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "umc_dp_live_dp_secret",
+                    "token_type": "Bearer",
+                    "token_id": "0191dddd-0000-7000-8000-000000000001",
+                    "org_id": "0191ffff-0000-7000-8000-000000000002",
+                    "deployment_id": "0191dddd-0000-7000-8000-000000000002",
+                    "label": "my-project",
+                    "token_prefix": "umc_dp",
+                    "data_plane_hostname": "proj-1.dp.remember.dev",
+                    "data_plane_hostname_live": True,
+                    "audience": "deployment",
+                },
+            )
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    code = main(["login", "--token-host", "https://api.remember.dev"])
+    assert code == 0
+
+    cred = load_credentials()
+    assert cred is not None
+    # Verify control_plane was preserved
+    assert cred.control_plane is not None
+    assert (
+        cred.control_plane.access_token.get_secret_value() == "umc_cp_existing_secret"
+    )
+    # And deployment token was added
+    assert cred.access_token.get_secret_value() == "umc_dp_live_dp_secret"
+    assert cred.api_url == "https://proj-1.dp.remember.dev"
+
+
+def test_query_result_dict_export_type_parity() -> None:
+    """QueryResultDict in remember and remember.models are identical class."""
+    import remember
+    from remember.models import QueryResultDict
+
+    assert remember.QueryResultDict is QueryResultDict
+    instance = QueryResultDict(
+        {"rows": [{"a": 1}], "columns": ["a"], "truncated": False}
+    )
+    assert isinstance(instance, remember.QueryResultDict)
+    assert instance.rows == [{"a": 1}]
+    assert instance.columns == ["a"]
+    assert instance.truncated is False
+
+
+def test_setup_dry_run_does_not_claim_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """remember setup --dry-run must not output '[✓] Stored' or '[✓] Configured'."""
+    config_dir = tmp_path / "cfg-dryrun"
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    code = main(["setup", "--self-hosted", "--dry-run", "--dir", str(tmp_path)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[✓] Stored access token" not in out
+    assert "[✓] Configured self-hosted endpoint" not in out
+    assert "Mode: DRY RUN (no files will be written)" in out

@@ -146,6 +146,7 @@ Deep dive: [Retrieval](https://remember.dev/docs/retrieval)
 
 ```bash
 # 1. Run the self-hosted engine (Postgres 19 + MinIO + workers)
+cp .env.example .env
 docker compose up -d
 
 # 2. Configure your AI agent in one command

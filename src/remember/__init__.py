@@ -10,10 +10,10 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
 from remember.client import Client
+from remember.client import Client as RememberClient
 from remember.client import ClientSettings
 from remember.client import CloudClient
 from remember.client import MemoryClient
-from remember.client import MemoryClient as RememberClient
 from remember.errors import CloudError
 from remember.errors import ConnectorNotFoundError
 from remember.errors import MemoryApiError

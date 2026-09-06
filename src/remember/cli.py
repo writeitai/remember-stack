@@ -27,6 +27,7 @@ from pydantic import SecretStr
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.credentials import CredentialError
 from remember.models import ConnectorCreate
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
@@ -40,57 +41,61 @@ _TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
 
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
-    _warn_if_revocation_outstanding()
-    effective_argv = list(sys.argv[1:] if argv is None else argv)
-    if effective_argv:
-        subcmd = effective_argv[0]
-        if subcmd == "review":
-            print(
-                "error: 'remember review' is retired. The engine adjudicates contradictions "
-                "autonomously without human review queues. See https://remember.dev/docs/architecture",
-                file=sys.stderr,
-            )
-            return 1
-        if subcmd == "budget":
-            print(
-                "error: 'remember budget' is retired from the client CLI. "
-                "Use 'remember balance' to check account credits. See https://remember.dev/docs",
-                file=sys.stderr,
-            )
-            return 1
-        if subcmd == "ops":
-            from remember.credentials import CliClientEnv
-
-            env = CliClientEnv.model_validate({})
-            if not env.internal_ops:
-                print(
-                    "error: 'remember ops' is confined to internal container environments. "
-                    "For developer operations, use 'remember operations list|run'. See https://remember.dev/docs",
-                    file=sys.stderr,
-                )
-                return 1
-        if subcmd == "query":
-            known_query_subcmds = {
-                "text",
-                "sql",
-                "explain-sql",
-                "space",
-                "search-space",
-                "list-saved",
-                "describe-saved",
-                "run-saved",
-            }
-            has_subcmd = any(arg in known_query_subcmds for arg in effective_argv[1:])
-            has_help = any(arg in ("-h", "--help") for arg in effective_argv[1:])
-            if not has_subcmd and not has_help:
-                effective_argv.insert(1, "text")
+    from pydantic import ValidationError
 
     from remember.credentials import CliClientEnv
 
-    env = CliClientEnv.model_validate({})
-    parser = _build_parser(include_internal_ops=env.internal_ops)
-    args = parser.parse_args(effective_argv)
+    parser: argparse.ArgumentParser | None = None
     try:
+        _warn_if_revocation_outstanding()
+        effective_argv = list(sys.argv[1:] if argv is None else argv)
+        if effective_argv:
+            subcmd = effective_argv[0]
+            if subcmd == "review":
+                print(
+                    "error: 'remember review' is retired. The engine adjudicates contradictions "
+                    "autonomously without human review queues. See https://remember.dev/docs/architecture",
+                    file=sys.stderr,
+                )
+                return 1
+            if subcmd == "budget":
+                print(
+                    "error: 'remember budget' is retired from the client CLI. "
+                    "Use 'remember balance' to check account credits. See https://remember.dev/docs",
+                    file=sys.stderr,
+                )
+                return 1
+            if subcmd == "ops":
+                env = CliClientEnv.model_validate({})
+                if not env.internal_ops:
+                    print(
+                        "error: 'remember ops' is confined to internal container environments. "
+                        "For developer operations, use 'remember operations list|run'. See https://remember.dev/docs",
+                        file=sys.stderr,
+                    )
+                    return 1
+            if subcmd == "query":
+                known_query_subcmds = {
+                    "text",
+                    "sql",
+                    "explain-sql",
+                    "space",
+                    "search-space",
+                    "list-saved",
+                    "describe-saved",
+                    "run-saved",
+                }
+                has_subcmd = any(
+                    arg in known_query_subcmds for arg in effective_argv[1:]
+                )
+                has_help = any(arg in ("-h", "--help") for arg in effective_argv[1:])
+                if not has_subcmd and not has_help:
+                    effective_argv.insert(1, "text")
+
+        env = CliClientEnv.model_validate({})
+        parser = _build_parser(include_internal_ops=env.internal_ops)
+        args = parser.parse_args(effective_argv)
+
         if args.command == "setup":
             return _run_setup(args)
         if args.command == "doctor":
@@ -121,32 +126,113 @@ def main(argv: list[str] | None = None) -> int:
             return _run_login(args)
         if args.command == "logout":
             return _run_logout(args)
-    except MemoryApiError as error:
+    except ValidationError as error:
+        errors = error.errors()
+        if errors:
+            first = errors[0]
+            loc = ".".join(str(x) for x in first.get("loc", []))
+            msg = first.get("msg", str(error))
+            print(
+                f"error: Invalid environment configuration ({loc}): {msg}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"error: Invalid environment configuration: {error}", file=sys.stderr)
+        return 1
+    except (
+        MemoryApiError,
+        CredentialError,
+        httpx.InvalidURL,
+        httpx.RequestError,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    parser.print_help()
+    if parser is not None:
+        parser.print_help()
     return 2
 
 
-_SELF_HOSTED_NOTICE = (
-    "Note: You are connected to a self-hosted engine (http://localhost:8000). "
-    "Projects, team members, and billing are cloud-managed services on remember.dev."
-)
+def _get_active_endpoint(args: argparse.Namespace) -> str:
+    """Return the currently configured or stored data-plane endpoint URL."""
+    from remember.credentials import CliClientEnv
+    from remember.credentials import load_credentials
+
+    try:
+        stored = load_credentials()
+    except CredentialError:
+        stored = None
+
+    env = CliClientEnv.model_validate({})
+    api_url = (
+        getattr(args, "api_url", None)
+        or env.api_url
+        or (stored.active_data_plane_url if stored else None)
+    )
+    return api_url or "http://localhost:8000"
+
+
+def _self_hosted_notice(args: argparse.Namespace) -> str:
+    """Format an informative notice explaining self-hosted engine boundaries."""
+    url = _get_active_endpoint(args)
+    return (
+        f"Note: You are connected to a self-hosted engine ({url}). "
+        "Projects, team members, and billing are cloud-managed services on remember.dev."
+    )
+
+
+def _is_local_host(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return (
+        host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+        or host.endswith(".local")
+        or (parsed.port == 8000 and not host.endswith("remember.dev"))
+    )
+
+
+def _is_cloud_host(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return host == "remember.dev" or host.endswith(".remember.dev")
 
 
 def _is_self_hosted(args: argparse.Namespace) -> bool:
-    """True when explicitly flagged or pointing at a local self-hosted instance without cloud credentials."""
+    """True when explicitly flagged or pointing at a self-hosted instance without cloud credentials."""
     if getattr(args, "self_hosted", False):
         return True
     from remember.credentials import CliClientEnv
     from remember.credentials import load_credentials
 
-    env = CliClientEnv.model_validate({})
-    api_url = getattr(args, "api_url", None) or env.api_url
-    if api_url and ("localhost" in api_url or "127.0.0.1" in api_url):
+    try:
         stored = load_credentials()
-        if stored is None or stored.control_plane is None:
+    except CredentialError:
+        stored = None
+
+    env = CliClientEnv.model_validate({})
+    explicit_target = getattr(args, "api_url", None) or env.api_url
+    if explicit_target:
+        return _is_local_host(explicit_target)
+
+    if stored is not None:
+        if stored.control_plane is not None:
+            return False
+        active_url = stored.active_data_plane_url or stored.api_url
+        if _is_local_host(active_url):
             return True
+        if _is_cloud_host(active_url) or _is_cloud_host(stored.token_host):
+            return False
+        if (
+            active_url
+            and stored.token_host
+            and active_url.rstrip("/") == stored.token_host.rstrip("/")
+        ):
+            return True
+
     return False
 
 
@@ -231,6 +317,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
         )
 
     # 3. Data plane connectivity & authentication
+    explicit_token = getattr(args, "token", None) or getattr(
+        args, "api_authorization", None
+    )
     api_url = getattr(args, "api_url", None)
     if not api_url:
         api_url = CliClientEnv.model_validate({}).api_url
@@ -241,7 +330,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
     # Strictly verify scheme and origin before attaching ambient data-plane token
     token_for_request: str | None = None
-    if active_token and stored:
+    if explicit_token:
+        token_for_request = explicit_token
+    elif active_token and stored:
         stored_url = stored.active_data_plane_url or stored.api_url
         if stored_url:
             target_parsed = urlparse(api_url)
@@ -420,9 +511,10 @@ def _run_doctor(args: argparse.Namespace) -> int:
 def _run_whoami(args: argparse.Namespace) -> int:
     """Display authenticated identity, organization, and current project (D108)."""
     if _is_self_hosted(args):
+        endpoint = _get_active_endpoint(args)
         print("Identity: self-hosted (local)")
-        print("Endpoint: http://localhost:8000")
-        print(_SELF_HOSTED_NOTICE)
+        print(f"Endpoint: {endpoint}")
+        print(_self_hosted_notice(args))
         return 0
 
     from remember.credentials import load_credentials
@@ -457,7 +549,7 @@ def _run_balance(args: argparse.Namespace) -> int:
     """Fetch current credit balance and subscription status (D108)."""
     if _is_self_hosted(args):
         print(
-            f"error: Credit balance and subscription billing are cloud-managed services on remember.dev.\n{_SELF_HOSTED_NOTICE}",
+            f"error: Credit balance and subscription billing are cloud-managed services on remember.dev.\n{_self_hosted_notice(args)}",
             file=sys.stderr,
         )
         return 1
@@ -522,12 +614,12 @@ def _run_projects(args: argparse.Namespace) -> int:
             return 0
         if args.projects_command == "create":
             print(
-                f"error: Multi-tenant project provisioning is not supported on a self-hosted engine.\n{_SELF_HOSTED_NOTICE}",
+                f"error: Multi-tenant project provisioning is not supported on a self-hosted engine.\n{_self_hosted_notice(args)}",
                 file=sys.stderr,
             )
             return 1
         print(
-            f"error: Projects management is not supported in self-hosted mode.\n{_SELF_HOSTED_NOTICE}",
+            f"error: Projects management is not supported in self-hosted mode.\n{_self_hosted_notice(args)}",
             file=sys.stderr,
         )
         return 1
@@ -544,6 +636,54 @@ def _run_projects(args: argparse.Namespace) -> int:
             )
             return 1
         print(f"{'PROJECT ID':<36} {'NAME':<20} {'STATUS':<10} {'ACTIVE'}")
+
+        # D108 / D56: If control plane credentials exist, query live projects from control plane
+        if stored.control_plane and stored.control_plane.access_token:
+            cp_url = stored.control_plane.url or "https://api.remember.dev"
+            token = stored.control_plane.access_token.get_secret_value()
+            org_id = stored.control_plane.org_id or stored.org_id
+            endpoints = [
+                f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments",
+                f"/v1/orgs/{org_id}/projects" if org_id else "/v1/projects",
+                "/v1/projects",
+            ]
+            for endpoint in endpoints:
+                try:
+                    with httpx.Client(base_url=cp_url, timeout=5.0) as client:
+                        resp = client.get(
+                            endpoint, headers={"Authorization": f"Bearer {token}"}
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            items = (
+                                data.get("deployments")
+                                or data.get("projects")
+                                or (data if isinstance(data, list) else [])
+                            )
+                            if items:
+                                for item in items:
+                                    pid = str(
+                                        item.get("id")
+                                        or item.get("deployment_id")
+                                        or item.get("project_id")
+                                        or ""
+                                    )
+                                    name = str(
+                                        item.get("name") or item.get("label") or pid[:8]
+                                    )
+                                    state = str(
+                                        item.get("state")
+                                        or item.get("status")
+                                        or "ready"
+                                    )
+                                    is_act = (
+                                        "*" if pid == stored.active_project_id else " "
+                                    )
+                                    print(f"{pid:<36} {name:<20} {state:<10} {is_act}")
+                                return 0
+                except Exception:
+                    pass
+
         if stored.projects:
             for pid, p in stored.projects.items():
                 active_marker = "*" if pid == stored.active_project_id else " "
@@ -553,6 +693,11 @@ def _run_projects(args: argparse.Namespace) -> int:
             name = stored.label or "default"
             print(
                 f"{str(stored.deployment_id):<36} {name:<20} {'ready':<10} {active_marker}"
+            )
+        if not (stored.control_plane and stored.control_plane.access_token):
+            print()
+            print(
+                "Note: Showing locally cached projects. For live organization discovery, run: remember login --audience control"
             )
         return 0
 
@@ -573,6 +718,13 @@ def _run_projects(args: argparse.Namespace) -> int:
 
 def _run_switch(args: argparse.Namespace) -> int:
     """Switch the default active project in local configuration (D108)."""
+    if _is_self_hosted(args):
+        print(
+            f"error: Project switching is not applicable to a self-hosted engine.\n{_self_hosted_notice(args)}",
+            file=sys.stderr,
+        )
+        return 1
+
     from remember.credentials import load_credentials
     from remember.credentials import write_credentials
 
@@ -633,7 +785,7 @@ def _run_members(args: argparse.Namespace) -> int:
     """Manage team organization seats (D108)."""
     if _is_self_hosted(args):
         print(
-            f"error: Team member and seat administration are cloud-managed services on remember.dev.\n{_SELF_HOSTED_NOTICE}",
+            f"error: Team member and seat administration are cloud-managed services on remember.dev.\n{_self_hosted_notice(args)}",
             file=sys.stderr,
         )
         return 1
@@ -1244,7 +1396,8 @@ def _login_locked(args: argparse.Namespace) -> int:
         with httpx.Client(
             base_url=token_host, timeout=30.0, follow_redirects=False
         ) as client:
-            granted = authorize_device(client=client)
+            audience = getattr(args, "audience", "deployment")
+            granted = authorize_device(client=client, audience=audience)
             print(f"verification_uri: {granted.verification_uri}")
             print(f"verification_uri_complete: {granted.verification_uri_complete}")
             print(f"user_code: {granted.user_code}")
@@ -1412,11 +1565,11 @@ def _login_locked(args: argparse.Namespace) -> int:
         ValueError,
         OSError,
         DurabilityUnconfirmed,
-    ):
+    ) as error:
         # OSError included deliberately: a disk that cannot be written to
         # during login is a failed login, not a crash. The credential has
         # already been withdrawn or recorded by the time we get here.
-        print("error: login failed", file=sys.stderr)
+        print(f"error: login failed: {error}", file=sys.stderr)
         return 1
     else:
         # The predecessor is revoked only now, with the replacement already on
@@ -1425,19 +1578,26 @@ def _login_locked(args: argparse.Namespace) -> int:
         # credential at all, having destroyed the working one to make room.
         if predecessor_to_revoke is not None:
             _retry_pending_revocation()
-        print(f"token_prefix: {credential.token_prefix}")
-        print(f"deployment_id: {credential.deployment_id}")
-        print(f"api_url: {credential.api_url}")
-        if credential.expires_at is not None:
-            print(f"expires_at: {credential.expires_at.isoformat()}")
-        env_api_url = CliClientEnv.model_validate({}).api_url
-        if env_api_url and env_api_url != credential.api_url:
-            print(
-                f"warning: REMEMBERSTACK_API_URL={env_api_url} overrides the "
-                f"stored api_url {credential.api_url} for other commands; "
-                "unset it to use this deployment",
-                file=sys.stderr,
-            )
+        if getattr(args, "audience", "deployment") == "control":
+            print("[✓] Authenticated with Remember Cloud organization control plane.")
+            if credential.control_plane and credential.control_plane.org_id:
+                print(f"org_id: {credential.control_plane.org_id}")
+            print(f"token_host: {credential.token_host}")
+            print("Run 'remember projects list' to discover all organization projects.")
+        else:
+            print(f"token_prefix: {credential.token_prefix}")
+            print(f"deployment_id: {credential.deployment_id}")
+            print(f"api_url: {credential.api_url}")
+            if credential.expires_at is not None:
+                print(f"expires_at: {credential.expires_at.isoformat()}")
+            env_api_url = CliClientEnv.model_validate({}).api_url
+            if env_api_url and env_api_url != credential.api_url:
+                print(
+                    f"warning: REMEMBERSTACK_API_URL={env_api_url} overrides the "
+                    f"stored api_url {credential.api_url} for other commands; "
+                    "unset it to use this deployment",
+                    file=sys.stderr,
+                )
         return 0
 
 
@@ -1578,9 +1738,13 @@ def _retry_pending_revocation() -> None:
                 timeout=_RECOVERY_TIMEOUT_SECONDS,
                 follow_redirects=False,
             ) as client:
-                status = revoke_self(
-                    client=client, access_token=pending.access_token.get_secret_value()
+                sec = pending.access_token.get_secret_value()
+                p = (
+                    "/v1/control-tokens/self"
+                    if sec.startswith("umc_cp_")
+                    else "/v1/api-tokens/self"
                 )
+                status = revoke_self(client=client, access_token=sec, path=p)
         except (ValueError, httpx.InvalidURL):
             # A journal entry naming an unusable host can never be retried, and
             # letting it raise would block every later entry behind it. Say so
@@ -1672,17 +1836,23 @@ def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
         except Exception:
             return False
 
-    tokens_to_revoke: list[tuple[str, str]] = []
+    tokens_to_revoke: list[tuple[str, str, str]] = []
     seen_tokens: set[str] = set()
 
-    def _add_token(h: str, sec: str) -> None:
+    def _add_token(h: str, sec: str, path: str) -> None:
         if sec and sec not in seen_tokens and not _is_local_host(h):
             seen_tokens.add(sec)
-            tokens_to_revoke.append((h, sec))
+            tokens_to_revoke.append((h, sec, path))
 
     # Primary token: only revoke remotely if host is not local and token is a cloud token
     if not _is_local_host(host) and not _is_local_host(stored.api_url):
-        _add_token(host, stored.access_token.get_secret_value())
+        sec = stored.access_token.get_secret_value()
+        p = (
+            "/v1/control-tokens/self"
+            if sec.startswith("umc_cp_")
+            else "/v1/api-tokens/self"
+        )
+        _add_token(host, sec, p)
 
     # Projects: each project must only be revoked on its own token_host, and only if not local
     if stored.projects:
@@ -1690,18 +1860,28 @@ def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
             p_host = getattr(p, "token_host", None) or host
             if not _is_local_host(p_host) and not _is_local_host(p.data_plane_url):
                 if p.data_plane_token and p.data_plane_token.get_secret_value():
-                    _add_token(p_host, p.data_plane_token.get_secret_value())
+                    p_sec = p.data_plane_token.get_secret_value()
+                    p_path = (
+                        "/v1/control-tokens/self"
+                        if p_sec.startswith("umc_cp_")
+                        else "/v1/api-tokens/self"
+                    )
+                    _add_token(p_host, p_sec, p_path)
 
     # Control plane:
     if stored.control_plane and stored.control_plane.access_token:
         cp_host = stored.control_plane.url or host
         if not _is_local_host(cp_host):
-            _add_token(cp_host, stored.control_plane.access_token.get_secret_value())
+            _add_token(
+                cp_host,
+                stored.control_plane.access_token.get_secret_value(),
+                "/v1/control-tokens/self",
+            )
 
     failed = False
-    for h, sec in tokens_to_revoke:
+    for h, sec, p in tokens_to_revoke:
         with httpx.Client(base_url=h, timeout=30.0, follow_redirects=False) as client:
-            status = revoke_self(client=client, access_token=sec)
+            status = revoke_self(client=client, access_token=sec, path=p)
         if not _revoke_confirmed(status=status):
             print(
                 f"error: revoke not confirmed (HTTP {status or 'no response'}); file kept",
@@ -2003,6 +2183,20 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     login = commands.add_parser("login", help="device-grant login to a token host")
     login.add_argument("--token-host", default=None)
     login.add_argument("--api-url", default=None)
+    login.add_argument(
+        "--audience",
+        choices=["deployment", "control"],
+        default="deployment",
+        help="credential audience: 'deployment' (default, memory data plane) or 'control' (organization control plane, D56)",
+    )
+    login.add_argument(
+        "--control-plane",
+        "--control",
+        dest="audience",
+        action="store_const",
+        const="control",
+        help="shorthand for --audience control",
+    )
     logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
     logout.add_argument("--token-host", default=None)
 

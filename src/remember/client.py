@@ -52,6 +52,7 @@ from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import LedgerEntry
 from remember.models import PipelineReadinessReport
+from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import SpendGate
 from remember.models import ToolDescriptor
@@ -107,6 +108,7 @@ class ClientSettings(BaseSettings):
     api_authorization: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices(
+            "REMEMBER_API_KEY",
             "REMEMBER_TOKEN",
             "REMEMBER_API_AUTHORIZATION",
             "REMEMBERSTACK_API_AUTHORIZATION",
@@ -127,24 +129,6 @@ class ExplicitEnvSettings(BaseSettings):
             "REMEMBER_DATA_PLANE_URL", "REMEMBER_API_URL", "REMEMBERSTACK_API_URL"
         ),
     )
-
-
-class QueryResultDict(dict[str, object]):
-    """Dictionary result wrapper providing attribute access (.rows, .columns, .truncated)."""
-
-    @property
-    def rows(self) -> list[dict[str, object]]:
-        val = self.get("rows", [])
-        return val if isinstance(val, list) else []  # type: ignore
-
-    @property
-    def columns(self) -> list[str]:
-        val = self.get("columns", [])
-        return val if isinstance(val, list) else []  # type: ignore
-
-    @property
-    def truncated(self) -> bool:
-        return bool(self.get("truncated", False))
 
 
 class _DiscoveryHit(BaseModel):
@@ -184,6 +168,7 @@ class MemoryClient:
         *,
         base_url: str | None = None,
         api_url: str | None = None,
+        data_plane_url: str | None = None,
         token: str | None = None,
         authorization: str | None = None,
         client: httpx.Client | None = None,
@@ -193,7 +178,15 @@ class MemoryClient:
         """Bind either an owned HTTP client or an injected transport client."""
         if client is not None and any(
             value is not None
-            for value in (base_url, api_url, token, authorization, timeout, settings)
+            for value in (
+                base_url,
+                api_url,
+                data_plane_url,
+                token,
+                authorization,
+                timeout,
+                settings,
+            )
         ):
             raise ValueError(
                 "an injected client cannot be combined with client settings"
@@ -214,7 +207,7 @@ class MemoryClient:
         )
         env_settings = ExplicitEnvSettings.model_validate({})
         env_url = env_settings.data_plane_url
-        explicit_url = base_url or api_url or env_url
+        explicit_url = data_plane_url or base_url or api_url or env_url
         resolved_url = explicit_url or resolved.api_url
 
         resolved_authorization = None
@@ -1041,6 +1034,7 @@ class _ClientEnv(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     remember_api_key: str | None = None
+    remember_data_plane_url: str | None = None
     remember_api_url: str | None = None
     rememberstack_api_authorization: str | None = None
     rememberstack_api_url: str | None = None
@@ -1084,6 +1078,8 @@ class Client(MemoryClient):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
+        api_url: str | None = None,
+        data_plane_url: str | None = None,
         authorization: str | None = None,
         client: httpx.Client | None = None,
         timeout: float | None = None,
@@ -1091,7 +1087,15 @@ class Client(MemoryClient):
     ) -> None:
         if client is not None and any(
             value is not None
-            for value in (api_key, base_url, authorization, timeout, settings)
+            for value in (
+                api_key,
+                base_url,
+                api_url,
+                data_plane_url,
+                authorization,
+                timeout,
+                settings,
+            )
         ):
             raise ValueError(
                 "an injected client cannot be combined with client settings"
@@ -1113,11 +1117,18 @@ class Client(MemoryClient):
         elif env.rememberstack_api_authorization:
             resolved_authorization = env.rememberstack_api_authorization
 
+        effective_base_url = (
+            data_plane_url
+            if data_plane_url is not None
+            else (base_url if base_url is not None else api_url)
+        )
         resolved_base_url: str | None = None
-        if base_url is not None:
-            resolved_base_url = base_url
+        if effective_base_url is not None:
+            resolved_base_url = effective_base_url
         elif settings is not None and settings.api_url:
             resolved_base_url = settings.api_url
+        elif env.remember_data_plane_url:
+            resolved_base_url = env.remember_data_plane_url
         elif env.remember_api_url:
             resolved_base_url = env.remember_api_url
         elif env.rememberstack_api_url:
