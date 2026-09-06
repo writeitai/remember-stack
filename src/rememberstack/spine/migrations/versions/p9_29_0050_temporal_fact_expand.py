@@ -7,6 +7,7 @@ Legacy writers and serving remain fenced until the final revision validates.
 revision: p9_29_0050
 """
 
+from alembic import context
 from alembic import op
 
 from rememberstack.spine.migrations._helpers import _split_sql
@@ -886,8 +887,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Allow empty-schema development rollback; never discard converted fact authority."""
-    op.execute("""
+    """Permit explicit whole-schema teardown, but refuse lossy populated rollback."""
+    teardown = context.get_revision_argument() is None
+    if not teardown:
+        op.execute("""
         DO $guard$ BEGIN
           IF EXISTS (SELECT 1 FROM public.relations)
              OR EXISTS (SELECT 1 FROM public.observations)
@@ -897,4 +900,13 @@ def downgrade() -> None:
         END $guard$;
     """)
     for statement in _split_sql(sql=_DOWNGRADE_DDL):
+        # A downgrade to base already means removing the entire schema and data.
+        # Do not temporarily impose the legacy exclusion on overlapping events
+        # that the same teardown is about to delete. Ordinary rollback remains
+        # guarded and restores the old constraint only for an empty schema.
+        if (
+            teardown
+            and "ADD CONSTRAINT relations_legacy_world_window_excl" in statement
+        ):
+            continue
         op.execute(statement)
