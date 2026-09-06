@@ -1,4 +1,5 @@
 src/tests/adapters/test_bounded_postgres_read.py
+src/tests/adapters/test_codex_subscription.py
 src/tests/adapters/test_codex_writer.py
 src/tests/adapters/test_composite_auth.py
 src/tests/adapters/test_control_plane_spend_lease.py

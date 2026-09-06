@@ -34,6 +34,7 @@ from benchmarks.locomo.retrieval import tool_catalog_sha256
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import VertexSettings
@@ -287,7 +288,11 @@ def test_protocol_is_v24_and_answer_prompt_has_reasoning_and_loop_guards() -> No
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == ("full-v24", "full-v24-gemma-vertex")
+    assert tuple(PROTOCOL_REGISTRY) == (
+        "full-v24",
+        "full-v24-gemma-vertex",
+        "full-v24-codex-subscription",
+    )
     protocol = PROTOCOL_REGISTRY["full-v24"]
 
     assert protocol.name == "RS-LoCoMo-Full-v24"
@@ -530,6 +535,11 @@ def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
         item_count=1,
         sample_ids=("conv-1",),
         answer_agent_model=protocol.answer_agent_model,
+        answer_agent_reasoning_effort=protocol.answer_agent_reasoning_effort,
+        judge_model=protocol.judge_model,
+        judge_reasoning_effort=protocol.judge_reasoning_effort,
+        answer_agent_temperature=protocol.answer_agent_temperature,
+        judge_temperature=protocol.judge_temperature,
         surface_manifest_hash="surface",
         tool_catalog_sha256="tools",
         answer_prompt_sha256="answer-prompt",
@@ -541,10 +551,10 @@ def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
     (run_dir / "run.json").write_text(configuration.model_dump_json(), encoding="utf-8")
 
 
-def test_cli_composes_vertex_only_for_the_seats_the_protocol_pins(
+def test_cli_composes_only_the_vertex_answer_seat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Gemma routes to Vertex; the judge and embeddings stay on OpenRouter."""
+    """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
     _write_run_json(run_dir=tmp_path, protocol_key="full-v24-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
@@ -556,19 +566,26 @@ def test_cli_composes_vertex_only_for_the_seats_the_protocol_pins(
 
     monkeypatch.setattr(cli, "VertexModelProvider", _FakeVertex)
 
-    provider = cli._provider(run_dir=tmp_path)
+    provider = cli._provider(run_dir=tmp_path, stage="answer")
 
-    assert isinstance(provider, ModelRoutedProvider)
+    assert isinstance(provider, _FakeVertex)
     assert isinstance(
-        provider.provider_for(model="google/gemma-4-26b-a4b-it-maas"), _FakeVertex
+        cli._provider(run_dir=tmp_path, stage="judge"), OpenRouterModelProvider
+    )
+    ingest_provider = cli._provider(run_dir=tmp_path, stage="ingest")
+    assert isinstance(ingest_provider, ModelRoutedProvider)
+    assert isinstance(
+        ingest_provider.provider_for(model="google/gemma-4-26b-a4b-it-maas"),
+        _FakeVertex,
     )
     assert isinstance(
-        provider.provider_for(model="openai/gpt-5.6-luna"), OpenRouterModelProvider
+        ingest_provider.provider_for(model="qwen/qwen3-embedding-8b"),
+        OpenRouterModelProvider,
     )
-    assert isinstance(
-        provider.provider_for(model="qwen/qwen3-embedding-8b"), OpenRouterModelProvider
-    )
-    assert [settings.project_id for settings in built] == ["umc-locomo-vertex-lab"]
+    assert [settings.project_id for settings in built] == [
+        "umc-locomo-vertex-lab",
+        "umc-locomo-vertex-lab",
+    ]
 
 
 def test_cli_keeps_plain_openrouter_for_the_default_protocol(
@@ -584,7 +601,11 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
 
     monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
-    assert isinstance(cli._provider(run_dir=tmp_path), OpenRouterModelProvider)
+    for stage in ("ingest", "answer", "judge"):
+        assert isinstance(
+            cli._provider(run_dir=tmp_path, stage=stage),  # type: ignore[arg-type]
+            OpenRouterModelProvider,
+        )
 
 
 def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
@@ -596,7 +617,46 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
     with pytest.raises(ValidationError, match="project_id"):
-        cli._provider(run_dir=tmp_path)
+        cli._provider(run_dir=tmp_path, stage="answer")
+
+
+def test_codex_subscription_variant_pins_both_generation_seats() -> None:
+    """The experimental variant changes provider controls, not LoCoMo logic."""
+    base = PROTOCOL_REGISTRY["full-v24"]
+    variant = PROTOCOL_REGISTRY["full-v24-codex-subscription"]
+
+    assert variant.name == "RS-LoCoMo-Full-v24-CodexSubscription"
+    assert variant.answer_agent_model == "gpt-5.6-luna"
+    assert variant.judge_model == "gpt-5.6-luna"
+    assert variant.answer_agent_provider == "codex_subscription"
+    assert variant.judge_provider == "codex_subscription"
+    assert variant.answer_agent_reasoning_effort == "low"
+    assert variant.judge_reasoning_effort == "low"
+    assert variant.answer_agent_temperature is None
+    assert variant.judge_temperature is None
+    assert variant.answer_schema is base.answer_schema
+    assert variant.judge_schema is base.judge_schema
+    assert variant.answer_prompt_template == base.answer_prompt_template
+    assert variant.judge_prompt_template == base.judge_prompt_template
+    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
+    assert variant.surface_manifest_hash == base.surface_manifest_hash
+
+
+def test_cli_codex_answer_and_judge_need_no_openrouter_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An already-ingested run can evaluate solely through local Codex auth."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v24-codex-subscription")
+    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
+
+    assert isinstance(
+        cli._provider(run_dir=tmp_path, stage="answer"), CodexSubscriptionModelProvider
+    )
+    assert isinstance(
+        cli._provider(run_dir=tmp_path, stage="judge"), CodexSubscriptionModelProvider
+    )
+    with pytest.raises(ValidationError, match="api_key"):
+        cli._provider(run_dir=tmp_path, stage="ingest")
 
 
 def test_discriminated_step_reads_exactly_like_the_flat_step() -> None:

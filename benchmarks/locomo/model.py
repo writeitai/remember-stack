@@ -24,6 +24,7 @@ from rememberstack.model import ContextBundleV1 as RememberstackContextBundleV1
 from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import UTCDateTime
 
@@ -31,14 +32,22 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal["full-v24", "full-v24-gemma-vertex"]
-ProtocolName = Literal["RS-LoCoMo-Full-v24", "RS-LoCoMo-Full-v24-GemmaVertex"]
+ProtocolKey = Literal[
+    "full-v24", "full-v24-gemma-vertex", "full-v24-codex-subscription"
+]
+ProtocolName = Literal[
+    "RS-LoCoMo-Full-v24",
+    "RS-LoCoMo-Full-v24-GemmaVertex",
+    "RS-LoCoMo-Full-v24-CodexSubscription",
+]
 SourceTimezoneBasis = Literal["assumed_utc"]
-AnswerAgentModel = Literal["openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it-maas"]
-JudgeModel = Literal["openai/gpt-5.6-luna"]
-ProviderKey = Literal["openrouter", "vertex"]
-"""Which adapter family serves a protocol seat: the shipped OpenRouter binding
-or the keyless Vertex managed-open-model binding."""
+AnswerAgentModel = Literal[
+    "openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it-maas", "gpt-5.6-luna"
+]
+JudgeModel = Literal["openai/gpt-5.6-luna", "gpt-5.6-luna"]
+ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
+"""Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
+or the local keyless Codex ChatGPT-subscription bridge."""
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]
@@ -146,12 +155,12 @@ class RunConfiguration(FrozenModel):
     knowledge_mode: Literal["not_composed"] = "not_composed"
     document_binding_generation: Literal["document-t0-v1"] = "document-t0-v1"
     answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
-    answer_agent_reasoning_effort: Literal["none"] = "none"
+    answer_agent_reasoning_effort: ReasoningEffort | None = "none"
     answer_word_cap: int | None = Field(default=None, ge=1)
     judge_model: JudgeModel = "openai/gpt-5.6-luna"
-    judge_reasoning_effort: Literal["none"] = "none"
-    answer_agent_temperature: float = Field(default=0.0, ge=0, le=2)
-    judge_temperature: float = Field(default=0.0, ge=0, le=2)
+    judge_reasoning_effort: ReasoningEffort | None = "none"
+    answer_agent_temperature: float | None = Field(default=0.0, ge=0, le=2)
+    judge_temperature: float | None = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
     surface_manifest_hash: NonEmpty
     tool_catalog_sha256: NonEmpty

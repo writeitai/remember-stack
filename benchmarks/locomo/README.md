@@ -239,6 +239,44 @@ responses, which report no usage. `ingest` still runs the preflight: the chat pr
 to Vertex and proves the certificate, project, and model entitlement before
 any upload.
 
+## Codex ChatGPT subscription for answer and judge
+
+`full-v24-codex-subscription` runs both evaluator seats through the official
+local Codex app-server and the operator's existing ChatGPT login. It does not
+read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
+ChatGPT response route directly. Run `codex login` once, then prepare the
+separately fingerprinted protocol:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo prepare \
+  --dataset /absolute/path/locomo10.json \
+  --tier smoke \
+  --protocol full-v24-codex-subscription \
+  --output .benchmark-runs/locomo-codex-smoke
+```
+
+The v24 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
+effort `low`, and temperature `null`. Therefore this is an experimental
+provider variant, not a canonical v24 score.
+
+Each model call uses a fresh ephemeral thread, an empty temporary directory,
+read-only/no-network sandboxing, and deny-all approvals. Codex receives no
+native RememberStack tools; the existing LoCoMo runner performs and records all
+retrieval. A turn that nevertheless attempts an agent action is rejected.
+
+Codex reports tokens but no per-turn USD charge. Records therefore carry
+`cost_usd=0` as the provider-reported marginal amount; the answer/judge call
+ceilings and Codex service limits bound subscription usage. The synchronous SDK
+turn has no harness-enforced timeout, and a trivial live probe carried roughly
+10k input tokens of Codex agent context, so start with smoke/development rather
+than treating this as the default publication path.
+
+Fresh ingestion still needs the normal OpenRouter key for the deployment's
+embedding preflight (the chat probe routes to Codex). Against an already
+ingested store, `answer` and `judge` compose only Codex and need no OpenRouter
+or Vertex credential on the evaluator machine.
+
 ## Sharded runs
 
 Publication samples can run concurrently on independent hosts while preserving the required
