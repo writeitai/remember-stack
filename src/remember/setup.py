@@ -123,22 +123,29 @@ def configure_cursor(
     mcp_config: dict[str, object] = {}
     if mcp_file.is_file():
         try:
-            mcp_config = json.loads(mcp_file.read_text(encoding="utf-8"))
+            loaded = json.loads(mcp_file.read_text(encoding="utf-8"))
         except Exception as error:
             raise RuntimeError(
                 f"Existing {mcp_file} contains invalid JSON: {error}. "
                 "Please fix or remove it before configuring Remember."
             ) from error
+        if not isinstance(loaded, dict):
+            raise RuntimeError(
+                f"Existing {mcp_file} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
+            )
+        mcp_config = loaded
 
-    servers = mcp_config.setdefault("mcpServers", {})
-    if isinstance(servers, dict):
-        server_entry: dict[str, object] = {
-            "command": launcher_cmd,
-            "args": launcher_args,
-        }
-        if env:
-            server_entry["env"] = env
-        servers["remember"] = server_entry
+    servers_raw = mcp_config.setdefault("mcpServers", {})
+    if not isinstance(servers_raw, dict):
+        raise RuntimeError(
+            f"Existing {mcp_file} has invalid structure: 'mcpServers' must be a JSON object, got {type(servers_raw).__name__}."
+        )
+
+    servers: dict[str, object] = servers_raw
+    server_entry: dict[str, object] = {"command": launcher_cmd, "args": launcher_args}
+    if env:
+        server_entry["env"] = env
+    servers["remember"] = server_entry
 
     if dry_run:
         print(f"[dry-run] Would update {mcp_file}")
@@ -223,22 +230,29 @@ def configure_claude_desktop(
     config: dict[str, object] = {}
     if config_path.is_file():
         try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
         except Exception as error:
             raise RuntimeError(
                 f"Existing {config_path} contains invalid JSON: {error}. "
                 "Please fix or remove it before configuring Remember."
             ) from error
+        if not isinstance(loaded, dict):
+            raise RuntimeError(
+                f"Existing {config_path} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
+            )
+        config = loaded
 
-    servers = config.setdefault("mcpServers", {})
-    if isinstance(servers, dict):
-        server_entry: dict[str, object] = {
-            "command": launcher_cmd,
-            "args": launcher_args,
-        }
-        if env:
-            server_entry["env"] = env
-        servers["remember"] = server_entry
+    servers_raw = config.setdefault("mcpServers", {})
+    if not isinstance(servers_raw, dict):
+        raise RuntimeError(
+            f"Existing {config_path} has invalid structure: 'mcpServers' must be a JSON object, got {type(servers_raw).__name__}."
+        )
+
+    servers: dict[str, object] = servers_raw
+    server_entry: dict[str, object] = {"command": launcher_cmd, "args": launcher_args}
+    if env:
+        server_entry["env"] = env
+    servers["remember"] = server_entry
 
     if dry_run:
         print(f"[dry-run] Would update {config_path}")
@@ -286,6 +300,16 @@ def configure_codex(
     existing_content = (
         config_file.read_text(encoding="utf-8") if config_file.is_file() else ""
     )
+    if config_file.is_file():
+        import tomllib
+
+        try:
+            tomllib.loads(existing_content)
+        except Exception as error:
+            raise RuntimeError(
+                f"Existing {config_file} contains invalid TOML: {error}. "
+                "Please fix or remove it before configuring Remember."
+            ) from error
 
     # Strip any existing [mcp_servers.remember] and [mcp_servers.remember.*] sections (cleans stale configs and leaked secrets)
     pattern = r"(?ms)^\[mcp_servers\.remember(?:\.[^\]]+)?\].*?(?=(?:^\[|\Z))"
@@ -321,11 +345,21 @@ def configure_antigravity(
     config: dict[str, Any] = {"mcpServers": {}}
     if mcp_file.is_file():
         try:
-            config = json.loads(mcp_file.read_text(encoding="utf-8"))
+            loaded = json.loads(mcp_file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as err:
             raise RuntimeError(
                 f"Antigravity config {mcp_file} exists but contains invalid JSON: {err}. Refusing to overwrite."
             ) from err
+        if not isinstance(loaded, dict):
+            raise RuntimeError(
+                f"Antigravity config {mcp_file} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
+            )
+        config = loaded
+
+    if "mcpServers" in config and not isinstance(config["mcpServers"], dict):
+        raise RuntimeError(
+            f"Antigravity config {mcp_file} has invalid structure: 'mcpServers' must be a JSON object, got {type(config['mcpServers']).__name__}."
+        )
 
     servers = config.setdefault("mcpServers", {})
     entry: dict[str, Any] = {"command": launcher_cmd, "args": launcher_args}
@@ -465,7 +499,18 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                         else None
                     )
                 )
-                old_token_id = (old_p.token_id if old_p else None) or stored.token_id
+                from uuid import uuid4
+
+                old_token_id = old_p.token_id if old_p else None
+                # Only borrow stored.token_id if proven to describe the same active project and token
+                if (
+                    old_token_id is None
+                    and stored.active_project_id == active_id
+                    and stored.access_token
+                    and old_token
+                    and stored.access_token.get_secret_value() == old_token
+                ):
+                    old_token_id = stored.token_id
                 old_host = (
                     (old_p.token_host if old_p else None)
                     or stored.token_host
@@ -488,17 +533,18 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                             version=1,
                             token_host=old_host,
                             access_token=SecretStr(old_token),
-                            token_id=old_token_id,
+                            token_id=old_token_id or uuid4(),
                         )
                     )
 
+                new_token_id = uuid4()
                 updated_projects[active_id] = ProjectCredentials(
-                    name="default",
+                    name=old_p.name if old_p else "default",
                     data_plane_url=effective_url,
                     data_plane_token=SecretStr(target_token),
                     token_host=token_host,
+                    token_id=new_token_id,
                 )
-                from uuid import uuid4
 
                 new_stored = stored.model_copy(
                     update={
@@ -507,16 +553,20 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                         "api_url": effective_url,
                         "token_host": token_host,
                         "access_token": SecretStr(target_token),
-                        "token_id": uuid4(),
+                        "token_id": new_token_id,
                     }
                 )
                 write_credentials(credential=new_stored)
             else:
+                from uuid import uuid4
+
+                new_token_id = uuid4()
                 cred = CredentialFile(
                     version=1,
                     api_url=effective_url,
                     token_host=token_host,
                     access_token=SecretStr(target_token),
+                    token_id=new_token_id,
                     active_project_id="default",
                     projects={
                         "default": ProjectCredentials(
@@ -524,6 +574,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                             data_plane_url=effective_url,
                             data_plane_token=SecretStr(target_token),
                             token_host=token_host,
+                            token_id=new_token_id,
                         )
                     },
                 )
@@ -577,80 +628,137 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
             return 1
         configured_any = True
     elif target_agent == "claude":
-        ok_code = configure_claude_code(
-            launcher_cmd=launcher_cmd,
-            launcher_args=launcher_args,
-            env=env if env else None,
-            dry_run=dry_run,
-        )
+        claude_cli_installed = bool(shutil.which("claude"))
         desktop_config = get_claude_desktop_config_path()
-        ok_desktop = configure_claude_desktop(
-            launcher_cmd=launcher_cmd,
-            launcher_args=launcher_args,
-            env=env if env else None,
-            dry_run=dry_run,
+        desktop_installed = (
+            desktop_config.exists()
+            or desktop_config.parent.is_dir()
+            or (sys.platform == "darwin" and Path("/Applications/Claude.app").exists())
         )
-        if not (ok_code or ok_desktop):
+
+        if not claude_cli_installed and not desktop_installed:
             print(
-                "error: Failed to configure Claude harness (neither Claude Code CLI nor Claude Desktop succeeded).",
+                "error: Neither Claude Code CLI ('claude') nor Claude Desktop was detected.\n"
+                "To install Claude Code CLI: npm install -g @anthropic-ai/claude-code\n"
+                "To install Claude Desktop:  https://claude.ai/download",
                 file=sys.stderr,
             )
             return 1
-        configured_any = True
+
+        code_failed = False
+        if claude_cli_installed:
+            ok_code = configure_claude_code(
+                launcher_cmd=launcher_cmd,
+                launcher_args=launcher_args,
+                env=env if env else None,
+                dry_run=dry_run,
+            )
+            if not ok_code:
+                code_failed = True
+            else:
+                configured_any = True
+
+        desktop_failed = False
+        if desktop_installed:
+            try:
+                ok_desktop = configure_claude_desktop(
+                    launcher_cmd=launcher_cmd,
+                    launcher_args=launcher_args,
+                    env=env if env else None,
+                    dry_run=dry_run,
+                )
+                if not ok_desktop:
+                    desktop_failed = True
+                else:
+                    configured_any = True
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                desktop_failed = True
+
+        if code_failed or desktop_failed or not configured_any:
+            failed_targets = []
+            if code_failed:
+                failed_targets.append("Claude Code CLI")
+            if desktop_failed:
+                failed_targets.append("Claude Desktop")
+            print(
+                f"error: Failed to configure Claude harness ({', '.join(failed_targets)} failed).",
+                file=sys.stderr,
+            )
+            return 1
     else:
         # target_agent == "all": auto-detect existing harnesses
         if (target_dir / ".cursor").is_dir():
-            configure_cursor(
-                cwd=target_dir,
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            configured_any = True
+            try:
+                configure_cursor(
+                    cwd=target_dir,
+                    launcher_cmd=launcher_cmd,
+                    launcher_args=launcher_args,
+                    env=env if env else None,
+                    dry_run=dry_run,
+                )
+                configured_any = True
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         if (target_dir / ".agents").is_dir():
-            configure_antigravity(
-                cwd=target_dir,
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            configured_any = True
+            try:
+                configure_antigravity(
+                    cwd=target_dir,
+                    launcher_cmd=launcher_cmd,
+                    launcher_args=launcher_args,
+                    env=env if env else None,
+                    dry_run=dry_run,
+                )
+                configured_any = True
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         if (
             (target_dir / ".codex").is_dir()
             or bool(shutil.which("codex"))
             or (Path.home() / ".codex").is_dir()
         ):
-            configure_codex(
-                cwd=target_dir,
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            configured_any = True
+            try:
+                configure_codex(
+                    cwd=target_dir,
+                    launcher_cmd=launcher_cmd,
+                    launcher_args=launcher_args,
+                    env=env if env else None,
+                    dry_run=dry_run,
+                )
+                configured_any = True
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         if shutil.which("claude"):
-            configure_claude_code(
+            ok = configure_claude_code(
                 launcher_cmd=launcher_cmd,
                 launcher_args=launcher_args,
                 env=env if env else None,
                 dry_run=dry_run,
             )
-            configured_any = True
+            if ok:
+                configured_any = True
 
         desktop_config = get_claude_desktop_config_path()
-        if desktop_config.exists():
-            configure_claude_desktop(
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            configured_any = True
+        if desktop_config.exists() or (
+            sys.platform == "darwin" and Path("/Applications/Claude.app").exists()
+        ):
+            try:
+                configure_claude_desktop(
+                    launcher_cmd=launcher_cmd,
+                    launcher_args=launcher_args,
+                    env=env if env else None,
+                    dry_run=dry_run,
+                )
+                configured_any = True
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         if not configured_any:
             # Default fallback to Cursor and Antigravity

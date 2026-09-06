@@ -456,8 +456,11 @@ def _run_whoami(args: argparse.Namespace) -> int:
 def _run_balance(args: argparse.Namespace) -> int:
     """Fetch current credit balance and subscription status (D108)."""
     if _is_self_hosted(args):
-        print(_SELF_HOSTED_NOTICE)
-        return 0
+        print(
+            f"error: Credit balance and subscription billing are cloud-managed services on remember.dev.\n{_SELF_HOSTED_NOTICE}",
+            file=sys.stderr,
+        )
+        return 1
 
     from remember.credentials import load_credentials
 
@@ -508,8 +511,26 @@ def _run_balance(args: argparse.Namespace) -> int:
 def _run_projects(args: argparse.Namespace) -> int:
     """Manage tenant projects in the active organization (D108)."""
     if _is_self_hosted(args):
-        print(_SELF_HOSTED_NOTICE)
-        return 0
+        if args.projects_command == "list":
+            print(f"{'PROJECT ID':<36} {'NAME':<20} {'STATUS':<10} {'ACTIVE'}")
+            print(f"{'local':<36} {'self-hosted':<20} {'ready':<10} *")
+            print()
+            print(
+                "Note: Self-hosted engine operates in a single local project namespace.\n"
+                "Connect to Remember Cloud for multi-project tenant management: remember login"
+            )
+            return 0
+        if args.projects_command == "create":
+            print(
+                f"error: Multi-tenant project provisioning is not supported on a self-hosted engine.\n{_SELF_HOSTED_NOTICE}",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"error: Projects management is not supported in self-hosted mode.\n{_SELF_HOSTED_NOTICE}",
+            file=sys.stderr,
+        )
+        return 1
 
     from remember.credentials import load_credentials
 
@@ -596,6 +617,10 @@ def _run_switch(args: argparse.Namespace) -> int:
             updates["token_host"] = p.token_host
         if p.token_id is not None:
             updates["token_id"] = p.token_id
+        else:
+            from uuid import uuid4
+
+            updates["token_id"] = uuid4()
         updates["expires_at"] = p.expires_at
 
     new_stored = stored.model_copy(update=updates)
@@ -607,8 +632,11 @@ def _run_switch(args: argparse.Namespace) -> int:
 def _run_members(args: argparse.Namespace) -> int:
     """Manage team organization seats (D108)."""
     if _is_self_hosted(args):
-        print(_SELF_HOSTED_NOTICE)
-        return 0
+        print(
+            f"error: Team member and seat administration are cloud-managed services on remember.dev.\n{_SELF_HOSTED_NOTICE}",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.members_command == "list":
         print(

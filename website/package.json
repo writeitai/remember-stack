@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "postbuild": "pagefind --site out --output-subdir docs/pagefind && cp -r out/docs/pagefind out/pagefind",
+    "postbuild": "mkdir -p out/docs && cp -r out/_next out/docs/_next && pagefind --site out --output-subdir docs/pagefind && cp -r out/docs/pagefind out/pagefind",
     "preview": "npx --yes serve out",
     "typecheck": "tsc --noEmit"
   },

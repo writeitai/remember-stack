@@ -181,6 +181,6 @@ try:
     client.fact_context("Who is Bob?")
 except MemoryApiError as exc:
     print(f"Status Code: {exc.status_code}")
-    print(f"Error Code:  {exc.error_code}")
-    print(f"Message:     {exc.message}")
+    print(f"Error Code:  {exc.code}")
+    print(f"Detail:      {exc.detail}")
 ```

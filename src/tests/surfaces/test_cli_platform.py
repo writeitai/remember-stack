@@ -155,27 +155,46 @@ def test_whoami_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_balance_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI balance --self-hosted prints honest local engine notice."""
+    """CLI balance --self-hosted rejects cloud billing with exit 1."""
     code = main(["balance", "--self-hosted"])
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "cloud-managed services on remember.dev" in out
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cloud-managed services on remember.dev" in err
 
 
 def test_projects_list_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI projects list --self-hosted prints honest local engine notice."""
+    """CLI projects list --self-hosted prints single local namespace and exits 0."""
     code = main(["projects", "list", "--self-hosted"])
     assert code == 0
     out = capsys.readouterr().out
-    assert "cloud-managed services on remember.dev" in out
+    assert "Self-hosted engine operates in a single local project namespace" in out
+
+
+def test_projects_create_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI projects create --self-hosted rejects multi-tenant creation with exit 1."""
+    code = main(["projects", "create", "my-project", "--self-hosted"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert (
+        "Multi-tenant project provisioning is not supported on a self-hosted engine"
+        in err
+    )
 
 
 def test_members_list_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI members list --self-hosted prints honest local engine notice."""
+    """CLI members list --self-hosted rejects team seat management with exit 1."""
     code = main(["members", "list", "--self-hosted"])
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "cloud-managed services on remember.dev" in out
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cloud-managed services on remember.dev" in err
+
+
+def test_members_invite_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI members invite --self-hosted rejects team invitations with exit 1."""
+    code = main(["members", "invite", "teammate@example.com", "--self-hosted"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cloud-managed services on remember.dev" in err
 
 
 def test_review_and_budget_retirement(capsys: pytest.CaptureFixture[str]) -> None:
@@ -451,29 +470,41 @@ def test_data_plane_token_origin_isolation(
     )
     write_credentials(credential=cred)
 
-    # 1. SDK: client pointing to unrelated origin does not send ambient project token
+    # 1. SDK: programmatic client strictly follows D92 and never reads ambient credential file
+    client_alpha = RememberClient(api_url="https://alpha.dp.remember.dev")
+    assert "Authorization" not in client_alpha._client.headers
+    client_alpha.close()
+
     client_unrelated = RememberClient(api_url="https://unrelated.example.com")
     assert "Authorization" not in client_unrelated._client.headers
     client_unrelated.close()
 
-    # 2. SDK: client pointing to matching origin does send ambient project token
-    client_matching = RememberClient(api_url="https://alpha.dp.remember.dev")
+    # 2. CLI: _cli_memory_client resolves ambient project credentials for matching origin
+    import argparse
+
+    from rememberstack.surfaces.cli import _cli_memory_client
+
+    cli_matching = _cli_memory_client(
+        argparse.Namespace(api_url="https://alpha.dp.remember.dev", token=None)
+    )
     assert (
-        client_matching._client.headers.get("Authorization")
+        cli_matching._client.headers.get("Authorization")
         == "Bearer umc_dp_alpha_secret"
     )
-    client_matching.close()
+    cli_matching.close()
 
-    # 3. Scheme downgrade: client pointing to http when stored is https does not send token
-    client_downgrade = RememberClient(api_url="http://alpha.dp.remember.dev")
-    assert "Authorization" not in client_downgrade._client.headers
-    client_downgrade.close()
+    # 3. Scheme downgrade: CLI client pointing to http when stored is https does not send token
+    cli_downgrade = _cli_memory_client(
+        argparse.Namespace(api_url="http://alpha.dp.remember.dev", token=None)
+    )
+    assert "Authorization" not in cli_downgrade._client.headers
+    cli_downgrade.close()
 
-    # 4. Explicit REMEMBER_DATA_PLANE_URL override prevents ambient token injection to other host
+    # 4. Explicit REMEMBER_DATA_PLANE_URL override prevents ambient token injection to other host in CLI
     monkeypatch.setenv("REMEMBER_DATA_PLANE_URL", "https://unrelated.example.com")
-    client_env_override = RememberClient()
-    assert "Authorization" not in client_env_override._client.headers
-    client_env_override.close()
+    cli_env_override = _cli_memory_client(argparse.Namespace())
+    assert "Authorization" not in cli_env_override._client.headers
+    cli_env_override.close()
     monkeypatch.delenv("REMEMBER_DATA_PLANE_URL")
 
     # 5. CLI: requests to unrelated origin do not leak ambient project token
@@ -1137,7 +1168,9 @@ def test_setup_with_token_overwrites_active_project_and_journals_revocation(
     assert updated_cred.projects is not None
     active_proj = updated_cred.projects[pid]
     assert active_proj.data_plane_token.get_secret_value() == replacement_token
-    assert active_proj.token_id is None
+    assert active_proj.token_id is not None
+    assert active_proj.token_id == updated_cred.token_id
+    assert active_proj.token_id != tid_initial
 
     # Verify predecessor was journaled to pending-revocation.json
     journal = load_pending_revocations()
@@ -1197,6 +1230,14 @@ def test_setup_explicit_requested_harness_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When a requested harness fails to register, setup returns exit code 1."""
+    import shutil
+
+    orig_which = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else orig_which(cmd),
+    )
     monkeypatch.setattr("remember.setup.configure_claude_code", lambda **kwargs: False)
     monkeypatch.setattr(
         "remember.setup.configure_claude_desktop", lambda **kwargs: False
@@ -1209,3 +1250,213 @@ def test_setup_explicit_requested_harness_failure(
 
     captured = capsys.readouterr()
     assert "error: Failed to configure Claude harness" in captured.err
+
+
+def test_setup_cursor_invalid_structure(tmp_path: Path) -> None:
+    """Cursor configuration rejects JSON arrays at root or for mcpServers."""
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    mcp_file = cursor_dir / "mcp.json"
+
+    # Root is list
+    mcp_file.write_text("[]", encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: expected JSON object at root"
+    ):
+        configure_cursor(
+            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+    # mcpServers is list
+    mcp_file.write_text('{"mcpServers": []}', encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
+    ):
+        configure_cursor(
+            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+
+def test_setup_claude_desktop_invalid_structure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claude Desktop configuration rejects JSON arrays at root or for mcpServers."""
+    from remember.setup import configure_claude_desktop
+
+    config_file = tmp_path / "claude_desktop_config.json"
+    monkeypatch.setattr(
+        "remember.setup.get_claude_desktop_config_path", lambda: config_file
+    )
+
+    # Root is list
+    config_file.write_text("[]", encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: expected JSON object at root"
+    ):
+        configure_claude_desktop(
+            launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+    # mcpServers is list
+    config_file.write_text('{"mcpServers": []}', encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
+    ):
+        configure_claude_desktop(
+            launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+
+def test_setup_antigravity_invalid_structure(tmp_path: Path) -> None:
+    """Antigravity configuration rejects JSON arrays at root or for mcpServers."""
+    agents_dir = tmp_path / ".agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    mcp_file = agents_dir / "mcp_config.json"
+
+    # Root is list
+    mcp_file.write_text("[]", encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: expected JSON object at root"
+    ):
+        configure_antigravity(
+            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+    # mcpServers is list
+    mcp_file.write_text('{"mcpServers": []}', encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
+    ):
+        configure_antigravity(
+            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+
+def test_setup_codex_invalid_toml(tmp_path: Path) -> None:
+    """Codex configuration rejects invalid TOML content with clean error."""
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    config_file = codex_dir / "config.toml"
+
+    config_file.write_text("this is not [ valid toml", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="contains invalid TOML"):
+        configure_codex(
+            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
+        )
+
+
+def test_multi_project_manual_rotation_preserves_token_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manual setup rotation across multiple projects does not borrow or corrupt token UUIDs."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from uuid import uuid4
+
+    from pydantic import SecretStr
+
+    from remember.credentials import CredentialFile
+    from remember.credentials import load_credentials
+    from remember.credentials import load_pending_revocations
+    from remember.credentials import ProjectCredentials
+    from remember.credentials import write_credentials
+
+    uuid_a = uuid4()
+    uuid_b = uuid4()
+    init_cred = CredentialFile(
+        version=1,
+        api_url="https://a.dp.remember.dev",
+        token_host="a.dp.remember.dev",
+        access_token=SecretStr("token-a-initial"),
+        token_id=uuid_a,
+        active_project_id="proj_a",
+        projects={
+            "proj_a": ProjectCredentials(
+                name="Project A",
+                data_plane_url="https://a.dp.remember.dev",
+                data_plane_token=SecretStr("token-a-initial"),
+                token_host="a.dp.remember.dev",
+                token_id=uuid_a,
+            ),
+            "proj_b": ProjectCredentials(
+                name="Project B",
+                data_plane_url="https://b.dp.remember.dev",
+                data_plane_token=SecretStr("token-b-initial"),
+                token_host="b.dp.remember.dev",
+                token_id=uuid_b,
+            ),
+        },
+    )
+    write_credentials(credential=init_cred)
+
+    # 1. Rotate A manually using setup --token
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    assert (
+        main(
+            [
+                "setup",
+                "--token",
+                "token-a-v2",
+                "--url",
+                "https://a.dp.remember.dev",
+                "--dir",
+                str(tmp_path),
+                "--agent",
+                "cursor",
+            ]
+        )
+        == 0
+    )
+    cred_after_rot1 = load_credentials()
+    assert cred_after_rot1 is not None
+    assert cred_after_rot1.projects is not None
+    token_id_a_v2 = cred_after_rot1.projects["proj_a"].token_id
+    assert token_id_a_v2 is not None
+    assert token_id_a_v2 != uuid_a
+    assert cred_after_rot1.token_id == token_id_a_v2
+
+    # 2. Switch A -> B -> A
+    assert main(["switch", "proj_b"]) == 0
+    cred_b = load_credentials()
+    assert cred_b is not None
+    assert cred_b.token_id == uuid_b
+
+    assert main(["switch", "proj_a"]) == 0
+    cred_a = load_credentials()
+    assert cred_a is not None
+    assert cred_a.token_id == token_id_a_v2
+    assert cred_a.token_id != uuid_b  # Did NOT borrow or preserve Project B's UUID!
+
+    # 3. Rotate A again
+    assert (
+        main(
+            [
+                "setup",
+                "--token",
+                "token-a-v3",
+                "--url",
+                "https://a.dp.remember.dev",
+                "--dir",
+                str(tmp_path),
+                "--agent",
+                "cursor",
+            ]
+        )
+        == 0
+    )
+    cred_a_v3 = load_credentials()
+    assert cred_a_v3 is not None
+    assert cred_a_v3.projects is not None
+    token_id_a_v3 = cred_a_v3.projects["proj_a"].token_id
+    assert token_id_a_v3 is not None
+    assert token_id_a_v3 not in (uuid_a, uuid_b, token_id_a_v2)
+    assert cred_a_v3.token_id == token_id_a_v3
+
+    # 4. Verify revocation journal entries do not borrow B's UUID
+    revocations = load_pending_revocations().entries
+    journaled_ids = [r.token_id for r in revocations]
+    assert uuid_b not in journaled_ids, (
+        "Project B's token_id was erroneously journaled as A's predecessor!"
+    )
+    assert uuid_a in journaled_ids
+    assert token_id_a_v2 in journaled_ids

@@ -121,7 +121,7 @@ Diagrams for top pages live under `public/docs/diagrams/`.
 
 The documentation site is deployed canonically at **`https://remember.dev/docs`** per D109.
 
-- Next.js exports static HTML with `basePath: "/docs"` into `website/out/`.
-- All static assets are served under `/docs/_next/...` and `/docs/pagefind/...`, ensuring zero asset collisions with the root Cloud web application at `remember.dev`.
+- Next.js exports static HTML with `assetPrefix: "/docs"` into `website/out/`.
+- Postbuild mirrors `out/_next` into `out/docs/_next` and Pagefind into `out/docs/pagefind`, ensuring all static assets are served under `/docs/_next/...` and `/docs/pagefind/...` without collisions with the root Cloud web application at `remember.dev`.
 - Ingress routing on `remember.dev` routes `/docs*` traffic directly to the static documentation artifact.
 - The legacy subdomain `https://docs.remember.dev/` issues permanent 301 redirects to `https://remember.dev/docs/`.

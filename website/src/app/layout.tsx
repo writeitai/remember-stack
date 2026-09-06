@@ -31,7 +31,6 @@ export const metadata: Metadata = {
     title: "Remember — Documentation",
     description:
       "A memory system for AI agents: millions of documents distilled into auditable, navigable knowledge.",
-    url: docsUrl,
     siteName: "Remember Documentation",
     type: "website",
   },

@@ -217,42 +217,6 @@ class MemoryClient:
         explicit_url = base_url or api_url or env_url
         resolved_url = explicit_url or resolved.api_url
 
-        if raw_auth is None:
-            try:
-                from urllib.parse import urlparse
-
-                from remember.credentials import load_credentials
-
-                stored = load_credentials()
-                if stored is not None:
-                    candidate_token: str | None = (
-                        stored.access_token.get_secret_value()
-                        if stored.access_token
-                        else None
-                    )
-                    candidate_url: str | None = stored.api_url
-                    if (
-                        stored.active_project_id
-                        and stored.projects
-                        and stored.active_project_id in stored.projects
-                    ):
-                        proj = stored.projects[stored.active_project_id]
-                        if proj.data_plane_token:
-                            candidate_token = proj.data_plane_token.get_secret_value()
-                        if proj.data_plane_url:
-                            candidate_url = proj.data_plane_url
-                    if candidate_token and candidate_url:
-                        target_parsed = urlparse(resolved_url)
-                        cand_parsed = urlparse(candidate_url)
-                        if (
-                            target_parsed.scheme == cand_parsed.scheme
-                            and target_parsed.hostname == cand_parsed.hostname
-                            and target_parsed.port == cand_parsed.port
-                        ):
-                            raw_auth = candidate_token
-            except Exception:
-                pass
-
         resolved_authorization = None
         if raw_auth:
             resolved_authorization = (
