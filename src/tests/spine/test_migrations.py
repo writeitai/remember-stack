@@ -127,6 +127,9 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_25_0046",
         "p9_26_0047",
         "p9_27_0048",
+        "p9_28_0049",
+        "p9_29_0050",
+        "p9_30_0051",
     )
     assert len(script.get_heads()) == 1
 
@@ -139,7 +142,8 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # the required legacy-generation backfill, D102's is a derived-projection
     # trigger, and p9_23_0044's DOWNGRADE rebuilds a derived cache from the
     # aliases already present (D103). All derive from existing rows; none
-    # seeds a deployment.
+    # seeds a deployment. D110 finalization certifies existing completed
+    # conversion receipts; it cannot create a deployment or bypass conversion.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
@@ -149,6 +153,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p1_04_0019_d79_structure_generations.py": 1,
         "p9_22_0043_document_entity_bindings.py": 1,
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
+        "p9_30_0051_temporal_fact_finalize.py": 1,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -643,7 +648,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 70
+    assert len(fresh_inventory.tables) == 98
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -665,7 +670,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_27_0048"
+    assert head_before_noop == head_after_noop == "p9_30_0051"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
