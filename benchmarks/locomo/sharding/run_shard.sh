@@ -46,9 +46,18 @@ embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
 backup_tool=${LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py}
 compose=(docker compose --project-name "$compose_project")
 
-export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}
-export GOOGLE_API_CERTIFICATE_CONFIG=${LOCOMO_GCP_CERTIFICATE_CONFIG_FILE:-/etc/rememberstack/locomo-gcs/certificate-config.json}
+backup_credentials_file=${LOCOMO_GCP_CREDENTIALS_FILE:-/etc/rememberstack/locomo-gcs/credentials.json}
+backup_certificate_config_file=${LOCOMO_GCP_CERTIFICATE_CONFIG_FILE:-/etc/rememberstack/locomo-gcs/certificate-config.json}
+export GOOGLE_APPLICATION_CREDENTIALS=${LOCOMO_VERTEX_GCP_CREDENTIALS_FILE:-$backup_credentials_file}
+export GOOGLE_API_CERTIFICATE_CONFIG=${LOCOMO_VERTEX_GCP_CERTIFICATE_CONFIG_FILE:-$backup_certificate_config_file}
 export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
+
+backup_python() {
+  GOOGLE_APPLICATION_CREDENTIALS="$backup_credentials_file" \
+    GOOGLE_API_CERTIFICATE_CONFIG="$backup_certificate_config_file" \
+    GOOGLE_API_USE_CLIENT_CERTIFICATE=true \
+    "$python_bin" "$@"
+}
 
 # RS-LoCoMo-Full-v22's non-secret ingest identity. Override ambient self-host
 # defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
@@ -92,11 +101,15 @@ exec 9>"$runner_lock"
 flock --nonblock 9 || die "another LoCoMo shard runner owns this host: $runner_lock"
 command -v tar >/dev/null || die "tar must be installed before a sharded run"
 command -v zstd >/dev/null || die "zstd must be installed before a sharded run"
+[[ -f "$backup_credentials_file" ]] ||
+  die "GCS workload credential configuration does not exist: $backup_credentials_file"
+[[ -f "$backup_certificate_config_file" ]] ||
+  die "GCS certificate configuration does not exist: $backup_certificate_config_file"
 [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]] ||
-  die "GCS workload credential configuration does not exist: $GOOGLE_APPLICATION_CREDENTIALS"
+  die "active workload credential configuration does not exist: $GOOGLE_APPLICATION_CREDENTIALS"
 [[ -f "$GOOGLE_API_CERTIFICATE_CONFIG" ]] ||
-  die "GCS certificate configuration does not exist: $GOOGLE_API_CERTIFICATE_CONFIG"
-"$python_bin" "$backup_tool" preflight \
+  die "active certificate configuration does not exist: $GOOGLE_API_CERTIFICATE_CONFIG"
+backup_python "$backup_tool" preflight \
   --destination "$backup_destination" \
   --project "$backup_project" ||
   die "the configured keyless GCS destination is not readable"
@@ -291,7 +304,7 @@ PY
 backup_sample() {
   local sample_id=$1
   local checkpoint=${2:-final}
-  "$python_bin" "$backup_tool" backup \
+  backup_python "$backup_tool" backup \
     --sample "$sample_id" \
     --run-dir "$run_dir" \
     --mount-root "$mount_root" \
@@ -305,7 +318,7 @@ backup_sample() {
 
 require_verified_scoring_backup() {
   local sample_id=$1
-  if ! "$python_bin" "$backup_tool" authorize-scoring \
+  if ! backup_python "$backup_tool" authorize-scoring \
     --run-dir "$run_dir" \
     --sample "$sample_id" \
     --compose-project "$compose_project" \
@@ -318,7 +331,7 @@ require_verified_scoring_backup() {
 
 require_verified_final_backup() {
   local sample_id=$1
-  "$python_bin" "$backup_tool" authorize-wipe \
+  backup_python "$backup_tool" authorize-wipe \
     --run-dir "$run_dir" \
     --compose-project "$compose_project" \
     --lock-fd 9 ||
@@ -361,7 +374,7 @@ PY
   [[ "$status" == complete ]] || return 0
   receipt=$run_dir/.locomo-backups/receipts/final/$sample_id.json
   if [[ -f "$receipt" ]] &&
-    "$python_bin" "$backup_tool" authorize-wipe \
+    backup_python "$backup_tool" authorize-wipe \
       --run-dir "$run_dir" \
       --compose-project "$compose_project" \
       --lock-fd 9; then
@@ -451,13 +464,13 @@ wait_for_drain() {
 for sample_id in "${pending_samples[@]}"; do
   status=$(sample_status "$sample_id")
   if [[ "$status" == empty ]]; then
-    "$python_bin" "$backup_tool" authorize-wipe \
+    backup_python "$backup_tool" authorize-wipe \
       --run-dir "$run_dir" \
       --compose-project "$compose_project" \
       --lock-fd 9
     log "sample=$sample_id stage=wipe status=starting"
     "${compose[@]}" down --volumes --remove-orphans
-    "$python_bin" "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
+    backup_python "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
     log "sample=$sample_id stage=stack status=starting"
     "${compose[@]}" up --detach --wait \
       --scale "worker-extract-claims=$extract_claim_workers" \
@@ -466,7 +479,7 @@ for sample_id in "${pending_samples[@]}"; do
       --scale "worker-embed-claim=$embed_claim_workers"
     bind_benchmark_api
     attest_worker_environment
-    "$python_bin" "$backup_tool" record-live \
+    backup_python "$backup_tool" record-live \
       --run-dir "$run_dir" \
       --sample "$sample_id" \
       --compose-project "$compose_project" \
