@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -628,8 +629,6 @@ def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
             (_DEPLOYMENT_ID, _WINDOW_TO, _WINDOW_FROM),
         ).fetchone()
         assert plan is not None
-        import json
-
         rendered = json.dumps(plan[0], default=str)
         assert "ix_claims_canonical_window" in rendered, rendered
         assert "Index Cond" in rendered, rendered

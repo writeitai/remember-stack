@@ -19079,15 +19079,507 @@
                     "name": "JOIN_INNER"
                   },
                   "larg": {
-                    "@": "RangeVar",
-                    "alias": {
-                      "@": "Alias",
-                      "aliasname": "h"
+                    "@": "JoinExpr",
+                    "isNatural": false,
+                    "jointype": {
+                      "#": "JoinType",
+                      "name": "JOIN_INNER"
                     },
-                    "inh": true,
-                    "relname": "claims_visible_history",
-                    "relpersistence": "p",
-                    "schemaname": "memory_v1"
+                    "larg": {
+                      "@": "JoinExpr",
+                      "isNatural": false,
+                      "jointype": {
+                        "#": "JoinType",
+                        "name": "JOIN_INNER"
+                      },
+                      "larg": {
+                        "@": "JoinExpr",
+                        "isNatural": false,
+                        "jointype": {
+                          "#": "JoinType",
+                          "name": "JOIN_INNER"
+                        },
+                        "larg": {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "c"
+                          },
+                          "inh": true,
+                          "relname": "claims",
+                          "relpersistence": "p",
+                          "schemaname": "public"
+                        },
+                        "quals": {
+                          "@": "BoolExpr",
+                          "args": [
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "ch"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "deployment_id"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "="
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "deployment_id"
+                                  }
+                                ]
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "ch"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "chunk_id"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "="
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "chunk_id"
+                                  }
+                                ]
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "ch"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "doc_id"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "="
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "doc_id"
+                                  }
+                                ]
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "boolop": {
+                            "#": "BoolExprType",
+                            "name": "AND_EXPR"
+                          }
+                        },
+                        "rarg": {
+                          "@": "RangeVar",
+                          "alias": {
+                            "@": "Alias",
+                            "aliasname": "ch"
+                          },
+                          "inh": true,
+                          "relname": "chunks",
+                          "relpersistence": "p",
+                          "schemaname": "public"
+                        },
+                        "rtindex": 0
+                      },
+                      "quals": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "vv"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "ch"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "vv"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "version_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "ch"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "version_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "vv"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "doc_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "ch"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "doc_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      },
+                      "rarg": {
+                        "@": "RangeVar",
+                        "alias": {
+                          "@": "Alias",
+                          "aliasname": "vv"
+                        },
+                        "inh": true,
+                        "relname": "document_versions_visible",
+                        "relpersistence": "p",
+                        "schemaname": "memory_v1"
+                      },
+                      "rtindex": 0
+                    },
+                    "quals": {
+                      "@": "BoolExpr",
+                      "args": [
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "representation"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "ch"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "representation"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "version_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "ch"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "version_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "representation"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "representation_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "ch"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "representation_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "representation"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "status"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "ready"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        }
+                      ],
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      }
+                    },
+                    "rarg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "representation"
+                      },
+                      "inh": true,
+                      "relname": "document_representations",
+                      "relpersistence": "p",
+                      "schemaname": "public"
+                    },
+                    "rtindex": 0
                   },
                   "quals": {
                     "@": "BoolExpr",
@@ -19103,7 +19595,7 @@
                           "fields": [
                             {
                               "@": "String",
-                              "sval": "c"
+                              "sval": "dl"
                             },
                             {
                               "@": "String",
@@ -19122,7 +19614,7 @@
                           "fields": [
                             {
                               "@": "String",
-                              "sval": "h"
+                              "sval": "c"
                             },
                             {
                               "@": "String",
@@ -19144,11 +19636,11 @@
                           "fields": [
                             {
                               "@": "String",
-                              "sval": "c"
+                              "sval": "dl"
                             },
                             {
                               "@": "String",
-                              "sval": "claim_id"
+                              "sval": "doc_id"
                             }
                           ]
                         },
@@ -19163,11 +19655,11 @@
                           "fields": [
                             {
                               "@": "String",
-                              "sval": "h"
+                              "sval": "c"
                             },
                             {
                               "@": "String",
-                              "sval": "claim_id"
+                              "sval": "doc_id"
                             }
                           ]
                         },
@@ -19184,12 +19676,12 @@
                     "@": "RangeVar",
                     "alias": {
                       "@": "Alias",
-                      "aliasname": "c"
+                      "aliasname": "dl"
                     },
                     "inh": true,
-                    "relname": "claims",
+                    "relname": "documents_live",
                     "relpersistence": "p",
-                    "schemaname": "public"
+                    "schemaname": "memory_v1"
                   },
                   "rtindex": 0
                 }
@@ -19211,7 +19703,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19227,7 +19719,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19243,7 +19735,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19259,7 +19751,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "ch"
                       },
                       {
                         "@": "String",
@@ -19275,7 +19767,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "ch"
                       },
                       {
                         "@": "String",
@@ -19291,7 +19783,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19307,7 +19799,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19323,7 +19815,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19339,7 +19831,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19355,7 +19847,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19371,7 +19863,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19383,17 +19875,32 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "h"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "temporal_class"
-                      }
-                    ]
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "temporal_class"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
                   }
                 },
                 {
@@ -19403,7 +19910,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19415,17 +19922,32 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "h"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "audit_status"
-                      }
-                    ]
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "audit_status"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
                   }
                 },
                 {
@@ -19435,7 +19957,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19451,7 +19973,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19467,7 +19989,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19483,7 +20005,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19499,7 +20021,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19511,17 +20033,63 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "h"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "claim_valid_precision"
-                      }
-                    ]
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_precision"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_kind"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
                   }
                 },
                 {
@@ -19531,23 +20099,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
-                      },
-                      {
-                        "@": "String",
-                        "sval": "claim_valid_kind"
-                      }
-                    ]
-                  }
-                },
-                {
-                  "@": "ResTarget",
-                  "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -19563,7 +20115,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "dl"
                       },
                       {
                         "@": "String",
@@ -19575,17 +20127,101 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "ColumnRef",
-                    "fields": [
-                      {
-                        "@": "String",
-                        "sval": "h"
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "lexpr": {
+                      "@": "A_Expr",
+                      "kind": {
+                        "#": "A_Expr_Kind",
+                        "name": "AEXPR_OP"
                       },
+                      "lexpr": {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "dl"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "source_kind"
+                          }
+                        ]
+                      },
+                      "name": [
+                        {
+                          "@": "String",
+                          "sval": "||"
+                        }
+                      ],
+                      "rexpr": {
+                        "@": "A_Const",
+                        "isnull": false,
+                        "val": {
+                          "@": "String",
+                          "sval": ":"
+                        }
+                      },
+                      "rexpr_list_end": 0,
+                      "rexpr_list_start": 0
+                    },
+                    "name": [
                       {
                         "@": "String",
-                        "sval": "source_handle"
+                        "sval": "||"
                       }
-                    ]
+                    ],
+                    "rexpr": {
+                      "@": "CoalesceExpr",
+                      "args": [
+                        {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "dl"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "source_ref"
+                            }
+                          ]
+                        },
+                        {
+                          "@": "TypeCast",
+                          "arg": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "dl"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "doc_id"
+                              }
+                            ]
+                          },
+                          "typeName": {
+                            "@": "TypeName",
+                            "names": [
+                              {
+                                "@": "String",
+                                "sval": "text"
+                              }
+                            ],
+                            "pct_type": false,
+                            "setof": false,
+                            "typemod": -1
+                          }
+                        }
+                      ]
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
                   }
                 },
                 {
@@ -19595,7 +20231,7 @@
                     "fields": [
                       {
                         "@": "String",
-                        "sval": "h"
+                        "sval": "c"
                       },
                       {
                         "@": "String",
@@ -40127,5 +40763,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "7d8ee75d2a102485df10d96511f306e0f4e5c8d1d387b1cc9f271497480b84f9"
+  "surface_manifest_hash": "c7a7c0e5bfc9126ba1d7ed7bedcf2489a8537393801b4288742fdbd29079539e"
 }

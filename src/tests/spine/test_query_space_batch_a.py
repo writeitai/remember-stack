@@ -3191,6 +3191,75 @@ def test_stored_claim_windows_keep_inclusive_instant_endpoints(corpus: _Corpus) 
     assert corpus.claim["instant"] not in after_instant
 
 
+@pytest.mark.parametrize(
+    ("precision", "start", "end"),
+    [
+        ("day", "2023-05-07T12:00:00+00:00", "2023-05-07T12:00:00+00:00"),
+        ("month", "2023-05-07T12:00:00+00:00", "2023-05-08T12:00:00+00:00"),
+        ("quarter", "2023-05-07T12:00:00+00:00", "2023-05-08T12:00:00+00:00"),
+        ("year", "2022-01-01T00:00:00+00:00", "2022-12-31T00:00:00+00:00"),
+        (
+            "instant",
+            "2023-05-07T12:00:00.000001+00:00",
+            "2023-05-07T12:00:00.000001+00:00",
+        ),
+        ("open", "2019-01-01T16:30:00+00:00", None),
+        ("unknown", None, None),
+    ],
+)
+def test_canonical_view_matches_private_twins_under_query_role(
+    corpus: _Corpus, precision: str, start: str | None, end: str | None
+) -> None:
+    """All published projections preserve source membership and UTC clock arithmetic."""
+    with corpus.engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims SET claim_valid_from=CAST(:start AS timestamptz),"
+                " claim_valid_until=CAST(:end AS timestamptz),"
+                " claim_valid_precision=CAST(:precision AS claim_valid_precision),"
+                " claim_valid_kind=CASE WHEN :precision='unknown' THEN NULL"
+                " ELSE 'event_time'::claim_valid_kind END WHERE claim_id=:claim"
+            ),
+            {
+                "start": start,
+                "end": end,
+                "precision": precision,
+                "claim": corpus.claim["a"],
+            },
+        )
+        expected = connection.execute(
+            text(
+                "SELECT claim_canonical_start(claim_valid_from,claim_valid_precision),"
+                " claim_canonical_end(claim_valid_from,claim_valid_until,claim_valid_precision)"
+                " FROM claims WHERE claim_id=:claim"
+            ),
+            {"claim": corpus.claim["a"]},
+        ).one()
+        role = corpus.engine.dialect.identifier_preparer.quote(
+            f"rememberstack_query_{corpus.engine.url.database}"
+        )
+        connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
+        connection.exec_driver_sql("SET LOCAL TIME ZONE 'Pacific/Auckland'")
+        actual = connection.execute(
+            text(
+                "SELECT canon_start,canon_end FROM memory_v1.claims_canonical WHERE claim_id=:claim"
+            ),
+            {"claim": corpus.claim["a"]},
+        ).one()
+        assert tuple(actual) == tuple(expected)
+        differing = connection.execute(
+            text(
+                "SELECT count(*) FROM ("
+                " (SELECT claim_id FROM memory_v1.claims_canonical EXCEPT SELECT claim_id FROM memory_v1.claims_visible_history)"
+                " UNION ALL"
+                " (SELECT claim_id FROM memory_v1.claims_visible_history EXCEPT SELECT claim_id FROM memory_v1.claims_canonical)"
+                ") AS difference"
+            )
+        ).scalar_one()
+        assert differing == 0
+        connection.rollback()
+
+
 # ── §9.4 D54 lifecycle ───────────────────────────────────────────────────
 
 _COUNTS = (

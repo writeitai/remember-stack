@@ -48,7 +48,18 @@ AS $$
 $$;
 """
 
-CLAIMS_CANONICAL_VIEW_DDL = r"""
+_CANONICAL_START_SQL = """
+CASE
+    WHEN claim_valid_from IS NULL OR claim_valid_precision = 'unknown' THEN NULL
+    WHEN claim_valid_precision = 'day' THEN date_trunc('day', claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN claim_valid_precision = 'month' THEN date_trunc('month', claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN claim_valid_precision = 'quarter' THEN date_trunc('quarter', claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN claim_valid_precision = 'year' THEN date_trunc('year', claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    ELSE claim_valid_from
+  END
+""".strip()
+
+CLAIMS_CANONICAL_VIEW_DDL = rf"""
 CREATE VIEW memory_v1.claims_canonical (
   deployment_id,           -- The deployment that owns the claim.
   claim_id,                -- Stable identity of this immutable claim.
@@ -79,43 +90,36 @@ CREATE VIEW memory_v1.claims_canonical (
   canon_end                -- Exclusive end of the half-open canonical window; null when the window is open or unknown.
 ) AS
 SELECT
-  h.deployment_id,
-  h.claim_id,
-  h.doc_id,
-  h.version_id,
-  h.representation_id,
-  h.chunk_id,
-  h.claim_text,
-  h.source_span,
-  h.char_start,
-  h.char_end,
-  h.added_context,
-  h.temporal_class,
-  h.is_attributed,
-  h.audit_status,
-  h.kept_flagged,
-  h.extractor_version,
-  h.asserted_at,
-  h.claim_valid_from,
-  h.claim_valid_until,
-  h.claim_valid_precision,
-  h.claim_valid_kind,
-  h.ingested_at,
-  h.source_kind,
-  h.source_handle,
-  h.is_current_testimony,
+  c.deployment_id,
+  c.claim_id,
+  c.doc_id,
+  ch.version_id,
+  ch.representation_id,
+  c.chunk_id,
+  c.claim_text,
+  c.source_span,
+  c.char_start,
+  c.char_end,
+  c.added_context,
+  c.temporal_class::text,
+  c.is_attributed,
+  c.audit_status::text,
+  c.kept_flagged,
+  c.extractor_version,
+  c.asserted_at,
+  c.claim_valid_from,
+  c.claim_valid_until,
+  c.claim_valid_precision::text,
+  c.claim_valid_kind::text,
+  c.ingested_at,
+  dl.source_kind,
+  dl.source_kind || ':' || coalesce(dl.source_ref, dl.doc_id::text),
+  c.is_current_testimony,
   -- Inline the immutable twins' expressions: view ownership supplies table
   -- privileges, not EXECUTE on private functions. Keeping expressions visible
   -- also allows the planner to match ix_claims_canonical_window after inlining
   -- the index's SQL functions. Database tests pin all three projections equal.
-  CASE
-    WHEN c.claim_valid_from IS NULL OR c.claim_valid_precision = 'unknown' THEN NULL
-    WHEN c.claim_valid_precision = 'day' THEN date_trunc('day', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-    WHEN c.claim_valid_precision = 'month' THEN date_trunc('month', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-    WHEN c.claim_valid_precision = 'quarter' THEN date_trunc('quarter', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-    WHEN c.claim_valid_precision = 'year' THEN date_trunc('year', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-    ELSE c.claim_valid_from
-  END,
+  {_CANONICAL_START_SQL.replace("claim_valid_", "c.claim_valid_")},
   CASE
     WHEN c.claim_valid_from IS NULL OR c.claim_valid_precision = 'unknown' THEN NULL
     WHEN c.claim_valid_precision = 'open' THEN NULL
@@ -125,9 +129,25 @@ SELECT
     WHEN c.claim_valid_precision = 'quarter' THEN (date_trunc('quarter', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '3 months') AT TIME ZONE 'UTC'
     WHEN c.claim_valid_precision = 'year' THEN (date_trunc('year', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '1 year') AT TIME ZONE 'UTC'
   END
-FROM memory_v1.claims_visible_history AS h
-JOIN public.claims AS c
-  ON c.deployment_id = h.deployment_id AND c.claim_id = h.claim_id;
+-- Identical coordinate/visibility joins to claims_visible_history (0025).
+-- Project directly from c so filtering does not require a second claims scan.
+FROM public.claims AS c
+JOIN public.chunks AS ch
+  ON ch.deployment_id = c.deployment_id
+ AND ch.chunk_id = c.chunk_id
+ AND ch.doc_id = c.doc_id
+JOIN memory_v1.document_versions_visible AS vv
+  ON vv.deployment_id = ch.deployment_id
+ AND vv.version_id = ch.version_id
+ AND vv.doc_id = ch.doc_id
+JOIN public.document_representations AS representation
+  ON representation.deployment_id = ch.deployment_id
+ AND representation.version_id = ch.version_id
+ AND representation.representation_id = ch.representation_id
+ AND representation.status = 'ready'
+JOIN memory_v1.documents_live AS dl
+  ON dl.deployment_id = c.deployment_id
+ AND dl.doc_id = c.doc_id;
 COMMENT ON VIEW memory_v1.claims_canonical IS
   'One row per historically visible claim with surviving lineage, keyed by (deployment_id, claim_id), carrying the stored inclusive D41 window beside the half-open canonical bounds that every overlap predicate must use (D107 §5). canon_start is inclusive and canon_end exclusive; both are null when precision is unknown, and canon_end is also null for an open window. Overlap is a.start < b.end AND b.start < a.end with a null end as unbounded. This relation is IMMUTABLE SOURCE TESTIMONY: it never answers what currently holds. Claims of forgotten lineages and tombstoned versions are absent.';
 """
@@ -152,15 +172,15 @@ def upgrade() -> None:
         " claim_canonical_end(timestamptz, timestamptz, claim_valid_precision)"
         f" TO {_VIEW_OWNER}"
     )
-    # A bound predicate proves canon_start non-null, even through the public
-    # precision-as-text projection. The prior enum predicate could not be
-    # inferred by the planner through that projection.
+    # Spell the start expression in the index: a query login without EXECUTE
+    # cannot inline a private SQL function even during index-path matching.
+    # The application can still inline its twin to this exact expression.
     op.execute("DROP INDEX ix_claims_canonical_window")
     op.execute(
-        "CREATE INDEX ix_claims_canonical_window ON claims ("
-        "deployment_id, claim_canonical_start(claim_valid_from, claim_valid_precision),"
-        "claim_canonical_end(claim_valid_from, claim_valid_until, claim_valid_precision))"
-        " WHERE claim_canonical_start(claim_valid_from, claim_valid_precision) IS NOT NULL"
+        f"CREATE INDEX ix_claims_canonical_window ON claims (deployment_id,"
+        f" ({_CANONICAL_START_SQL}),"
+        " claim_canonical_end(claim_valid_from, claim_valid_until, claim_valid_precision))"
+        f" WHERE ({_CANONICAL_START_SQL}) IS NOT NULL"
     )
     op.execute(CANONICAL_BOUNDS_FUNCTION_DDL)
     op.execute(
