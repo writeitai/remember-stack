@@ -178,3 +178,56 @@ conservative whole-operation support/checkpoints rather than a new per-component
 proof engine or bitmask. Its exact predecessor-schema probes and limits are
 recorded in `temporal_relation_staging.md` §8.4. That execution found and verified
 the corrected conversion ordering; it does not certify a full running store.
+
+
+## Antigravity round-one dispositions (2026-09-07)
+
+The reviewer found two physical foreign keys that contradicted exclusive fact
+deletion. Discrepancies are live domain work, so their fact foreign keys now
+cascade; retained temporal operations clear only their optional discrepancy ID.
+Application receipts are historical identity results, so their fact handle is
+logical and cannot block deletion or authorize resurrection. Ordinary writes
+still validate target existence and tenant under the common fence/locks.
+The operation DDL now declares its final logical targets directly rather than
+adding then dropping constraints, and operation snapshots reuse the fact basis
+enum instead of duplicating it with text checks.
+
+The correction work contract now explicitly pins the discrepancy target,
+unlaned stage, component policy generation and fingerprint content hash.
+Fact source leaves are created atomically for **every** inserted or converted
+fact, including those without future boundaries, because dependency foreign
+keys and empty/current candidate certification need those rows too. Missing
+historical operation-support rows become unproven; neither conversion nor
+checkpoint creation may invent a complete attestation to satisfy a foreign key.
+Block locking explicitly uses full-key row locks, with conflict-safe sorted
+creation for previously empty blocks. A sequence diagram connects receipt,
+observation barrier, closed admission, inference and atomic application.
+
+The proposed zero-exclusion no-op for step C was rejected. Step C is one-time
+DDL whose Alembic marker commits with the constraint drop; data conversion is
+a separate resumable operation. A blanket no-op masks schema drift, and a
+blind rerun after step D can drop the final exclusion because it is again the
+single exclusion. The existing migration environment wraps `run_migrations()`
+in one transaction, and `profiles/selfhost.py` upgrades straight to head.
+Therefore the binding contract requires changing upgrade orchestration to
+explicitly stop/commit at C, run the converter, then invoke D/head. Separate
+revision files alone are not a commit boundary. This preserves strict drift
+detection and gives an explicit recovery path before/after either DDL commit.
+Round-two review must assess this alternative against the actual caller.
+
+
+Lifecycle cross-review found the same closure issue one edge further along:
+D74 deletes relation adjudications whose **related** fact is exclusive, even
+when the target fact and triggering assertion survive. The receipt-to-
+adjudication junction must therefore cascade on adjudication deletion. Keeping
+the assertion receipt's logical identity result does not require retaining
+that erased narrative or its junction. The sanitized block checkpoint remains
+the replay authority for the covered effect.
+
+
+A checkpoint root combines a fact's clean state but is not a fresh judgment
+that semantically couples independent endpoints. On repeated forget, component
+authority traverses the recorded checkpoint component to its original accepted
+support operation; root-wide closure support cannot erase an independent cap
+merely because the start's source was later removed. This makes the rule in
+`temporal_cache_and_forget.md` §7.6 explicit in the binding narrative.

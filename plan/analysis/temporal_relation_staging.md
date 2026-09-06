@@ -973,3 +973,124 @@ prove migration-operation recording, policy decisions, full conversion
 coverage, readiness, replay, or concurrent writer behavior. Source-key hashing
 and checkpoint encoding remain implementation contracts; their declared SQL
 shapes and constraints alone do not prove those behaviors.
+
+## 9. Antigravity round-one conversion restart finding
+
+**Independent assessment, 2026-09-07:** Finding 4 in
+`/tmp/rs-d110-antigravity-r1.log` correctly identifies an ambiguous restart
+instruction, but its proposed `count = 0` no-op is not the simplest safe fix.
+Keep constraint-removal DDL strict and execute it exactly once through a
+committed Alembic revision; restart the data conversion independently.
+
+The actual migration environment,
+`src/rememberstack/spine/migrations/env.py::run_migrations_online`, wraps
+`context.run_migrations()` in one `context.begin_transaction()` and does not
+set `transaction_per_migration`. Merely placing C and D in separate revision
+files therefore does not establish a committed boundary around an asynchronous
+conversion. Furthermore,
+`src/rememberstack/profiles/selfhost.py::setup` currently calls
+`command.upgrade(..., revision="head")`. The implementation must change the
+populated-store orchestration, not merely append a migration to that call.
+
+Recommended explicit contract:
+
+1. Commit enum additions before any transaction consumes their new values.
+2. Upgrade **to the C schema revision**, checking the expected predecessor and
+   original exclusion shape under the closed serving/write fence. Drop the
+   legacy exclusion and advance Alembic's revision marker in one transaction.
+   Return from that upgrade call so the transaction has committed.
+3. Resume data work from `temporal_conversion_runs` and
+   `temporal_conversion_rows` under the existing work ledger. This worker never
+   re-executes CREATE TYPE, DROP CONSTRAINT, or Alembic stamping. The C marker,
+   expected intermediate schema, pinned policy, and active serving fence are
+   prerequisites, not inferred from a missing exclusion alone.
+4. Only after all expected data has been applied and verified, run the D
+   revision. Its precondition checks conversion completeness; final constraint
+   creation/validation and the D schema marker commit atomically. An explicit
+   zero-row conversion record supplies the same prerequisite for an empty
+   deployment.
+5. Publish serving readiness only when final schema marker/constraint shape,
+   conversion state and fact-generation certificate agree. A restart after D
+   but before certification retries certification, not constraint removal.
+
+| Crash point | Authoritative state and recovery |
+| --- | --- |
+| Before C commit | PostgreSQL rolls back both DROP and schema marker; retry the strict revision. |
+| After C commit, during data work | C marker and missing legacy exclusion are expected together; resume only data rows from their durable progress. |
+| During D before commit | Final DDL and marker roll back together; verified conversion data remains, so retry D. |
+| After D commit | D marker and final partial exclusion agree; C is never invoked again. |
+
+Blind `count = 0` success would hide an accidental/manual constraint drop when
+no matching migration marker exists. Blindly rerunning a block that drops
+whichever single exclusion exists is worse after D: it can delete the final
+state-only exclusion. Cardinality alone is not a complete original-schema
+signature. These risks disappear when a recorded schema transition owns the
+one-time mutation and drift is rejected. Do not use manual `alembic stamp` to
+repair a mismatch without independently verifying the complete schema state.
+
+Alembic's official cookbook describes separate schema/data migration execution,
+and its runtime documentation explains explicit transaction/autocommit
+boundaries. PostgreSQL transactions atomically commit or roll back their
+effects. Sources retrieved 2026-09-07:
+[Alembic data migration techniques](https://alembic.sqlalchemy.org/en/latest/cookbook.html#data-migrations-general-techniques),
+[Alembic transaction/autocommit API](https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.migration.MigrationContext.autocommit_block),
+[PostgreSQL transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html).
+This is a proposed orchestration contract based on inspected code, not a claim
+that the existing startup path already implements it.
+
+### 9.1 Validation after the Antigravity and lifecycle fixes
+
+**Checked:** 2026-09-07. Final checked combined SQL SHA-256:
+`9025a465ddcbb9d8da49d58ec16205fef27fd4f47ae8b8497478d73741f63fc7`.
+This includes the final `relation_application_adjudications` cascade amendment.
+The exact file executed successfully against a new private predecessor
+database in the PostgreSQL 15 setup described in §8.1. The preceding snapshot
+`07913875707e086af114bd6e47daefc93d159a0f394772b84bb4ee964cce1ae1`
+also executed, but the evidence below was repeated against the final hash.
+
+The targeted transaction verified:
+
+- Deleting a relation and an observation cascades their discrepancy rows.
+  Corresponding historical temporal operations survive with only
+  `discrepancy_id` set to NULL; their non-null `deployment_id` remains intact.
+- A historical relation application receipt survives deletion of its logical
+  fact target, so that receipt no longer blocks exclusive-fact deletion.
+- A surviving assertion's adjudication names another relation as its related
+  fact. Deleting that adjudication using the related-fact selector cascades
+  its application/adjudication junction while preserving the surviving
+  assertion's application receipt; deletion of the related fact then succeeds.
+- An active batch blocks admission of another batch for the same block even
+  at a different adjudicator generation. After the first batch is completed,
+  the next-generation batch is admitted.
+- Partial preparation identity/fingerprint/snapshot tuples are rejected for
+  batch inputs and discrepancies; an output without a preparation is rejected.
+  A complete preparation is accepted. An explicit compare-and-swap UPDATE
+  stores the first output, a second UPDATE with the empty-output precondition
+  changes zero rows, and a stale discrepancy attempt token changes zero rows.
+- A read witness preserves its block revision, and a write witness advances
+  it by exactly one. The opposite updates are rejected by local checks.
+- A newly materialized historical support row marked `unproven` retains the
+  default `footprint_complete = false`; the schema does not fabricate a
+  complete footprint merely because the row exists.
+
+There are six expected constraint rejections in this targeted probe, plus
+the positive deletion, receipt-retention, compare-and-swap and generation
+handoff assertions. The prior eight negative invariant checks and positive
+counterparts also pass against the final hash. All probe transactions rolled
+back, and the private server was stopped after verification.
+
+The revised narrative §6.1 explicitly says that missing historical support is
+created as `unproven` with an incomplete footprint, cannot authorize an endpoint
+or kind, and must not be promoted merely to satisfy a checkpoint foreign key.
+That addresses the invented-support concern at the contract level. The revised
+C/D comments bind strict one-time Alembic transitions and separate conversion
+retries, consistent with §9's recommendation.
+
+**Limits remain material:** this executes exact design DDL over selected actual
+predecessor definitions on PostgreSQL 15, not the complete current Alembic graph
+or PostgreSQL 19 stack. The compare-and-swap probes supply the proposed guarded
+UPDATE predicates directly; they do not prove a not-yet-written worker uses
+them, nor exercise concurrent remote inference. These probes establish the
+specific FK deletion paths and local tuple constraints above, not complete
+D74 residual erasure, replay support provenance, full read-footprint capture,
+cache freshness, migration orchestration, or production readiness.

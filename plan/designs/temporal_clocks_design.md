@@ -187,8 +187,8 @@ overlapping different value is the supersede/contradict question (§4.4).
 **Occurrences.** Identity is the ladder's verdict, not the window: there is
 **no** occurrence exclusion constraint; overlapping occurrence rows of one
 key are legal, a union expansion that comes to overlap a neighbouring
-occurrence never merges rows, and the advisory lock plus the recorded verdict
-prevent duplicates. Acceptance covers same-key recurring events, coarse and
+occurrence never merges rows, and D110's block lock plus the recorded verdict
+prevent duplicate application. Acceptance covers same-key recurring events, coarse and
 fine precision overlap judged `new`, a disjoint pair judged `contradict`, and
 a union expansion bridging two existing occurrences.
 
@@ -242,8 +242,11 @@ review order. D74 erasure uses D110 §6's independently verified sanitized roots
 ### 4.4 Closing: temporal succession, separate from processing order
 
 D90's deterministic **processing** order — `(asserted_at NULLS LAST,
-claim_id, statement)` — is unchanged; it makes replay total and reproducible
-and decides nothing about the world.
+claim_id, statement)` for observations — decides nothing about the world.
+D110 qualifies this as ordering within a closed admitted set and exact replay
+of recorded history; unseen future inputs cannot determine today's immutable
+seed. Its assertion-level relation order and common operation sequence govern
+relation application and interleaved corrections.
 
 **Temporal succession** is the rule for capping a `state` slice. A supersede
 verdict caps the predecessor at a **world-time instant supplied by the

@@ -65,7 +65,10 @@ sorted order. Relation blocks are `(deployment, canonical subject, predicate)`;
 observation blocks are `(deployment, canonical entity)`, because nomination
 and state-ending comparisons can cross observation keys. Block key encoding
 is versioned, deployment-qualified and collision-checked against its canonical
-identity. A redirect detected after nomination causes release and retry with
+identity. Materialize missing `temporal_blocks` rows with conflict-safe inserts
+in that same sorted order, then acquire row locks by full primary key with
+`SELECT ... FOR UPDATE`. The canonical key itself is authoritative; do not
+substitute a lossy advisory-lock hash. A redirect detected after nomination causes release and retry with
 the corrected block set. Version/representation barrier locks are acquired
 only after releasing fact-application locks.
 
@@ -200,6 +203,25 @@ admission histories may choose different seeds. This explicitly qualifies
 D90's “global order” wording. D107 world-time succession and late-arrival
 re-splitting still apply independently of processing order.
 
+The complete path is:
+
+```mermaid
+sequenceDiagram
+    participant N as Normalizer
+    participant V as Version barrier
+    participant B as Block application worker
+    participant M as Identity model
+    N->>N: Commit complete receipt and accepted assertions
+    N->>V: Complete expected normalization work
+    V->>V: Finish observation flush
+    V->>B: Atomically materialize relation units and work
+    B->>B: Lock block, close batch, prepare head ordinal
+    B->>M: Infer outside transaction
+    M-->>B: Decision for pinned attempt and fingerprint
+    B->>B: Revalidate and atomically apply effects plus receipt
+    B->>V: Release application locks, complete leased unit
+```
+
 ### 3.3 Atomic effects and completion
 
 For a new identity, insert the fact, seed, add adjudication with both triggering
@@ -241,8 +263,15 @@ revisions, not only dates. `temporal_discrepancies` is a durable domain target;
 `processing_state` alone owns its lease, attempts, retry delay and completion.
 Work identity is `target_kind=temporal_correction`, the discrepancy UUID,
 `stage=correct_temporal`, `lane=NULL`, and the registered
-`temporal_adjudicator` policy generation. Enqueue it atomically with the input
-change. There is no separate discrepancy poller or custom lease system.
+`temporal_adjudicator` policy generation, with `content_hash=input_fingerprint`.
+`correct_temporal` joins `UNLANED_STAGES`; the generation is registered in the
+existing component-version catalog and changes when the correction policy
+changes. Enqueue it atomically with the input change. There is no separate
+discrepancy poller or custom lease system. Discrepancies are live domain work:
+exclusive fact deletion cascades to its discrepancies and clears only the
+optional discrepancy ID on retained operations. A leased worker finding a
+missing discrepancy after acquiring the deployment fence completes as obsolete;
+it cannot reconstruct the deleted target from its old prepared payload.
 
 The model chooses from canonical endpoints computed from eligible supporting
 claims already linked to this fact by an identity verdict. It returns candidate
@@ -338,6 +367,15 @@ and page-publication keys, so an unchanged old child hash cannot keep it fresh.
 Authored K content is not rewritten as a generated summary.
 
 `temporal_sources` stores revision/deadline certificates for those keys.
+Every fact insertion and every converted existing fact creates its fact leaf
+in the same transaction: source kind is `relation` or `observation`, source ID
+is the fact UUID, source key is its canonical UUID text, and revision equals
+the fact's `temporal_revision`. This applies even when no future boundary
+exists; `next_boundary_at` is then NULL. Fact updates advance the leaf revision
+atomically with the fact. Create routing/sentinel source rows before inserting
+their memberships or certificate dependencies; an empty candidate set retains
+its sentinel. Exclusive deletion first invalidates dependent certificates and
+then removes the fact leaf/memberships in the same fenced transaction.
 For a fact/entity/document/scope/artifact, source_id is its actual UUID and
 source_key is its canonical UUID text. Predicate and document-source rule keys
 use UUIDv5 over a versioned, length-delimited UTF-8 encoding of deployment,
@@ -439,6 +477,16 @@ operation predecessors, with a support-completeness attestation. Distinguish
 semantic premises from mere causal/precondition ordering through a typed
 `required_for_semantics` dependency flag; unclassified historical edges default
 to required. Truncated/uninstrumented input is `unproven`, never complete.
+Every new temporal operation, including conversion and checkpoint roots, writes
+its `temporal_operation_support` row atomically. Conversion can attest complete
+support only for the input and footprint it actually recovered. Before staging
+a checkpoint, create any missing historical support row as `unproven` with
+`footprint_complete=false`; never label it complete to satisfy a foreign key.
+Such a row cannot authorize retention of an endpoint or kind. Component
+attestations are emitted only for complete surviving authority; erased/unknown
+components have no invented supporting-operation reference. Checkpoint roots
+record the clean retained support and closure, without upgrading a predecessor's
+unproven authority merely because a checkpoint now exists.
 Deleting a required input first marks support `erased`; removing a member
 cannot turn an incomplete proof into a smaller apparently complete proof.
 
@@ -523,10 +571,29 @@ or ordinary revision gaps fail readiness. Roots reconstruct temporal fields
 for surviving facts under the existing fact/evidence rebuild contract; they
 cannot fabricate a fact whose remaining statement support was deleted.
 Application receipts retain their already-applied identity result but cannot
-reapply a covered effect. No global ignore-missing-dependencies switch exists.
+reapply a covered effect. Their relation ID is a historical logical handle,
+validated for tenant and existence on ordinary apply; it is not a foreign key
+that could block exclusive fact deletion. A receipt whose assertion lineage is
+itself forgotten is removed by the assertion cascade. A surviving receipt can
+name a deleted, non-readable handle but cannot recreate that fact. When existing
+D74 scrub deletes an adjudication whose target or related fact is exclusive,
+its application-receipt junction cascades away while the surviving identity
+receipt remains. Covered operation/checkpoint metadata supplies replay history;
+a deleted adjudication link cannot authorize replay of a scrubbed effect.
+No global ignore-missing-dependencies switch exists.
 
 Repeated forget rechecks historical snapshots and their support, including old
-roots containing a newly forbidden date. Replacement is per covered block;
+roots containing a newly forbidden date. A `checkpoint_root` is a projection
+boundary, not a new judgment that couples formerly independent components.
+When an endpoint owner is a checkpoint root, resolve that endpoint's authority
+through its `temporal_checkpoint_components` entry to the original independent
+supporting operation and attestation, recursively through older roots if needed.
+The root-wide support row attests checkpoint closure; its union cannot replace
+component authority or make both endpoints depend on every retained source.
+For example, erasing the source for a retained start must preserve a separately
+supported later cap. Carry that cap's verified component proof into the replacement
+root if it still survives. Missing or erased component proof remains uncertainty;
+no new proof is inferred from the old root's copied value. Replacement is per covered block;
 untouched blocks keep valid prior roots. Supersede a checkpoint set only when
 none of its block roots remains active. Retain/scrub covered metadata according
 to the same inventory. A restored v1 manifest derives this checkpoint closure
@@ -545,6 +612,26 @@ the closed fence before any converted row can require occurrence overlap,
 validate and swap bounded batches
 with migration adjudications and temporal operations. Resume from durable
 validated progress, then install and validate the final partial exclusion.
+
+The schema file is an ordered specification, not a retryable whole-file script.
+Startup/upgrade orchestration explicitly upgrades **to the step C Alembic
+revision and commits**, runs/resumes the data converter, then upgrades through
+step D to head. Merely creating separate revision files is insufficient: the
+existing migration environment wraps `run_migrations()` in a transaction, and
+the current self-host bootstrap unconditionally upgrades to head. T.1 changes
+that caller to honor the conversion boundary. Step C's legacy-exclusion drop
+and its Alembic version marker commit atomically. A crash before commit rolls
+both back; a crash after commit resumes conversion rows without rerunning C.
+The strict one-legacy-exclusion check rejects unexpected schema drift; zero
+constraints alone is not proof of a completed C revision. Blindly rerunning C
+after D could otherwise drop the new state-only constraint. Step D verifies
+completed conversion before installing and validating the final constraints,
+and commits its marker atomically with them. An interrupted D transaction
+rolls back and retries normally. Readiness checks the expected revision,
+constraint shape and completed generation, not merely whether an exclusion
+exists. Empty deployments record their explicit zero-row conversion between
+C and D through the same orchestrator.
+
 `temporal_conversion_runs` records the pinned campaign, fenced input counts and
 semantic state; `temporal_conversion_rows` records prepared/applied/verified
 rows and their migration operation. The JSON shadow is a strict typed tuple of

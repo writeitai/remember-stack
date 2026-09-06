@@ -271,10 +271,10 @@ CREATE TABLE public.relation_application_receipts (
   FOREIGN KEY (deployment_id, batch_id, ordinal, assertion_id, adjudicator_version)
     REFERENCES public.relation_apply_batch_inputs
       (deployment_id, batch_id, ordinal, assertion_id, adjudicator_version)
-    ON DELETE CASCADE,
-  FOREIGN KEY (deployment_id, relation_id)
-    REFERENCES public.relations (deployment_id, relation_id)
+    ON DELETE CASCADE
 );
+COMMENT ON COLUMN public.relation_application_receipts.relation_id IS
+  'Historical logical target; validate under locks at apply. A retained receipt cannot resurrect a forgotten fact.';
 CREATE INDEX ix_rel_apply_receipt_fact ON public.relation_application_receipts
   (deployment_id, relation_id);
 
@@ -296,6 +296,7 @@ CREATE TABLE public.relation_application_adjudications (
       (deployment_id, assertion_id, adjudicator_version) ON DELETE CASCADE,
   FOREIGN KEY (deployment_id, adjudication_id)
     REFERENCES public.relation_adjudications (deployment_id, adjudication_id)
+    ON DELETE CASCADE
 );
 
 -- Single temporal mutation history.
@@ -328,9 +329,9 @@ CREATE TABLE temporal_discrepancies (
     CHECK (num_nonnulls(preparation_id, prepared_fingerprint, prepared_snapshot) IN (0, 3)),
     CHECK (prepared_output IS NULL OR prepared_snapshot IS NOT NULL),
     FOREIGN KEY (deployment_id, relation_id)
-        REFERENCES relations (deployment_id, relation_id),
+        REFERENCES relations (deployment_id, relation_id) ON DELETE CASCADE,
     FOREIGN KEY (deployment_id, observation_id)
-        REFERENCES observations (deployment_id, observation_id)
+        REFERENCES observations (deployment_id, observation_id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX ux_temporal_discrepancy_relation
     ON temporal_discrepancies
@@ -356,12 +357,12 @@ CREATE TABLE temporal_operations (
     resulting_revision bigint NOT NULL CHECK (resulting_revision >= 0),
     old_valid_from timestamptz,
     old_valid_until timestamptz,
-    old_from_basis text NOT NULL,
-    old_until_basis text NOT NULL,
+    old_from_basis public.fact_temporal_basis NOT NULL,
+    old_until_basis public.fact_temporal_basis NOT NULL,
     new_valid_from timestamptz,
     new_valid_until timestamptz,
-    new_from_basis text NOT NULL,
-    new_until_basis text NOT NULL,
+    new_from_basis public.fact_temporal_basis NOT NULL,
+    new_until_basis public.fact_temporal_basis NOT NULL,
     old_invalidated_at timestamptz,
     new_invalidated_at timestamptz,
     old_from_operation_id uuid,
@@ -380,10 +381,6 @@ CREATE TABLE temporal_operations (
       IS DISTINCT FROM ROW(new_valid_from, new_from_basis))),
     CHECK (changed_until = (ROW(old_valid_until, old_until_basis)
       IS DISTINCT FROM ROW(new_valid_until, new_until_basis))),
-    CHECK (old_from_basis IN ('world_time','verdict','source_removed','legacy','unknown','erased')),
-    CHECK (old_until_basis IN ('world_time','verdict','source_removed','legacy','unknown','erased')),
-    CHECK (new_from_basis IN ('world_time','verdict','source_removed','legacy','unknown','erased')),
-    CHECK (new_until_basis IN ('world_time','verdict','source_removed','legacy','unknown','erased')),
     CHECK ((operation_kind = 'compensation') = (reverses_operation_id IS NOT NULL)),
     CHECK (reverses_operation_id IS DISTINCT FROM operation_id),
     CHECK (result = 'applied' OR (
@@ -395,12 +392,10 @@ CREATE TABLE temporal_operations (
         AND old_invalidated_at IS NOT DISTINCT FROM new_invalidated_at
         AND NOT changed_from AND NOT changed_until)),
     CHECK (result <> 'applied' OR resulting_revision = expected_revision + 1),
-    FOREIGN KEY (deployment_id, relation_id)
-        REFERENCES relations (deployment_id, relation_id),
-    FOREIGN KEY (deployment_id, observation_id)
-        REFERENCES observations (deployment_id, observation_id),
+    -- Fact targets are historical logical references, validated by ordinary apply.
     FOREIGN KEY (deployment_id, discrepancy_id)
-        REFERENCES temporal_discrepancies (deployment_id, discrepancy_id),
+        REFERENCES temporal_discrepancies (deployment_id, discrepancy_id)
+        ON DELETE SET NULL (discrepancy_id),
     FOREIGN KEY (deployment_id, reverses_operation_id)
         REFERENCES temporal_operations (deployment_id, operation_id),
     FOREIGN KEY (deployment_id, old_from_operation_id)
@@ -770,10 +765,6 @@ CREATE TABLE temporal_checkpoint_components (
     REFERENCES temporal_operation_support (deployment_id, operation_id)
 );
 
-ALTER TABLE temporal_operations
-  DROP CONSTRAINT temporal_operations_deployment_id_relation_id_fkey,
-  DROP CONSTRAINT temporal_operations_deployment_id_observation_id_fkey;
-
 -- Conversion is a pinned, fenced campaign; these are domain progress records,
 -- never a second work queue. The existing work ledger owns execution/retries.
 CREATE TABLE temporal_conversion_runs (
@@ -821,6 +812,10 @@ CREATE TABLE temporal_fact_generations (
 
 -- STEP C: with intake/serving fenced and all legacy writers drained, drop
 -- the old all-kind exclusion BEFORE applying any converted occurrence row.
+-- This is one Alembic revision: its version marker and DDL commit atomically.
+-- The orchestrator upgrades explicitly TO this revision, commits, then resumes
+-- data conversion. It does not rerun C on retries or upgrade directly to head.
+-- A missing exclusion without this recorded revision is schema drift, not success.
 DO $ddl$
 DECLARE
   exclusion_name text;
@@ -840,11 +835,10 @@ $ddl$;
 -- Run resumable conversion using the campaign/shadow stores above. Do not
 -- continue to D until every expected fact has its validated migration effect.
 
--- STEP D: run ONLY after STEP C resumable conversion has validated every row.
-
-
--- Run the actual resumable conversion while serving and legacy writes remain fenced.
--- After every row is converted and conflicts are resolved by recorded verdicts:
+-- STEP D: a separate Alembic upgrade invocation, ONLY after resumable conversion.
+-- Its revision verifies completed conversion/generation before any final DDL;
+-- constraints and the D revision marker commit together. Empty stores must have
+-- their explicit zero-row conversion too. Never infer conversion from defaults.
 ALTER TABLE public.relations
   ADD CONSTRAINT ex_rel_state_world_window EXCLUDE USING gist (
     deployment_id WITH =,
