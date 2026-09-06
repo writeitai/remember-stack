@@ -74,7 +74,7 @@ def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) ->
     cli_reference = tmp_path / "website/src/app/docs/reference/cli/page.mdx"
     cli_reference.write_text(
         cli_reference.read_text(encoding="utf-8").replace(
-            f"# RememberStack {version}", "# RememberStack 0.0.0", 1
+            f"`remember` CLI (v{version}", "`remember` CLI (v0.0.0", 1
         ),
         encoding="utf-8",
     )
@@ -83,7 +83,7 @@ def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) ->
         _validate_release_docs(root=tmp_path, version=version)
     assert str(error.value) == (
         "website/src/app/docs/reference/cli/page.mdx must contain release "
-        f"coordinate '# RememberStack {version}'"
+        f"coordinate '`remember` CLI (v{version}'"
     )
 
 
