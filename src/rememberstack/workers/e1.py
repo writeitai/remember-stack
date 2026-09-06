@@ -63,7 +63,7 @@ E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 
 E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.08a:d80-location-elements-1:"
-    f"token-union-grounding-1:temporal-anchor-2:{SECTION_ORIENTATION_VERSION}"
+    f"token-union-grounding-1:temporal-anchor-3:d107-kind-vocabulary-1:{SECTION_ORIENTATION_VERSION}"
 )
 """Extractor generation in extraction_input_hash (D56). 08a: D80 typed location
 elements replace free-form context_prefix in the bundle/grounding union."""

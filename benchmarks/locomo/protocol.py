@@ -34,8 +34,9 @@ from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v23"
-DEFAULT_PROTOCOL_KEY: Final = "full-v23"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24"
+DEFAULT_PROTOCOL_KEY: Final = "full-v24"
+# T.4 changes extraction; the query-space adapter remains the v23 generation.
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-query-space-canonical-bounds-v23"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -71,7 +72,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "embed_chunk": "e1-embed-2026.08-d80",
         "extract_claims": (
             "e2-extract-2026.08a:d80-location-elements-1:"
-            "token-union-grounding-1:temporal-anchor-2:"
+            "token-union-grounding-1:temporal-anchor-3:d107-kind-vocabulary-1:"
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
@@ -118,12 +119,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v23-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v23-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v24-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v23 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v24 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -235,8 +236,8 @@ class LoCoMoProtocol:
     """Which adapter serves the judge; kept on OpenRouter for comparability."""
 
 
-_FULL_V23 = LoCoMoProtocol(
-    key="full-v23",
+_FULL_V24 = LoCoMoProtocol(
+    key="full-v24",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -257,7 +258,7 @@ _FULL_V23 = LoCoMoProtocol(
     answer_word_cap=None,
 )
 
-_FULL_V23_GEMMA_VERTEX = LoCoMoProtocol(
+_FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
     key=GEMMA_VERTEX_PROTOCOL_KEY,
     name=GEMMA_VERTEX_PROTOCOL_NAME,
     answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
@@ -282,7 +283,7 @@ _FULL_V23_GEMMA_VERTEX = LoCoMoProtocol(
 )
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V23.key: _FULL_V23, _FULL_V23_GEMMA_VERTEX.key: _FULL_V23_GEMMA_VERTEX}
+    {_FULL_V24.key: _FULL_V24, _FULL_V24_GEMMA_VERTEX.key: _FULL_V24_GEMMA_VERTEX}
 )
 
 

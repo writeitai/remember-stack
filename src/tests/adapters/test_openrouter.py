@@ -1350,3 +1350,26 @@ def test_strict_schema_rejects_free_form_objects_before_any_call(
             )
     finally:
         provider._client.close()
+
+
+def test_strict_schema_preserves_temporal_enum_descriptions_without_ref_siblings() -> (
+    None
+):
+    """Azure accepts field descriptions outside, rather than beside, enum references."""
+    from rememberstack.model import ClaimifyResponse
+
+    schema = _strict_json_schema(ClaimifyResponse)
+    field = schema["$defs"]["CandidateClaim"]["properties"]["valid_precision"]
+    assert "$ref" not in field
+    assert field["anyOf"] == [{"$ref": "#/$defs/ClaimValidPrecision"}]
+    assert "open" in field["description"]
+    assert "null" not in str(field["anyOf"])
+    assert schema["$defs"]["ClaimValidPrecision"]["enum"] == [
+        "unknown",
+        "instant",
+        "day",
+        "month",
+        "quarter",
+        "year",
+        "open",
+    ]
