@@ -1,244 +1,134 @@
 export const metadata = {
   title: "Getting started",
   description:
-    "Install RememberStack, stand up a single-deployment Compose stack, ingest a Markdown document, and run the four assured queries.",
+    "Give your AI coding agent persistent bitemporal memory in under 2 minutes with uvx remember setup.",
 };
 
 # Getting started
 
-Goal: a running deployment, one ingested document, and a first honest query — in one sitting.
+Give your AI coding agent (**Cursor**, **Claude Code**, **Claude Desktop**, **Codex**, **Antigravity**) persistent, auditable memory in under two minutes.
 
-Managed-cloud humans can run `remember login --token-host <url>` instead of
-pasting a long-lived secret; self-host Compose still uses the local API URL
-below.
+Remember separates raw source claims (testimony) from current truth (adjudicated facts), resolves contradictions autonomously, and gives your agents tools to verify what changed and why.
 
-## Choose a path
+---
 
-| Path | When |
-| --- | --- |
-| **Docker Compose** (recommended first) | You want the full stack: Postgres, MinIO, API, workers |
-| **Python client wheel** | You already have a remote deployment API URL |
-| **Library / server extras** | You are embedding or operating the engine in process |
+## 1. Universal Setup (30 seconds)
 
-This page uses Compose. Full operator detail: [Self-host deployment](/docs/deployment).
-
-## Prerequisites
-
-- Docker Engine with Compose v2
-- An OpenRouter API key (or equivalent model seats) for extraction and embeddings
-- ~10 minutes for first boot + smoke ingest
-
-## 1. Start the stack
+Run the interactive setup command in your terminal or project root:
 
 ```bash
-git clone https://github.com/writeitai/remember-stack.git
-cd remember-stack
-cp .env.example .env
-# Set OpenRouter (or configured provider) credentials in .env
-docker compose up --build --detach --wait
+uvx remember setup
 ```
 
-The Compose file can also pull the public `ghcr.io/writeitai/remember-stack:0.16.0` image. Use `--build` when you want to run local source; use `--no-build --pull always` when you want the released image.
+*(Alternatively, if you prefer pip: `pip install remember && remember setup`)*
 
-Health:
+### What `remember setup` does:
+1. **Connects your backend**:
+   - **Remember Cloud** (*recommended for instant setup*): Connect to `https://api.remember.dev` with managed private database pods.
+   - **Self-Hosted Engine**: Connect to your local Docker Compose instance (`ghcr.io/writeitai/remember-stack:0.17.0`) at `http://localhost:8000`.
+2. **Auto-configures your AI agent harnesses**:
+   - **Cursor**: Creates `.cursor/mcp.json` and a `.cursor/rules/remember.mdc` context rule.
+   - **Claude Code**: Registers the memory server via `claude mcp add`.
+   - **Claude Desktop**: Updates `claude_desktop_config.json`.
+   - **Codex**: Updates `.codex/config.toml`.
+   - **Antigravity**: Generates `.agents/mcp_config.json` and `.agents/skills/remember/SKILL.md`.
+3. **Guarantees reliable execution**: Resolves absolute launcher binaries so your MCP server boots reliably across GUI restarts, without PATH inheritance issues or credential leaks in git.
+
+---
+
+## 2. Verify with `remember doctor`
+
+Verify your setup, backend connectivity, active project, and MCP harness registrations:
 
 ```bash
-curl --fail http://localhost:8000/healthz
-curl --fail http://localhost:8000/operations
+remember doctor
 ```
 
-You should see the four assured operations: `resolve_entity`,
-`testimony_context`, `fact_context`, and `answer_context`.
+Example healthy output:
+```text
+Remember Diagnostics (CLI v0.17.0)
+----------------------------------------
+[✓] Configuration: ~/.config/remember/credentials.json (0600)
+[✓] Backend connectivity: https://api.remember.dev (200 OK)
+[✓] Authentication: Valid session (project: prj_prod_acme)
+[✓] MCP Server: uvx remember mcp runnable
+[✓] Harnesses configured: Cursor (.cursor/mcp.json), Claude Code
+All systems operational.
+```
 
-## 2. Ingest a document
+---
 
-The fresh self-host profile ships a **Markdown conversion route**. Other MIME types need additional conversion routes registered on the deployment (the engine design supports them; the smoke profile does not auto-route PDF/audio/video).
+## 3. Ingest Your First Document
 
+Add knowledge to your project memory. You can ingest via the CLI or Python SDK:
+
+### Via Platform CLI
 ```bash
-printf '# Hello\n\nAlice is the CFO of Acme as of 2024.\n' > /tmp/remember-smoke.md
-curl --fail \
-  -H 'content-type: application/octet-stream' \
-  --data-binary @/tmp/remember-smoke.md \
-  'http://localhost:8000/ingest?filename=remember-smoke.md&mime=text%2Fmarkdown'
+# Ingest any markdown or text document
+printf "# Team Roster\nAlice is the CFO of Acme as of 2026.\n" > roster.md
+remember ingest roster.md
 ```
 
-The response names `deployment_id`, `doc_id`, and `version_id`. Save the version id for readiness.
-
-What just happened (short form):
-
-1. Bytes stored immutably (E0)
-2. Markdown + structure derived
-3. Chunks packed deterministically (E1)
-4. Claims extracted and grounded (E2)
-5. Entities resolved; facts adjudicated (E3)
-6. Search indexes updated (P1)
-
-Detail: [Ingestion](/docs/ingestion).
-
-## 3. Wait until the version is ready
-
-Prefer the machine-verifiable readiness endpoint over shelling into Postgres:
-
+### Via Python SDK
 ```bash
-# replace VERSION_ID with the ingest response version_id
-curl --fail -X POST http://localhost:8000/readiness \
-  -H 'content-type: application/json' \
-  -d '{"version_ids":["VERSION_ID"],"require":{"pipeline":true,"p1":true,"live_graph":true,"p3":false}}'
+pip install remember
 ```
 
-All four capability keys are mandatory. Ordinary recall requires the pipeline,
-P1, and live graph; require P3 only when the caller needs the published corpus
-filesystem.
+```python
+from remember import RememberClient
 
-Human fallback if you need stage detail:
+# Automatically loads credentials from ~/.config/remember or REMEMBER_TOKEN
+client = RememberClient()
 
+result = client.ingest(
+    filename="roster.md",
+    content=b"# Team Roster\nAlice is the CFO of Acme as of 2026.\n",
+    mime="text/markdown",
+)
+print(f"Ingested doc_id: {result.doc_id}, version_id: {result.version_id}")
+
+# Wait for extraction, entity resolution, and graph indexing (usually 1-3 seconds)
+client.wait_for_readiness([result.version_id], timeout=30)
+print("Document is ready for recall!")
+```
+
+---
+
+## 4. Query Memory
+
+### A. In Your AI Agent
+Now open your configured coding agent (Cursor, Claude, Codex, or Antigravity) and ask naturally:
+> *"Check Remember memory: who is the CFO of Acme?"*
+
+Your agent will call the `fact_context` MCP tool, inspect the adjudicated facts and source testimony, and return an honest answer backed by verified evidence.
+
+### B. Via Platform CLI
 ```bash
-docker compose exec postgres psql -U rememberstack -d rememberstack -c \
-  "SELECT stage, status FROM processing_state ORDER BY enqueued_at"
+# Get current fact context with live evidence
+remember operations run fact_context --arg query="Who is the CFO of Acme?"
+
+# Run open SQL against the memory_v1 view
+remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10;"
 ```
 
-## 4. Publish P3 (when you need the corpus filesystem)
+### C. Via Python SDK
+```python
+# Query current facts
+envelope = client.fact_context("Who is the CFO of Acme?")
+for fact in envelope.facts:
+    print(f"- {fact.label} (evidence count: {fact.evidence_count})")
 
-The graph is already live in PostgreSQL. P3 remains a whole-corpus build:
-
-```bash
-docker compose --profile operations run --rm projections
+# Run open bitemporal SQL
+query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10")
+print(f"Returned {len(query_res.rows)} facts")
 ```
 
-## 5. First retrieval — four assured ops
+---
 
-Argument names match the operation registry and [API reference](/docs/reference/api).
+## 5. Next Steps
 
-### Resolve an entity
-
-```bash
-curl --fail -X POST http://localhost:8000/operations/resolve_entity \
-  -H 'content-type: application/json' \
-  -d '{"name":"Alice"}'
-```
-
-Query-time resolve is **exact-name (T0)** in the current surface: ambiguity among exact aliases is returned as ranked candidates, never guessed away. Fuzzy/phonetic/embedding tiers run on the **write-time** resolution cascade, not this hot path.
-
-### Evidence context for a question
-
-```bash
-curl --fail -X POST http://localhost:8000/operations/testimony_context \
-  -H 'content-type: application/json' \
-  -d '{"query":"Who is the CFO of Acme?"}'
-```
-
-Returns **evidence grain** (claims + chunks) — testimony, not the adjudicated verdict alone.
-
-### Current-fact context
-
-```bash
-curl --fail -X POST http://localhost:8000/operations/fact_context \
-  -H 'content-type: application/json' \
-  -d '{"query":"Who is the CFO of Acme?","time":{"mode":"current"}}'
-```
-
-Returns **fact grain** with live testimony under a hard evidence budget. Use
-`at`, `overlap`, or `history` time mode when the question is about past
-world-valid state; omit `entity_ids` for deployment-wide retrieval or pass
-confirmed IDs to start the default one-hop entity-neighborhood recipe.
-Current/`at` calls walk every relation by default—including `other:*`—then
-search relation and observation text inside the capped ID union. Optional
-`predicate` narrows to that exact stored relation name; `hops` accepts 1–2.
-
-### Both authority views
-
-```bash
-curl --fail -X POST http://localhost:8000/operations/answer_context \
-  -H 'content-type: application/json' \
-  -d '{"query":"Who is the CFO of Acme?"}'
-```
-
-Returns `ContextBundle/v1` with the complete evidence-grain response under
-`testimony` and the complete fact-grain response under `facts`. The two are not
-flattened or re-ranked together.
-
-### What to read on the envelope first
-
-Single-grain `Envelope` answers are flat:
-
-```json
-{
-  "grain": "fact",
-  "temporal_scope": {
-    "mode": "current",
-    "evaluated_at": "…",
-    "believed_at": "…",
-    "identity_regime": "current"
-  },
-  "facts": [{ "fact_id": "…", "kind": "relation", "label": "…", "evidence_count": 1, "support": "current" }],
-  "fact_evidence": [{ "fact_kind": "relation", "fact_id": "…", "claim_id": "…", "stance": "supports" }],
-  "evidence": [{ "claim_id": "…", "claim_text": "…", "is_current_testimony": true }],
-  "freshness": { "pg_live_ts": "…", "p1_written_inline": true },
-  "dropped_by_hydration": 0,
-  "negative": null
-}
-```
-
-Agent checklist:
-
-1. Read `grain`
-2. If `negative` is set — branch on `kind` (`unknown_entity` | `known_empty` | `boundary`)
-3. Prefer `facts` + `fact_evidence` for present-tense belief
-4. Drill `evidence` / sources before irreversible action
-5. For `ContextBundle/v1`, inspect `testimony` and `facts` as separate complete envelopes
-
-Full contract: [Response envelope](/docs/retrieval/envelope).
-
-## 6. Open query (optional, powerful)
-
-```bash
-curl --fail http://localhost:8000/query/space
-```
-
-Example — current facts only:
-
-```bash
-curl --fail -X POST http://localhost:8000/query/sql \
-  -H 'content-type: application/json' \
-  -d '{"sql":"SELECT fact_kind, fact_id, predicate FROM facts_current LIMIT 20"}'
-```
-
-**Wrong pattern:** filtering `claims_live` validity windows to answer “what is true now.” Claim windows are **asserted testimony**, not system belief. Start from `facts_current`. See [Open query space](/docs/retrieval/open-query).
-
-## 7. Agent path
-
-Surfaces available immediately without mounts: **API / CLI / MCP** (same four assured ops + open query).
-
-Mounts (P3 corpus tree, artifacts, raw, Plane K checkout) are published through the **library mount APIs** for a deployment — not a separate Compose service in the smoke profile. When your harness can mount:
-
-1. Obtain `PublishedMounts` from the self-host mount publisher for this deployment.
-2. Render/publish the consumption `SKILL.md` via `ConsumptionSkillSurface`.
-3. Prefer filesystem for navigate/read/grep; use MCP/API for search/graph/time-travel.
-
-Details: [Mounts and skill](/docs/mounts).
-
-## Install without Compose
-
-**Client (remote deployment):**
-
-```bash
-pip install rememberstack
-# or: uv add rememberstack
-```
-
-**Named install surfaces** (see package extras):
-
-```bash
-pip install 'rememberstack[server]'
-pip install 'rememberstack[connectors-watched-directory]'
-pip install 'rememberstack[k]'
-```
-
-## Next
-
-- [Concepts](/docs/concepts) — claim vs fact vs grain
-- [Ingestion](/docs/ingestion) — full write path
-- [Retrieval](/docs/retrieval) — full read path
-- [Deployment](/docs/deployment) — Compose lifecycle and projections
-- [Configuration](/docs/configuration) — env, model seats, budgets
-- [Troubleshooting](/docs/troubleshooting) — stuck work and empty retrieval
+- **[Agent Harness Integrations](/docs/harnesses)**: Deep dive into configuring and prompting Cursor, Claude Code, Desktop, Codex, and Antigravity.
+- **[Python SDK Reference](/docs/reference/sdk)**: Complete API docs for `RememberClient` methods and types.
+- **[Platform CLI Reference](/docs/reference/cli)**: Full command manual (`setup`, `doctor`, `projects`, `balance`, `query`).
+- **[Docker Compose Quickstart](/docs/deployment)**: How to self-host the complete engine, PostgreSQL 19 with SQL/PGQ, and MinIO storage locally.
+- **[Remember Cloud Platform](/docs/cloud/architecture)**: Dedicated private pod architecture, billing, and team collaboration.

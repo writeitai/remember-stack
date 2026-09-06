@@ -19,10 +19,9 @@ The one-time owner setup is complete:
    git remote set-url origin git@github.com:writeitai/remember-stack.git
    ```
 
-   The readable hyphen belongs only to repository and container URLs; the product remains
-   RememberStack and the Python distribution/import remain `rememberstack`. GitHub redirects
-   ordinary repository and Git traffic after a rename, but the final name must be in place before
-   configuring PyPI because the trusted identity includes the repository name.
+   Under D108, the canonical PyPI distribution is `remember` (providing the `remember` CLI launcher
+   and both `remember` and `rememberstack` Python import packages), published from this repository
+   starting with `v0.17.0`. The container image package is `ghcr.io/writeitai/remember-stack`.
 3. The GitHub environment `pypi` requires an owner review, so a tag cannot publish to PyPI without
    explicit approval.
 4. The PyPI account uses two-factor authentication and has a
@@ -31,7 +30,7 @@ The one-time owner setup is complete:
 
    | Field | Value |
    |---|---|
-   | PyPI project name | `rememberstack` |
+   | PyPI project name | `remember` |
    | GitHub owner | `writeitai` |
    | Repository | `remember-stack` |
    | Workflow | `release.yml` |
@@ -52,7 +51,7 @@ GHCR tag in `compose.yaml`. Update release-facing documentation in the same pull
 contract check rejects drift:
 
 ```bash
-uv run python scripts/check_release_contract.py --tag v0.2.0
+uv run python scripts/check_release_contract.py --tag v0.17.0
 ```
 
 That release pull request also refreshes the PostgreSQL foundation pins in
@@ -74,13 +73,13 @@ After that pull request is merged and `main` is green, tag its exact merge commi
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.2.0 -m "RememberStack 0.2.0"
-git push origin v0.2.0
+git tag -a v0.17.0 -m "Remember 0.17.0"
+git push origin v0.17.0
 ```
 
 The workflow validates the tag, runs the release test suite, builds the wheel and source
-distribution, and publishes `rememberstack==0.2.0` plus
-`ghcr.io/writeitai/remember-stack:0.2.0` and the multi-architecture PostgreSQL
+distribution, and publishes `remember==0.17.0` plus
+`ghcr.io/writeitai/remember-stack:0.17.0` and the multi-architecture PostgreSQL
 foundation. It creates the GitHub release only after both registries accept
 their artifacts and the PostgreSQL manifest proves amd64 plus arm64 digests.
 
@@ -103,16 +102,16 @@ the package back to this repository. Docker Hub is intentionally not a second pu
 Run these checks from a clean machine or temporary directory:
 
 ```bash
-uvx --from rememberstack==0.2.0 remember --version
-docker pull ghcr.io/writeitai/remember-stack:0.2.0
-gh release download v0.2.0 --repo writeitai/remember-stack \
+uvx --from remember==0.17.0 remember --version
+docker pull ghcr.io/writeitai/remember-stack:0.17.0
+gh release download v0.17.0 --repo writeitai/remember-stack \
   --pattern compose.yaml --pattern default.env.example --pattern openapi.json
 found=$(jq -r '.info.version' openapi.json) || {
   echo "cannot read openapi.json" >&2
   exit 1
 }
-[ "$found" = "0.2.0" ] || {
-  echo "openapi.json is version $found, expected 0.2.0" >&2
+[ "$found" = "0.17.0" ] || {
+  echo "openapi.json is version $found, expected 0.17.0" >&2
   exit 1
 }
 cp default.env.example .env

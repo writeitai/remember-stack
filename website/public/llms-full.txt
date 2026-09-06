@@ -1,0 +1,136 @@
+# Remember: Complete Architecture & Developer Manual
+
+> Open memory infrastructure for autonomous AI coding agents. Bitemporal knowledge graph, autonomous contradiction adjudication, and assured retrieval over PostgreSQL 19 with open query space parity.
+
+---
+
+## 1. System Overview & Core Theory
+
+Remember is an open memory infrastructure designed for autonomous AI agents. Unlike standard vector databases (top-K similarity search over text chunks), Remember solves the fundamental limitations of semantic search:
+1. **Separation of Testimony vs. Truth**: Raw assertions made by source documents ("claims") are immutable testimony. Adjudicated current beliefs ("facts", comprised of relations and observations) represent the system's current worldview. The `fact_claim_evidence` association forms the auditable bridge between them.
+2. **Bitemporal Timeline**: Every fact records two independent time dimensions:
+   - **Valid Time (`valid_from`, `valid_until`)**: When the fact was true in the real world.
+   - **Belief Time (`believed_from`, `believed_until`)**: When the system learned or revoked belief in the fact.
+3. **Autonomous Contradiction Adjudication**: When a new document asserts that "Bob left Acme for Stark Corp", the engine automatically closes the validity window on `(bob, works_at, acme)` and records `(bob, works_at, stark_corp)`. Active contradictions are grouped and returned together in responses.
+4. **Three-Plane Architecture**:
+   - **Plane E (Evidence)**: What was ingested and adjudicated. Stored in PostgreSQL 19 and S3/MinIO. Authoritative ground truth.
+   - **Plane K (Knowledge)**: High-level prose conclusions. Authored or compiled into git.
+   - **Plane P (Projections)**: Fast query indexes (pgvector, Lance, lexical search). Derived and fully rebuildable from Plane E anytime.
+
+---
+
+## 2. Quickstart & Agent Harnesses
+
+### Universal Onboarding
+```bash
+uvx remember setup
+```
+
+The setup wizard:
+- Connects to **Remember Cloud** (`https://api.remember.dev`) or **Self-Hosted Engine** (`http://localhost:8000`).
+- Auto-configures agent harnesses using durable absolute paths without credential leaks in git:
+  - **Cursor**: `.cursor/mcp.json` + `.cursor/rules/remember.mdc`
+  - **Claude Code**: `claude mcp add remember -- uvx remember mcp`
+  - **Claude Desktop**: `claude_desktop_config.json`
+  - **OpenAI Codex**: `.codex/config.toml`
+  - **Google Antigravity**: `.agents/mcp_config.json` + `.agents/skills/remember/SKILL.md`
+
+### Verification
+```bash
+remember doctor
+```
+
+---
+
+## 3. Python SDK (`remember`)
+
+```bash
+pip install remember
+```
+
+Carries zero heavy database or C-extension compilation dependencies (`httpx>=0.28.1`, `pydantic>=2.11`).
+
+```python
+from remember import RememberClient
+
+# Automatically reads credentials from ~/.config/remember/credentials.json or REMEMBER_TOKEN
+client = RememberClient()
+
+# Ingest document
+res = client.ingest(filename="notes.md", content=b"# Team\nAlice is the CFO of Acme as of 2026.\n")
+client.wait_for_readiness([res.version_id], timeout=30)
+
+# Retrieve current fact context
+facts = client.fact_context("Who is the CFO of Acme?")
+
+# Retrieve comprehensive dual-grain bundle
+bundle = client.answer_context("CFO of Acme")
+
+# Execute sandboxed open SQL query (open query space parity)
+query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10")
+```
+
+---
+
+## 4. Platform CLI Reference
+
+- `remember setup`: Interactive multi-harness onboarding.
+- `remember doctor`: Environment and MCP diagnostic verification.
+- `remember login`: Secure OAuth device-grant browser authentication.
+- `remember logout`: Terminate session and revoke cloud credentials.
+- `remember whoami`: Display authenticated user, organization, and active project.
+- `remember balance` / `remember billing`: Display credit balance and monthly spend.
+- `remember projects list` / `create`: Manage isolated workspace projects.
+- `remember switch <project-id>`: Set default project context.
+- `remember members list` / `invite`: Manage team seats and roles.
+- `remember ingest <file>`: Ingest document into bitemporal spine.
+- `remember query sql <sql>`: Execute sandboxed SQL statement against `memory_v1`.
+- `remember operations list` / `run`: Run assured operations (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`).
+- `remember mcp`: Launch Model Context Protocol stdio server.
+
+---
+
+## 5. Assured Retrieval Contracts
+
+Every assured operation returns an honest, structured envelope:
+- `grain`: `fact` or `testimony`.
+- `facts`: Array of adjudicated facts (`fact_id`, `predicate`, `label`, `evidence_count`, `support`).
+- `fact_evidence`: Bridge linking facts to claims (`fact_id`, `claim_id`, `stance`).
+- `evidence`: Raw source claims (`claim_id`, `claim_text`, `is_current_testimony`).
+- `freshness`: Timestamp of PostgreSQL live state (`pg_live_ts`).
+- `negative`: Typed negative result if empty (`unknown_entity`, `known_empty`, `boundary`).
+- `contradictions`: Grouped active contradictions.
+
+---
+
+## 6. Open Query Space (SQL & Graph)
+
+Sandboxed read-only SQL execution against the PostgreSQL 19 schema:
+- **Authoritative Surface**: 24 public views (`facts_current`, `claims_live`, `graph_edges_current`, `contradiction_members_current`, etc.) and 11 allowlisted functions (`facts_as_of`, `graph_neighborhood`, `graph_path`, `semantic_chunks`, etc.).
+- **Query Sandbox Defense**: Deny-by-default AST parsing (`pglast 8.x`), `READ ONLY` transaction blocks, 5-second statement timeout, 100-row default clamp, and 1 MB payload limit.
+- **Open Query Space Parity**: Supported on Self-Hosted Engine (v0.17.0+); planned parity for Remember Cloud under active operator dogfooding.
+
+---
+
+## 7. Self-Hosting & Operations
+
+```bash
+git clone https://github.com/writeitai/remember-stack.git
+cd remember-stack
+cp .env.example .env
+docker compose up --detach --wait
+```
+
+Runs:
+- `postgres`: PostgreSQL 19 with SQL/PGQ graph engine and `pgvector`.
+- `minio`: S3-compatible content-addressed object storage.
+- `api`: FastAPI HTTP server exposing REST, Open Query, and Assured Operations.
+- `worker`: Background asynchronous pipeline (E0 extraction, E1 chunking, E2 claims, E3 graph).
+
+---
+
+## 8. Remember Cloud Platform
+
+- **Physical Database Isolation**: Every project runs against a dedicated PostgreSQL database instance. Zero shared multi-tenant tables.
+- **Spend Leases (D46)**: Ephemeral spend lease reservation on request admission; commit on HTTP 2xx; automatic release on failure or timeout.
+- **Secret Isolation**: Strict separation between control-plane user session tokens and per-project data-plane tokens. Workspace harness configurations remain secret-free.

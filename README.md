@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/writeitai/remember-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/writeitai/remember-stack/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/writeitai/remember-stack/python-coverage-comment-action-data/endpoint.json)](https://github.com/writeitai/remember-stack/tree/python-coverage-comment-action-data)
-[![Docs](https://img.shields.io/badge/docs-docs.remember.dev-ee5b44)](https://docs.remember.dev)
-[![PyPI](https://img.shields.io/pypi/v/rememberstack)](https://pypi.org/project/rememberstack/)
+[![Docs](https://img.shields.io/badge/docs-remember.dev-ee5b44)](https://remember.dev/docs)
+[![PyPI](https://img.shields.io/pypi/v/remember)](https://pypi.org/project/remember/)
 
 **Memory for AI agents that have to act — not just chat about a corpus.**
 
 Pour documents into it. Get back **what sources said**, **what the system currently holds true**, and a full audit trail to the exact span, page, or second of audio. Built to stay useful at **a million documents**.
 
-**Docs:** [docs.remember.dev](https://docs.remember.dev) · **Product:** [remember.dev](https://remember.dev)
+**Docs:** [remember.dev/docs](https://remember.dev/docs) · **Product:** [remember.dev](https://remember.dev)
 
 ---
 
@@ -158,13 +158,13 @@ curl --fail http://localhost:8000/operations
 
 Ingest Markdown, wait for readiness, then call the assured ops — full walkthrough:
 
-**→ [Getting started](https://docs.remember.dev/docs/getting-started)**  
-**→ [Self-host deployment](https://docs.remember.dev/docs/deployment)**
+**→ [Getting started](https://remember.dev/docs/getting-started)**
+**→ [Self-host deployment](https://remember.dev/docs/deployment)**
 
 Client package:
 
 ```bash
-pip install rememberstack
+pip install remember
 # server / connectors / knowledge extras named in the package
 ```
 
@@ -178,9 +178,9 @@ The managed cloud runs **this same engine**. Cloud adds operations and product c
 
 | | |
 | --- | --- |
-| Docs | [docs.remember.dev](https://docs.remember.dev) |
+| Docs | [remember.dev/docs](https://remember.dev/docs) |
 | Managed product | [remember.dev](https://remember.dev) |
-| Release | [v0.16.0](https://github.com/writeitai/remember-stack/releases/tag/v0.16.0) |
+| Release | [v0.17.0](https://github.com/writeitai/remember-stack/releases/tag/v0.17.0) |
 
 ---
 
@@ -191,4 +191,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). Pull requests need 
 ---
 
 <p align="center"><b>Stop retrieving passages. Start knowing what is true.</b><br/>
-<a href="https://docs.remember.dev">Read the docs</a> · <a href="https://docs.remember.dev/docs/getting-started">Run it</a></p>
+<a href="https://remember.dev/docs">Read the docs</a> · <a href="https://remember.dev/docs/getting-started">Run it</a></p>

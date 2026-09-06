@@ -20,11 +20,11 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md LICENSE alembic.ini ./
 
-RUN uv sync --locked --no-dev --extra observability --extra server --no-install-project
+RUN uv sync --locked --no-dev --group server --extra observability --no-install-project
 
 COPY src ./src
 
-RUN uv sync --locked --no-dev --extra observability --extra server
+RUN uv sync --locked --no-dev --group server --extra observability
 
 
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6

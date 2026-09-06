@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "rememberstack"
-version = "0.16.0"
+name = "remember"
+version = "0.17.0"
 description = "Open memory infrastructure for AI agents."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -40,28 +40,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = [
-    "alembic>=1.16",
-    "boto3>=1.42",
-    "fastapi>=0.139.2",
-    # EdDSA verification for the managed auth perimeter (D61 reference
-    # adapter). A boring, widely implemented JWT envelope beats a parser we
-    # would have to get right ourselves, and `cryptography` already resolves.
-    "pyjwt[crypto]>=2.10",
-    "markdown-it-py>=4.2.0",
-    "markitdown>=0.1.6",
-    "onnxruntime>=1.24.1; python_version >= '3.14'",
-    # PostgreSQL's own SQL parser, used to canonicalize the memory_v1 view
-    # definitions into the hashed AST. The major is pinned because the parse
-    # tree is a hash input: pglast 8.x embeds the PostgreSQL 18 grammar. It is
-    # intentionally retained as the deny-by-default public SQL parser while
-    # server-owned SQL/PGQ executes only through static PostgreSQL 19 SQL.
-    "pglast>=8.4,<9",
-    "psycopg[binary]>=3.2",
-    "pyarrow>=25.0.0",
-    "sqlalchemy>=2.0",
-    "uvicorn>=0.37",
-]
 # The watched-directory connector uses only the standard library. Other
 # connector extras are added with their adapters, rather than speculatively.
 connectors-watched-directory = []
@@ -79,48 +57,52 @@ observability = [
 ]
 
 [project.scripts]
-remember = "rememberstack.surfaces.cli:main"
+remember = "remember.cli:main"
+rememberstack = "remember.cli:rememberstack_main"
+remember-status = "remember.cli:main_status"
 
 [project.urls]
 Homepage = "https://remember.dev"
-Documentation = "https://docs.remember.dev/docs"
+Documentation = "https://remember.dev/docs"
 Repository = "https://github.com/writeitai/remember-stack"
 Issues = "https://github.com/writeitai/remember-stack/issues"
 
 [dependency-groups]
-dev = [
+server = [
     "alembic>=1.16",
     "boto3>=1.42",
     "fastapi>=0.139.2",
-    "google-auth>=2.39",
-    "google-cloud-storage>=3.4,<4",
-    "import-linter>=2.13",
-    "jsonschema>=4.23",
     "markdown-it-py>=4.2.0",
     "markitdown>=0.1.6",
-    "nltk>=3.9",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     "pglast>=8.4,<9",
     "psycopg[binary]>=3.2",
     "pyarrow>=25.0.0",
-    # Mirrors the `server` extra: CI installs the dev group, so an adapter that
-    # needs this at runtime needs it here to be tested at all.
     "pyjwt[crypto]>=2.10",
+    "sqlalchemy>=2.0",
+    "uvicorn>=0.37",
+]
+dev = [
+    {include-group = "server"},
+    "google-auth>=2.39",
+    "google-cloud-storage>=3.4,<4",
+    "import-linter>=2.13",
+    "jsonschema>=4.23",
+    "nltk>=3.9",
+    "pydantic-settings>=2.10",
     "pyright>=1.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
     "ruff>=0.4",
     "regex>=2024.11.6",
-    "sqlalchemy>=2.0",
-    "uvicorn>=0.37",
 ]
 
 [tool.uv]
 required-version = "==0.12.6"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rememberstack"]
+packages = ["src/remember"]
 
 # Ruff config copied from the writeitai house style (team-harness / loopy-loop).
 [tool.ruff]
@@ -146,7 +128,7 @@ extend-select = ["I", "B", "A", "ERA", "TID251"]
 case-sensitive = false
 force-single-line = true
 force-sort-within-sections = true
-known-first-party = ["rememberstack"]
+known-first-party = ["rememberstack", "remember"]
 order-by-type = false
 relative-imports-order = "closest-to-furthest"
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
@@ -179,7 +161,7 @@ pythonpath = ["src", "."]
 testpaths = ["src/tests"]
 
 [tool.coverage.run]
-source = ["src/rememberstack"]
+source = ["src/rememberstack", "src/remember"]
 branch = true
 relative_files = true # required by the coverage-comment action
 

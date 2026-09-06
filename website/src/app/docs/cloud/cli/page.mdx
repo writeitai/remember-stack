@@ -1,0 +1,118 @@
+export const metadata = {
+  title: "Remember Cloud CLI",
+  description:
+    "Authenticate, inspect project context, switch active projects, and run agent memory tools with Remember Cloud.",
+};
+
+# Remember Cloud CLI
+
+The canonical `remember` CLI connects developer workstations and autonomous agent harnesses to Remember Cloud. It handles device authentication (`login` / `logout`), active project selection (`switch`, `projects list`), session context inspection (`whoami`), and data plane execution (`ingest`, `query`, `mcp`).
+
+Administrative lifecycle operations — provisioning dedicated database pods, managing team seats, and configuring subscription billing — are managed through the Remember Cloud web console at [https://remember.dev/app](https://remember.dev/app).
+
+---
+
+## 1. Authentication (`login` / `logout`)
+
+Remember Cloud uses an interactive browser-based OAuth device-grant flow. You never need to manually copy or paste sensitive session tokens into your shell.
+
+```bash
+# Start the login flow
+remember login
+```
+
+The CLI prints a verification URL and a one-time user code. Visit the URL in your browser to approve the device. Once approved, the CLI receives project deployment credentials and stores them securely in `~/.config/remember/credentials.json` with `0600` permissions.
+
+To terminate your session and revoke active session credentials:
+```bash
+remember logout
+```
+
+---
+
+## 2. Inspecting Context (`whoami`)
+
+Check your current active project, deployment endpoint, and credentials:
+
+```bash
+remember whoami
+```
+
+Output:
+```text
+Token Prefix:   umc_dp_...
+Deployment ID:  74000000-0000-0000-0000-000000000001
+Active Project: production
+Data Plane:     https://alpha.dp.remember.dev
+```
+
+---
+
+## 3. Managing Projects (`projects` & `switch`)
+
+Every project in Remember Cloud runs in its own dedicated, physically isolated database pod.
+
+### List Projects
+Lists projects configured on your local machine:
+```bash
+remember projects list
+```
+
+### Create a New Project
+New projects in Remember Cloud require provisioning dedicated PostgreSQL 19 database pods and storage infrastructure. Project provisioning is managed through the web console at [https://remember.dev/app/projects/new](https://remember.dev/app/projects/new).
+
+Running `remember projects create` in the terminal directs operators directly to this console URL:
+```bash
+$ remember projects create my-new-project
+Notice: Project creation requires provisioning a dedicated pod.
+Provision new projects via the web console at https://remember.dev/app/projects/new
+```
+
+Once created, authenticate your CLI with the new project using `remember login`.
+
+### Switch Active Project
+Switching projects updates your default project context in `credentials.json`. Subsequent CLI actions (`remember ingest`, `remember query`, `remember mcp`) and agent harnesses automatically target the newly selected project without reconfiguring files:
+
+```bash
+remember switch prj_mobile_app
+```
+
+---
+
+## 4. Monitoring Credits & Usage (`balance`)
+
+View your remaining credits, billing period, and current month's usage:
+
+```bash
+remember balance
+```
+
+You can also use the alias `remember billing`. If control-plane tokens are not present, the CLI directs you to the web console:
+
+```text
+Notice: Organization billing and subscription status are managed in the cloud console at https://remember.dev/app/billing.
+```
+
+---
+
+## 5. Team Collaboration (`members`)
+
+Team seats and organization permissions are managed by organization owners in the cloud console at [https://remember.dev/app/team](https://remember.dev/app/team).
+
+Running `remember members list` or `remember members invite` informs the operator:
+```text
+Notice: Team seats and organization permissions are managed in the cloud console at https://remember.dev/app/team.
+```
+
+Available roles in the console:
+- `owner`: Full organization control, billing management, and project creation.
+- `member`: Project read/write access, data ingestion, and agent MCP usage.
+
+---
+
+## 6. Secret Isolation Architecture (D92/D108)
+
+Remember strictly isolates control-plane tokens from data-plane tokens:
+- **Control-Plane Session Tokens**: Only used to manage projects, billing, and team seats on `https://api.remember.dev`. They are never sent to individual project data pods.
+- **Data-Plane Project Tokens**: Scoped exclusively to a single project's database pod for ingestion and querying. They cannot perform administrative control-plane actions.
+- **Agent Harness Safety**: When `remember setup` writes configuration files (e.g. `.cursor/mcp.json` or `.agents/mcp_config.json`), it dynamically launches `remember mcp` which inspects `credentials.json` at runtime, ensuring zero secrets are committed to git repositories.

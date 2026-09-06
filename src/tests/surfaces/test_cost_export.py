@@ -308,6 +308,7 @@ def test_cli_cost_export_prints_one_page(
 ) -> None:
     """``remember ops cost-export`` writes JSON to stdout and exits 0."""
     _bootstrap(database_engine)
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
     monkeypatch.setenv(
         "REMEMBERSTACK_DATABASE_URL",
         database_engine.url.render_as_string(hide_password=False),

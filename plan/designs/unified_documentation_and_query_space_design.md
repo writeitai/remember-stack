@@ -7,9 +7,11 @@
 > narrative combining deep conceptual foundations (bitemporal memory, contradiction adjudication, graph retrieval),
 > a universal quickstart (`uvx remember setup`), identical client/MCP surfaces (`remember`), and an honest,
 > transparent deployment choice (Self-Hosted Docker Compose vs. Managed Cloud). The SQL and bitemporal
-> graph query space (`open_query_execute`) is **fully enabled on Remember Cloud**, establishing 100% data-plane
-> parity with self-hosted instances backed by dedicated per-project database pods and the AST-validated
-> query sandbox (`QuerySandboxExecutor`). Duplicate documentation pages in `ultimate-memory-cloud` are retired.
+> graph query space (`open_query_execute`) is **fully implemented and active on Self-Hosted Engine (v0.17.0+)**,
+> with complete local-to-cloud parity planned for Remember Cloud under active operator dogfooding, backed
+> by dedicated per-project database pods and the AST-validated query sandbox (`QuerySandboxExecutor`).
+> Duplicate documentation pages in `ultimate-memory-cloud` are retired.
+
 
 ---
 
@@ -118,7 +120,7 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 ## 4. Full Cloud Query Space Parity (`open_query`)
 
 ### 4.1 Architecture & Tenant Isolation Guarantees
-The open query space is fully enabled on all Remember Cloud tenant deployments. The security model relies on physical pod isolation and three layers of query sandbox defense:
+The open query space is active on the Self-Hosted Engine (v0.17.0+) and planned for Remember Cloud tenant deployments following operator dogfooding. The security model relies on physical pod isolation and three layers of query sandbox defense:
 
 1. **Physical Database & Pod Isolation**:
    - Remember Cloud allocates a **private, dedicated PostgreSQL instance** for every project.

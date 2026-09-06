@@ -93,11 +93,13 @@ from benchmarks.locomo.retrieval import query_result_failure
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
+from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import Envelope as RememberEnvelope
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.vertex import VertexAccessError
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV1 as RememberstackContextBundleV1
 from rememberstack.model import EmbeddingRequest
-from rememberstack.model import Envelope
+from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import ModelRequest
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderAccountingError
@@ -2642,12 +2644,19 @@ def _dropped_by_hydration(*, call: ToolCallRecord) -> int:
 
 
 def _response_envelopes(
-    *, response: Envelope | ContextBundleV1 | JsonValue
-) -> tuple[Envelope, ...]:
+    *,
+    response: (
+        RememberEnvelope
+        | RememberstackEnvelope
+        | RememberContextBundleV1
+        | RememberstackContextBundleV1
+        | JsonValue
+    ),
+) -> tuple[RememberEnvelope | RememberstackEnvelope, ...]:
     """Expose typed envelope children without blending their authorities."""
-    if isinstance(response, Envelope):
+    if isinstance(response, (RememberEnvelope, RememberstackEnvelope)):
         return (response,)
-    if isinstance(response, ContextBundleV1):
+    if isinstance(response, (RememberContextBundleV1, RememberstackContextBundleV1)):
         return (response.testimony, response.facts)
     return ()
 

@@ -132,13 +132,28 @@ def test_login_writes_0600_and_does_not_print_device_code(
     assert stored.access_token.get_secret_value() == _ACCESS
 
 
-def test_login_without_token_host_exits_2(
+def test_login_without_token_host_defaults_to_cloud(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Token host is required; it is never derived from --api-url."""
+    """Token host defaults to cloud (D108); it is never derived from --api-url."""
     _isolate_config(monkeypatch, tmp_path)
-    assert cli_main(["login", "--api-url", "https://remember.dev/app/api/dp/v1"]) == 2
-    assert "token-host" in capsys.readouterr().err
+    recorded_base_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "test_stop"})
+
+    orig_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        recorded_base_urls.append(str(kwargs.get("base_url", "")))
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return orig_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", mock_client)
+    cli_main(["login", "--api-url", "https://remember.dev/app/api/dp/v1"])
+    assert len(recorded_base_urls) >= 1
+    assert recorded_base_urls[0] == "https://api.remember.dev"
+    assert "https://remember.dev/app/api/dp/v1" not in recorded_base_urls
     assert load_credentials() is None
 
 

@@ -376,6 +376,6 @@ def _load_langfuse() -> _LangfuseModule:
         module = import_module("langfuse")
     except ModuleNotFoundError as error:
         raise RuntimeError(
-            "Langfuse tracing requires rememberstack[observability]"
+            "Langfuse tracing requires remember[observability]"
         ) from error
     return module  # type: ignore[return-value]

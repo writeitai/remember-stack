@@ -1,8 +1,9 @@
-# RememberStack docs site
+# Remember documentation site
 
-The public documentation for [RememberStack](https://github.com/writeitai/remember-stack),
-published at **[docs.remember.dev](https://docs.remember.dev)**. The product and
-managed-cloud home remains [remember.dev](https://remember.dev).
+The public documentation for [Remember](https://github.com/writeitai/remember-stack),
+canonically published at **[remember.dev/docs](https://remember.dev/docs)** (with
+`docs.remember.dev` 301-redirecting to `remember.dev/docs` per D109).
+
 
 It is a self-contained static site: a Next.js App-Router app whose pages are authored
 as MDX, exported to static HTML, and served by GitHub Pages. The stack replicates the

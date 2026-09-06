@@ -100,7 +100,7 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
         ),
         Path("website/src/app/docs/project-status/page.mdx"): (
             f"releases/tag/v{version}",
-            f"rememberstack/{version}/",
+            f"remember/{version}/",
         ),
     }
     for relative_path, expected_markers in markers.items():

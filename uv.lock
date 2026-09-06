@@ -1692,8 +1692,8 @@ wheels = [
 ]
 
 [[package]]
-name = "rememberstack"
-version = "0.16.0"
+name = "remember"
+version = "0.17.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -1712,20 +1712,6 @@ observability = [
     { name = "langfuse" },
     { name = "sentry-sdk" },
 ]
-server = [
-    { name = "alembic" },
-    { name = "boto3" },
-    { name = "fastapi" },
-    { name = "markdown-it-py" },
-    { name = "markitdown" },
-    { name = "onnxruntime", marker = "python_full_version >= '3.14'" },
-    { name = "pglast" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pyarrow" },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "sqlalchemy" },
-    { name = "uvicorn" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1743,6 +1729,7 @@ dev = [
     { name = "pglast" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
+    { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pyright" },
     { name = "pytest" },
@@ -1753,32 +1740,34 @@ dev = [
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
+server = [
+    { name = "alembic" },
+    { name = "boto3" },
+    { name = "fastapi" },
+    { name = "markdown-it-py" },
+    { name = "markitdown" },
+    { name = "onnxruntime", marker = "python_full_version >= '3.14'" },
+    { name = "pglast" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pyarrow" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "sqlalchemy" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", marker = "extra == 'server'", specifier = ">=1.16" },
-    { name = "boto3", marker = "extra == 'server'", specifier = ">=1.42" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.139.2" },
     { name = "google-auth", marker = "extra == 'benchmark'", specifier = ">=2.39" },
     { name = "google-cloud-storage", marker = "extra == 'benchmark'", specifier = ">=3.4,<4" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langfuse", marker = "extra == 'observability'", specifier = ">=4.14.1,<5" },
-    { name = "markdown-it-py", marker = "extra == 'server'", specifier = ">=4.2.0" },
-    { name = "markitdown", marker = "extra == 'server'", specifier = ">=0.1.6" },
     { name = "nltk", marker = "extra == 'benchmark'", specifier = ">=3.9" },
-    { name = "onnxruntime", marker = "python_full_version >= '3.14' and extra == 'server'", specifier = ">=1.24.1" },
-    { name = "pglast", marker = "extra == 'server'", specifier = ">=8.4,<9" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
-    { name = "pyarrow", marker = "extra == 'server'", specifier = ">=25.0.0" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.10" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.10" },
     { name = "regex", marker = "extra == 'benchmark'", specifier = ">=2024.11.6" },
     { name = "sentry-sdk", marker = "extra == 'observability'", specifier = "==2.66.1" },
-    { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0" },
-    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.37" },
 ]
-provides-extras = ["server", "connectors-watched-directory", "k", "benchmark", "observability"]
+provides-extras = ["connectors-watched-directory", "k", "benchmark", "observability"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1796,6 +1785,7 @@ dev = [
     { name = "pglast", specifier = ">=8.4,<9" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=25.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.10" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8.3" },
@@ -1803,6 +1793,20 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "ruff", specifier = ">=0.4" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "uvicorn", specifier = ">=0.37" },
+]
+server = [
+    { name = "alembic", specifier = ">=1.16" },
+    { name = "boto3", specifier = ">=1.42" },
+    { name = "fastapi", specifier = ">=0.139.2" },
+    { name = "markdown-it-py", specifier = ">=4.2.0" },
+    { name = "markitdown", specifier = ">=0.1.6" },
+    { name = "onnxruntime", marker = "python_full_version >= '3.14'", specifier = ">=1.24.1" },
+    { name = "pglast", specifier = ">=8.4,<9" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pyarrow", specifier = ">=25.0.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", specifier = ">=0.37" },
 ]

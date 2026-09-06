@@ -110,7 +110,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         capture_output=True,
         text=True,
     )
-    wheel = next(dist.glob("rememberstack-*.whl"))
+    wheel = next(dist.glob("remember-*.whl"))
     _assert_dependency_split(wheel=wheel)
     subprocess.run(
         ["uv", "venv", str(environment)], check=True, capture_output=True, text=True
@@ -129,9 +129,22 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
             "-c",
             (
                 "import importlib.util; "
-                "from rememberstack.client import MemoryClient, PipelineReadinessReport; "
+                "import remember.client; "
+                "import remember.models; "
+                "import remember.errors; "
+                "from remember import Client, CloudClient, RememberClient, MemoryClient as RememberMemoryClient; "
+                "from remember.models import BillingStatus, Deployment; "
+                "from remember.errors import CloudError, Unauthenticated; "
+                "from remember import MemoryClient, PipelineReadinessReport; "
+                "c = Client(api_key='umc_dp_test', base_url='https://dp.example.com'); "
+                "assert c._client.headers.get('Authorization') == 'Bearer umc_dp_test'; "
+                "assert hasattr(Client, 'from_env'); "
+                "assert hasattr(CloudClient, 'from_env'); "
+                "assert RememberClient.__name__ == 'MemoryClient'; "
+                "assert RememberMemoryClient.__name__ == 'MemoryClient'; "
                 "assert MemoryClient.__name__ == 'MemoryClient'; "
                 "assert PipelineReadinessReport.__name__ == 'PipelineReadinessReport'; "
+                "assert importlib.util.find_spec('rememberstack') is None; "
                 "assert importlib.util.find_spec('sqlalchemy') is None"
             ),
         ],
@@ -141,6 +154,22 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
     )
 
     executable = environment / "bin" / "remember"
+    compat_launcher = environment / "bin" / "rememberstack"
+    status_launcher = environment / "bin" / "remember-status"
+    assert executable.exists()
+    assert compat_launcher.exists()
+    assert status_launcher.exists()
+
+    compat_run = subprocess.run(
+        [str(compat_launcher), "--version"], check=True, capture_output=True, text=True
+    )
+    assert "DeprecationWarning: 'rememberstack' CLI is deprecated" in compat_run.stderr
+    assert compat_run.stdout.strip() == f"remember {_declared_version()}"
+
+    status_run = subprocess.run(
+        [str(status_launcher), "--help"], check=True, capture_output=True, text=True
+    )
+    assert "remember-status" in status_run.stdout
     source = tmp_path / "fresh-wheel.md"
     source.write_bytes(b"fresh wheel push\n")
     _DeploymentHandler.ingested = []
@@ -195,7 +224,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
         server.server_close()
         thread.join()
 
-    assert version.stdout.strip() == f"RememberStack {_declared_version()}"
+    assert version.stdout.strip() == f"remember {_declared_version()}"
     assert json.loads(listing.stdout)["name"] == "resolve_entity"
     assert json.loads(query.stdout)["grain"] == "fact"
     assert json.loads(ingest.stdout)["created"] is True
@@ -228,6 +257,57 @@ def _assert_dependency_split(*, wheel: Path) -> None:
         "connectors-watched-directory",
         "k",
         "observability",
-        "server",
     }
-    assert any(requirement.startswith("sqlalchemy") for requirement in requirements)
+
+
+def test_wheel_contains_only_remember_and_no_rememberstack_collision(
+    tmp_path: Path,
+) -> None:
+    """The built wheel packages solely the remember/ namespace and dist-info without collision."""
+    project_root = Path(__file__).resolve().parents[3]
+    dist = tmp_path / "dist"
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist)],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheel = next(dist.glob("remember-*.whl"))
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        for name in names:
+            assert name.startswith("remember/") or ".dist-info/" in name, (
+                f"Unexpected entry in wheel: {name}"
+            )
+            assert not name.startswith("rememberstack"), (
+                f"rememberstack file leaked into wheel: {name}"
+            )
+
+    environment = tmp_path / "venv"
+    subprocess.run(
+        ["uv", "venv", str(environment)], check=True, capture_output=True, text=True
+    )
+    python = environment / "bin" / "python"
+    site_packages = next((environment / "lib").glob("python*/site-packages"))
+    dummy_pkg = site_packages / "rememberstack"
+    dummy_pkg.mkdir(parents=True)
+    (dummy_pkg / "__init__.py").write_text("LEGACY_MARKER = 'legacy_rememberstack'\n")
+
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(wheel)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import remember; import rememberstack; assert rememberstack.LEGACY_MARKER == 'legacy_rememberstack'",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

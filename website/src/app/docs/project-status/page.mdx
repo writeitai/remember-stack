@@ -6,7 +6,7 @@ export const metadata = {
 
 # Project Status
 
-Current public release: [`v0.16.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.16.0) on [PyPI](https://pypi.org/project/rememberstack/0.16.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
+Current public release: [`v0.17.0`](https://github.com/writeitai/remember-stack/releases/tag/v0.17.0) on [PyPI](https://pypi.org/project/remember/0.17.0/) and [GHCR](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack).
 
 ## What ships today
 
@@ -62,7 +62,8 @@ Current public release: [`v0.16.0`](https://github.com/writeitai/remember-stack/
 
 ### Packaging
 
-- Client-first `rememberstack` wheel; `[server]`, connector, `[k]`, `[benchmark]`, and `[observability]` extras
+- Single canonical `remember` wheel on PyPI providing the platform CLI (`remember`) and Python SDK (`remember` and backward-compatible `rememberstack`)
+- Container-first engine distribution via `ghcr.io/writeitai/remember-stack` and Docker Compose
 - One semantic version across PyPI, GHCR image, and Compose
 
 ## Smoke-profile limits (be honest)
@@ -344,4 +345,4 @@ examined, and the failure looks like the deployment being down.
 ## Following along
 
 - [GitHub repository](https://github.com/writeitai/remember-stack) — releases and pull requests
-- [Public docs](https://docs.remember.dev) — this site, versioned with the code
+- [Public docs](https://remember.dev/docs) — this site, versioned with the code

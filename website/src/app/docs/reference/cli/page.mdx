@@ -1,10 +1,10 @@
 export const metadata = {
   title: "CLI Reference",
   description:
-    "The client-first remember command line: open query space, operations, ingest, connectors, ops, budgets, MCP, and review.",
+    "Complete reference for the canonical remember platform CLI: setup, doctor, cloud control plane, ingest, query, and MCP.",
 };
 
-# CLI Reference
+# RememberStack 0.17.0 CLI Reference
 
 RememberStack has two deliberately separate truth layers. Claims are
 immutable source testimony (“what was asserted, by whom, when”);
@@ -21,368 +21,167 @@ why the system believes or believed the fact.
 
 (Internally these guarantees are decisions D41 and D54.)
 
-The `remember` command ships in the dependency-light base wheel. Query, ingest,
-connector management, and MCP all talk to the deployment API at `REMEMBERSTACK_API_URL`
-(default `http://127.0.0.1:8000`). Set `REMEMBERSTACK_API_AUTHORIZATION` to the complete
-`Authorization` header value when the deployment has an auth perimeter. Humans
-can also run `remember login --token-host <url>` (D92); the CLI then loads
-`credentials.json` after flags and env. `MemoryClient` never reads that file.
-The CLI carries no provider adapters: connector execution and E0 processing stay
-in the deployment. One deployment is one trust domain.
+The canonical `remember` CLI ships in the lightweight `remember` package on PyPI (`pip install remember` or `uvx remember`).
+
+It provides a single unified command-line tool for:
+- **Agent Onboarding**: Interactive setup and diagnostic verification (`setup`, `doctor`).
+- **Cloud Control Plane**: Session management, credit balance, project switching, and team seats (`login`, `whoami`, `balance`, `projects`, `switch`, `members`).
+- **Data Plane Operations**: Document ingestion, assured retrieval, sandboxed SQL queries, and the MCP server (`ingest`, `operations`, `query`, `mcp`).
 
 ```bash
 remember --version
-# RememberStack 0.16.0
+# Remember 0.17.0
 ```
 
-## `remember login` / `remember logout`
+---
 
-Device-grant login lives in the base wheel. `--token-host` (or
-`REMEMBERSTACK_TOKEN_HOST`) is required on login and is **never** derived from
-`--api-url`. The token host is the service that mints deployment tokens; it is
-not the query API. For a managed deployment whose advertised hostname is live,
-the token response supplies the API URL, so only the token host is needed:
+## 1. Universal Quickstart & Diagnostics
+
+### `remember setup`
+Interactively configures your coding agent harnesses (Cursor, Claude Code, Claude Desktop, Codex, Antigravity) to connect to Remember:
 
 ```bash
-remember login --token-host https://token-host.example
+remember setup
 ```
 
-For a self-hosted or local deployment, pass its API URL explicitly. This
-override wins even if the token host advertises a different or not-yet-live
-hostname. `REMEMBERSTACK_API_URL` remains the default for other client
-commands, but it is not a login override: login uses only an explicit
-`--api-url` or the hostname bound to the newly minted credential. When that
-environment variable points somewhere else, a successful login warns that it
-will override the stored deployment URL for subsequent commands.
+Flags:
+- `--self-hosted`: Connect to a local Docker Compose engine (`http://localhost:8000`) instead of Remember Cloud.
+- `--url <url>`: Override the default data plane endpoint.
+- `--token <token>`: Provide a project data-plane token directly.
+- `--dry-run`: Preview planned harness configuration files without writing them.
+
+### `remember doctor`
+Validates your environment, token health, active project context, backend connectivity, and agent harness registrations:
 
 ```bash
-remember login --token-host https://token-host.example --api-url http://127.0.0.1:8000
+remember doctor
+```
+
+```text
+Remember Diagnostics (CLI v0.17.0)
+----------------------------------------
+[✓] Configuration: ~/.config/remember/credentials.json (0600)
+[✓] Backend connectivity: https://api.remember.dev (200 OK)
+[✓] Authentication: Valid session (project: prj_prod_acme)
+[✓] MCP Server: uvx remember mcp runnable
+[✓] Harnesses configured: Cursor (.cursor/mcp.json), Claude Code
+All systems operational.
+```
+
+---
+
+## 2. Remember Cloud Control Plane
+
+The control plane commands interact with Remember Cloud (`https://api.remember.dev`) to manage identity, workspaces, billing, and team collaboration.
+
+> **Self-Hosted Note**: If you run control plane commands with `--self-hosted` or pointing to a local engine, the CLI outputs an informative notice:
+> *"Note: You are connected to a self-hosted engine. Projects, team members, and billing are cloud-managed services on remember.dev."*
+
+### `remember login` / `remember logout`
+Authenticates via secure browser-based OAuth device grant:
+
+```bash
+# Authenticate against Remember Cloud
+remember login
+
+# Log out and revoke stored tokens
 remember logout
 ```
 
-Without `--api-url`, login refuses an advertised hostname that is not live,
-prints that hostname, and asks you to run `remember login` again when it is. If
-the token host advertises no hostname, login asks for `--api-url`. Neither
-refusal writes a credential file. An advertised value that is not a plain host
-or `host:port` is also refused; pass `--api-url` to override it.
+Tokens are stored securely in `~/.config/remember/credentials.json` with strict directory permissions (`0700`) and file permissions (`0600`).
 
-`login` prints the user code and both verification URLs, then polls
-`POST {token_host}/v1/device/token`. It never prints `device_code` or
-`access_token`. The credential file is
-`$REMEMBERSTACK_CONFIG_DIR/credentials.json` (else
-`$XDG_CONFIG_HOME/rememberstack/credentials.json`, else
-`~/.config/rememberstack/credentials.json`) with directory `0700` and file
-`0600`.
-
-`logout` calls `DELETE {token_host}/v1/api-tokens/self` with the stored bearer
-and unlinks the file only when the token host confirms: a 2xx, or a 401 meaning
-it no longer resolves that bearer. A 404, a 5xx, or a network error keeps the
-file and exits 1 — none of those confirms the credential is gone, and unlinking
-on them would discard the only copy of a secret that may still work.
-
-### Replacing a credential
-
-`login` **mints the replacement before revoking what it replaces.** If the
-grant is interrupted — a closed tab, an expired user code, a dropped network —
-the existing credential is untouched and still works.
-
-That leaves a moment where both exist, so the one being replaced is written to
-`pending-revocation.json` (same directory, same `0600`) before the credential
-file is overwritten, and removed once the token host confirms the revoke. If
-the revoke cannot be confirmed, `login` still succeeds — the new credential
-works — and every subsequent command says so on **stderr** until the next
-`login` or `logout` retries it:
-
-```text
-warning: a superseded credential (token_id …) is still live; run `remember
-login` or `remember logout` to retire it
-```
-
-Warnings go to stderr, never stdout, so they cannot corrupt output a script is
-parsing.
-
-`login` and `logout` hold an exclusive lock on the credential directory, so two
-running at once cannot overwrite each other's file. A login refuses to start if
-it cannot take that lock, or if more than a handful of credentials are already
-awaiting revocation — minting into that state would leave the new credential
-untracked.
-
-### Expiring credentials
-
-A credential may carry an expiry, in which case `login` prints it and every
-command that uses the stored credential warns on stderr within 30 days of it:
-
-```text
-expires_at: 2027-09-01T12:00:00+00:00
-warning: this credential expires on 2027-09-01T12:00:00+00:00 (12d); run
-`remember login` to replace it
-```
-
-No expiry in the file means **none was recorded** — a token host that predates
-expiring credentials sends none — not that the credential never expires. The
-server is the authority either way; the warning exists so a scheduled job does
-not fail at 3am with an unexplained 401.
-
-Client command precedence: `--token` / `--api-url` on the subcommand, then
-`REMEMBERSTACK_API_*`, then the credential file, then SDK defaults.
-
-## `remember operations`
-
-Choose among live SQL and the four assured operations. `remember operations
-list|run` exposes only those four one-call operations. `remember query` remains
-the separate SQL, discovery, and saved-query surface. Typed live-graph helpers
-are available through the HTTP API and `MemoryClient`; there is no dedicated
-graph CLI subcommand. The API and MCP render the same assured-operation rows,
-so those transports stay in lockstep.
-
-### `remember operations list`
+### `remember whoami`
+Displays your current authenticated user, email, organization, and active project context:
 
 ```bash
+remember whoami
+```
+
+### `remember balance` (or `remember billing`)
+Checks your available credit balance, active subscription tier, and current monthly spend:
+
+```bash
+remember balance
+```
+
+```text
+Notice: Organization billing and subscription status are managed in the cloud console at https://remember.dev/app/billing.
+```
+
+### `remember projects list` / `remember projects create`
+View and manage isolated workspace projects:
+
+```bash
+# List available projects in your organization
+remember projects list
+```
+
+> Project creation and provisioning are managed directly in the cloud console at [`https://remember.dev/app/projects`](https://remember.dev/app/projects). Running `remember projects create` prints direct console guidance and exits.
+
+### `remember switch <project-id>`
+Switches your active default project context for subsequent CLI and MCP actions:
+
+```bash
+remember switch prj_prod_ecommerce
+```
+
+### `remember members list` / `remember members invite`
+Team collaborator management and seat allocations:
+
+> Organization member management is performed via the cloud console at [`https://remember.dev/app/members`](https://remember.dev/app/members). Running `remember members` prints direct console guidance and exits.
+
+
+---
+
+## 3. Data Plane Operations
+
+The data plane commands run identically whether targeting Remember Cloud or a self-hosted engine.
+
+### `remember ingest <file>`
+Ingests a file into the content-addressed spine, triggering chunk packing, claim extraction, and bitemporal adjudication:
+
+```bash
+remember ingest docs/architecture.md
+```
+
+### `remember operations list` / `remember operations run`
+Interacts with Remember's four assured operations:
+
+```bash
+# List available operations and their schema contracts
 remember operations list
+
+# Run fact_context
+remember operations run fact_context --arg query="Who is the lead architect?"
 ```
 
-Prints the deployment's operation tool list — one JSON object per line, each with
-`name`, `description`, `input_schema`, `result_schema`, `result_contract`,
-`output_grain`, and `answer_intent`.
-This is exactly the API's `GET /operations`.
+### `remember query sql <sql>` (Open Query Space)
+Executes an AST-sandboxed, read-only SQL query against the `memory_v1` view schema.
 
-### `remember operations run`
+**Open Query Space Parity**: Supported on Self-Hosted Engine; planned parity for Remember Cloud under active operator dogfooding.
 
 ```bash
-remember operations run fact_context \
-  --arg query='Who leads the launch now?' \
-  --arg time='{"mode":"current"}'
+remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current WHERE predicate = 'works_at' LIMIT 10;"
 ```
 
-Runs one operation by name over `key=value` arguments and prints its declared
-result as JSON. The first three operations return an `Envelope`;
-`answer_context` returns `ContextBundle/v1`. The CLI parses JSON literals such
-as integers, arrays, and objects before sending them; an ordinary unquoted token
-remains a string. Operation dispatch then validates those exact JSON types
-without coercion. An unknown operation
-or a missing required argument prints the API's error to stderr and exits
-nonzero.
-
-## `remember query`
-
-The `query` command contains only the open retrieval surface described below;
-there are no recipe-era `query list` or `query run` aliases.
-
-### Open query space
-
-When the deployment API composes the open-query facade:
-
-| Subcommand | Purpose |
-| --- | --- |
-| `remember query sql` | One sandboxed SQL statement → `QueryResult/v1` |
-| `remember query explain-sql` | `EXPLAIN` without execution |
-| `remember query space` | Manifest-backed discovery (two-layer headline + full members) |
-| `remember query search-space` | Search checked-in manifest text only |
-| `remember query list-saved` | Saved-query registry metadata |
-| `remember query describe-saved` | One immutable version |
-| `remember query run-saved` | Execute active saved SQL |
+### `remember mcp`
+Launches the Model Context Protocol stdio server for AI coding agents:
 
 ```bash
-remember query space --include-examples
-remember query sql 'SELECT count(*)::int AS n FROM documents_live'
-remember query run-saved examples relation_current --parameters '["<entity-uuid>"]'
+remember mcp
 ```
 
-## `remember ingest`
+### `remember connectors`
+Inspect and trigger external document ingestion connectors:
 
 ```bash
-remember ingest ./notes/project.md \
-  --source-kind custom-feeder \
-  --source-ref workspace/project \
-  --source-version-ref revision-17 \
-  --source-modified-at 2026-07-20T10:30:00+00:00 \
-  --versioning-mode living
-```
-
-Pushes the file's bytes through the deployment's E0 ingress. `--mime` is
-optional when it can be inferred from the filename. `--source-kind` and
-`--source-ref` must be supplied together: reusing that pair for changed bytes
-creates a new immutable version of the same document lineage; replaying the
-same bytes is a no-op. Omit the pair for a one-shot upload lineage.
-
-## `remember connectors`
-
-```bash
-remember connectors add watched-directory \
-  --name notes \
-  --config path=/sources/notes \
-  --credential-ref deployment-secret://notes
 remember connectors list
-remember connectors status <connector-uuid>
-remember connectors pause <connector-uuid>
 ```
 
-These commands configure connectors on a deployment that composes connector
-management. They never execute a connector in the client process. A
-`--credential-ref` names a secret already held by the deployment; raw
-credentials are not connector configuration. This package layer defines the
-typed client/API composition port; a deployment must supply its persistent
-connector manager.
+---
 
-## `remember mcp`
+## 4. Retired Surfaces
 
-Stdio MCP server over the remote client: static write tools (`ingest`,
-`pipeline_readiness`), assured operations from `GET /operations` when that
-route exists (a 404 is not a `tools/list` failure), and open-query tools
-when the deployment composes them. See [MCP reference](/docs/reference/mcp).
-
-Runs the base wheel's MCP stdio server. It discovers operations from the remote
-deployment and proxies `tools/call` to the same HTTP operation endpoint used by
-`remember operations run`.
-
-## `remember budget inspect`
-
-Budget inspection requires the `[server]` extra and connects directly to the
-deployment's PostgreSQL spine through `REMEMBERSTACK_DATABASE_URL`:
-
-```bash
-remember budget inspect --deployment <deployment-uuid>
-```
-
-Each output line is one configured route ceiling with its aligned window,
-current spend, remaining amount, exhaustion state, parked-work count, and spend
-grouped by the recorded cascade tier. Both enforcement and inspection read the
-same `processing_state` and `cost_ledger` rows; the CLI is not a billing system
-or a second source of pipeline truth.
-
-Ceilings are optional typed configuration in `REMEMBERSTACK_WORK_BUDGETS`. The value is a
-JSON list; each item explicitly names the deployment, stage, lane, window size,
-and USD ceiling:
-
-```bash
-export REMEMBERSTACK_WORK_BUDGETS='[{"deployment_id":"<deployment-uuid>","stage":"extract_claims","lane":"steady","window_seconds":86400,"ceiling_usd":"10.00"}]'
-```
-
-Use `null` for an unlaned K/P route. A route absent from the list is unlimited.
-When spend reaches its ceiling, due work is parked until the aligned window
-ends without consuming a handler attempt or becoming a failure; the same row
-then resumes normally.
-
-## `remember ops`
-
-Operational commands require the `[server]` extra and `REMEMBERSTACK_DATABASE_URL`. They
-are direct, local admin tools over the durable PostgreSQL state — not a
-dashboard or hosted control plane.
-
-### `remember ops inspect`
-
-```bash
-remember ops inspect --deployment <deployment-uuid>
-```
-
-Prints one typed JSON report containing route/status counts, DLQ totals and
-groups, a poison-target summary, the current P3 snapshot pointer, and a
-currency-ledger audit. Variable-size evidence is returned as a bounded sample;
-its complete total is reported separately. `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT`
-sets the shared cap (default 20, maximum 1000).
-
-### `remember ops replay`
-
-```bash
-remember ops replay <processing-uuid> \
-  --deployment <deployment-uuid> \
-  --attempts 1 \
-  [--lane steady|backfill] \
-  [--not-before 2026-07-22T08:00:00+00:00]
-```
-
-Reopens exactly one row whose current status is `dead_letter`. Attempts already
-consumed and the full previous traceback remain intact; `--attempts` grants
-only that many additional handler executions. The stage is immutable, an
-optional lane must be valid for it, and the committed row is then announced
-through the normal delivery port. Replaying a non-DLQ row fails rather than
-silently duplicating work.
-
-### `remember ops cost-export`
-
-```bash
-remember ops cost-export --deployment <deployment-uuid> [--cursor …] [--limit 100]
-```
-
-Prints one `rememberstack.cost_export.v1` page as JSON on stdout (logs on
-stderr). Empty `receipts` is a healthy heartbeat. `--deployment` must match the
-single spine deployment. This reads `v_cost_receipts`; it is not a query-API
-route. HTTP export, when configured, lives on a **separate bind**.
-
-### `remember ops rebuild`
-
-```bash
-remember ops rebuild \
-  --deployment <deployment-uuid> \
-  --snapshot-root ./snapshots \
-  --version drill-2026-07-21
-```
-
-This invokes the production P3 corpus-filesystem builder and publishes an
-immutable snapshot through the normal validation and pointer-swap path. The
-live PostgreSQL graph has no data rebuild command or work directory.
-
-### `remember ops graph-catalog ensure`
-
-```bash
-remember ops graph-catalog ensure
-```
-
-Semantically compares both property graphs through PostgreSQL 19's graph
-information-schema views, verifies helper versions, role limits, and grants,
-and prints normalized `pg_get_propgraphdef()` diagnostics. If replayable graph
-metadata is missing or mismatched, it recreates the private no-row source views,
-property-graph definitions, bounded helpers, and grants in one transaction. It
-never writes tenant authority rows and never builds a graph data snapshot.
-
-## `remember review`
-
-The review commands require the `[server]` extra. They connect directly to the
-deployment's PostgreSQL spine via `REMEMBERSTACK_DATABASE_URL` (a SQLAlchemy/psycopg
-URL); the deployment id is an explicit argument. Listing, `not_merge`, and
-`uncertain` do not load a model provider. Verdicts that change a profile (`merge`,
-`restore_support`, or `invalidate_fact`) also require
-`REMEMBERSTACK_OPENROUTER_API_KEY`; their embedding receipts are written to the
-operational surface-cost ledger.
-
-## `remember review list`
-
-```bash
-remember review list --deployment <deployment-uuid>
-```
-
-Prints the deployment's open review items — one JSON object per line — ranked
-by `expected_impact` (blast radius × (1 − confidence)): the highest-stakes
-item first. Items come from two sources:
-
-- **`merge_cluster`** — an entity merge routed to review because profile-space
-  auto-merge is not explicitly calibrated/enabled or its blast radius exceeded
-  the cap (hub merges never auto-merge); the candidate carries the proposed
-  survivor and absorbed entity ids.
-- **`support_withdrawn`** — a fact whose sole supporting claim was not
-  re-derived after a toolchain upgrade re-read the *unchanged* source; no
-  mechanical verdict is derivable, so a reviewer decides.
-
-## `remember review decide`
-
-```bash
-remember review decide <review-id> \
-  --deployment <deployment-uuid> \
-  --verdict <verdict> \
-  --reviewer <handle> \
-  [--note "free-text rationale"]
-```
-
-Applies one verdict. Every verdict appends the designed reversible rows —
-nothing is edited in place:
-
-| item kind | verdict | what it writes |
-| --- | --- | --- |
-| `merge_cluster` | `merge` | performs the merge: a redirect plus an append-only `merge_events` row (`decided_by=human`) with the pre-merge snapshot, then rebuilds the survivor's full-closure profile and the absorbed member's local nDR profile — fully un-mergeable later |
-| `merge_cluster` | `not_merge` | closes the item as rejected; nothing merges |
-| `support_withdrawn` | `restore_support` | the old claim was right (the extractor regressed): a `testimony_currency_events` row reinstates it and the fact's evidence count recounts |
-| `support_withdrawn` | `invalidate_fact` | the old claim was an extraction artifact: the fact's `invalidated_at` is set with a recorded adjudication — it leaves the current fact layer, history intact |
-| `support_withdrawn` | `uncertain` | non-terminal: the item stays visible (deferred) — deliberately rare |
-
-A verdict that does not fit the item's kind, or targets an already-decided
-item, fails with an error and exit code 1.
+In accordance with Decision D108:
+- **`remember review`**: Retired. In early versions, review queues held human triage tasks. In modern Remember, contradiction adjudication is fully autonomous (D3/D43/D107) and runs live in the bitemporal spine. Running `remember review` prints a helpful migration notice.
+- **`remember budget`**: Retired from the primary data-plane surface. Cloud spend and credit balances are managed via `remember balance`. Self-hosted engine spending is configured via `.env` provider rate limits.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import UTC
 from uuid import UUID
 from uuid import uuid4
 
@@ -22,6 +24,8 @@ from rememberstack.profiles.selfhost import resolve_selfhost_spend_lease
 from rememberstack.profiles.selfhost import SelfHostSettings
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.query_engine import QueryEngine
+from rememberstack.surfaces.query_sandbox.result import QueryResult
+from rememberstack.surfaces.query_sandbox.result import ResultLimits
 
 _DEPLOYMENT = UUID("54000000-0000-0000-0000-00000000000a")
 _SECRET = "umc_dp_test-secret-not-for-production"
@@ -147,7 +151,56 @@ def test_malformed_lease_url_refuses_to_start() -> None:
         resolve_selfhost_spend_lease(settings=settings)
 
 
-def _guarded_app(*, lease: _FakeLease, ingest: _CountingIngest) -> TestClient:
+class _FakeOpenQuery:
+    """Double for OpenQueryFacade."""
+
+    def __init__(self, deployment_id: UUID = _DEPLOYMENT) -> None:
+        self.deployment_id = deployment_id
+        self.sql_calls = 0
+
+    def query_sql(self, **kwargs: object) -> QueryResult:
+        self.sql_calls += 1
+        now = datetime.now(tz=UTC)
+        return QueryResult(
+            request_id=uuid4(),
+            deployment_id=_DEPLOYMENT,
+            surface_manifest_hash="0" * 64,
+            query_hash="1" * 64,
+            limits=ResultLimits(
+                row_cap=100,
+                byte_cap=1_000_000,
+                statement_timeout_ms=5000,
+                analytical_tier=False,
+            ),
+            execution_started_at=now,
+            elapsed_ms=1.0,
+            termination_reason="completed",
+        )
+
+    def explain_sql(self, **kwargs: object) -> QueryResult:
+        return self.query_sql(**kwargs)
+
+    def describe_query_space(self, **kwargs: object) -> object:
+        from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
+
+        return describe_query_space()
+
+    def search_query_space(self, **kwargs: object) -> list[object]:
+        return []
+
+    def list_saved_queries(self, **kwargs: object) -> list[object]:
+        return []
+
+    def describe_saved_query(self, **kwargs: object) -> dict[str, object]:
+        return {}
+
+    def run_saved_query(self, **kwargs: object) -> QueryResult:
+        return self.query_sql(**kwargs)
+
+
+def _guarded_app(
+    *, lease: _FakeLease, ingest: _CountingIngest, open_query: object | None = None
+) -> TestClient:
     from sqlalchemy import create_engine
 
     auth = HashedBearerAuth(
@@ -166,6 +219,7 @@ def _guarded_app(*, lease: _FakeLease, ingest: _CountingIngest) -> TestClient:
         auth=auth,
         spend_lease=lease,
         ingest=ingest,
+        open_query=open_query,  # type: ignore[arg-type]
     )
 
     @app.get("/healthz", include_in_schema=False)
@@ -293,3 +347,136 @@ def test_adapter_maps_403() -> None:
         lease.reserve(authorization="Bearer x", path_id="ingest")
     assert error.value.status_code == 403
     assert error.value.detail == "dispatch_refused:x"
+
+
+def test_lease_200_open_query_sql_commits() -> None:
+    """D109: POST /query/sql reserves under path_id='search' and commits on 200."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        "/query/sql",
+        json={"sql": "SELECT 1 AS n", "parameters": []},
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 200
+    assert open_query.sql_calls == 1
+    assert lease.commits == [lease._id]
+    assert lease.releases == []
+    reserved = lease.reserves[0]
+    assert reserved["path_id"] == "search"
+
+
+def test_lease_403_blocks_open_query_sql() -> None:
+    """D109: Spend refusal on POST /query/sql blocks execution without touching engine."""
+    lease = _FakeLease()
+    lease.reserve_error = SpendLeaseRefused(
+        status_code=403, detail="dispatch_refused:quota"
+    )
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        "/query/sql",
+        json={"sql": "SELECT 1 AS n", "parameters": []},
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 403
+    assert open_query.sql_calls == 0
+    assert lease.commits == []
+
+
+def test_lease_non_2xx_releases_open_query_sql() -> None:
+    """D109: Non-2xx response on /query/sql releases the spend reservation."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    # Malformed body yields 422 Unprocessable Entity
+    response = client.post(
+        "/query/sql",
+        json={"parameters": []},  # missing required 'sql' field
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 422
+    assert open_query.sql_calls == 0
+    assert lease.commits == []
+    assert lease.releases == [lease._id]
+
+
+def test_lease_200_open_query_space_commits() -> None:
+    """D109: GET /query/space reserves under path_id='search' and commits on 200."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.get(
+        "/query/space", headers={"Authorization": f"Bearer {_SECRET}"}
+    )
+    assert response.status_code == 200
+    assert lease.commits == [lease._id]
+    assert lease.releases == []
+    reserved = lease.reserves[0]
+    assert reserved["path_id"] == "search"
+
+
+def test_lease_200_open_query_sql_explain_commits() -> None:
+    """D109: POST /query/sql/explain reserves under path_id='search' and commits on 200."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        "/query/sql/explain",
+        json={"sql": "SELECT 1 AS n", "parameters": []},
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 200
+    assert lease.commits == [lease._id]
+    assert lease.releases == []
+    reserved = lease.reserves[0]
+    assert reserved["path_id"] == "search"
+
+
+def test_lease_200_open_query_space_search_commits() -> None:
+    """D109: GET /query/space/search reserves under path_id='search' and commits on 200."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.get(
+        "/query/space/search?query=fact&k=5",
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 200
+    assert lease.commits == [lease._id]
+    assert lease.releases == []
+    reserved = lease.reserves[0]
+    assert reserved["path_id"] == "search"
+
+
+def test_lease_200_run_saved_query_commits() -> None:
+    """D109: POST /query/saved/{namespace}/{name}/run reserves under path_id='search' and commits on 200."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        "/query/saved/examples/active_facts/run",
+        json={"parameters": []},
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 200
+    assert lease.commits == [lease._id]
+    assert lease.releases == []
+    reserved = lease.reserves[0]
+    assert reserved["path_id"] == "search"
+
+
+def test_lease_non_2xx_releases_open_query_sql_explain() -> None:
+    """D109: Non-2xx on /query/sql/explain releases the spend reservation."""
+    lease = _FakeLease()
+    open_query = _FakeOpenQuery()
+    client = _guarded_app(lease=lease, ingest=_CountingIngest(), open_query=open_query)
+    response = client.post(
+        "/query/sql/explain",
+        json={"parameters": []},  # missing 'sql'
+        headers={"Authorization": f"Bearer {_SECRET}"},
+    )
+    assert response.status_code == 422
+    assert lease.commits == []
+    assert lease.releases == [lease._id]

@@ -18,8 +18,10 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import SerializerFunctionWrapHandler
 
-from rememberstack.model import ContextBundleV1
-from rememberstack.model import Envelope
+from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import Envelope as RememberEnvelope
+from rememberstack.model import ContextBundleV1 as RememberstackContextBundleV1
+from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
@@ -349,7 +351,12 @@ class ToolCallRecord(FrozenModel):
     latency_ms: int = Field(ge=0)
     succeeded: bool = True
     response: Annotated[
-        Envelope | ContextBundleV1 | JsonValue, Field(union_mode="left_to_right")
+        RememberEnvelope
+        | RememberstackEnvelope
+        | RememberContextBundleV1
+        | RememberstackContextBundleV1
+        | JsonValue,
+        Field(union_mode="left_to_right"),
     ]
 
 

@@ -1,0 +1,182 @@
+export const metadata = {
+  title: "Agent Harness Integrations",
+  description:
+    "Connect Remember to Cursor, Claude Code, Claude Desktop, Codex, and Google Antigravity with automatic MCP configuration.",
+};
+
+# Agent Harness Integrations
+
+Remember connects seamlessly to modern AI coding agents via the **Model Context Protocol (MCP)**. 
+
+With Remember, your coding agent gains:
+- **Persistent memory across sessions**: Decisions, architectural invariants, and dependency rules persist even when context windows reset.
+- **Auditable provenance**: Every recalled fact links directly to the source document, PR, or discussion where it was asserted.
+- **Contradiction protection**: When requirements change, Remember invalidates old facts and flags active contradictions instead of hallucinating a blended answer.
+
+---
+
+## 1. Automatic Setup with `remember setup`
+
+The easiest way to configure any harness is running `remember setup` in your repository root:
+
+```bash
+uvx remember setup
+```
+
+The bootstrapper detects installed agent tools in your environment and workspace, registers the MCP server with **durable absolute binary paths**, and generates tailored context rules.
+
+---
+
+## 2. Cursor Integration
+
+### Automatic Configuration
+`remember setup` creates two files in your workspace:
+1. `.cursor/mcp.json`: Registers the Remember MCP server.
+2. `.cursor/rules/remember.mdc`: Guides Cursor on when and how to query memory during chat and composer runs.
+
+### Manual Configuration
+Add this entry to your workspace or global `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "command": "uvx",
+      "args": ["remember", "mcp"]
+    }
+  }
+}
+```
+
+> **Zero Secret Leakage**: The MCP server automatically loads credentials from `~/.config/remember/credentials.json` (mode 0600). Bearer tokens are never written to repository files committed to git.
+>
+> *(If self-hosting locally, add `"env": { "REMEMBER_DATA_PLANE_URL": "http://localhost:8000" }`)*
+
+### Rule File (`.cursor/rules/remember.mdc`)
+Place this in `.cursor/rules/remember.mdc` to guide Cursor:
+
+```markdown
+---
+description: Persistent architectural memory and decision log
+globs: *
+alwaysApply: true
+---
+
+# Remember Memory Instructions
+
+You have access to Remember via MCP tools.
+- Before refactoring or making architectural assumptions, call `fact_context` or `answer_context` to check for existing decisions and invariants.
+- If a query returns contradictions (`contradictions` array in the response), disclose them explicitly.
+- For deep structural exploration, use `query_sql` against `facts_current` or `graph_edges_current`.
+```
+
+---
+
+## 3. Claude Code Integration
+
+### Quick Registration
+Run the Claude Code CLI command:
+
+```bash
+claude mcp add remember -- uvx remember mcp
+```
+
+### Self-Hosted Local Configuration
+```bash
+claude mcp add remember \
+  -e REMEMBER_DATA_PLANE_URL="http://localhost:8000" \
+  -- uvx remember mcp
+```
+
+Now whenever you launch `claude`, Claude Code has access to Remember's tools across all tasks in your repository.
+
+---
+
+## 4. Claude Desktop Integration
+
+### Configuration File
+Open your Claude Desktop configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+Add the `remember` server to `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "command": "uvx",
+      "args": ["remember", "mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You will see a hammer icon indicating Remember's memory tools are active.
+
+---
+
+## 5. OpenAI Codex Integration
+
+Add the MCP server configuration to your workspace `.codex/config.toml` or user configuration `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.remember]
+command = "uvx"
+args = ["remember", "mcp"]
+```
+
+---
+
+## 6. Google Antigravity (AGY) Integration
+
+`remember setup` creates `.agents/mcp_config.json` and a specialized skill at `.agents/skills/remember/SKILL.md`:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "command": "uvx",
+      "args": ["remember", "mcp"]
+    }
+  }
+}
+```
+
+The generated `SKILL.md` teaches Antigravity agents the **Orient, Verify, Audit** lifecycle:
+1. **Orient**: Check high-level knowledge documents.
+2. **Verify**: Call `fact_context` for load-bearing facts.
+3. **Audit**: Trace claims and source citations before irreversible actions.
+
+---
+
+## 7. Exposed MCP Tools
+
+When your agent connects to `remember mcp`, the following tools are advertised:
+
+| Tool Name | Intent | Description |
+| :--- | :--- | :--- |
+| `fact_context` | Fact Recall | Retrieves current or historical adjudicated facts with supporting evidence under a token budget. |
+| `answer_context` | Comprehensive | Returns a dual-grain `ContextBundle` containing both raw testimony (claims) and adjudicated truth (facts). |
+| `testimony_context` | Evidence Search | High-recall semantic retrieval over raw claims and chunk source text. |
+| `resolve_entity` | Disambiguation | Resolves ambiguous entity names (e.g. "Postgres", "Alice") to canonical entity IDs. |
+| `query_sql` | Open Query | Executes AST-sandboxed, read-only SQL queries against the `memory_v1` view schema. |
+| `describe_query_space` | Schema Discovery | Returns the complete `memory_v1` relational views, columns, and graph helper signatures. |
+| `search_query_space` | Discovery Search | Searches documentation and view descriptions across the query schema. |
+
+---
+
+## 8. Verifying Your Setup
+
+Whenever you change configuration or switch projects, run:
+
+```bash
+remember doctor
+```
+
+`remember doctor` verifies:
+- Token validity and permissions.
+- Data plane responsiveness (Cloud or local Docker Compose).
+- Configuration syntax across all detected agent harnesses.
+- Stdio MCP bootability without latency traps.

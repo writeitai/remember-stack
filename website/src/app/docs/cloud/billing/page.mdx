@@ -1,0 +1,76 @@
+export const metadata = {
+  title: "Billing & Credits",
+  description:
+    "Prepaid credit model, spend lease protection, and budget monitoring in Remember Cloud.",
+};
+
+# Billing & Credits
+
+Remember Cloud is designed with transparent, predictable pricing. You only pay for the dedicated pods you run and the compute resources your agents consume.
+
+---
+
+## 1. Credit-Based Billing Model
+
+Usage in Remember Cloud is prepaid in credits. While work runs, an estimate is held; the statement is the bill. Work pauses visibly at the cap the organisation sets.
+
+- **Paid Alpha Entry**: The planned public managed offering is a paid Alpha with no free tier.
+- **Zero-Cost Evaluation**: For local exploration, testing, and zero-cost self-hosting, use the Apache-2.0 [Docker Compose quickstart](/docs/deployment).
+
+---
+
+## 2. Usage & Compute Resources
+
+Billing in Remember Cloud consists of two components:
+
+### A. Dedicated Project Pods
+Each project is allocated a dedicated container pod with an isolated PostgreSQL 19 instance, SQL/PGQ engine, private vector storage, and automated bitemporal maintenance.
+
+### B. Ingestion & Retrieval Compute
+- **Ingestion Pipeline (E0–E3)**: Metered based on document pages and extracted claims (text normalization, deterministic chunk packing, model extraction, and contradiction resolution).
+- **Assured Operations & Open SQL**: Metered based on query execution time and retrieved claim hydration.
+
+---
+
+## 3. Spend Lease Protection (D46)
+
+To protect your budget from buggy agent loops, infinite recursive tool calls, or runaway scripts, Remember Cloud enforces **Spend Leases**:
+
+```
+Agent Request (e.g. POST /operations/fact_context)
+       │
+       ▼
+┌────────────────────────────────────────┐
+│ 1. Lease Reservation                   │
+│    - Verifies token balance            │
+│    - Reserves ephemeral micro-lease    │
+└──────────────────┬─────────────────────┘
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+┌──────────────────┐ ┌──────────────────┐
+│ Success (2xx)    │ │ Error / Timeout  │
+│ - Commit lease   │ │ - Release lease  │
+│ - Deduct credits │ │ - Zero charge    │
+└──────────────────┘ └──────────────────┘
+```
+
+- **Ephemeral Reservation**: A tiny spend lease is reserved when a request enters the gateway.
+- **Commit on Success**: Credits are only deducted if the request succeeds (HTTP 2xx).
+- **Auto-Release on Failure**: If a query encounters a syntax error, hits the 5-second statement timeout, or fails for any reason, the lease is instantly released. You never pay for failed queries.
+
+---
+
+## 4. Monitoring Your Spend
+
+Check your credit balance anytime from the terminal:
+
+```bash
+remember balance
+```
+
+```text
+Notice: Organization billing and subscription status are managed in the cloud console at https://remember.dev/app/billing.
+```
+
+You can also inspect spending caps in the Cloud Dashboard to ensure work pauses visibly when a budget threshold is reached.

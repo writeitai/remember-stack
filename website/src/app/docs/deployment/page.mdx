@@ -48,9 +48,9 @@ Pre-release volumes created by the older PostgreSQL image are not migrated. For
 this disposable quickstart, remove the old stack with
 `docker compose down --volumes` before starting a different PostgreSQL 19 prerelease checkout.
 
-`--build` deliberately tests the checked-out source. The public `v0.16.0` release
+`--build` deliberately tests the checked-out source. The public `v0.17.0` release
 also ships this Compose file pinned to
-`ghcr.io/writeitai/remember-stack:0.16.0`; release consumers use
+`ghcr.io/writeitai/remember-stack:0.17.0`; release consumers use
 `--no-build --pull always` so Compose cannot fall back to a local source build.
 
 Do **not** put cost export on the public query port. When you want HTTP export,
@@ -70,7 +70,7 @@ model IDs for reproducible work; do not use a rotating free-model router.
 ## Optional observability
 
 Observability is strictly opt-in. The self-host image includes the
-`rememberstack[observability]` extra, but no exporter initializes unless its
+`remember[observability]` extra, but no exporter initializes unless its
 environment configuration is non-empty.
 
 Set `REMEMBERSTACK_SENTRY_DSN` to send metadata-only error events to a

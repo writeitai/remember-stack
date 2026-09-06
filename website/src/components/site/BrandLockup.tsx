@@ -36,7 +36,7 @@ export function BrandLockup({
               className="inline-block h-[1.5px] w-3 shrink-0 bg-coral"
               aria-hidden
             />
-            docs.remember.dev
+            remember.dev/docs
           </span>
         )}
       </span>

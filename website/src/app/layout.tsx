@@ -13,13 +13,13 @@ const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
 });
 
-const siteUrl = "https://docs.remember.dev";
+const siteUrl = "https://remember.dev";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "RememberStack — Documentation",
-    template: "%s — RememberStack",
+    default: "Remember — Documentation",
+    template: "%s — Remember",
   },
   description:
     "Open memory infrastructure for AI agents: auditable, navigable knowledge at scale.",
@@ -27,12 +27,15 @@ export const metadata: Metadata = {
     icon: "/brand/mark.svg",
   },
   openGraph: {
-    title: "RememberStack — Documentation",
+    title: "Remember — Documentation",
     description:
       "A memory system for AI agents: millions of documents distilled into auditable, navigable knowledge.",
     url: siteUrl,
-    siteName: "RememberStack",
+    siteName: "Remember",
     type: "website",
+  },
+  alternates: {
+    canonical: "./",
   },
 };
 
