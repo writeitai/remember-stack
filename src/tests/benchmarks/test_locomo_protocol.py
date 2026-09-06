@@ -46,8 +46,8 @@ from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.workers import E3_NORMALIZER_VERSION
-from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers import OBS_FLUSH_VERSION
+from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 
 
 def test_session_render_preserves_turns_and_discloses_derived_visual_text() -> None:
