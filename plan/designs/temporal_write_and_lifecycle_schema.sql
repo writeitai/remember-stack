@@ -231,7 +231,7 @@ CREATE TABLE public.relation_apply_batches (
 
 CREATE UNIQUE INDEX uq_rel_active_batch
   ON public.relation_apply_batches
-    (deployment_id, subject_entity_id, predicate, adjudicator_version)
+    (deployment_id, subject_entity_id, predicate)
   WHERE completed_at IS NULL;
 
 CREATE TABLE public.relation_apply_batch_inputs (
@@ -239,8 +239,11 @@ CREATE TABLE public.relation_apply_batch_inputs (
   batch_id uuid NOT NULL,
   adjudicator_version text NOT NULL,
   ordinal bigint NOT NULL CHECK (ordinal > 0),
+  preparation_id uuid,
+  prepared_fingerprint text,
   prepared_snapshot jsonb,
   prepared_output jsonb,
+  CHECK (num_nonnulls(preparation_id, prepared_fingerprint, prepared_snapshot) IN (0, 3)),
   CHECK (prepared_output IS NULL OR prepared_snapshot IS NOT NULL),
   assertion_id uuid NOT NULL,
   PRIMARY KEY (batch_id, ordinal),
@@ -314,12 +317,15 @@ CREATE TABLE temporal_discrepancies (
     state text NOT NULL CHECK (state IN
         ('ready', 'prepared', 'complete', 'retryable', 'superseded')),
     reason_code text NOT NULL,
+    preparation_id uuid,
+    prepared_fingerprint text,
     prepared_snapshot jsonb,
     prepared_at timestamptz,
     prepared_output jsonb,
     created_at timestamptz NOT NULL,
     UNIQUE (deployment_id, discrepancy_id),
     CHECK (num_nonnulls(relation_id, observation_id) = 1),
+    CHECK (num_nonnulls(preparation_id, prepared_fingerprint, prepared_snapshot) IN (0, 3)),
     CHECK (prepared_output IS NULL OR prepared_snapshot IS NOT NULL),
     FOREIGN KEY (deployment_id, relation_id)
         REFERENCES relations (deployment_id, relation_id),
@@ -412,8 +418,11 @@ CREATE TABLE temporal_operation_blocks (
     operation_id uuid NOT NULL,
     block_key text NOT NULL,
     sequence bigint NOT NULL CHECK (sequence > 0),
+    writes_block boolean NOT NULL,
     expected_block_revision bigint NOT NULL CHECK (expected_block_revision >= 0),
     resulting_block_revision bigint NOT NULL CHECK (resulting_block_revision >= 0),
+    CHECK (resulting_block_revision = expected_block_revision
+      + CASE WHEN writes_block THEN 1 ELSE 0 END),
     PRIMARY KEY (deployment_id, operation_id, block_key),
     UNIQUE (deployment_id, block_key, sequence),
     FOREIGN KEY (deployment_id, operation_id)
@@ -650,6 +659,8 @@ CREATE TABLE temporal_operation_support (
   operation_id uuid NOT NULL,
   support_state text NOT NULL CHECK
     (support_state IN ('complete','erased','unproven')),
+  footprint_complete boolean NOT NULL DEFAULT false,
+  expected_block_count integer NOT NULL DEFAULT 0 CHECK (expected_block_count >= 0),
   expected_claim_count integer NOT NULL CHECK (expected_claim_count >= 0),
   expected_semantic_dependency_count integer NOT NULL
     CHECK (expected_semantic_dependency_count >= 0),

@@ -77,20 +77,42 @@ fact/block revision.
 
 Preparation reads a bounded candidate/evidence snapshot under those locks,
 records the input fingerprint and proposed canonical endpoint candidates,
-then releases locks for remote inference. Apply reacquires the same locks and
+then releases locks for remote inference. The prepared row has a unique
+attempt UUID and fingerprint with an immutable snapshot. Publishing a completed
+output is a compare-and-swap against that exact attempt/fingerprint and an
+empty output column; the first complete output wins and cannot be replaced.
+A late helper whose token no longer matches cannot store or apply its answer
+beside a newer snapshot. Retries reuse the stored pair. A replacement attempt
+gets a new UUID only after recording the old completed pair's stale disposition
+in the existing adjudication/operation log; an uncompleted old attempt is
+retired without allowing its later output to bind to the new token. Source
+forget/write fencing applies before archival too; forbidden payload is discarded,
+not reintroduced by a late model reply. No extra attempt queue is introduced.
+Apply reacquires the same locks and
 checks the fact revision, values/bases, evidence eligibility, block/neighbour
 revision, identity epoch and policy generation. Checking endpoint equality
 alone is insufficient: intervening writes can return to the same values.
 A stale result has no effect and creates reconsideration for the new input
-fingerprint. The completed prepared output is stored before apply, so a crash
+fingerprint. Diagnostic non-applied operations are audit witnesses on replay;
+they never force their stale expected revision onto the fact. The completed
+prepared output is stored before apply, so a crash
 between inference and application need not repeat a successful model call.
 Provider failure before a durable output follows existing bounded retry/cost
 rules; retries cannot be described as byte-identical model inference.
 
 A `temporal_blocks` row supplies the sole committed operation sequence and
-revision for its block. Each mutation records its position in every affected
-block and its already-committed predecessor operations. Multi-fact effects from
-one assertion commit in one transaction, in stable fact order. Replay follows
+revision for its block. Each mutation records its position in every read or written
+block, including empty candidate blocks, their observed heads/revisions, and
+predecessor operations. `temporal_operation_blocks.writes_block` distinguishes
+read witnesses from mutations: both receive a sequence position, only mutations
+advance the block revision. Support metadata records expected block count and
+complete read-footprint attestation. Live apply records its complete footprint;
+historical unknown footprints trigger the conservative checkpoint rule.
+Predecessors are already committed effects or earlier effects in this same
+atomic assertion group. Multi-fact effects from one assertion commit together,
+in stable fact order, using the existing receipt→adjudication→operation linkage
+as group identity. Replay applies that group atomically, or reconstructs it only
+while the serving/readiness fence is closed; it cannot expose half a group. Replay follows
 these dependencies and exact stored decisions, not model-completion timestamps
 or “all caps, then all corrections”. A missing predecessor or mismatching
 revision is a replay conflict and blocks readiness, except for an explicit
@@ -152,7 +174,9 @@ relation completion, never an inferred success from no rows.
 
 Under the canonical block lock, freeze all currently eligible, materialized,
 unapplied assertions into an immutable admitted batch. One active batch exists
-per block/generation. Distinct assertions are ordered by
+per canonical block across generations. A generation roll drains or explicitly
+retires the old active batch before admitting another generation; two generations
+cannot race their own head ordinals. Distinct assertions are ordered by
 `asserted_at NULLS LAST, claim_id, predicate COLLATE "C", object_entity_id,
 assertion_id`. Multiple version memberships of the same assertion share its
 single application. Newly eligible assertions enter the next batch, even when
@@ -215,7 +239,10 @@ a potentially useful correction. A timer with unchanged evidence does not
 repeatedly buy the same model judgment. The fingerprint includes consumed
 revisions, not only dates. `temporal_discrepancies` is a durable domain target;
 `processing_state` alone owns its lease, attempts, retry delay and completion.
-There is no separate discrepancy poller or custom lease system.
+Work identity is `target_kind=temporal_correction`, the discrepancy UUID,
+`stage=correct_temporal`, `lane=NULL`, and the registered
+`temporal_adjudicator` policy generation. Enqueue it atomically with the input
+change. There is no separate discrepancy poller or custom lease system.
 
 The model chooses from canonical endpoints computed from eligible supporting
 claims already linked to this fact by an identity verdict. It returns candidate

@@ -153,3 +153,28 @@ Session locks survive transaction rollback; transaction locks do not. At Read
 Committed, successive statements may see different snapshots. CHECK constraints
 do not provide cross-row invariant enforcement. These mechanisms support the
 chosen protocol only when every relevant writer participates.
+
+
+## Final cross-review resolutions (2026-09-07)
+
+Independent review of the binding draft found an output/snapshot race that
+simple fact revision revalidation would not prevent: a late worker could store
+its old response beside a helper's new snapshot. The draft now pins a preparation
+attempt UUID/fingerprint and immutable snapshot/output pair, uses first-output
+CAS, and records a stale outcome before replacing an attempt. Existing logs
+hold the audit; no second work queue is added.
+
+The active relation batch is unique across adjudicator generations, not one
+per generation. The next generation cannot race its own head ordinal against
+an undrained older batch. Atomic assertion effects may depend on preceding
+effects in their same transaction; replay preserves that group boundary.
+All read/write blocks, including empty candidate blocks, have explicit
+footprint/completeness records. Read witnesses advance the sequence but not
+the mutation revision. These resolve the concrete findings recorded in
+`temporal_autonomous_corrections.md` §11.
+
+The final schema uses the existing endpoint basis field for `erased` and
+conservative whole-operation support/checkpoints rather than a new per-component
+proof engine or bitmask. Its exact predecessor-schema probes and limits are
+recorded in `temporal_relation_staging.md` §8.4. That execution found and verified
+the corrected conversion ordering; it does not certify a full running store.

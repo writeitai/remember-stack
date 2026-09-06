@@ -933,3 +933,43 @@ than inferring it from this successful run.
   fact rows use SQL NULL. Their checkpoint encoder/decoder must explicitly
   map those representations and revalidate canonical bounds. SQL execution
   does not prove that the restored fact tuple is identical to its checkpoint.
+
+### 8.4 Revalidation after the synthesis fixes
+
+**Checked:** 2026-09-07. Exact combined SQL SHA-256:
+`cfe1260b9cec7ca47d5a954cd32f1d0995b0b2257ca48b18b32f31167f8668c3`.
+The primary author moved `migrate`/`migration` additions into committed STEP A,
+moved the legacy exclusion drop to STEP C before converted rows are applied,
+left final exclusion creation/validation in STEP D, and added exact endpoint
+value-or-basis change-flag checks. The revised schema also adds the source-key
+mapping column/uniqueness and makes checkpoint occurrence precision use the
+same nullable enum and bound-coherence rule as fact rows.
+
+The exact revised file executes successfully against a newly initialized
+private PostgreSQL 15 predecessor database using the extraction and exclusions
+described in §8.1. A second private database exercised the corrected conversion
+sequence rather than merely running DDL on empty tables:
+
+1. Execute through STEP B, leaving the original relation exclusion installed.
+2. Insert two legal adjacent legacy facts with one triple and record their IDs.
+3. Execute the revised STEP C exclusion drop, then update those existing rows
+   to `occurrence` with uncapped verdict windows.
+4. Execute the exact STEP D final exclusion and constraint validations.
+5. Verify that both overlapping uncapped occurrence rows survive, their IDs
+   match the originals exactly, and the new relation constraints are validated.
+
+All five steps pass. The §8.2 reproduced exclusion-order blocker is resolved
+for this snapshot. Three additional probes reject an incorrect false start
+change flag, an incorrect true end change flag, and an end **basis-only**
+change whose flag remains false. A correctly flagged applied operation is
+accepted. The earlier eight negative invariant probes and their positive
+counterparts also pass against the revised combined schema.
+
+The private server was stopped after verification. This is still a focused
+partial-predecessor PostgreSQL 15 check, **not** a PostgreSQL 19 full-head
+Alembic test or an implementation of D107 conversion. The probe's direct
+updates intentionally test the repaired constraint ordering; they do not
+prove migration-operation recording, policy decisions, full conversion
+coverage, readiness, replay, or concurrent writer behavior. Source-key hashing
+and checkpoint encoding remain implementation contracts; their declared SQL
+shapes and constraints alone do not prove those behaviors.

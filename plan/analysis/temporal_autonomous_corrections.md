@@ -851,3 +851,103 @@ machinery while removing duplicate clocks, queues and narrative verdicts.
 Its strongest unresolved item is the exact sanitized-checkpoint schema and
 replay proof. The primary amendment must settle that mechanism explicitly;
 it must not cite this analysis as if the proof already exists.
+
+## 11. Independent review of the D110 binding draft (2026-09-07)
+
+Reviewed the actual proposed `temporal_write_and_lifecycle_design.md`, its full
+SQL appendix, amended `temporal_clocks_design.md`, `hard_forget_design.md`,
+`decisions.md` D110 and the temporal work-package plan. These findings concern
+that draft, not the earlier independent DDL sketches. No binding file was
+changed in this review. Syntax/execution probes reported by the primary author
+are useful structural evidence but cannot establish concurrent writer semantics.
+
+### R1 — block acceptance on an immutable prepared-output binding
+
+Draft §2 records preparation and then a successful model output before apply.
+`relation_apply_batch_inputs` and `temporal_discrepancies` each store mutable
+`prepared_snapshot`/`prepared_output`, with only the shape check that output
+requires a snapshot. The text permits a helper to prepare the same head but
+does not say how output publication pins the exact snapshot evaluated.
+
+Concrete race: A prepares revision 1; evidence changes; B replaces the stored
+snapshot with revision 2; A returns and stores its revision-1 model answer beside
+the revision-2 snapshot. Apply's revision-2 checks can now succeed despite the
+model having evaluated different evidence. An application receipt's uniqueness
+prevents double application, not this wrong-input application.
+
+Required resolution: each preparation has an immutable attempt token and input
+fingerprint; provider output publication performs compare-and-swap against that
+token/fingerprint and accepts only the first complete result. A successful result
+must never be detached from its snapshot. Repreparation retires the old pair and
+creates a new token; late outputs fail closed. Apply validates the persisted
+output's preparation token as well as current authority revisions. These can be
+typed fields within the existing records; a new queue or inference subsystem
+is unnecessary. Add the delayed-A/new-B race and concurrent-output winner case
+to acceptance.
+
+### R2 — block acceptance on one frontier across generations
+
+Draft §3.2 says one active batch per block/**generation**; SQL's
+`uq_rel_active_batch` includes `adjudicator_version`. The head-of-batch restriction
+therefore permits generation A's ordinal 1 and generation B's ordinal 1 to be
+simultaneously eligible for the same canonical block. Their immutable seed can
+again depend on which worker reacquires the block first.
+
+Required resolution: uniqueness for active batches is canonical block alone;
+generation remains a pinned property of that batch. A roll must drain or
+explicitly retire the previous head before admitting another generation.
+Alternatively the design would need another cross-generation frontier, which
+is needless machinery when the one-block rule already solves the problem.
+Verify with two generations containing conflicting initial assertions, not only
+two workers on one generation.
+
+### R3 — clarify same-transaction operation dependencies
+
+Draft §2 requires predecessors to be “already-committed,” while §§2/3.3 require
+all effects from one assertion to commit atomically. A later effect in that
+transaction can depend on an earlier effect which is recorded but not yet
+committed. For example an assertion can create a successor and use its boundary
+to cap another fact. Satisfying the literal wording by committing between effects
+would violate the atomicity contract.
+
+Permit a predecessor that is either committed earlier or an earlier recorded
+effect of the same atomic assertion group. Existing receipt/adjudication links
+identify the group; preserve a stable effect order and validate that the graph
+is acyclic. Replay must respect that group under the fenced rebuild contract
+and must not expose a half-applied group. This is a precise wording/application
+contract fix, not a request for another operation log.
+
+### R4 — spell out complete read footprints in the shared journal
+
+The checkpoint algorithm §6.2 expands across dependency/**read-footprint** edges,
+but §2 describes sequence membership only for “affected” blocks. A block can be
+read to rule out a neighbour without receiving a fact mutation. Its absence
+result still influences the decision and is relevant to checkpoint closure.
+
+State explicitly that prepare snapshots enumerate all consumed read and write
+block keys, including empty candidate blocks; operation membership/dependencies
+persist their observed revisions/heads and a completeness attestation. Only
+write blocks advance the mutation revision, while every recorded membership can
+advance its ordering sequence as defined by the one sequencer. If historical
+inputs lack this footprint, the documented conservative checkpoint fallback
+remains valid. New writers should not silently rely on that fallback instead of
+recording the footprint their own preparation already knows.
+
+### Findings that do not warrant additional machinery
+
+The draft's assertion receipt → adjudication → temporal operation linkage is
+adequate for one shared effect history when the writer checks matching target
+and complete membership atomically. A second assertion-to-operation junction
+would duplicate those edges without adding authority. The existing operation
+support and component attestations are also sufficient to express conservative
+independent support; there is no need to add separate endpoint claim tables
+merely because this earlier analysis explored them.
+
+Erased bounds are explicitly excluded from confident current membership in
+amended D107 §7.1 and D110 §6.1, with uncertain count/absence disclosure. The
+checkpoint explicitly fences the deployment, retains clean roots, covers old
+prefixes, repairs endpoint ownership, and distinguishes verified database state
+from completed all-store forget. Those are coherent design decisions. Tests
+must still prove repeated forget and restore against actual lineage/source
+scrub, including old root payloads and FK deletion ordering; DDL parsing is not
+that proof.
