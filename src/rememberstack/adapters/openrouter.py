@@ -40,6 +40,8 @@ _ALLOWED_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
 _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
 _GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 1.0, 2.0, 3.0, 5.0)
 _GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
+_IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S: Final[float] = 120.0
+_IN_FLIGHT_BUDGET_RETRIES: Final[int] = 3
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
 )
@@ -497,13 +499,23 @@ class OpenRouterModelProvider:
 
     def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
         """POST one JSON request; non-2xx responses become typed errors."""
-        response = self._client.post(path, json=payload)
-        if response.status_code >= 400:
-            raise OpenRouterProviderError(
-                f"OpenRouter {path} returned {response.status_code}: "
-                f"{response.text[:500]}"
-            )
-        return response.json()
+        for attempt in range(_IN_FLIGHT_BUDGET_RETRIES + 1):
+            response = self._client.post(path, json=payload)
+            retry_after = _in_flight_budget_retry_after(response=response)
+            if retry_after is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
+                _logger.warning(
+                    "OpenRouter in-flight budget exhausted; retrying after %.1fs",
+                    retry_after,
+                )
+                time.sleep(retry_after)
+                continue
+            if response.status_code >= 400:
+                raise OpenRouterProviderError(
+                    f"OpenRouter {path} returned {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+            return response.json()
+        raise AssertionError("bounded OpenRouter POST retry loop did not return")
 
     def _get_generation(self, *, generation_id: str) -> dict[str, Any]:
         """Fetch metadata for one already-created generation without its content."""
@@ -527,6 +539,34 @@ class OpenRouterModelProvider:
                 "OpenRouter /generation returned malformed metadata"
             )
         return body
+
+
+def _in_flight_budget_retry_after(*, response: httpx.Response) -> float | None:
+    """Return one bounded wait only for OpenRouter's transient credit reservation."""
+    if response.status_code != 402:
+        return None
+    try:
+        body = response.json()
+        metadata = body["error"]["metadata"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(metadata, dict) or metadata.get("reason") != (
+        "in_flight_budget_exhausted"
+    ):
+        return None
+    retry_after: object = response.headers.get("Retry-After")
+    provider_headers = metadata.get("headers")
+    if retry_after is None and isinstance(provider_headers, dict):
+        retry_after = provider_headers.get("Retry-After")
+    try:
+        parsed = (
+            float(retry_after) if isinstance(retry_after, (int, float, str)) else None
+        )
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None or parsed < 0:
+        return _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S
+    return min(parsed, _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S)
 
 
 def _strict_json_schema(response_type: type[StructuredResponseModel]) -> dict[str, Any]:

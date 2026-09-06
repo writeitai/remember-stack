@@ -299,6 +299,78 @@ def test_generation_accounting_lookup_uses_exact_bounded_metadata_request() -> N
     assert body == {"data": {"id": "gen-existing"}}
 
 
+def test_in_flight_budget_exhaustion_retries_with_bounded_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Honor OpenRouter's transient reservation window inside one worker attempt."""
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            return httpx.Response(
+                402,
+                json={
+                    "error": {
+                        "metadata": {
+                            "reason": "in_flight_budget_exhausted",
+                            "headers": {"Retry-After": "17"},
+                        }
+                    }
+                },
+            )
+        return httpx.Response(200, json={"ok": True})
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    try:
+        body = provider._post(path="/chat/completions", payload={"model": "test"})
+    finally:
+        provider._client.close()
+
+    assert body == {"ok": True}
+    assert calls == 4
+    assert sleeps == [17.0, 17.0, 17.0]
+
+
+def test_other_payment_failures_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal 402 remains an immediate provider error."""
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            402, json={"error": {"metadata": {"reason": "insufficient_credits"}}}
+        )
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="returned 402"):
+            provider._post(path="/chat/completions", payload={"model": "test"})
+    finally:
+        provider._client.close()
+
+    assert calls == 1
+    assert sleeps == []
+
+
 @pytest.mark.parametrize(
     ("settings_override", "expected"),
     (({}, 32_000), ({"max_completion_tokens": None}, None)),
