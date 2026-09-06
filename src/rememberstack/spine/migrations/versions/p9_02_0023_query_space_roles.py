@@ -43,9 +43,35 @@ def query_role_name(database: str) -> str:
     return f"{_QUERY_ROLE_PREFIX}_{database}"
 
 
-# The exhaustive public view list is read from the checked-in catalog at
-# runtime so this migration can never drift from the schema contract.
-from rememberstack.spine.query_space.catalog import VIEW_CONTRACTS_BY_NAME  # noqa: E402
+# Freeze the views created by revision 0022. Reading the live application
+# catalog here would make a fresh install grant views before later migrations
+# create them, and would also break reverse-order downgrades.
+_INITIAL_PUBLIC_VIEWS = (
+    "changes_visible",
+    "chunks_live",
+    "claim_occurrences_live",
+    "claims_live",
+    "claims_visible_history",
+    "contradiction_members_current",
+    "document_crossrefs_live",
+    "document_versions_visible",
+    "documents_live",
+    "entities_current",
+    "entity_aliases_current",
+    "entity_document_mentions",
+    "evidence_lineage",
+    "fact_claim_evidence_live",
+    "facts_current",
+    "facts_visible_history",
+    "graph_edges_current",
+    "graph_edges_visible_history",
+    "identity_events_visible",
+    "mentions_live",
+    "page_evidence_visible",
+    "pages_live",
+    "sections_live",
+    "testimony_currency_events_visible",
+)
 
 _PRIVATE_HELPERS = (
     "v_memory_entity_survivor",
@@ -127,11 +153,11 @@ def upgrade() -> None:
         " REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
     )
 
-    for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
+    for view_name in _INITIAL_PUBLIC_VIEWS:
         op.execute(f"ALTER VIEW memory_v1.{view_name} OWNER TO {_VIEW_OWNER}")
 
     op.execute(f"GRANT USAGE ON SCHEMA memory_v1 TO {query_role}")
-    for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
+    for view_name in _INITIAL_PUBLIC_VIEWS:
         op.execute(f"GRANT SELECT ON memory_v1.{view_name} TO {query_role}")
     # Durable role settings: the query role may not set superuser-only GUCs
     # per request, so the caps that require privilege are pinned here by the
@@ -160,7 +186,7 @@ def downgrade() -> None:
     for helper in _PRIVATE_HELPERS:
         op.execute(f"ALTER VIEW public.{helper} OWNER TO CURRENT_USER")
     op.execute(f"ALTER ROLE {query_role} RESET ALL")
-    for view_name in sorted(VIEW_CONTRACTS_BY_NAME):
+    for view_name in _INITIAL_PUBLIC_VIEWS:
         op.execute(f"REVOKE ALL ON memory_v1.{view_name} FROM {query_role}")
         op.execute(f"ALTER VIEW memory_v1.{view_name} OWNER TO CURRENT_USER")
     op.execute(f"REVOKE USAGE ON SCHEMA memory_v1 FROM {query_role}")

@@ -42,7 +42,7 @@
         "indexes_used": [
           "ix_claims_doc",
           "ix_claims_chunk",
-          "ix_claims_valid_window"
+          "ix_claims_canonical_window"
         ]
       },
       "claims_live": {
@@ -19072,15 +19072,126 @@
               "all": false,
               "fromClause": [
                 {
-                  "@": "RangeVar",
-                  "alias": {
-                    "@": "Alias",
-                    "aliasname": "h"
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
                   },
-                  "inh": true,
-                  "relname": "claims_visible_history",
-                  "relpersistence": "p",
-                  "schemaname": "memory_v1"
+                  "larg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "h"
+                    },
+                    "inh": true,
+                    "relname": "claims_visible_history",
+                    "relpersistence": "p",
+                    "schemaname": "memory_v1"
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "h"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "claim_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "h"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "claim_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
+                    }
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "c"
+                    },
+                    "inh": true,
+                    "relname": "claims",
+                    "relpersistence": "p",
+                    "schemaname": "public"
+                  },
+                  "rtindex": 0
                 }
               ],
               "groupDistinct": false,
@@ -19496,138 +19607,1679 @@
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "FuncCall",
-                    "agg_distinct": false,
-                    "agg_star": false,
-                    "agg_within_group": false,
+                    "@": "CaseExpr",
                     "args": [
                       {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "h"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "claim_valid_from"
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "BoolExpr",
+                          "args": [
+                            {
+                              "@": "NullTest",
+                              "arg": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "claim_valid_from"
+                                  }
+                                ]
+                              },
+                              "argisrow": false,
+                              "nulltesttype": {
+                                "#": "NullTestType",
+                                "name": "IS_NULL"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "claim_valid_precision"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "="
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "A_Const",
+                                "isnull": false,
+                                "val": {
+                                  "@": "String",
+                                  "sval": "unknown"
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "boolop": {
+                            "#": "BoolExprType",
+                            "name": "OR_EXPR"
                           }
-                        ]
+                        },
+                        "result": {
+                          "@": "A_Const",
+                          "isnull": true
+                        }
                       },
                       {
-                        "@": "TypeCast",
-                        "arg": {
-                          "@": "ColumnRef",
-                          "fields": [
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
                             {
                               "@": "String",
-                              "sval": "h"
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "day"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "FuncCall",
+                              "agg_distinct": false,
+                              "agg_star": false,
+                              "agg_within_group": false,
+                              "args": [
+                                {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "day"
+                                  }
+                                },
+                                {
+                                  "@": "FuncCall",
+                                  "agg_distinct": false,
+                                  "agg_star": false,
+                                  "agg_within_group": false,
+                                  "args": [
+                                    {
+                                      "@": "A_Const",
+                                      "isnull": false,
+                                      "val": {
+                                        "@": "String",
+                                        "sval": "UTC"
+                                      }
+                                    },
+                                    {
+                                      "@": "ColumnRef",
+                                      "fields": [
+                                        {
+                                          "@": "String",
+                                          "sval": "c"
+                                        },
+                                        {
+                                          "@": "String",
+                                          "sval": "claim_valid_from"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "func_variadic": false,
+                                  "funcformat": {
+                                    "#": "CoercionForm",
+                                    "name": "COERCE_SQL_SYNTAX"
+                                  },
+                                  "funcname": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "timezone"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "func_variadic": false,
+                              "funcformat": {
+                                "#": "CoercionForm",
+                                "name": "COERCE_EXPLICIT_CALL"
+                              },
+                              "funcname": [
+                                {
+                                  "@": "String",
+                                  "sval": "date_trunc"
+                                }
+                              ]
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
                             },
                             {
                               "@": "String",
-                              "sval": "claim_valid_precision"
+                              "sval": "timezone"
                             }
                           ]
-                        },
-                        "typeName": {
-                          "@": "TypeName",
-                          "names": [
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
                             {
                               "@": "String",
-                              "sval": "claim_valid_precision"
+                              "sval": "="
                             }
                           ],
-                          "pct_type": false,
-                          "setof": false,
-                          "typemod": -1
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "month"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "FuncCall",
+                              "agg_distinct": false,
+                              "agg_star": false,
+                              "agg_within_group": false,
+                              "args": [
+                                {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "month"
+                                  }
+                                },
+                                {
+                                  "@": "FuncCall",
+                                  "agg_distinct": false,
+                                  "agg_star": false,
+                                  "agg_within_group": false,
+                                  "args": [
+                                    {
+                                      "@": "A_Const",
+                                      "isnull": false,
+                                      "val": {
+                                        "@": "String",
+                                        "sval": "UTC"
+                                      }
+                                    },
+                                    {
+                                      "@": "ColumnRef",
+                                      "fields": [
+                                        {
+                                          "@": "String",
+                                          "sval": "c"
+                                        },
+                                        {
+                                          "@": "String",
+                                          "sval": "claim_valid_from"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "func_variadic": false,
+                                  "funcformat": {
+                                    "#": "CoercionForm",
+                                    "name": "COERCE_SQL_SYNTAX"
+                                  },
+                                  "funcname": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "timezone"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "func_variadic": false,
+                              "funcformat": {
+                                "#": "CoercionForm",
+                                "name": "COERCE_EXPLICIT_CALL"
+                              },
+                              "funcname": [
+                                {
+                                  "@": "String",
+                                  "sval": "date_trunc"
+                                }
+                              ]
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "quarter"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "FuncCall",
+                              "agg_distinct": false,
+                              "agg_star": false,
+                              "agg_within_group": false,
+                              "args": [
+                                {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "quarter"
+                                  }
+                                },
+                                {
+                                  "@": "FuncCall",
+                                  "agg_distinct": false,
+                                  "agg_star": false,
+                                  "agg_within_group": false,
+                                  "args": [
+                                    {
+                                      "@": "A_Const",
+                                      "isnull": false,
+                                      "val": {
+                                        "@": "String",
+                                        "sval": "UTC"
+                                      }
+                                    },
+                                    {
+                                      "@": "ColumnRef",
+                                      "fields": [
+                                        {
+                                          "@": "String",
+                                          "sval": "c"
+                                        },
+                                        {
+                                          "@": "String",
+                                          "sval": "claim_valid_from"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "func_variadic": false,
+                                  "funcformat": {
+                                    "#": "CoercionForm",
+                                    "name": "COERCE_SQL_SYNTAX"
+                                  },
+                                  "funcname": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "timezone"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "func_variadic": false,
+                              "funcformat": {
+                                "#": "CoercionForm",
+                                "name": "COERCE_EXPLICIT_CALL"
+                              },
+                              "funcname": [
+                                {
+                                  "@": "String",
+                                  "sval": "date_trunc"
+                                }
+                              ]
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "year"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "FuncCall",
+                              "agg_distinct": false,
+                              "agg_star": false,
+                              "agg_within_group": false,
+                              "args": [
+                                {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "year"
+                                  }
+                                },
+                                {
+                                  "@": "FuncCall",
+                                  "agg_distinct": false,
+                                  "agg_star": false,
+                                  "agg_within_group": false,
+                                  "args": [
+                                    {
+                                      "@": "A_Const",
+                                      "isnull": false,
+                                      "val": {
+                                        "@": "String",
+                                        "sval": "UTC"
+                                      }
+                                    },
+                                    {
+                                      "@": "ColumnRef",
+                                      "fields": [
+                                        {
+                                          "@": "String",
+                                          "sval": "c"
+                                        },
+                                        {
+                                          "@": "String",
+                                          "sval": "claim_valid_from"
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "func_variadic": false,
+                                  "funcformat": {
+                                    "#": "CoercionForm",
+                                    "name": "COERCE_SQL_SYNTAX"
+                                  },
+                                  "funcname": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "timezone"
+                                    }
+                                  ]
+                                }
+                              ],
+                              "func_variadic": false,
+                              "funcformat": {
+                                "#": "CoercionForm",
+                                "name": "COERCE_EXPLICIT_CALL"
+                              },
+                              "funcname": [
+                                {
+                                  "@": "String",
+                                  "sval": "date_trunc"
+                                }
+                              ]
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
                         }
                       }
                     ],
-                    "func_variadic": false,
-                    "funcformat": {
-                      "#": "CoercionForm",
-                      "name": "COERCE_EXPLICIT_CALL"
-                    },
-                    "funcname": [
-                      {
-                        "@": "String",
-                        "sval": "claim_canonical_start"
-                      }
-                    ]
+                    "defresult": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "c"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "claim_valid_from"
+                        }
+                      ]
+                    }
                   }
                 },
                 {
                   "@": "ResTarget",
                   "val": {
-                    "@": "FuncCall",
-                    "agg_distinct": false,
-                    "agg_star": false,
-                    "agg_within_group": false,
+                    "@": "CaseExpr",
                     "args": [
                       {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "h"
-                          },
-                          {
-                            "@": "String",
-                            "sval": "claim_valid_from"
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "BoolExpr",
+                          "args": [
+                            {
+                              "@": "NullTest",
+                              "arg": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "claim_valid_from"
+                                  }
+                                ]
+                              },
+                              "argisrow": false,
+                              "nulltesttype": {
+                                "#": "NullTestType",
+                                "name": "IS_NULL"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "c"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "claim_valid_precision"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "="
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "A_Const",
+                                "isnull": false,
+                                "val": {
+                                  "@": "String",
+                                  "sval": "unknown"
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "boolop": {
+                            "#": "BoolExprType",
+                            "name": "OR_EXPR"
                           }
-                        ]
+                        },
+                        "result": {
+                          "@": "A_Const",
+                          "isnull": true
+                        }
                       },
                       {
-                        "@": "ColumnRef",
-                        "fields": [
-                          {
-                            "@": "String",
-                            "sval": "h"
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
                           },
-                          {
-                            "@": "String",
-                            "sval": "claim_valid_until"
-                          }
-                        ]
-                      },
-                      {
-                        "@": "TypeCast",
-                        "arg": {
-                          "@": "ColumnRef",
-                          "fields": [
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
                             {
                               "@": "String",
-                              "sval": "h"
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "open"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "A_Const",
+                          "isnull": true
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "instant"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_from"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "+"
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "TypeCast",
+                            "arg": {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "1 microsecond"
+                              }
+                            },
+                            "typeName": {
+                              "@": "TypeName",
+                              "names": [
+                                {
+                                  "@": "String",
+                                  "sval": "pg_catalog"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "interval"
+                                }
+                              ],
+                              "pct_type": false,
+                              "setof": false,
+                              "typemod": -1
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "day"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "FuncCall",
+                                "agg_distinct": false,
+                                "agg_star": false,
+                                "agg_within_group": false,
+                                "args": [
+                                  {
+                                    "@": "A_Const",
+                                    "isnull": false,
+                                    "val": {
+                                      "@": "String",
+                                      "sval": "day"
+                                    }
+                                  },
+                                  {
+                                    "@": "FuncCall",
+                                    "agg_distinct": false,
+                                    "agg_star": false,
+                                    "agg_within_group": false,
+                                    "args": [
+                                      {
+                                        "@": "A_Const",
+                                        "isnull": false,
+                                        "val": {
+                                          "@": "String",
+                                          "sval": "UTC"
+                                        }
+                                      },
+                                      {
+                                        "@": "CoalesceExpr",
+                                        "args": [
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_until"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_from"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "func_variadic": false,
+                                    "funcformat": {
+                                      "#": "CoercionForm",
+                                      "name": "COERCE_SQL_SYNTAX"
+                                    },
+                                    "funcname": [
+                                      {
+                                        "@": "String",
+                                        "sval": "pg_catalog"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "timezone"
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "func_variadic": false,
+                                "funcformat": {
+                                  "#": "CoercionForm",
+                                  "name": "COERCE_EXPLICIT_CALL"
+                                },
+                                "funcname": [
+                                  {
+                                    "@": "String",
+                                    "sval": "date_trunc"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "+"
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "TypeCast",
+                                "arg": {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "1 day"
+                                  }
+                                },
+                                "typeName": {
+                                  "@": "TypeName",
+                                  "names": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "interval"
+                                    }
+                                  ],
+                                  "pct_type": false,
+                                  "setof": false,
+                                  "typemod": -1
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
                             },
                             {
                               "@": "String",
-                              "sval": "claim_valid_precision"
+                              "sval": "timezone"
                             }
                           ]
-                        },
-                        "typeName": {
-                          "@": "TypeName",
-                          "names": [
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
                             {
                               "@": "String",
-                              "sval": "claim_valid_precision"
+                              "sval": "="
                             }
                           ],
-                          "pct_type": false,
-                          "setof": false,
-                          "typemod": -1
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "month"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "FuncCall",
+                                "agg_distinct": false,
+                                "agg_star": false,
+                                "agg_within_group": false,
+                                "args": [
+                                  {
+                                    "@": "A_Const",
+                                    "isnull": false,
+                                    "val": {
+                                      "@": "String",
+                                      "sval": "month"
+                                    }
+                                  },
+                                  {
+                                    "@": "FuncCall",
+                                    "agg_distinct": false,
+                                    "agg_star": false,
+                                    "agg_within_group": false,
+                                    "args": [
+                                      {
+                                        "@": "A_Const",
+                                        "isnull": false,
+                                        "val": {
+                                          "@": "String",
+                                          "sval": "UTC"
+                                        }
+                                      },
+                                      {
+                                        "@": "CoalesceExpr",
+                                        "args": [
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_until"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_from"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "func_variadic": false,
+                                    "funcformat": {
+                                      "#": "CoercionForm",
+                                      "name": "COERCE_SQL_SYNTAX"
+                                    },
+                                    "funcname": [
+                                      {
+                                        "@": "String",
+                                        "sval": "pg_catalog"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "timezone"
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "func_variadic": false,
+                                "funcformat": {
+                                  "#": "CoercionForm",
+                                  "name": "COERCE_EXPLICIT_CALL"
+                                },
+                                "funcname": [
+                                  {
+                                    "@": "String",
+                                    "sval": "date_trunc"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "+"
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "TypeCast",
+                                "arg": {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "1 month"
+                                  }
+                                },
+                                "typeName": {
+                                  "@": "TypeName",
+                                  "names": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "interval"
+                                    }
+                                  ],
+                                  "pct_type": false,
+                                  "setof": false,
+                                  "typemod": -1
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
                         }
-                      }
-                    ],
-                    "func_variadic": false,
-                    "funcformat": {
-                      "#": "CoercionForm",
-                      "name": "COERCE_EXPLICIT_CALL"
-                    },
-                    "funcname": [
+                      },
                       {
-                        "@": "String",
-                        "sval": "claim_canonical_end"
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "quarter"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "FuncCall",
+                                "agg_distinct": false,
+                                "agg_star": false,
+                                "agg_within_group": false,
+                                "args": [
+                                  {
+                                    "@": "A_Const",
+                                    "isnull": false,
+                                    "val": {
+                                      "@": "String",
+                                      "sval": "quarter"
+                                    }
+                                  },
+                                  {
+                                    "@": "FuncCall",
+                                    "agg_distinct": false,
+                                    "agg_star": false,
+                                    "agg_within_group": false,
+                                    "args": [
+                                      {
+                                        "@": "A_Const",
+                                        "isnull": false,
+                                        "val": {
+                                          "@": "String",
+                                          "sval": "UTC"
+                                        }
+                                      },
+                                      {
+                                        "@": "CoalesceExpr",
+                                        "args": [
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_until"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_from"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "func_variadic": false,
+                                    "funcformat": {
+                                      "#": "CoercionForm",
+                                      "name": "COERCE_SQL_SYNTAX"
+                                    },
+                                    "funcname": [
+                                      {
+                                        "@": "String",
+                                        "sval": "pg_catalog"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "timezone"
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "func_variadic": false,
+                                "funcformat": {
+                                  "#": "CoercionForm",
+                                  "name": "COERCE_EXPLICIT_CALL"
+                                },
+                                "funcname": [
+                                  {
+                                    "@": "String",
+                                    "sval": "date_trunc"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "+"
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "TypeCast",
+                                "arg": {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "3 months"
+                                  }
+                                },
+                                "typeName": {
+                                  "@": "TypeName",
+                                  "names": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "interval"
+                                    }
+                                  ],
+                                  "pct_type": false,
+                                  "setof": false,
+                                  "typemod": -1
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "@": "CaseWhen",
+                        "expr": {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "claim_valid_precision"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "year"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        "result": {
+                          "@": "FuncCall",
+                          "agg_distinct": false,
+                          "agg_star": false,
+                          "agg_within_group": false,
+                          "args": [
+                            {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "UTC"
+                              }
+                            },
+                            {
+                              "@": "A_Expr",
+                              "kind": {
+                                "#": "A_Expr_Kind",
+                                "name": "AEXPR_OP"
+                              },
+                              "lexpr": {
+                                "@": "FuncCall",
+                                "agg_distinct": false,
+                                "agg_star": false,
+                                "agg_within_group": false,
+                                "args": [
+                                  {
+                                    "@": "A_Const",
+                                    "isnull": false,
+                                    "val": {
+                                      "@": "String",
+                                      "sval": "year"
+                                    }
+                                  },
+                                  {
+                                    "@": "FuncCall",
+                                    "agg_distinct": false,
+                                    "agg_star": false,
+                                    "agg_within_group": false,
+                                    "args": [
+                                      {
+                                        "@": "A_Const",
+                                        "isnull": false,
+                                        "val": {
+                                          "@": "String",
+                                          "sval": "UTC"
+                                        }
+                                      },
+                                      {
+                                        "@": "CoalesceExpr",
+                                        "args": [
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_until"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "@": "ColumnRef",
+                                            "fields": [
+                                              {
+                                                "@": "String",
+                                                "sval": "c"
+                                              },
+                                              {
+                                                "@": "String",
+                                                "sval": "claim_valid_from"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "func_variadic": false,
+                                    "funcformat": {
+                                      "#": "CoercionForm",
+                                      "name": "COERCE_SQL_SYNTAX"
+                                    },
+                                    "funcname": [
+                                      {
+                                        "@": "String",
+                                        "sval": "pg_catalog"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "timezone"
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "func_variadic": false,
+                                "funcformat": {
+                                  "#": "CoercionForm",
+                                  "name": "COERCE_EXPLICIT_CALL"
+                                },
+                                "funcname": [
+                                  {
+                                    "@": "String",
+                                    "sval": "date_trunc"
+                                  }
+                                ]
+                              },
+                              "name": [
+                                {
+                                  "@": "String",
+                                  "sval": "+"
+                                }
+                              ],
+                              "rexpr": {
+                                "@": "TypeCast",
+                                "arg": {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "1 year"
+                                  }
+                                },
+                                "typeName": {
+                                  "@": "TypeName",
+                                  "names": [
+                                    {
+                                      "@": "String",
+                                      "sval": "pg_catalog"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "interval"
+                                    }
+                                  ],
+                                  "pct_type": false,
+                                  "setof": false,
+                                  "typemod": -1
+                                }
+                              },
+                              "rexpr_list_end": 0,
+                              "rexpr_list_start": 0
+                            }
+                          ],
+                          "func_variadic": false,
+                          "funcformat": {
+                            "#": "CoercionForm",
+                            "name": "COERCE_SQL_SYNTAX"
+                          },
+                          "funcname": [
+                            {
+                              "@": "String",
+                              "sval": "pg_catalog"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "timezone"
+                            }
+                          ]
+                        }
                       }
                     ]
                   }
@@ -38475,5 +40127,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "2fff3177fd6adb35c8f6a248db1d9c698cc716dc8461c818865bb3c36c752870"
+  "surface_manifest_hash": "7d8ee75d2a102485df10d96511f306e0f4e5c8d1d387b1cc9f271497480b84f9"
 }

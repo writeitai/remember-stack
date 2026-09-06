@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import psycopg
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -18,8 +19,6 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import FakeModelProvider
-from rememberstack.core.open_query_prose import CLAIMS_AS_OF_SQL
-from rememberstack.core.temporal import inclusive_request
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NegativeKind
@@ -29,6 +28,8 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59000000-0000-0000-0000-000000000001")
@@ -563,35 +564,75 @@ def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
     answer = corpus.query_engine().claims_as_of(
         deployment_id=_DEPLOYMENT_ID, from_=_WINDOW_FROM, to=_WINDOW_TO, k=50
     )
-    example_sql = CLAIMS_AS_OF_SQL.replace("$1::timestamptz", ":from_instant").replace(
-        "$2::timestamptz", ":to_instant"
+    role = f"rememberstack_query_{corpus.engine.url.database}"
+    quoted_role = corpus.engine.dialect.identifier_preparer.quote(role)
+    with corpus.engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"ALTER ROLE {quoted_role} PASSWORD 'temporal-test-only'"
+        )
+    query_url = corpus.engine.url.set(
+        drivername="postgresql", username=role, password="temporal-test-only"
+    ).render_as_string(hide_password=False)
+
+    def connect_query_role() -> psycopg.Connection:
+        """Authenticate as the real restricted login, including after DISCARD ALL."""
+        return psycopg.connect(query_url)
+
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT_ID, connect=connect_query_role
     )
-    point = datetime(2024, 6, 15, 12, tzinfo=UTC)
-    with corpus.engine.connect() as connection:
-        rows = list(
-            connection.execute(
-                text(example_sql),
-                {"from_instant": _WINDOW_FROM, "to_instant": _WINDOW_TO},
-            )
-        )
-        point_rows = list(
-            connection.execute(
-                text(example_sql),
-                {"from_instant": point, "to_instant": point},
-            )
-        )
-    assert rows
-    unknown = int(rows[0].unknown_precision_excluded)
-    assert unknown > 0
-    assert unknown == answer.excluded_unstamped
-    assert {row.claim_id for row in rows} == {claim.claim_id for claim in answer.evidence}
-    assert all(row.unknown_precision_excluded == unknown for row in rows)
-    window = inclusive_request(from_=point, to=point)
+    result = executor.query_sql(
+        sql=EXAMPLE_QUERIES["claims_as_of"][1],
+        parameters=(_WINDOW_FROM, _WINDOW_TO),
+        max_rows=50,
+    )
+    assert result.error_code is None, result.error_message
+    assert result.rows
+    columns = [column.name for column in result.columns]
+    rows = [dict(zip(columns, row, strict=True)) for row in result.rows]
     assert all(
-        row.canon_start is not None and row.canon_start < window.end
-        and (row.canon_end is None or row.canon_end > window.start)
-        for row in point_rows
+        row["unknown_precision_excluded"] == answer.excluded_unstamped for row in rows
     )
+    assert answer.excluded_unstamped > 0
+    assert {row["claim_id"] for row in rows} == {
+        claim.claim_id for claim in answer.evidence
+    }
+    point = datetime(2024, 6, 15, 12, tzinfo=UTC)
+    point_result = executor.query_sql(
+        sql=EXAMPLE_QUERIES["claims_as_of"][1], parameters=(point, point), max_rows=50
+    )
+    assert point_result.error_code is None, point_result.error_message
+    point_answer = corpus.query_engine().claims_as_of(
+        deployment_id=_DEPLOYMENT_ID, from_=point, to=point, k=50
+    )
+    assert point_result.rows, "the point-query proof must not pass vacuously"
+    assert {row[columns.index("claim_id")] for row in point_result.rows} == {
+        claim.claim_id for claim in point_answer.evidence
+    }
+    with connect_query_role() as connection:
+        for statement in (
+            "SELECT * FROM public.claims",
+            "SELECT public.claim_canonical_start(NULL, 'unknown')",
+            "SELECT public.claim_canonical_end(NULL, NULL, 'unknown')",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(statement)
+            connection.rollback()
+        # Tiny fixtures favor sequential scans. Disabling them proves that a
+        # canonical bound can be an index condition, not only a residual filter.
+        connection.execute("SET LOCAL enable_seqscan = off")
+        plan = connection.execute(
+            "EXPLAIN (FORMAT JSON) SELECT claim_id FROM memory_v1.claims_canonical"
+            " WHERE deployment_id = %s AND canon_start < %s"
+            " AND (canon_end IS NULL OR canon_end > %s)",
+            (_DEPLOYMENT_ID, _WINDOW_TO, _WINDOW_FROM),
+        ).fetchone()
+        assert plan is not None
+        import json
+
+        rendered = json.dumps(plan[0], default=str)
+        assert "ix_claims_canonical_window" in rendered, rendered
+        assert "Index Cond" in rendered, rendered
 
 
 def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(

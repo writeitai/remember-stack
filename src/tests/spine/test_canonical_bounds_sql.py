@@ -151,10 +151,7 @@ def test_sql_twin_is_session_timezone_independent(
     ],
 )
 def test_query_space_canonical_bounds_wraps_the_public_twins(
-    database_engine: Engine,
-    precision: str,
-    valid_from: str,
-    valid_until: str | None,
+    database_engine: Engine, precision: str, valid_from: str, valid_until: str | None
 ) -> None:
     """memory_v1.canonical_bounds is the public twins, published as text precision."""
     expected = canonical_bounds(
@@ -163,6 +160,10 @@ def test_query_space_canonical_bounds_wraps_the_public_twins(
         precision=precision,
     )
     with database_engine.connect() as connection:
+        role = database_engine.dialect.identifier_preparer.quote(
+            f"rememberstack_query_{database_engine.url.database}"
+        )
+        connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
         row = connection.execute(
             text(
                 "SELECT canon_start, canon_end"

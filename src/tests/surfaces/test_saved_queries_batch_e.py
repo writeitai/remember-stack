@@ -1577,12 +1577,7 @@ def test_the_shipped_examples_are_the_eighteen_the_design_maps() -> None:
 _EXAMPLE_MAPPING_SIGNALS: dict[str, tuple[str, ...]] = {
     "claims_verbatim": ("semantic_claims", "claims_live", "JOIN"),
     "claims_about": ("mentions_live", "claim_occurrences_live", "claims_live"),
-    "claims_as_of": (
-        "claims_canonical",
-        "canon_start <",
-        "canon_end > $1",
-        "unknown",
-    ),
+    "claims_as_of": ("claims_canonical", "canon_start <", "canon_end > $1", "unknown"),
     "claims_hybrid_rrf": ("semantic_claims", "lexical_claims"),
     "chunks_hybrid_rrf": ("semantic_chunks", "lexical_chunks"),
     "chunk_neighbors": ("chunks_live",),

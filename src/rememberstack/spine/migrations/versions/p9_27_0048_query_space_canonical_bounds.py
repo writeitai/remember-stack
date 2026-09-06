@@ -11,7 +11,11 @@ revision: p9_27_0048
 
 from alembic import op
 
+from rememberstack.spine.migrations._helpers import _split_sql
 from rememberstack.spine.migrations._helpers import apply_view_ddl
+from rememberstack.spine.migrations.versions.p9_01_0022_memory_v1_query_space import (
+    MEMORY_V1_AUTHORED_DDL,
+)
 
 revision: str = "p9_27_0048"
 down_revision: str | None = "p9_26_0047"
@@ -31,7 +35,7 @@ LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
 SECURITY DEFINER
-SET search_path = public, pg_catalog
+SET search_path = pg_catalog, public, pg_temp
 ROWS 1
 AS $$
   SELECT
@@ -100,16 +104,30 @@ SELECT
   h.source_kind,
   h.source_handle,
   h.is_current_testimony,
-  claim_canonical_start(
-    h.claim_valid_from,
-    h.claim_valid_precision::claim_valid_precision
-  ),
-  claim_canonical_end(
-    h.claim_valid_from,
-    h.claim_valid_until,
-    h.claim_valid_precision::claim_valid_precision
-  )
-FROM memory_v1.claims_visible_history AS h;
+  -- Inline the immutable twins' expressions: view ownership supplies table
+  -- privileges, not EXECUTE on private functions. Keeping expressions visible
+  -- also allows the planner to match ix_claims_canonical_window after inlining
+  -- the index's SQL functions. Database tests pin all three projections equal.
+  CASE
+    WHEN c.claim_valid_from IS NULL OR c.claim_valid_precision = 'unknown' THEN NULL
+    WHEN c.claim_valid_precision = 'day' THEN date_trunc('day', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'month' THEN date_trunc('month', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'quarter' THEN date_trunc('quarter', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'year' THEN date_trunc('year', c.claim_valid_from AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    ELSE c.claim_valid_from
+  END,
+  CASE
+    WHEN c.claim_valid_from IS NULL OR c.claim_valid_precision = 'unknown' THEN NULL
+    WHEN c.claim_valid_precision = 'open' THEN NULL
+    WHEN c.claim_valid_precision = 'instant' THEN c.claim_valid_from + interval '1 microsecond'
+    WHEN c.claim_valid_precision = 'day' THEN (date_trunc('day', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '1 day') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'month' THEN (date_trunc('month', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'quarter' THEN (date_trunc('quarter', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '3 months') AT TIME ZONE 'UTC'
+    WHEN c.claim_valid_precision = 'year' THEN (date_trunc('year', coalesce(c.claim_valid_until, c.claim_valid_from) AT TIME ZONE 'UTC') + interval '1 year') AT TIME ZONE 'UTC'
+  END
+FROM memory_v1.claims_visible_history AS h
+JOIN public.claims AS c
+  ON c.deployment_id = h.deployment_id AND c.claim_id = h.claim_id;
 COMMENT ON VIEW memory_v1.claims_canonical IS
   'One row per historically visible claim with surviving lineage, keyed by (deployment_id, claim_id), carrying the stored inclusive D41 window beside the half-open canonical bounds that every overlap predicate must use (D107 §5). canon_start is inclusive and canon_end exclusive; both are null when precision is unknown, and canon_end is also null for an open window. Overlap is a.start < b.end AND b.start < a.end with a null end as unbounded. This relation is IMMUTABLE SOURCE TESTIMONY: it never answers what currently holds. Claims of forgotten lineages and tombstoned versions are absent.';
 """
@@ -133,6 +151,16 @@ def upgrade() -> None:
         "GRANT EXECUTE ON FUNCTION"
         " claim_canonical_end(timestamptz, timestamptz, claim_valid_precision)"
         f" TO {_VIEW_OWNER}"
+    )
+    # A bound predicate proves canon_start non-null, even through the public
+    # precision-as-text projection. The prior enum predicate could not be
+    # inferred by the planner through that projection.
+    op.execute("DROP INDEX ix_claims_canonical_window")
+    op.execute(
+        "CREATE INDEX ix_claims_canonical_window ON claims ("
+        "deployment_id, claim_canonical_start(claim_valid_from, claim_valid_precision),"
+        "claim_canonical_end(claim_valid_from, claim_valid_until, claim_valid_precision))"
+        " WHERE claim_canonical_start(claim_valid_from, claim_valid_precision) IS NOT NULL"
     )
     op.execute(CANONICAL_BOUNDS_FUNCTION_DDL)
     op.execute(
@@ -177,6 +205,22 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the published view and wrapper; public twins stay."""
     op.execute("DROP VIEW IF EXISTS memory_v1.claims_canonical")
+    for block in MEMORY_V1_AUTHORED_DDL:
+        for statement in _split_sql(sql=block):
+            if statement.startswith(
+                (
+                    "COMMENT ON VIEW memory_v1.claims_visible_history IS",
+                    "COMMENT ON VIEW memory_v1.claims_live IS",
+                )
+            ):
+                op.execute(statement)
+    op.execute("DROP INDEX ix_claims_canonical_window")
+    op.execute(
+        "CREATE INDEX ix_claims_canonical_window ON claims ("
+        "deployment_id, claim_canonical_start(claim_valid_from, claim_valid_precision),"
+        "claim_canonical_end(claim_valid_from, claim_valid_until, claim_valid_precision))"
+        " WHERE claim_valid_precision <> 'unknown'"
+    )
     op.execute(
         "DROP FUNCTION IF EXISTS"
         " memory_v1.canonical_bounds(timestamptz, timestamptz, text)"

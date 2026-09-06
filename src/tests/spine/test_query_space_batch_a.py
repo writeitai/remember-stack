@@ -3166,9 +3166,7 @@ def test_no_claim_row_is_ever_accepted_as_a_current_fact(corpus: _Corpus) -> Non
     assert not claim_columns & {"evaluated_at", "support_state", "evidence_count"}
 
 
-def test_stored_claim_windows_keep_inclusive_instant_endpoints(
-    corpus: _Corpus,
-) -> None:
+def test_stored_claim_windows_keep_inclusive_instant_endpoints(corpus: _Corpus) -> None:
     """D41 storage is inclusive: an instant has equal endpoints on the raw columns.
 
     World-time overlap belongs on claims_canonical, not this predicate.
