@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -61,6 +62,7 @@ class Inputs:
     other_id: UUID
     claim_id: UUID
     doc_id: UUID
+    assertion_id: UUID
 
     def block(self, *, plane: FactPlane, other: bool = False) -> TemporalBlock:
         """Name the real subject block or a deliberately unrelated read block."""
@@ -104,6 +106,7 @@ def inputs(database_engine: Engine) -> Inputs:
         other_id=uuid4(),
         claim_id=uuid4(),
         doc_id=uuid4(),
+        assertion_id=uuid4(),
     )
     with database_engine.begin() as connection:
         connection.execute(
@@ -130,8 +133,8 @@ def inputs(database_engine: Engine) -> Inputs:
         for entity_id in (result.subject_id, result.other_id):
             connection.execute(
                 text("""
-                INSERT INTO entities (deployment_id, entity_id, type, canonical_name, normalized_name)
-                VALUES (:dep, :entity, 'Person', 'Subject', 'subject')
+                INSERT INTO entities (deployment_id, entity_id, canonical_name, normalized_name)
+                VALUES (:dep, :entity, 'Subject', 'subject')
             """),
                 {"dep": result.deployment_id, "entity": entity_id},
             )
@@ -149,6 +152,55 @@ def inputs(database_engine: Engine) -> Inputs:
                 "doc": result.doc_id,
                 "chunk": uuid4(),
                 "start": _START,
+            },
+        )
+        connection.execute(
+            text("""
+            INSERT INTO documents (deployment_id, doc_id, source_kind) VALUES (:dep, :doc, 'upload')
+        """),
+            {"dep": result.deployment_id, "doc": result.doc_id},
+        )
+        receipt_id = uuid4()
+        output = {
+            "relations": [
+                {
+                    "subject_entity_id": str(result.subject_id),
+                    "predicate": "works_for",
+                    "object_entity_id": str(result.other_id),
+                    "shape_kind": "state",
+                }
+            ],
+            "observations": [],
+        }
+        connection.execute(
+            text("""
+            INSERT INTO normalize_claim_receipts (receipt_id, deployment_id, claim_id, doc_id,
+              normalizer_version, outcome, input_digest, output_digest, normalization_output,
+              relation_count, observation_count)
+            VALUES (:receipt, :dep, :claim, :doc, 'test', 'accepted', :digest, :digest,
+                    CAST(:output AS jsonb), 1, 0)
+        """),
+            {
+                "receipt": receipt_id,
+                "dep": result.deployment_id,
+                "claim": result.claim_id,
+                "doc": result.doc_id,
+                "digest": "0" * 64,
+                "output": json.dumps(output),
+            },
+        )
+        connection.execute(
+            text("""
+            INSERT INTO normalize_relation_assertions (assertion_id, deployment_id, receipt_id,
+              normalizer_version, subject_entity_id, predicate, object_entity_id, shape_kind)
+            VALUES (:assertion, :dep, :receipt, 'test', :subject, 'works_for', :object, 'state')
+        """),
+            {
+                "assertion": result.assertion_id,
+                "dep": result.deployment_id,
+                "receipt": receipt_id,
+                "subject": result.subject_id,
+                "object": result.other_id,
             },
         )
         conversion_id = uuid4()
@@ -231,6 +283,9 @@ def _effect(
             outcome=outcome,
             method="exact",
             triggering_claim_id=inputs.claim_id,
+            triggering_assertion_id=inputs.assertion_id
+            if fact.plane is FactPlane.RELATION and kind is TemporalOperationKind.SEED
+            else None,
         ),
         evidence=evidence,
         input_fingerprint="1" * 64,
@@ -474,6 +529,7 @@ def test_compensation_preserves_later_cap_and_records_semantic_dependency(
         neighbours=(),
     ).state
     with database_engine.begin() as connection:
+        connection.execute(text("SET LOCAL TIME ZONE 'Europe/Prague'"))
         with temporal_write(
             connection=connection,
             deployment_id=inputs.deployment_id,
@@ -887,3 +943,122 @@ def test_read_only_witness_advances_order_without_invalidating_preparation(
             assert session.block_states[0].revision == prepared[0].revision
             with pytest.raises(TemporalWriteConflict, match="footprint differs"):
                 session.require_revisions(prepared=())
+
+
+def test_relation_seed_rejects_assertion_for_a_different_triple(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """A valid assertion UUID alone cannot authorize a different relation identity."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("""
+            UPDATE normalize_relation_assertions SET object_entity_id = :subject WHERE assertion_id = :id
+        """),
+            {"subject": inputs.subject_id, "id": inputs.assertion_id},
+        )
+    with pytest.raises(TemporalWriteConflict, match="canonical fact identities"):
+        _seed(engine=database_engine, inputs=inputs, plane=FactPlane.RELATION)
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM relations WHERE deployment_id = :dep"),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_generation_certificate_is_unique_per_deployment(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """Verify the real schema cardinality used by the admission gate, including another generation."""
+    from sqlalchemy.exc import IntegrityError
+
+    with database_engine.begin() as connection:
+        with pytest.raises(IntegrityError):
+            with connection.begin_nested():
+                connection.execute(
+                    text("""
+                    INSERT INTO temporal_fact_generations (deployment_id, generation, conversion_id, verified_at)
+                    SELECT deployment_id, 'future-generation', conversion_id, verified_at
+                    FROM temporal_fact_generations WHERE deployment_id = :dep
+                """),
+                    {"dep": inputs.deployment_id},
+                )
+        with temporal_write(
+            connection=connection,
+            deployment_id=inputs.deployment_id,
+            blocks=(inputs.block(plane=FactPlane.RELATION),),
+            facts=(),
+        ):
+            pass
+
+
+def test_support_fingerprint_ignores_evidence_iteration_order(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """The same consumed support set has one digest even when loaders return a different order."""
+    fact, seeded = _seed(
+        engine=database_engine, inputs=inputs, plane=FactPlane.OBSERVATION
+    )
+    ids = (uuid4(), uuid4())
+    with database_engine.begin() as connection:
+        with temporal_write(
+            connection=connection,
+            deployment_id=inputs.deployment_id,
+            blocks=(inputs.block(plane=fact.plane),),
+            facts=(fact,),
+        ) as session:
+            for index, operation_id in enumerate(ids):
+                effect = _effect(
+                    connection=connection,
+                    inputs=inputs,
+                    fact=fact,
+                    kind=TemporalOperationKind.EVIDENCE,
+                    before=seeded,
+                    after=seeded,
+                    operation_id=operation_id,
+                    result=TemporalResult.NOOP,
+                    candidate_claim_id=inputs.claim_id,
+                )
+                if index:
+                    effect = effect.model_copy(
+                        update={"evidence": tuple(reversed(effect.evidence))}
+                    )
+                session.apply(effect=effect, written_blocks=frozenset())
+        fingerprints = (
+            connection.execute(
+                text("""
+            SELECT DISTINCT support_fingerprint FROM temporal_operation_support
+            WHERE operation_id IN (:first, :second)
+        """),
+                {"first": ids[0], "second": ids[1]},
+            )
+            .scalars()
+            .all()
+        )
+        assert len(fingerprints) == 1
+
+
+def test_observation_effect_rejects_relation_assertion_metadata(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """Provenance supplied to the wrong fact plane must be rejected, never silently dropped."""
+    fact, seeded = _seed(
+        engine=database_engine, inputs=inputs, plane=FactPlane.OBSERVATION
+    )
+    with database_engine.connect() as connection:
+        effect = _effect(
+            connection=connection,
+            inputs=inputs,
+            fact=fact,
+            kind=TemporalOperationKind.EVIDENCE,
+            before=seeded,
+            after=seeded,
+            operation_id=uuid4(),
+            result=TemporalResult.NOOP,
+        )
+    fields = effect.model_dump()
+    fields["decision"]["triggering_assertion_id"] = inputs.assertion_id
+    with pytest.raises(ValidationError, match="cannot carry relation assertion IDs"):
+        TemporalEffect.model_validate(fields)

@@ -454,6 +454,7 @@ class TemporalWriteSession:
             if effect.result is TemporalResult.APPLIED
             else set(self._heads),
         )
+        self._check_triggering_assertion(effect=effect, actual=actual)
         self._check_evidence(effect=effect)
         if effect.kind is TemporalOperationKind.COMPENSATION:
             self._check_compensation(effect=effect)
@@ -481,12 +482,12 @@ class TemporalWriteSession:
         candidate_starts: set[datetime | None] = set()
         candidate_ends: set[datetime | None] = set()
         for evidence in effect.evidence:
-            current = load_temporal_evidence(
+            claim = _load_claim_input(
                 connection=self.connection,
                 deployment_id=self.deployment_id,
                 claim_id=evidence.claim_id,
-                role=evidence.role,
             )
+            current = _evidence_ref(row=claim, role=evidence.role)
             if current != evidence:
                 raise TemporalWriteConflict(
                     "prepared testimony changed before application"
@@ -519,17 +520,6 @@ class TemporalWriteSession:
                     "candidate_from",
                     "candidate_until",
                 ):
-                    claim = (
-                        self.connection.execute(
-                            _CLAIM_INPUT,
-                            {
-                                "deployment_id": self.deployment_id,
-                                "claim_id": evidence.claim_id,
-                            },
-                        )
-                        .mappings()
-                        .one()
-                    )
                     bounds = canonical_bounds(
                         valid_from=claim["claim_valid_from"],
                         valid_until=claim["claim_valid_until"],
@@ -557,6 +547,53 @@ class TemporalWriteSession:
             ) and new.end not in candidate_ends:
                 raise TemporalWriteConflict(
                     "corrected end is not a current supporting endpoint candidate"
+                )
+
+    def _check_triggering_assertion(
+        self, *, effect: TemporalEffect, actual: RowMapping
+    ) -> None:
+        """Validate logical assertion provenance before a relation seed becomes authority."""
+        assertion_id = effect.decision.triggering_assertion_id
+        if assertion_id is None:
+            return
+        assertion = (
+            self.connection.execute(
+                _ASSERTION_INPUT,
+                {"deployment_id": self.deployment_id, "assertion_id": assertion_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            assertion is None
+            or assertion["claim_id"] != effect.decision.triggering_claim_id
+        ):
+            raise TemporalWriteConflict(
+                "triggering assertion does not belong to the triggering claim"
+            )
+        if effect.kind is not TemporalOperationKind.SEED:
+            return
+        if (
+            assertion["normalizer_version"] != actual["normalizer_version"]
+            or assertion["predicate"] != actual["predicate"]
+        ):
+            raise TemporalWriteConflict(
+                "seed assertion disagrees with fact predicate or generation"
+            )
+        for coordinate in ("subject_entity_id", "object_entity_id"):
+            asserted = _canonical_subject(
+                connection=self.connection,
+                deployment_id=self.deployment_id,
+                entity_id=assertion[coordinate],
+            )
+            target = _canonical_subject(
+                connection=self.connection,
+                deployment_id=self.deployment_id,
+                entity_id=actual[coordinate],
+            )
+            if asserted != target:
+                raise TemporalWriteConflict(
+                    "seed assertion disagrees with canonical fact identities"
                 )
 
     def _check_compensation(self, *, effect: TemporalEffect) -> None:
@@ -604,12 +641,15 @@ class TemporalWriteSession:
                 row[f"changed_{component}"] and owner == effect.reverses_operation_id
             )
             expected = (
-                (row[f"old_valid_{component}"], row[f"old_{component}_basis"])
+                (
+                    _utc_timestamp(value=row[f"old_valid_{component}"]),
+                    row[f"old_{component}_basis"],
+                )
                 if restore
                 else before
             )
             if restore and before != (
-                row[f"new_valid_{component}"],
+                _utc_timestamp(value=row[f"new_valid_{component}"]),
                 row[f"new_{component}_basis"],
             ):
                 raise TemporalWriteConflict(
@@ -788,7 +828,11 @@ class TemporalWriteSession:
                 "fingerprint": temporal_fingerprint(
                     value={
                         "claims": [
-                            item.model_dump(mode="json") for item in effect.evidence
+                            item.model_dump(mode="json")
+                            for item in sorted(
+                                effect.evidence,
+                                key=lambda item: (item.claim_id, item.role),
+                            )
                         ],
                         "semantic_predecessors": sorted(
                             map(str, set(effect.semantic_predecessors))
@@ -879,6 +923,16 @@ def load_temporal_evidence(
     ],
 ) -> TemporalEvidenceRef:
     """Capture the exact immutable testimony plus mutable current-support bit."""
+    row = _load_claim_input(
+        connection=connection, deployment_id=deployment_id, claim_id=claim_id
+    )
+    return _evidence_ref(row=row, role=role)
+
+
+def _load_claim_input(
+    *, connection: Connection, deployment_id: UUID, claim_id: UUID
+) -> RowMapping:
+    """Load a deployment-scoped claim once for both fingerprint and canonical bounds."""
     row = (
         connection.execute(
             _CLAIM_INPUT, {"deployment_id": deployment_id, "claim_id": claim_id}
@@ -890,8 +944,19 @@ def load_temporal_evidence(
         raise TemporalWriteConflict(
             "consumed claim is missing or belongs to another deployment"
         )
+    return row
+
+
+def _evidence_ref(
+    *,
+    row: RowMapping,
+    role: Literal[
+        "support", "contrary", "historical", "candidate_from", "candidate_until"
+    ],
+) -> TemporalEvidenceRef:
+    """Build a prepared witness from a previously loaded exact claim row."""
     return TemporalEvidenceRef(
-        claim_id=claim_id,
+        claim_id=row["claim_id"],
         role=role,
         was_current=row["is_current_testimony"],
         fingerprint=temporal_fingerprint(value=dict(row)),
@@ -960,7 +1025,8 @@ def _load_fact(
         SELECT temporal_kind, valid_from, valid_until, valid_from_basis, valid_until_basis,
           occurs_from, occurs_until, occurs_precision, seed_claim_id, ingested_at,
           invalidated_at, temporal_revision, from_operation_id, until_operation_id,
-          contradiction_group, subject_entity_id,
+          contradiction_group, subject_entity_id, normalizer_version,
+          {"object_entity_id" if fact.plane is FactPlane.RELATION else "NULL::uuid"} AS object_entity_id,
           {"predicate" if fact.plane is FactPlane.RELATION else "NULL::text"} AS predicate
         FROM {plane}s WHERE deployment_id = :deployment_id AND {plane}_id = :fact_id
         FOR UPDATE
@@ -1055,6 +1121,13 @@ _CLAIM_INPUT = text("""
     SELECT claim_id, doc_id, claim_text, asserted_at, claim_valid_from, claim_valid_until,
       claim_valid_precision::text, claim_valid_kind::text, is_current_testimony
     FROM claims WHERE deployment_id = :deployment_id AND claim_id = :claim_id
+""")
+_ASSERTION_INPUT = text("""
+    SELECT a.subject_entity_id, a.predicate, a.object_entity_id, a.normalizer_version, r.claim_id
+    FROM normalize_relation_assertions a JOIN normalize_claim_receipts r
+      ON r.deployment_id = a.deployment_id AND r.receipt_id = a.receipt_id
+      AND r.normalizer_version = a.normalizer_version
+    WHERE a.deployment_id = :deployment_id AND a.assertion_id = :assertion_id
 """)
 _INSERT_EFFECT = text("""
     INSERT INTO temporal_operations (
