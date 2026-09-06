@@ -51,20 +51,6 @@ def main(argv: list[str] | None = None) -> int:
         effective_argv = list(sys.argv[1:] if argv is None else argv)
         if effective_argv:
             subcmd = effective_argv[0]
-            if subcmd == "review":
-                print(
-                    "error: 'remember review' is retired. The engine adjudicates contradictions "
-                    "autonomously without human review queues. See https://remember.dev/docs/architecture",
-                    file=sys.stderr,
-                )
-                return 1
-            if subcmd == "budget":
-                print(
-                    "error: 'remember budget' is retired from the client CLI. "
-                    "Use 'remember balance' to check account credits. See https://remember.dev/docs",
-                    file=sys.stderr,
-                )
-                return 1
             if subcmd == "ops":
                 env = CliClientEnv.model_validate({})
                 if not env.internal_ops:
@@ -93,9 +79,20 @@ def main(argv: list[str] | None = None) -> int:
                     effective_argv.insert(1, "text")
 
         env = CliClientEnv.model_validate({})
-        parser = _build_parser(include_internal_ops=env.internal_ops)
+        has_server_subcmd = bool(effective_argv) and effective_argv[0] in (
+            "review",
+            "budget",
+            "ops",
+        )
+        parser = _build_parser(
+            include_internal_ops=env.internal_ops or has_server_subcmd
+        )
         args = parser.parse_args(effective_argv)
 
+        if args.command == "review":
+            return _run_review(args)
+        if args.command == "budget":
+            return _run_budget(args)
         if args.command == "setup":
             return _run_setup(args)
         if args.command == "doctor":
@@ -812,24 +809,151 @@ def _run_members(args: argparse.Namespace) -> int:
     return 0
 
 
+_MERGE_VERDICTS = ("merge", "not_merge")
+_TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
+
+
+def _list_reviews(*, queue: Any, deployment_id: UUID) -> int:
+    """Print one JSON record per open item in impact-ranked order."""
+    for item in queue.list_open(deployment_id=deployment_id):
+        print(
+            json.dumps(
+                {
+                    "review_id": str(item.review_id),
+                    "kind": item.item_kind,
+                    "expected_impact": item.expected_impact,
+                    "blast_radius": item.blast_radius,
+                    "status": item.status,
+                    "candidate": item.candidate,
+                },
+                default=str,
+            )
+        )
+    return 0
+
+
+def _decide_review(
+    *,
+    queue: Any,
+    deployment_id: UUID,
+    review_id: UUID,
+    verdict: str,
+    reviewer: str,
+    note: str | None,
+) -> int:
+    """Apply one verdict; the verdict picks the decision path by its name."""
+    try:
+        if verdict in _MERGE_VERDICTS:
+            events = queue.decide_merge(
+                deployment_id=deployment_id,
+                review_id=review_id,
+                verdict=verdict,
+                reviewer=reviewer,
+                note=note,
+            )
+            print(
+                json.dumps(
+                    {"verdict": verdict, "merge_events": [str(e) for e in events]}
+                )
+            )
+        else:
+            queue.decide_support_withdrawn(
+                deployment_id=deployment_id,
+                review_id=review_id,
+                verdict=verdict,
+                reviewer=reviewer,
+                note=note,
+            )
+            print(json.dumps({"verdict": verdict}))
+    except Exception as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _run_review(args: argparse.Namespace) -> int:
-    """Retirement notice for D24 local review queue (D108)."""
-    print(
-        "error: 'remember review' is retired. The engine uses autonomous "
-        "bitemporal adjudication (D3/D43/D107). See https://remember.dev/docs",
-        file=sys.stderr,
-    )
-    return 1
+    """Compose the optional local ReviewQueue over the spine or show retirement notice."""
+    try:
+        from sqlalchemy import create_engine
+
+        from rememberstack.spine.settings import load_database_settings
+        from rememberstack.spine.surface_cost import open_surface_scope
+        from rememberstack.spine.surface_cost import SurfaceCostKind
+
+        db_settings = load_database_settings()
+        review_queue_builder = import_module(
+            "rememberstack.profiles.selfhost"
+        ).build_selfhost_review_queue
+    except Exception:
+        print(
+            "error: 'remember review' is retired. The engine adjudicates contradictions "
+            "autonomously without human review queues. See https://remember.dev/docs/architecture",
+            file=sys.stderr,
+        )
+        return 1
+
+    engine = create_engine(db_settings.sqlalchemy_url())
+    try:
+        project_profiles = args.review_command == "decide" and args.verdict in (
+            "merge",
+            "restore_support",
+            "invalidate_fact",
+        )
+        try:
+            queue = review_queue_builder(
+                engine=engine,
+                deployment_id=args.deployment,
+                project_profiles=project_profiles,
+            )
+        except Exception as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            if args.review_command == "list":
+                return _list_reviews(queue=queue, deployment_id=args.deployment)
+            return _decide_review(
+                queue=queue,
+                deployment_id=args.deployment,
+                review_id=args.review_id,
+                verdict=args.verdict,
+                reviewer=args.reviewer,
+                note=args.note,
+            )
+    finally:
+        engine.dispose()
+
+
+def _inspect_budgets(*, ledger: Any, deployment_id: UUID) -> int:
+    """Print one current-window JSON record per configured deployment budget."""
+    for status in ledger.budget_status(deployment_id=deployment_id):
+        print(status.model_dump_json())
+    return 0
 
 
 def _run_budget(args: argparse.Namespace) -> int:
-    """Retirement notice for budget command (D108)."""
-    print(
-        "error: 'remember budget' is retired from the client CLI. "
-        "Use 'remember balance' to check account credits. See https://remember.dev/docs",
-        file=sys.stderr,
-    )
-    return 1
+    """Compose the local WorkLedger and print configured budget state or show retirement notice."""
+    try:
+        from sqlalchemy import create_engine
+
+        from rememberstack.spine.settings import load_database_settings
+        from rememberstack.spine.work_ledger import WorkLedger
+        from rememberstack.spine.work_ledger import WorkLedgerSettings
+
+        db_settings = load_database_settings()
+    except Exception:
+        print(
+            "error: 'remember budget' is retired from the client CLI. "
+            "Use 'remember balance' to check account credits. See https://remember.dev/docs",
+            file=sys.stderr,
+        )
+        return 1
+
+    engine = create_engine(db_settings.sqlalchemy_url())
+    try:
+        ledger = WorkLedger(engine=engine, settings=WorkLedgerSettings())
+        return _inspect_budgets(ledger=ledger, deployment_id=args.deployment)
+    finally:
+        engine.dispose()
 
 
 def _run_ops(args: argparse.Namespace) -> int:
@@ -2013,6 +2137,26 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     if include_internal_ops:
+        review = commands.add_parser("review", help="the D24 local review queue")
+        review_commands = review.add_subparsers(dest="review_command", required=True)
+        listing = review_commands.add_parser("list", help="open items, impact-ranked")
+        listing.add_argument("--deployment", type=UUID, required=True)
+        decide = review_commands.add_parser("decide", help="apply one verdict")
+        decide.add_argument("review_id", type=UUID)
+        decide.add_argument("--deployment", type=UUID, required=True)
+        decide.add_argument(
+            "--verdict", required=True, choices=(*_MERGE_VERDICTS, *_TRIAGE_VERDICTS)
+        )
+        decide.add_argument("--reviewer", required=True)
+        decide.add_argument("--note", default=None)
+
+        budget = commands.add_parser("budget", help="inspect configured spend ceilings")
+        budget_commands = budget.add_subparsers(dest="budget_command", required=True)
+        inspect = budget_commands.add_parser(
+            "inspect", help="current spend, tier attribution, and parked work"
+        )
+        inspect.add_argument("--deployment", type=UUID, required=True)
+
         ops = commands.add_parser("ops", help=argparse.SUPPRESS)
         ops_commands = ops.add_subparsers(dest="ops_command", required=True)
         ops_inspect = ops_commands.add_parser(
