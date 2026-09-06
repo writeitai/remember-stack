@@ -6,6 +6,17 @@
 > builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph
 > operations and public bounded SQL helpers remain. Pre-D98 references to open
 > Cypher or P2 packaging are removed requirements.
+>
+> **Binding D108 amendment (2026-09-05).** PyPI publishes exclusively **`remember`**
+> (lightweight client SDK, platform CLI, and MCP server with zero server dependencies).
+> The database/worker server engine is distributed strictly via Docker container images
+> (`ghcr.io/writeitai/remember-stack:<tag>`) and Docker Compose; `rememberstack` is
+> retired from standalone PyPI distribution. The binary command **`remember`** is owned
+> exclusively by the `remember` package. Legacy human-review queue commands (`review`) and
+> budget inspection are retired from public interfaces; autonomous bitemporal adjudication
+> (D3/D43/D107) is the sole engine truth authority. Full specification:
+> `plan/designs/unified_remember_distribution_design.md`.
+
 
 What the open-source library *ships as*, how work physically executes on both deployment
 profiles, and how the codebase is structured so the substrate stays swappable without

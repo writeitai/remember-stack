@@ -5211,3 +5211,28 @@ closed); D55 (retraction by temporal kind; unknown source time closes on
 belief-time from the persisted reconciliation instant, never `now()`); D49
 (additive envelope fields; four operation versions roll). Preserves D3, D6,
 D32, D43's untyped statement, D98, D100–D105.
+
+## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
+
+**Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
+1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
+2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
+3. Early D24 review-queue tooling (`remember review`) and spend inspection (`remember budget`) remained in the CLI entry point despite the production engine evolving to fully autonomous bitemporal adjudication (D3/D43/D107), with zero human review queues in managed cloud or public documentation.
+
+**Decision.**
+1. **Single PyPI Distribution (`remember`)**: PyPI publishes exclusively **`remember`**. `remember` contains the Python client SDK (`RememberClient`), the AI coding agent bootstrapper (`remember setup`), the Model Context Protocol server (`remember mcp`), and the unified platform CLI. It carries zero database or server dependencies (`httpx>=0.28.1`, `pydantic>=2.11` only).
+2. **Container-First Engine (`remember-stack`)**: The server engine, workers (E0–E3), Alembic migrations, and database spine are distributed exclusively via pre-built Docker images (`ghcr.io/writeitai/remember-stack:<version>`) and official Docker Compose manifests. Standalone distribution of `rememberstack` on PyPI is retired (existing package receives a terminal deprecation forwarder).
+3. **Repository Preservation**: The git repository retains its canonical name `writeitai/remember-stack`, housing the engine, client package, documentation website, and benchmarks in one repository.
+4. **Binary Ownership & Platform CLI**: The `remember` executable is owned exclusively by the `remember` package. It unifies:
+   - **Control Plane**: `remember login`, `logout`, `whoami`, `balance`, `projects`, `members` (talking to `https://api.remember.dev`).
+   - **Data Plane**: `remember setup`, `ingest`, `query`, `operations`, `mcp`, `doctor` (defaulting to Managed Cloud with `--self-hosted` for `http://localhost:8000`).
+   - **Credential Separation & Project Context**: Amends D92 to structure `credentials.json` with strict separation between control-plane user session tokens and per-project data-plane tokens. Control tokens are never forwarded to data planes; data-plane tokens never authorize control actions. Self-hosted bearer secrets receive identical secret-isolation guarantees (D92/D108).
+   - **Resilient Agent Bootstrapper (`remember setup`)**: When bootstrapping agent harnesses via `uvx`, generates durable launch commands using resolved, normalized absolute launcher binaries (`Path(shutil.which(...)).resolve().as_posix()`) so configured MCP servers launch reliably across environment reboots and GUI editor spawns without PATH inheritance or relative-working-directory issues.
+5. **Retirement of Legacy Surfaces**: `review` and `budget` commands are retired from public CLI surfaces.
+
+**Consequences.** Developers and AI coding agents have a single canonical package name (`remember`) with sub-second installation and zero C-extension compilation friction; `uvx remember setup` serves as the primary universal onboarding command; self-hosters run verified Docker Compose environments; the cloud control plane (projects, balance, members) is directly manageable from the terminal; and binary collisions are eliminated. Costs: migrating existing `rememberstack` PyPI users via deprecation notice, reorganizing repository packaging, and establishing cross-image CI contract tests between client and released engine containers.
+
+**Rejected.** Keeping two active packages on PyPI (perpetuates consumer confusion and collision); distributing the server as a bare-metal pip wheel (leads to host compilation failures; real deployments use Docker); splitting into a separate repository (unnecessary overhead for a focused team; monorepo guarantees atomic PRs and zero contract drift); renaming the `remember-stack` repository; maintaining human review queues in public interfaces (adjudication is autonomous).
+
+**Design.** `plan/designs/unified_remember_distribution_design.md`; amendment banner on `plan/designs/packaging_distribution_design.md`.
+**Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D66, D98, D107.
