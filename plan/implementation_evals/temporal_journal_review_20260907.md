@@ -135,3 +135,28 @@ fresh startup, the zero-cost pipeline, gated restart and explicit conversion
 certificate checks passed, as did contract smoke, unit, quality, surfaces,
 adapters and the documentation build. This verifies the implemented startup
 increment; it does not complete the remaining T.1 runtime program.
+
+
+## Normalization publication review and integration follow-up
+
+Antigravity round five reviewed committed publication scope `519c3453` and
+returned **SCOPED APPROVED**, while explicitly withholding PR merge approval.
+The completed output is `/tmp/rs-t1-normalization-antigravity-r5.log`; the
+original process handle completed normally. Its pending PostgreSQL19 prerequisite
+subsequently passed in
+[CI34072158644](https://github.com/writeitai/remember-stack/actions/runs/34072158644).
+
+The review's defensive predicate-row locking and explicit active-forget and
+observation-only proof requests are applied in the next working increment.
+Independent comparison with binding D110 §3.1 also found that publication must
+retain the normalizer's shape judgment, not overwrite it with D41 precedence.
+The model/catalog/test now retain that judgment; D41 precedence remains an
+application responsibility. Round five's praise of publication-time precedence
+is therefore not adopted as authority over the binding contract.
+
+The next increment wires the worker and closed-version handoffs, with real
+worker/catalog and database rollback evidence recorded in the progress report.
+Its ordered relation application is still unfinished and explicitly fenced;
+this increment must not be represented as a passing complete pipeline or a
+merge-ready PR. The local integration requires its own scoped review and later
+supported full-pipeline validation after the remaining writers are connected.

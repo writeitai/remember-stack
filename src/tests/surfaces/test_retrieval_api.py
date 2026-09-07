@@ -42,7 +42,6 @@ from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import EntityProfileRefresher
-from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
@@ -54,6 +53,7 @@ from rememberstack.spine import SupersessionAdjudicator
 from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.normalization import NormalizationCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
@@ -292,9 +292,9 @@ class _ApiRig:
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
             handler=NormalizeRelationsHandler(
+                normalizations=NormalizationCatalog(engine=engine),
                 claim_catalog=claim_catalog,
                 chunk_catalog=chunk_catalog,
-                registry=EntityRegistry(engine=engine),
                 resolver=CascadeResolver(
                     engine=engine,
                     model_provider=self.provider,
@@ -303,8 +303,6 @@ class _ApiRig:
                     small_model="openai/gpt-5.6-luna",
                 ),
                 facts=facts,
-                observation_adjudicator=obs_adjudicator,
-                profile_refresher=profile_refresher,
                 model_provider=self.provider,
                 settings=E3Settings(),
                 chunker_version=generation,

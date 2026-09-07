@@ -9,7 +9,6 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 
-from rememberstack.core.fact_temporal import fact_kind
 from rememberstack.model.fact_temporal import ClaimTemporalWindow
 from rememberstack.model.normalization import NormalizationInput
 from rememberstack.model.normalization import NormalizationOutput
@@ -201,7 +200,7 @@ def _canonical_output_on(
         if (
             connection.execute(
                 text("""
-            SELECT 1 FROM predicates WHERE deployment_id = :dep AND predicate = :predicate AND status = 'active'
+            SELECT 1 FROM predicates WHERE deployment_id = :dep AND predicate = :predicate AND status = 'active' FOR SHARE
         """),
                 {"dep": deployment_id, "predicate": predicate},
             ).scalar_one_or_none()
@@ -217,9 +216,7 @@ def _canonical_output_on(
                 subject_entity_id=canonical[relation.subject_entity_id],
                 predicate=relation.predicate,
                 object_entity_id=canonical[relation.object_entity_id],
-                shape_kind=fact_kind(
-                    claim_kind=prepared.temporal_window.kind, shape=relation.shape_kind
-                ),
+                shape_kind=relation.shape_kind,
             )
             for relation in output.relations
         ),
@@ -227,10 +224,7 @@ def _canonical_output_on(
             NormalizedObservation(
                 subject_entity_id=canonical[observation.subject_entity_id],
                 statement=observation.statement,
-                shape_kind=fact_kind(
-                    claim_kind=prepared.temporal_window.kind,
-                    shape=observation.shape_kind,
-                ),
+                shape_kind=observation.shape_kind,
             )
             for observation in output.observations
         ),

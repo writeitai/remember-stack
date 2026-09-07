@@ -157,8 +157,10 @@ def test_publication_is_complete_and_never_attaches_a_fact(
     published = catalog.publish(
         prepared=prepared, normalizer_version=_VERSION, output=_output(inputs=inputs)
     )
-    assert published.output.relations[0].shape_kind is FactTemporalKind.STATE
-    assert published.output.observations[0].shape_kind is FactTemporalKind.STATE
+    # Staging retains the normalizer's own shape judgment. Application later
+    # prefers the immutable D41 claim kind, without rewriting this source.
+    assert published.output.relations[0].shape_kind is FactTemporalKind.OCCURRENCE
+    assert published.output.observations[0].shape_kind is FactTemporalKind.UNKNOWN
     assert (
         catalog.receipt(
             deployment_id=inputs.deployment_id,
@@ -569,3 +571,743 @@ def test_foreign_entity_cannot_be_published_under_this_claim(
         )
         is None
     )
+
+
+def _version_membership(
+    *, database_engine: Engine, inputs: PublicationInputs, number: int
+) -> tuple[UUID, UUID]:
+    """Attach the same immutable claim to a new real version's chunk occurrence."""
+    version_id, representation_id, chunk_id = uuid4(), uuid4(), uuid4()
+    section_id = uuid4()
+    with database_engine.begin() as connection:
+        doc_id = connection.execute(
+            text("SELECT doc_id FROM claims WHERE claim_id = :id"),
+            {"id": inputs.claim_id},
+        ).scalar_one()
+        parameters = {
+            "dep": inputs.deployment_id,
+            "doc": doc_id,
+            "version": version_id,
+            "rep": representation_id,
+            "chunk": chunk_id,
+            "section": section_id,
+            "claim": inputs.claim_id,
+            "hash": str(version_id),
+            "number": number,
+        }
+        connection.execute(
+            text("""
+            INSERT INTO content_objects (deployment_id, content_hash, byte_size, mime, raw_uri)
+            VALUES (:dep, :hash, 1, 'text/plain', 'mem://source')
+        """),
+            parameters,
+        )
+        connection.execute(
+            text("""
+            INSERT INTO document_versions (deployment_id, doc_id, version_id, content_hash, version_no)
+            VALUES (:dep, :doc, :version, :hash, :number)
+        """),
+            parameters,
+        )
+        connection.execute(
+            text("""
+            INSERT INTO document_representations (deployment_id, version_id, representation_id, route)
+            VALUES (:dep, :version, :rep, 'text')
+        """),
+            parameters,
+        )
+        connection.execute(
+            text("""
+            INSERT INTO document_sections (section_id, deployment_id, doc_id, version_id,
+                representation_id, node_path, block_start, block_end, role, char_start, char_end, ordinal)
+            VALUES (:section, :dep, :doc, :version, :rep, '0', 0, 0, 'body', 0, 18, 0)
+        """),
+            parameters,
+        )
+        connection.execute(
+            text("""
+            INSERT INTO chunks (deployment_id, doc_id, version_id, representation_id, chunk_id,
+                ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+                char_start, char_end, chunker_version, section_id)
+            VALUES (:dep, :doc, :version, :rep, :chunk, 0, 0, 0, :hash, :hash, 0, 18, 'chunk-proof', :section)
+        """),
+            parameters,
+        )
+        connection.execute(
+            text("""
+            INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id) VALUES (:dep, :chunk, :claim)
+        """),
+            parameters,
+        )
+    return version_id, representation_id
+
+
+def _open_observation_barrier(
+    *,
+    database_engine: Engine,
+    inputs: PublicationInputs,
+    version_id: UUID,
+    representation_id: UUID,
+    normalizer_version: str,
+) -> None:
+    """Run the actual closed-set materializer under production admission and barrier locks."""
+    from rememberstack.model import ProcessingLane
+    from rememberstack.spine.temporal_journal import temporal_identity_admission
+    from rememberstack.spine.work_ledger import _ADVISORY_LOCK_NORMALIZE_BARRIER
+    from rememberstack.spine.work_ledger import _enqueue_entity_obs_flush_fanout
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
+    with (
+        database_engine.begin() as connection,
+        temporal_identity_admission(
+            connection=connection, deployment_id=inputs.deployment_id
+        ),
+    ):
+        connection.execute(
+            _ADVISORY_LOCK_NORMALIZE_BARRIER, {"representation_id": representation_id}
+        )
+        _enqueue_entity_obs_flush_fanout(
+            connection=connection,
+            deployment_id=inputs.deployment_id,
+            version_id=version_id,
+            representation_id=representation_id,
+            chunker_version="chunk-proof",
+            extractor_version="source-proof",
+            normalize_component_version=normalizer_version,
+            obs_flush_component_version=OBS_FLUSH_VERSION,
+            content_hash=str(version_id),
+            lane=ProcessingLane.STEADY,
+            doc_id=None,
+        )
+
+
+def test_reused_claim_materializes_observations_for_later_version(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """D56 reuse opens a new version's observations from one saved result without republishing."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    receipt = catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=_output(inputs=inputs),
+    )
+    versions: list[UUID] = []
+    for number in (1, 2):
+        version_id, representation_id = _version_membership(
+            database_engine=database_engine, inputs=inputs, number=number
+        )
+        versions.append(version_id)
+        _open_observation_barrier(
+            database_engine=database_engine,
+            inputs=inputs,
+            version_id=version_id,
+            representation_id=representation_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+        # Re-evaluating a closed version cannot enlarge or duplicate its inputs.
+        _open_observation_barrier(
+            database_engine=database_engine,
+            inputs=inputs,
+            version_id=version_id,
+            representation_id=representation_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+    with database_engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text("""
+            SELECT version_id, claim_id, statement FROM normalize_observation_staging
+            WHERE deployment_id = :dep ORDER BY version_id
+        """),
+                {"dep": inputs.deployment_id},
+            )
+            .mappings()
+            .all()
+        )
+        assert {row["version_id"] for row in rows} == set(versions)
+        assert len(rows) == 2
+        assert all(
+            row["claim_id"] == inputs.claim_id
+            and row["statement"] == receipt.output.observations[0].statement
+            for row in rows
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM normalize_claim_receipts WHERE deployment_id = :dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM relation_flush_version_state WHERE deployment_id = :dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_relation_membership_requires_observations_complete_and_closes_once(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Relation units contain stable assertions, without premature fact identities or duplicate work."""
+    from rememberstack.model import ProcessingLane
+    from rememberstack.spine.temporal_journal import temporal_identity_admission
+    from rememberstack.spine.work_ledger import _ADVISORY_LOCK_NORMALIZE_BARRIER
+    from rememberstack.spine.work_ledger import _materialize_relation_units_on
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    output = _output(inputs=inputs)
+    # Two distinct triples on one block must both survive publication and fan-out.
+    output = output.model_copy(
+        update={
+            "relations": output.relations + _output(inputs=inputs, other=True).relations
+        }
+    )
+    catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=output,
+    )
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    _open_observation_barrier(
+        database_engine=database_engine,
+        inputs=inputs,
+        version_id=version_id,
+        representation_id=representation_id,
+        normalizer_version=E3_NORMALIZER_VERSION,
+    )
+
+    def materialize() -> int:
+        """Own the real lock prefix and call the same function as the completed observation barrier."""
+        with (
+            database_engine.begin() as connection,
+            temporal_identity_admission(
+                connection=connection, deployment_id=inputs.deployment_id
+            ),
+        ):
+            connection.execute(
+                _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                {"representation_id": representation_id},
+            )
+            return len(
+                _materialize_relation_units_on(
+                    connection=connection,
+                    deployment_id=inputs.deployment_id,
+                    version_id=version_id,
+                    representation_id=representation_id,
+                    chunker_version="chunk-proof",
+                    extractor_version="source-proof",
+                    normalizer_version=E3_NORMALIZER_VERSION,
+                    content_hash=str(version_id),
+                    lane=ProcessingLane.STEADY,
+                )
+            )
+
+    with pytest.raises(TemporalWriteConflict, match="completed observation"):
+        materialize()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE obs_flush_version_state SET fanout_status = 'barrier_complete', completed_at = clock_timestamp() WHERE deployment_id = :dep"
+            ),
+            {"dep": inputs.deployment_id},
+        )
+    assert materialize() == 1
+    assert materialize() == 0
+    with database_engine.connect() as connection:
+        parameters = {"dep": inputs.deployment_id}
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM relation_flush_inputs WHERE deployment_id = :dep AND applied_at IS NULL"
+                ),
+                parameters,
+            ).scalar_one()
+            == 2
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT expected_units FROM relation_flush_version_state WHERE deployment_id = :dep"
+                ),
+                parameters,
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM processing_state WHERE deployment_id = :dep AND stage = 'adjudicate_supersession' AND target_kind = 'entity'"
+                ),
+                parameters,
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM relations WHERE deployment_id = :dep"),
+                parameters,
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_missing_receipt_cannot_become_an_empty_completed_version(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Missing model output blocks the handoff and rolls back every membership/work row."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    with pytest.raises(TemporalWriteConflict, match="missing complete receipts"):
+        _open_observation_barrier(
+            database_engine=database_engine,
+            inputs=inputs,
+            version_id=version_id,
+            representation_id=representation_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM obs_flush_version_state WHERE deployment_id = :dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_recorded_empty_answer_has_explicit_empty_relation_completion(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """A real empty normalization answer completes both barriers and starts reconciliation."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=NormalizationOutput(outcome="empty"),
+    )
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    _open_observation_barrier(
+        database_engine=database_engine,
+        inputs=inputs,
+        version_id=version_id,
+        representation_id=representation_id,
+        normalizer_version=E3_NORMALIZER_VERSION,
+    )
+    with database_engine.connect() as connection:
+        parameters = {"dep": inputs.deployment_id}
+        row = (
+            connection.execute(
+                text(
+                    "SELECT fanout_status, expected_units, completed_at FROM relation_flush_version_state WHERE deployment_id = :dep"
+                ),
+                parameters,
+            )
+            .mappings()
+            .one()
+        )
+        assert row["fanout_status"] == "empty_complete"
+        assert row["expected_units"] == 0
+        assert row["completed_at"] is not None
+        stages = set(
+            connection.execute(
+                text(
+                    "SELECT stage::text FROM processing_state WHERE deployment_id = :dep"
+                ),
+                parameters,
+            ).scalars()
+        )
+        assert stages == {"reconcile", "embed_claim"}
+
+
+def test_active_forget_blocks_source_snapshot_and_publication(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """No saved or in-flight normalized payload may cross accepted deletion admission."""
+    from rememberstack.model import ForgetInProgressError
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    prepared = catalog.input_snapshot(
+        deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("""
+            INSERT INTO forget_manifests (forget_id, deployment_id, doc_id, schema_version)
+            VALUES (:id, :dep, :doc, 1)
+        """),
+            {"id": uuid4(), "dep": inputs.deployment_id, "doc": prepared.claim.doc_id},
+        )
+    with pytest.raises(ForgetInProgressError):
+        catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        )
+    with pytest.raises(ForgetInProgressError):
+        catalog.publish(
+            prepared=prepared,
+            normalizer_version=_VERSION,
+            output=_output(inputs=inputs),
+        )
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM normalize_claim_receipts WHERE deployment_id = :dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_observation_only_answer_is_accepted_and_reusable(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """A complete accepted result may contain observations without any relation assertion."""
+    catalog = NormalizationCatalog(engine=database_engine)
+    output = NormalizationOutput(
+        outcome="accepted", observations=_output(inputs=inputs).observations
+    )
+    published = catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=_VERSION,
+        output=output,
+    )
+    assert published.output == output
+    assert (
+        catalog.receipt(
+            deployment_id=inputs.deployment_id,
+            claim_id=inputs.claim_id,
+            normalizer_version=_VERSION,
+        )
+        == published
+    )
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM normalize_relation_assertions WHERE deployment_id = :dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_missing_assertion_cannot_silently_close_relation_membership(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """A damaged accepted receipt is not an empty relation answer at the version barrier."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    output = NormalizationOutput(
+        outcome="accepted", relations=_output(inputs=inputs).relations
+    )
+    catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=output,
+    )
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM normalize_relation_assertions WHERE deployment_id = :dep"
+            ),
+            {"dep": inputs.deployment_id},
+        )
+    with pytest.raises(TemporalWriteConflict, match="missing complete receipts"):
+        _open_observation_barrier(
+            database_engine=database_engine,
+            inputs=inputs,
+            version_id=version_id,
+            representation_id=representation_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
+        )
+
+
+def test_claim_worker_publishes_real_receipt_and_reuses_it_on_retry(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The shipped worker resolves/publishes once, leaves facts untouched, and returns a barrier."""
+    from rememberstack.adapters.testing import FakeModelProvider
+    from rememberstack.adapters.testing import NoopCostMeter
+    from rememberstack.model import ClaimedWork
+    from rememberstack.model import EntityRef
+    from rememberstack.model import PipelineStage
+    from rememberstack.model import ProcessingLane
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.model import ResolvedEntity
+    from rememberstack.spine.chunk_catalog import ChunkCatalog
+    from rememberstack.spine.claim_catalog import ClaimCatalog
+    from rememberstack.spine.fact_catalog import FactCatalog
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+    from rememberstack.workers.e3 import E3Settings
+    from rememberstack.workers.e3 import NormalizeRelationsHandler
+
+    class Resolver:
+        """Return fixture identities; actual model identity resolution has separate proofs."""
+
+        def resolve(self, *, reference: EntityRef, **kwargs: object) -> ResolvedEntity:
+            """Resolve the two named entities without writing any fact or evidence."""
+            del kwargs
+            return ResolvedEntity(
+                entity_id=inputs.subject_id
+                if reference.name == "Ada"
+                else inputs.object_id,
+                created=False,
+            )
+
+    provider = FakeModelProvider(
+        generate_payload={
+            "relations": [
+                {
+                    "subject": {"name": "Ada"},
+                    "predicate": "works_for",
+                    "object": {"name": "Acme"},
+                    "shape_kind": "state",
+                }
+            ],
+            "observations": [
+                {
+                    "subject": {"name": "Ada"},
+                    "statement": "Ada is employed",
+                    "shape_kind": "state",
+                }
+            ],
+        }
+    )
+    catalog = NormalizationCatalog(engine=database_engine)
+    prepared = catalog.input_snapshot(
+        deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+    )
+    handler = NormalizeRelationsHandler(
+        normalizations=catalog,
+        claim_catalog=ClaimCatalog(engine=database_engine),
+        chunk_catalog=ChunkCatalog(engine=database_engine),
+        resolver=Resolver(),  # type: ignore[arg-type]
+        facts=FactCatalog(engine=database_engine),
+        model_provider=provider,
+        settings=E3Settings(normalize_model="proof"),
+        chunker_version="chunk-proof",
+    )
+    for number in (1, 2):
+        version_id, representation_id = _version_membership(
+            database_engine=database_engine, inputs=inputs, number=number
+        )
+        work = ClaimedWork(
+            processing_id=uuid4(),
+            deployment_id=inputs.deployment_id,
+            target_kind=ProcessingTarget.CLAIM,
+            target_id=inputs.claim_id,
+            stage=PipelineStage.NORMALIZE_RELATIONS,
+            component_version=E3_NORMALIZER_VERSION,
+            content_hash=str(version_id),
+            lane=ProcessingLane.STEADY,
+            attempt=number,
+            payload={
+                "version_id": str(version_id),
+                "representation_id": str(representation_id),
+                "doc_id": str(prepared.claim.doc_id),
+                "chunker_version": "chunk-proof",
+                "extractor_version": "source-proof",
+            },
+        )
+        outcome = handler.handle(work=work, meter=NoopCostMeter())
+        assert outcome.claim_normalize_barrier is not None
+        assert outcome.claim_normalize_barrier.version_id == version_id
+    assert len(provider.generated_requests) == 1
+    receipt = catalog.receipt(
+        deployment_id=inputs.deployment_id,
+        claim_id=inputs.claim_id,
+        normalizer_version=E3_NORMALIZER_VERSION,
+    )
+    assert receipt is not None
+    assert len(receipt.output.relations) == len(receipt.output.observations) == 1
+    with database_engine.connect() as connection:
+        for table in ("relations", "observations", "normalize_observation_staging"):
+            assert (
+                connection.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE deployment_id = :dep"),
+                    {"dep": inputs.deployment_id},
+                ).scalar_one()
+                == 0
+            )
+
+
+def test_claim_completion_cannot_mark_missing_receipt_succeeded(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The real work ledger rolls back completion when the worker has not published an answer."""
+    from rememberstack.model import EnqueueWork
+    from rememberstack.model import PipelineStage
+    from rememberstack.model import ProcessingLane
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.work_ledger import WorkLedger
+    from rememberstack.spine.work_ledger import WorkLedgerSettings
+    from rememberstack.workers.base import ClaimNormalizeBarrier
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    ledger = WorkLedger(engine=database_engine, settings=WorkLedgerSettings())
+    job = ledger.enqueue(
+        work=EnqueueWork(
+            deployment_id=inputs.deployment_id,
+            target_kind=ProcessingTarget.CLAIM,
+            target_id=inputs.claim_id,
+            stage=PipelineStage.NORMALIZE_RELATIONS,
+            component_version=E3_NORMALIZER_VERSION,
+            content_hash=str(version_id),
+            lane=ProcessingLane.STEADY,
+        )
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status = 'running' WHERE processing_id = :id"
+            ),
+            {"id": job.processing_id},
+        )
+        doc_id = connection.execute(
+            text("SELECT doc_id FROM claims WHERE claim_id = :id"),
+            {"id": inputs.claim_id},
+        ).scalar_one()
+    barrier = ClaimNormalizeBarrier(
+        deployment_id=inputs.deployment_id,
+        version_id=version_id,
+        representation_id=representation_id,
+        doc_id=doc_id,
+        chunker_version="chunk-proof",
+        extractor_version="source-proof",
+        content_hash=str(version_id),
+        lane=ProcessingLane.STEADY,
+        normalize_component_version=E3_NORMALIZER_VERSION,
+        obs_flush_component_version=OBS_FLUSH_VERSION,
+    )
+    with pytest.raises(
+        TemporalWriteConflict, match="requires a complete normalization receipt"
+    ):
+        ledger.complete_claim_normalize(
+            processing_id=job.processing_id, barrier=barrier
+        )
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT status::text FROM processing_state WHERE processing_id = :id"
+                ),
+                {"id": job.processing_id},
+            ).scalar_one()
+            == "running"
+        )
+
+
+def test_relation_work_enqueue_failure_rolls_back_the_entire_handoff(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """A failure after membership inserts cannot leave a closed barrier without its work."""
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=NormalizationOutput(
+            outcome="accepted", relations=_output(inputs=inputs).relations
+        ),
+    )
+    version_id, representation_id = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    # A real database failure occurs after both version markers, the unit, and
+    # its input rows have been inserted. It must abort that whole transaction.
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("""
+            CREATE FUNCTION normalization_handoff_proof_failure() RETURNS trigger
+            LANGUAGE plpgsql AS $$ BEGIN
+                IF NEW.stage = 'adjudicate_supersession' AND NEW.target_kind = 'entity' THEN
+                    RAISE EXCEPTION 'relation enqueue proof failure';
+                END IF;
+                RETURN NEW;
+            END $$
+        """)
+        )
+        connection.execute(
+            text("""
+            CREATE TRIGGER normalization_handoff_proof_failure
+            BEFORE INSERT ON processing_state FOR EACH ROW
+            EXECUTE FUNCTION normalization_handoff_proof_failure()
+        """)
+        )
+    try:
+        with pytest.raises(SQLAlchemyError, match="relation enqueue proof failure"):
+            _open_observation_barrier(
+                database_engine=database_engine,
+                inputs=inputs,
+                version_id=version_id,
+                representation_id=representation_id,
+                normalizer_version=E3_NORMALIZER_VERSION,
+            )
+    finally:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DROP TRIGGER normalization_handoff_proof_failure ON processing_state"
+                )
+            )
+            connection.execute(
+                text("DROP FUNCTION normalization_handoff_proof_failure()")
+            )
+    with database_engine.connect() as connection:
+        for table in (
+            "obs_flush_version_state",
+            "relation_flush_version_state",
+            "relation_flush_block_units",
+            "relation_flush_inputs",
+            "processing_state",
+        ):
+            assert (
+                connection.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE deployment_id = :dep"),
+                    {"dep": inputs.deployment_id},
+                ).scalar_one()
+                == 0
+            )

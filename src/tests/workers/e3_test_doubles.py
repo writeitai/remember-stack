@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
-from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EntityRef
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ResolvedEntity
+from rememberstack.model.fact_temporal import ClaimTemporalWindow
+from rememberstack.model.normalization import NormalizationInput
+from rememberstack.model.normalization import NormalizationOutput
+from rememberstack.model.normalization import NormalizationReceipt
+from rememberstack.spine.temporal_journal import temporal_fingerprint
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 
@@ -121,14 +126,66 @@ def _handler(
 ) -> NormalizeRelationsHandler:
     """Build a handler with the generate path wired to optional test doubles."""
     return NormalizeRelationsHandler(
+        normalizations=None,  # type: ignore[arg-type]
         claim_catalog=None,  # type: ignore[arg-type]
         chunk_catalog=None,  # type: ignore[arg-type]
-        registry=None,  # type: ignore[arg-type]
         resolver=resolver,  # type: ignore[arg-type]
         facts=facts,  # type: ignore[arg-type]
-        observation_adjudicator=None,  # type: ignore[arg-type]
-        profile_refresher=RecordingProfileRefresher(),
         model_provider=provider,
         settings=E3Settings(normalize_model="test-model"),
         chunker_version="test",
     )
+
+
+class RecordingNormalizations:
+    """Save a complete answer and reject mismatched claim/generation coordinates."""
+
+    def __init__(self, *, claim: ClaimForNormalization) -> None:
+        """Bind a fixed source snapshot; publication is observable to the test."""
+        self.prepared = NormalizationInput(
+            claim=claim,
+            temporal_window=ClaimTemporalWindow(claim_id=claim.claim_id),
+            input_digest="a" * 64,
+        )
+        self.published: NormalizationReceipt | None = None
+        self.publications = 0
+
+    def input_snapshot(
+        self, *, deployment_id: UUID, claim_id: UUID
+    ) -> NormalizationInput:
+        """Return the fixed source with explicit coordinate assertions."""
+        assert deployment_id == self.prepared.claim.deployment_id
+        assert claim_id == self.prepared.claim.claim_id
+        return self.prepared
+
+    def receipt(
+        self, *, deployment_id: UUID, claim_id: UUID, normalizer_version: str
+    ) -> NormalizationReceipt | None:
+        """Return the saved answer for this exact idempotency key."""
+        assert deployment_id == self.prepared.claim.deployment_id
+        assert claim_id == self.prepared.claim.claim_id
+        if self.published is not None:
+            assert self.published.normalizer_version == normalizer_version
+        return self.published
+
+    def publish(
+        self,
+        *,
+        prepared: NormalizationInput,
+        normalizer_version: str,
+        output: NormalizationOutput,
+    ) -> NormalizationReceipt:
+        """Record one complete answer, including observations or an empty disposition."""
+        assert prepared == self.prepared
+        self.publications += 1
+        self.published = NormalizationReceipt(
+            receipt_id=uuid4(),
+            deployment_id=prepared.claim.deployment_id,
+            claim_id=prepared.claim.claim_id,
+            doc_id=prepared.claim.doc_id,
+            normalizer_version=normalizer_version,
+            input_digest=prepared.input_digest,
+            output_digest=temporal_fingerprint(value=output.model_dump(mode="json")),
+            output=output,
+        )
+        return self.published

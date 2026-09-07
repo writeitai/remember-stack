@@ -184,8 +184,9 @@ The typed publication catalog now records one complete resolved answer per
 claim and normalizer generation: all distinct relation triples, all accepted
 observations, and an explicit accepted/empty/soft-drop disposition. It snapshots
 immutable source inputs before inference, revalidates them before publication,
-resolves identity redirects under the identity epoch, and applies D41 kind
-precedence. One transaction writes the receipt and every relation assertion;
+resolves identity redirects under the identity epoch, and retains the
+normalizer's shape judgment. D41 kind precedence belongs at fact application,
+not in the immutable normalization answer (D110 §3.1). One transaction writes the receipt and every relation assertion;
 it does not insert facts or attach evidence. Competing accepted attempts reuse
 the first complete receipt without mixing outputs or replacing empty results.
 Reads verify both the output digest/counts and the actual assertion set.
@@ -205,11 +206,57 @@ database cases and 90 temporal/profile pure cases still pass after extracting
 the admission prefix. Ruff, targeted Pyright, import boundaries and inventory
 checks pass. The new module requires its own PostgreSQL19 CI and scoped review.
 
-This catalog is not yet called by the runtime normalizer. The next integration
-must replace immediate relation upserts with complete publication, materialize
-observation inputs from receipts at the closed version barrier (including D56
-reused claims), then create relation block units after observation completion.
-Ordered relation admission/application and all remaining authority participants
-remain required. The old serial compatibility paths do not establish T.1
-completion. No normalizer or LoCoMo generation is rolled by this inactive
-catalog alone; the observable integration must roll them as the plan requires.
+The publication-only commit `519c3453` passed full
+[CI34072158644](https://github.com/writeitai/remember-stack/actions/runs/34072158644).
+Antigravity round five approved that scope, with defensive predicate locking
+and additional forget/observation-only proofs suggested. Those changes are
+included in the subsequent integration work below. Neither this CI nor the
+scoped approval proves the new integration.
+
+## Normalizer and closed-version handoffs
+
+The claim worker now loads an existing complete receipt before inference,
+publishes every resolved assertion when absent, and returns its version barrier.
+It no longer creates relation facts, adds relation evidence, stages observations
+by enumerating currently known versions, or refreshes fact profiles during
+normalization. Its unused fact-application/profile dependencies and the old
+serial normalization writer were removed. Old normalization generations are
+refused under the upgrade's existing requirement to drain old work before C.
+The normalizer generation adds `complete-receipt-1:temporal-shape-1`; the prompt
+and candidate schema now ask for state/occurrence/unknown shape.
+
+The version barrier loads observations from complete receipts for the exact
+chunker/extractor/representation membership. A later D56 version reuses the
+receipt without another normalizer call. Re-evaluating a closed version cannot
+enlarge its recorded input set. Current-generation claim completion requires a
+complete receipt before changing ledger status. Barrier transactions acquire
+shared deployment/identity admission before representation locks, and missing
+receipts or missing assertion rows refuse materialization.
+
+After observation completion, the same transaction records relation version
+state, subject/predicate units, all distinct assertion memberships and existing
+work-ledger rows using the entity-unit convention. Empty results have explicit
+empty relation completion and start reconciliation plus claim embedding.
+Existing application receipts supply completion time when a later version
+reuses an assertion. No fact or evidence is created by this handoff.
+
+Validation for this working integration: 123 focused worker/temporal/profile
+cases pass, targeted Pyright and Ruff pass, and import boundaries remain intact.
+Twenty-one private PostgreSQL15 proofs exercise publication and real worker/
+barrier catalog paths: source/forget admission, observation-only output,
+D56 receipt reuse, missing receipt/assertion refusal, complete multiple-triple
+membership, observation-first ordering, explicit empty completion, worker retry,
+ledger refusal to complete missing output, and rollback of both barriers and
+membership when the final work enqueue fails. The harness uses actual relevant
+DDL and the final temporal constraints; it is not full migration-graph or
+PostgreSQL19 evidence.
+
+**Unfinished and not runnable to full fact completion:** the ordered relation
+applier is the next integration. Entity-unit supersession work explicitly refuses
+to complete through the old fact-ID handler. This fence is temporary work in
+progress, not an implementation of ordered application. Observation journal
+integration, all other authority writers, correction/replay, cache certificates
+and events, hard forget, serving/readiness checks, remaining generation/LoCoMo
+protocol rolls, consumer packages and release are still required. The complete
+pipeline must pass supported PostgreSQL19 CI and Antigravity review before this
+PR can merge. No full-pipeline success is claimed for the handoff increment.

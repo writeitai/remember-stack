@@ -48,6 +48,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.normalization import NormalizationCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -1148,7 +1149,6 @@ class SelfHostProfile:
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import EntityClusterer
         from rememberstack.spine import EntityProfileRefresher
-        from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
         from rememberstack.spine import ObservationAdjudicator
@@ -1251,9 +1251,9 @@ class SelfHostProfile:
         if stage is PipelineStage.NORMALIZE_RELATIONS:
             observation_settings = ObservationSettings.model_validate({})
             return NormalizeRelationsHandler(
+                normalizations=NormalizationCatalog(engine=self._engine),
                 claim_catalog=claims,
                 chunk_catalog=chunks,
-                registry=EntityRegistry(engine=self._engine),
                 resolver=CascadeResolver(
                     engine=self._engine,
                     model_provider=self._model_provider,
@@ -1262,12 +1262,6 @@ class SelfHostProfile:
                     small_model=observation_settings.small_model,
                 ),
                 facts=facts,
-                observation_adjudicator=ObservationAdjudicator(
-                    engine=self._engine,
-                    model_provider=self._model_provider,
-                    settings=observation_settings,
-                ),
-                profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
                 settings=E3Settings.model_validate({}),
                 chunker_version=chunk_generation,

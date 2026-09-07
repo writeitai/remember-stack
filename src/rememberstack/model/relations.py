@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from rememberstack.model.fact_temporal import FactTemporalKind
+
 _NonEmpty = Annotated[str, Field(min_length=1)]
 
 
@@ -38,6 +40,7 @@ class RelationCandidate(BaseModel):
     subject: EntityRef
     predicate: _NonEmpty
     object: EntityRef
+    shape_kind: FactTemporalKind = FactTemporalKind.UNKNOWN
 
 
 class ObservationCandidate(BaseModel):
@@ -47,6 +50,7 @@ class ObservationCandidate(BaseModel):
 
     subject: EntityRef
     statement: _NonEmpty
+    shape_kind: FactTemporalKind = FactTemporalKind.UNKNOWN
 
 
 class ObservationAssertion(BaseModel):
