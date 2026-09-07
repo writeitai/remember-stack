@@ -1339,8 +1339,13 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     prompt = provider.generated_prompts[-1]
     candidate = _t4_candidates(prompt)[0]
     assert candidate["aliases"] == ["KB Bank"]
-    assert candidate["profile_description"] == "KB Bank is a bank licensed by CNB"
-    assert candidate["salient_facts"] == ["KB Bank is a bank licensed by CNB"]
+    assert (
+        candidate["profile_description"]
+        == "KB Bank is a bank licensed by CNB [world time: world date unknown]"
+    )
+    assert candidate["salient_facts"] == [
+        "KB Bank is a bank licensed by CNB [world time: world date unknown]"
+    ]
     assert candidate["t3_gate"] == "scored"
     assert "Prefer an existing compatible candidate." in prompt
     assert "Missing overlap and different topics" in prompt
@@ -1363,7 +1368,9 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     stale_candidate = _t4_candidates(stale_prompt)[0]
     assert len(provider.embedded_texts) == embedded_before
     assert stale_candidate["profile_description"] is None
-    assert stale_candidate["salient_facts"] == ["KB Bank is based in Prague"]
+    assert stale_candidate["salient_facts"] == [
+        "KB Bank is based in Prague [world time: world date unknown]"
+    ]
     assert stale_candidate["t3_gate"] == "profile_stale"
 
 

@@ -1,4 +1,4 @@
-"""Bounded adjudication inputs re-read under D114 claim and fact row locks."""
+"""Bounded adjudication inputs re-read under D118 claim and fact row locks."""
 
 from collections.abc import Mapping
 from hashlib import sha256

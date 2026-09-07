@@ -81,8 +81,8 @@ class KnowledgeCycleForgetRebuilder:
     ) -> None:
         """Run one K commit only when the manifest names affected artifacts."""
         if artifact_ids:
-            self._driver.run_cycle(
-                deployment_id=deployment_id, exclusions_by_artifact={}
+            self._driver.recompile_after_forget(
+                deployment_id=deployment_id, artifact_ids=artifact_ids
             )
 
 

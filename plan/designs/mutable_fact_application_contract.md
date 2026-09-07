@@ -1,6 +1,6 @@
-# D114 application contract: normalized assertions, decisions and support
+# D118 application contract: normalized assertions, decisions and support
 
-**Status:** implementation contract under D114; Antigravity and Grok approved
+**Status:** implementation contract under D118; Antigravity and Grok approved
 the application contract after round-2 review on 2026-09-07. Runtime activation remains subject to the delivery gates.
 **Date:** 2026-09-07.
 **Authority:** [one mutable window](mutable_fact_windows_design.md).
@@ -187,7 +187,7 @@ by UUIDv5 in a fixed namespace over the versioned tuple
 window replacement preserves dates; a supplied all-unknown window clears them.
 
 Every window is already canonical `FactWindow`. Claim windows are canonicalized
-once at input construction; partial raw endpoints use the D114 unit rules without
+once at input construction; partial raw endpoints use the D118 unit rules without
 filling missing sides. Initial creation uses the claim window only when the
 normalizer established that it applies. Every later replacement and every
 additional cap/update requires a nonempty rationale and cited admissible claims
@@ -275,9 +275,9 @@ pending replies, retries, partial purge failure and restored older manifests.
 
 The migration requires stopped serving and drained old intake/workers/staging.
 A nullable `deployments.fact_window_generation` stores readiness: NULL means
-conversion is incomplete; the D114 generation string means the coordinated
+conversion is incomplete; the D118 generation string means the coordinated
 writers/readers are ready. Existing stores containing claims start NULL; empty
-stores and newly bootstrapped deployments use the D114 default. Serving and intake
+stores and newly bootstrapped deployments use the D118 default. Serving and intake
 check this column. Conversion workers use the new generation while it is NULL;
 only the conversion verifier can mark a populated converting store ready.
 It first rejects nonempty legacy staging and closes the fact-generation readiness
@@ -285,7 +285,7 @@ gate. The SQL file describes the target storage shape, not a standalone migratio
 Add precision and witness columns nullable with no defaults; clear ungrounded
 legacy endpoints to `(NULL,NULL,'unknown',{})` under the fence. Canonicalize any
 grounded raw endpoints once (an instant is `[t,t+1 microsecond)`). Then set NOT NULL
-and defaults for new rows, remove old `>=` checks, and install the D114 shape
+and defaults for new rows, remove old `>=` checks, and install the D118 shape
 checks. The enum addition commits before any writer uses `update`. No reader may
 observe intermediate shapes. It adds the structural stores while unready; it must not
 silently assign unknown precision beside old source-time endpoints and serve them.

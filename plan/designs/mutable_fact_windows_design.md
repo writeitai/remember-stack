@@ -1,6 +1,6 @@
 # Mutable facts with one world-time window
 
-**Status:** D114, binding when merged; replaces the temporal fact design in
+**Status:** D118, binding when merged; replaces the temporal fact design in
 D107/D110–D113 as specified in §10. Design acceptance is not runtime acceptance.
 **Date:** 2026-09-07.
 **Analysis:** [alternatives and independent audits](../analysis/lean_mutable_fact_windows.md).

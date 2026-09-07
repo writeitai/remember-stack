@@ -1,6 +1,6 @@
 # Evidence Lifecycle — Document Versions, Testimony Currency, and the Counting Rule (Design)
 
-> **D114 amendment (2026-09-07; effective when merged).** Withdrawal changes evidence currency and system belief, not world-time endpoints (§7). Use ordinary write coordination; the D110 temporal revision/cache framework is withdrawn.
+> **D118 amendment (2026-09-07; effective when merged).** Withdrawal changes evidence currency and system belief, not world-time endpoints (§7). Use ordinary write coordination; the D110 temporal revision/cache framework is withdrawn.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

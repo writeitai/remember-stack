@@ -1,6 +1,6 @@
 # E2 / E3 — Claim Extraction and Relation Normalization (Design)
 
-> **D114 amendment (2026-09-07; effective when merged).** Retain all four claim temporal kinds, open precision, full source timestamp and canonical arithmetic. Fact creation and later dates follow D114 §§2–3: one mutable window, no copied fact kind or permanent seed authority.
+> **D118 amendment (2026-09-07; effective when merged).** Retain all four claim temporal kinds, open precision, full source timestamp and canonical arithmetic. Fact creation and later dates follow D118 §§2–3: one mutable window, no copied fact kind or permanent seed authority.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

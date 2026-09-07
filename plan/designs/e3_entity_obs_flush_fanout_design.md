@@ -1,6 +1,6 @@
 # Design: entity-grain observation flush fan-out
 
-> **D114 amendment (2026-09-07; effective when merged).** Existing entity-grain work topology remains. D114 §§3.2–4 replace automatic time-based re-splits and D110/D113 application storage. Historical D113 keys, handlers, barriers and proof stores below are not replacement implementation authority.
+> **D118 amendment (2026-09-07; effective when merged).** Existing entity-grain work topology remains. D118 §§3.2–4 replace automatic time-based re-splits and D110/D113 application storage. Historical D113 keys, handlers, barriers and proof stores below are not replacement implementation authority.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

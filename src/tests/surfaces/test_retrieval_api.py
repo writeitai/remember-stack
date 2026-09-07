@@ -8,6 +8,7 @@ against the live spine (D48), every answer carrying the D49 envelope.
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -148,7 +149,20 @@ _PAYLOADS: dict[str, dict[str, object]] = {
 def _provider_response(prompt: str, type_name: str) -> dict[str, object]:
     """Serve canned chain payloads and a dynamic valid T4 selection."""
     if type_name == "FactApplicationDecision":
-        return same_fact_application_answer(prompt=prompt)
+        answer = same_fact_application_answer(prompt=prompt)
+        inputs = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
+        incoming = next(
+            item
+            for item in inputs["assertions"]
+            if item["application_id"] == inputs["application_id"]
+        )
+        # This retrieval fixture gives the writer an explicit chosen open window;
+        # claim raw-date tests below remain independent of fact interpretation.
+        answer["window"] = {
+            "window": {"valid_from": "2024-01-01T00:00:00Z", "valid_precision": "open"},
+            "supporting_claim_ids": [incoming["claim_id"]],
+        }
+        return answer
     if type_name == "T4Selection":
         return match_first_t4_candidate(prompt, type_name)
     return _PAYLOADS[type_name]
@@ -558,7 +572,10 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     ).json()
     assert relations["grain"] == "fact"
     (fact,) = relations["facts"]
-    assert fact["label"] == "Alice Novak works for Acme"
+    assert (
+        fact["label"]
+        == "Alice Novak works for Acme [world time: since 2024-01-01T00:00:00+00:00; no end recorded]"
+    )
     assert fact["evidence_count"] == 1
     assert fact["validity"]["invalidated_at"] is None
     assert relations["freshness"]["pg_live_ts"] is not None
@@ -721,12 +738,13 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
                 text(
                     "INSERT INTO relations (relation_id, deployment_id,"
                     " subject_entity_id, predicate, object_entity_id,"
-                    " normalizer_version, evidence_count, ingested_at) VALUES"
+                    " normalizer_version, evidence_count, ingested_at, valid_from, valid_precision, window_claim_ids) VALUES"
                     " (:relation_id, :deployment_id, :subject_id, :predicate,"
-                    " :object_id, 's51-spike', 1, now())"
+                    " :object_id, 's51-spike', 1, now(), '2024-01-01Z', 'open', ARRAY[:claim]::uuid[])"
                 ),
                 {
                     "relation_id": relation_id,
+                    "claim": claim_id,
                     "deployment_id": _DEPLOYMENT_ID,
                     "subject_id": subject_id,
                     "predicate": predicate,
@@ -995,7 +1013,7 @@ def test_expired_valid_window_is_not_a_current_fact(rig: _ApiRig) -> None:
         connection.execute(
             text(
                 "UPDATE relations SET valid_from = '2020-01-01+00',"
-                " valid_until = '2021-01-01+00'"
+                " valid_until = '2021-01-01+00', valid_precision='year'"
             )
         )
     answer = rig.client.get(

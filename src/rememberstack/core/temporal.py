@@ -106,7 +106,7 @@ def inclusive_request(*, from_: datetime, to: datetime) -> CanonicalBounds:
 def canonical_endpoint(*, value: datetime, precision: str, is_end: bool) -> datetime:
     """Normalize one supplied raw boundary without inventing a missing sibling.
 
-    This supports D114 partial fact windows. Use only when constructing new
+    This supports D118 partial fact windows. Use only when constructing new
     endpoints; persisted half-open fact endpoints must not be normalized again.
     """
     value = _utc(value)

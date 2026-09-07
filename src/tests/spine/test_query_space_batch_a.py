@@ -765,10 +765,10 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id, subject_entity_id,"
                 " predicate, object_entity_id, valid_from, valid_until, ingested_at,"
                 " invalidated_at, confidence, contradiction_group, fact_label,"
-                " normalizer_version)"
+                " normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:relation, :deployment, :subject, :predicate, :object,"
                 " :valid_from, :valid_until, :ingested, :invalidated, 0.8, :group,"
-                " :label, 'normalizer-1')"
+                " :label, 'normalizer-1', CAST(:precision AS claim_valid_precision), ARRAY[:witness]::uuid[])"
             ),
             {
                 "relation": relation_id,
@@ -782,6 +782,8 @@ class _Corpus:
                 "invalidated": invalidated_at,
                 "group": contradiction_group,
                 "label": f"Alice {predicate} {object_key}",
+                "precision": "open" if valid_until is None else "instant",
+                "witness": self.claim["a"],
             },
         )
 
@@ -842,7 +844,7 @@ class _Corpus:
             key="open_ended",
             predicate="knows",
             object_key="globex",
-            valid_from=None,
+            valid_from=_PAST,
             valid_until=None,
             ingested_at=_PAST,
         )
@@ -933,13 +935,14 @@ class _Corpus:
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
                 " subject_entity_id, statement, valid_from, valid_until, ingested_at,"
-                " confidence, obs_label, normalizer_version)"
+                " confidence, obs_label, normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:observation, :deployment, :subject,"
                 " 'Alice holds the title VP of Engineering.', :valid_from, NULL, :at,"
-                " 0.7, 'Alice is VP of Engineering.', 'normalizer-1')"
+                " 0.7, 'Alice is VP of Engineering.', 'normalizer-1', 'open', ARRAY[:witness]::uuid[])"
             ),
             {
                 "observation": observation_id,
+                "witness": self.claim["a"],
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.entity["alice"],
                 "valid_from": _PAST,
@@ -1333,7 +1336,7 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
         ),
         "facts_current.open_window_fact_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.facts_current"
-            " WHERE fact_id = :fact AND valid_from IS NULL AND valid_until IS NULL)",
+            " WHERE fact_id = :fact AND valid_from IS NOT NULL AND valid_until IS NULL AND valid_precision='open')",
             {"fact": corpus.fact["open_ended"]},
         ),
         "facts_current.ended_window_fact_absent": (
@@ -3002,8 +3005,8 @@ _CURRENT_AT = (
     "SELECT coalesce(array_agg(h.fact_id ORDER BY h.fact_id), '{}'::uuid[])"
     " FROM memory_v1.facts_visible_history AS h"
     " WHERE h.ingested_at <= :at AND h.invalidated_at IS NULL"
-    " AND (h.valid_from IS NULL OR h.valid_from <= :at)"
-    " AND (h.valid_until IS NULL OR h.valid_until > :at)"
+    " AND h.valid_from <= :at"
+    " AND (h.valid_precision='open' OR h.valid_until > :at)"
 )
 
 #: The §3.3 bitemporal as-of predicate, with the two instants kept separate.
@@ -3012,8 +3015,8 @@ _AS_OF = (
     " FROM memory_v1.facts_visible_history AS h"
     " WHERE h.ingested_at <= :believed_at"
     " AND (h.invalidated_at IS NULL OR h.invalidated_at > :believed_at)"
-    " AND (h.valid_from IS NULL OR h.valid_from <= :valid_at)"
-    " AND (h.valid_until IS NULL OR h.valid_until > :valid_at)"
+    " AND h.valid_from <= :valid_at"
+    " AND (h.valid_precision='open' OR h.valid_until > :valid_at)"
 )
 
 
@@ -3065,17 +3068,19 @@ def test_valid_from_is_inclusive_and_valid_until_is_exclusive(corpus: _Corpus) -
     assert corpus.fact["ended"] not in at_end, "valid_until is exclusive"
 
 
-def test_null_endpoints_are_open_and_future_ingestion_is_not_yet_believed(
+def test_open_end_and_future_ingestion_keep_their_separate_clocks(
     corpus: _Corpus,
 ) -> None:
-    """A null endpoint is unbounded; a fact is not current before it was learned."""
+    """An explicitly open end is unbounded; belief still starts when learned."""
     with corpus.engine.connect() as connection:
         long_ago = _scalar(connection=connection, sql=_CURRENT_AT, at=_ANCIENT)
         later = _scalar(connection=connection, sql=_CURRENT_AT, at=_MID)
         far_future = _scalar(connection=connection, sql=_CURRENT_AT, at=_FUTURE)
 
     assert list(long_ago) == [], "nothing had been ingested yet at that instant"
-    assert corpus.fact["open_ended"] in later, "a null valid_from is unbounded before"
+    assert corpus.fact["open_ended"] in later, (
+        "the known open window covers this instant"
+    )
     assert corpus.fact["open_ended"] in far_future, "a null valid_until never expires"
     assert corpus.fact["ended"] in later
     assert corpus.fact["ended"] not in far_future
@@ -3466,7 +3471,7 @@ def test_withdrawal_is_bound_to_fact_kind_when_uuids_collide(corpus: _Corpus) ->
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
                 " subject_entity_id, statement, valid_from, ingested_at,"
-                " confidence, obs_label, normalizer_version)"
+                " confidence, obs_label, normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:fact, :deployment, :subject, 'Colliding observation',"
                 " :at, :at, 0.7, 'Colliding observation', 'normalizer-1')"
             ),

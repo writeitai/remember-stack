@@ -1,6 +1,6 @@
 # Alternative: current-only generated summaries
 
-**Status:** unchosen alternative to [D114 §6](../designs/mutable_fact_windows_design.md#6-profiles-and-generated-knowledge),
+**Status:** unchosen alternative to [D118 §6](../designs/mutable_fact_windows_design.md#6-profiles-and-generated-knowledge),
 2026-09-07. Not implementation authority.
 
 ## When this would win
@@ -32,6 +32,6 @@ deadline and dependency checks, with complete failure/recovery and deletion proo
 
 Entity profiles support identity resolution; historical employers and achievements
 are useful inputs. Stable date-qualified selection preserves that information
-without a wall-clock dependency. D114 therefore chooses dated content and explicit
+without a wall-clock dependency. D118 therefore chooses dated content and explicit
 fact-time queries. Current-only cached prose would add refresh and stale-read
 machinery for a product promise that is not required by that choice.

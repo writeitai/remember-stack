@@ -1300,7 +1300,7 @@ class QueryEngine:
             negative=Negative(
                 kind=NegativeKind.BOUNDARY,
                 explanation=f"{possible} additional candidate(s) have incomplete world dates; they are not confirmed matches",
-                workaround="use fact_context to inspect possible matches and their evidence",
+                workaround="use facts_context to inspect possible matches and their evidence",
             )
             if possible
             else None
@@ -1401,7 +1401,7 @@ class QueryEngine:
             negative=Negative(
                 kind=NegativeKind.BOUNDARY,
                 explanation=f"{possible} additional candidate(s) have incomplete world dates; they are not confirmed matches",
-                workaround="use fact_context to inspect possible matches and their evidence",
+                workaround="use facts_context to inspect possible matches and their evidence",
             )
             if possible
             else None

@@ -106,6 +106,7 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import PredicateBeatRuleParams
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ScopeInterestsRuleParams
+from rememberstack.spine.fact_window_readiness import fact_windows_converting
 from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -887,6 +888,13 @@ class KnowledgeControlPlane:
                 connection.commit()
                 if not released:
                     raise KnowledgeCompilationError("Plane-K commit lease was lost")
+
+    def fact_windows_converting(self, *, deployment_id: UUID) -> bool:
+        """Tell the erasure driver whether compilation is fenced by conversion."""
+        with self._engine.connect() as connection:
+            return fact_windows_converting(
+                connection=connection, deployment_id=deployment_id
+            )
 
     def compile_artifacts(
         self, *, deployment_id: UUID

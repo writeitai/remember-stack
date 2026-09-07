@@ -49,7 +49,7 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> RelationUpsert:
-        """Reject the superseded direct writer; stage through D114 fact applications."""
+        """Reject the superseded direct writer; stage through D118 fact applications."""
         raise RuntimeError(
             "direct fact writes are retired; use normalized fact applications"
         )
@@ -64,7 +64,7 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> UUID:
-        """Reject the superseded direct writer; stage through D114 fact applications."""
+        """Reject the superseded direct writer; stage through D118 fact applications."""
         raise RuntimeError(
             "direct fact writes are retired; use normalized fact applications"
         )
@@ -118,6 +118,26 @@ class FactCatalog:
             return (), ()  # Source erasure retired the application; never recreate it.
         ids = tuple(UUID(value) for value in row["result"]["changed_fact_ids"])
         return (ids, ()) if row["output_kind"] == "relation" else ((), ids)
+
+    def document_fact_ids(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
+        """Load retained facts for document projection repair, including zero-output replay."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text("""
+                SELECT 'relation' AS kind,relation_id AS id FROM relation_evidence
+                WHERE deployment_id=:dep AND doc_id=:doc
+                UNION
+                SELECT 'observation',observation_id FROM observation_evidence
+                WHERE deployment_id=:dep AND doc_id=:doc ORDER BY kind,id
+            """),
+                {"dep": deployment_id, "doc": doc_id},
+            ).all()
+        return (
+            tuple(row.id for row in rows if row.kind == "relation"),
+            tuple(row.id for row in rows if row.kind == "observation"),
+        )
 
     def relations_for_labeling(
         self,
@@ -305,7 +325,7 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> None:
-        """Reject the superseded direct writer; stage through D114 fact applications."""
+        """Reject the superseded direct writer; stage through D118 fact applications."""
         raise RuntimeError(
             "direct fact writes are retired; use normalized fact applications"
         )

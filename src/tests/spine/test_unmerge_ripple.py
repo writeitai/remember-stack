@@ -21,15 +21,11 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClusterConfig
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityClusterer
-from rememberstack.spine import FactCatalog
-from rememberstack.spine import SupersessionAdjudicator
-from rememberstack.spine import SupersessionSettings
 from rememberstack.spine.settings import load_database_settings
 from tests.database_reset import reset_database
 
@@ -111,31 +107,65 @@ def _entity(*, engine: Engine, name: str) -> UUID:
     return entity_id
 
 
-def _relation(*, facts: FactCatalog, subject: UUID, object_: UUID) -> UUID:
-    """One works_for relation."""
-    return facts.upsert_relation(
+def _relation(
+    *, engine: Engine, subject: UUID, object_: UUID, prior: UUID | None = None
+) -> UUID:
+    """Apply a source-grounded job change through the ordinary fact writer."""
+    from tests.fact_application_support import WriterCase
+
+    case = WriterCase(
+        engine=engine,
         deployment_id=_DEPLOYMENT_ID,
-        subject_entity_id=subject,
-        predicate="works_for",
-        object_entity_id=object_,
-        claim_id=uuid4(),
-        doc_id=uuid4(),
-        normalizer_version="test",
-    ).relation_id
+        subject_id=subject,
+        object_id=object_,
+    )
+    day = 12 if prior else 10
+    claim, app = case.stage(day=day, kind="relation", predicate="works_for")
+    updates = (
+        []
+        if prior is None
+        else [
+            {
+                "target": {"fact_id": str(prior)},
+                "window": {
+                    "window": {
+                        "valid_from": "2022-05-10T00:00:00Z",
+                        "valid_until": "2022-05-12T00:00:00Z",
+                        "valid_precision": "day",
+                    },
+                    "supporting_claim_ids": [str(claim)],
+                },
+            }
+        ]
+    )
+    case.decide(
+        decision={
+            "target": {"new_handle": "job"},
+            "new_facts": [{"handle": "job", "assertion_application_id": str(app)}],
+            "window": {
+                "window": {
+                    "valid_from": f"2022-05-{day:02d}T00:00:00Z",
+                    "valid_precision": "open",
+                },
+                "supporting_claim_ids": [str(claim)],
+            },
+            "updates": updates,
+        }
+    )
+    return UUID(case.apply(app=app)["fact_id"])
 
 
 def test_merged_identity_blocks_across_endpoints_and_unmerge_flags_the_ripple(
     database_engine: Engine,
 ) -> None:
     """The full spike scenario, end to end."""
-    facts = FactCatalog(engine=database_engine)
     variant = _entity(engine=database_engine, name="R. Klein")
     canonical = _entity(engine=database_engine, name="Robert Klein")
     oldco = _entity(engine=database_engine, name="OldCo")
     newco = _entity(engine=database_engine, name="NewCo")
 
     # the absorbed identity's employment spell, pre-merge:
-    old_spell = _relation(facts=facts, subject=variant, object_=oldco)
+    old_spell = _relation(engine=database_engine, subject=variant, object_=oldco)
 
     # merge variant -> canonical (as the clusterer would):
     clusterer = EntityClusterer(
@@ -161,21 +191,8 @@ def test_merged_identity_blocks_across_endpoints_and_unmerge_flags_the_ripple(
 
     # under the MERGED identity, a new employer for the survivor supersedes
     # the absorbed endpoint's spell — identity-set blocking finds it:
-    provider = FakeModelProvider(
-        generate_payloads={
-            "SupersessionVerdict": {
-                "outcome": "supersede",
-                "confidence": 0.95,
-                "rationale": "one person changed jobs",
-            }
-        }
-    )
-    adjudicator = SupersessionAdjudicator(
-        engine=database_engine, model_provider=provider, settings=SupersessionSettings()
-    )
-    new_spell = _relation(facts=facts, subject=canonical, object_=newco)
-    adjudicator.adjudicate_new_relation(
-        deployment_id=_DEPLOYMENT_ID, relation_id=new_spell
+    new_spell = _relation(
+        engine=database_engine, subject=canonical, object_=newco, prior=old_spell
     )
     with database_engine.connect() as connection:
         closed = connection.execute(
@@ -214,7 +231,6 @@ def test_same_identity_closures_do_not_ripple(database_engine: Engine) -> None:
     STRADDLE the split identities ripple."""
     from rememberstack.spine.clustering import apply_merge
 
-    facts = FactCatalog(engine=database_engine)
     survivor = _entity(engine=database_engine, name="Alice")
     variant = _entity(engine=database_engine, name="A. Nova")
     a_co = _entity(engine=database_engine, name="ACo")
@@ -233,20 +249,8 @@ def test_same_identity_closures_do_not_ripple(database_engine: Engine) -> None:
             decided_by="auto",
         )
     assert merge_id is not None
-    _relation(facts=facts, subject=survivor, object_=a_co)
-    second = _relation(facts=facts, subject=survivor, object_=b_co)
-    provider = FakeModelProvider(
-        generate_payloads={
-            "SupersessionVerdict": {
-                "outcome": "supersede",
-                "confidence": 0.95,
-                "rationale": "job change",
-            }
-        }
-    )
-    SupersessionAdjudicator(
-        engine=database_engine, model_provider=provider, settings=SupersessionSettings()
-    ).adjudicate_new_relation(deployment_id=_DEPLOYMENT_ID, relation_id=second)
+    first = _relation(engine=database_engine, subject=survivor, object_=a_co)
+    _relation(engine=database_engine, subject=survivor, object_=b_co, prior=first)
 
     EntityClusterer(
         engine=database_engine,
@@ -275,7 +279,6 @@ def test_nested_split_members_are_flagged(database_engine: Engine) -> None:
     C (merged into B) — the ripple scan walks the FULL post-split closures."""
     from rememberstack.spine.clustering import apply_merge
 
-    facts = FactCatalog(engine=database_engine)
     a = _entity(engine=database_engine, name="A Root")
     b = _entity(engine=database_engine, name="B Mid")
     c = _entity(engine=database_engine, name="C Leaf")
@@ -283,7 +286,7 @@ def test_nested_split_members_are_flagged(database_engine: Engine) -> None:
     newco = _entity(engine=database_engine, name="NewCo2")
 
     # C's spell exists; C merges into B, then B merges into A:
-    c_spell = _relation(facts=facts, subject=c, object_=oldco)
+    c_spell = _relation(engine=database_engine, subject=c, object_=oldco)
     with database_engine.begin() as connection:
         apply_merge(
             connection=connection,
@@ -309,19 +312,7 @@ def test_nested_split_members_are_flagged(database_engine: Engine) -> None:
 
     # under the A=B=C identity, A's new employer closes C's spell (the
     # fully-recursive identity block finds the nested member):
-    provider = FakeModelProvider(
-        generate_payloads={
-            "SupersessionVerdict": {
-                "outcome": "supersede",
-                "confidence": 0.95,
-                "rationale": "one person moved on",
-            }
-        }
-    )
-    new_spell = _relation(facts=facts, subject=a, object_=newco)
-    SupersessionAdjudicator(
-        engine=database_engine, model_provider=provider, settings=SupersessionSettings()
-    ).adjudicate_new_relation(deployment_id=_DEPLOYMENT_ID, relation_id=new_spell)
+    _relation(engine=database_engine, subject=a, object_=newco, prior=c_spell)
     with database_engine.connect() as connection:
         closed = connection.execute(
             text("SELECT valid_until FROM relations WHERE relation_id = :r"),

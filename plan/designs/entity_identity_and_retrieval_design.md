@@ -1,6 +1,6 @@
 # Entity identity and retrieval — design (binding)
 
-> **D114 amendment (2026-09-07; effective when merged).** Profiles are date-qualified historical summaries with mutation-driven repair (§6). D110 temporal deadline/certificate requirements are withdrawn; stale mutation-derived inputs still require existing revalidation.
+> **D118 amendment (2026-09-07; effective when merged).** Profiles are date-qualified historical summaries with mutation-driven repair (§6). D110 temporal deadline/certificate requirements are withdrawn; stale mutation-derived inputs still require existing revalidation.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

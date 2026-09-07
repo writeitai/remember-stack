@@ -1,11 +1,11 @@
 # Observation application receipts and support provenance (D113)
 
-> **D114 supersession (2026-09-07; effective when merged).** D113 storage, proof graph and incorporated SQL are withdrawn. D114 retains the requirements for assertion provenance, atomic support changes and stable retry results.
+> **D118 supersession (2026-09-07; effective when merged).** D113 storage, proof graph and incorporated SQL are withdrawn. D118 retains the requirements for assertion provenance, atomic support changes and stable retry results.
 > The [mutable fact window design](mutable_fact_windows_design.md) is the current
 > authority. The text
 > below is historical rationale, including any old “binding” or “required” labels.
 
-Historical status: superseded by D114. This formerly completed D110 §2's
+Historical status: superseded by D118. This formerly completed D110 §2's
 observation prepare/apply storage contract and amends D90's detailed locking and
 staging rules. It does not establish implementation or release readiness.
 [Analysis](../analysis/observation_temporal_applications.md) explains the gap and

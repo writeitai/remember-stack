@@ -1193,7 +1193,7 @@ _CROSS_IDENTITY_CLOSURES = text(
     JOIN relations closed ON closed.relation_id = a.relation_id
     JOIN relations superseding ON superseding.relation_id = a.related_relation_id
     WHERE a.deployment_id = :deployment_id
-      AND a.outcome = 'supersede'
+      AND a.outcome IN ('supersede', 'update')
       AND a.superseded_by IS NULL
       AND ((closed.subject_entity_id IN (SELECT entity_id FROM left_side)
             AND superseding.subject_entity_id

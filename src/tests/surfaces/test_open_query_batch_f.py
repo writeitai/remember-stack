@@ -690,7 +690,7 @@ def test_skill_opens_with_bound_headline_and_examples() -> None:
             mounts=None,
         )
     )
-    assert skill.version == CONSUMPTION_SKILL_VERSION == "3.0.0"
+    assert skill.version == CONSUMPTION_SKILL_VERSION == "4.0.0"
     assert skill.content.startswith("---\n")
     # first prose after the skill title block is the bound headline
     assert TWO_LAYER_HEADLINE in skill.content
@@ -966,7 +966,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
+        == "497bb97a6f325cc5ad599d398a8748447e140d3d457d0b29fc2c0aeced4ce4e5"
     )
 
 

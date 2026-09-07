@@ -1,6 +1,6 @@
 """Destructive reset of the explicitly configured disposable integration database.
 
-D114 cannot safely downgrade a populated store back to source-time windows.
+D118 cannot safely downgrade a populated store back to source-time windows.
 Tests that need a fresh schema therefore discard their disposable schema instead
 of weakening the production migration's restore requirement. Earlier revision
 fixtures still exercise their ordinary Alembic downgrades.
@@ -15,7 +15,7 @@ from rememberstack.spine.settings import load_database_settings
 
 
 def reset_database(*, config: Config) -> None:
-    """Discard test data at D114; otherwise exercise the prior downgrade chain."""
+    """Discard test data at D118; otherwise exercise the prior downgrade chain."""
     url = (
         config.get_main_option("sqlalchemy.url")
         or load_database_settings().sqlalchemy_url()
@@ -33,7 +33,12 @@ def reset_database(*, config: Config) -> None:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one_or_none()
-            if revision == "p9_28_0049":
+            if (
+                revision == "p9_30_0051"
+                or connection.execute(
+                    text("SELECT to_regclass('public.fact_applications') IS NOT NULL")
+                ).scalar_one()
+            ):
                 connection.execute(text("DROP SCHEMA IF EXISTS memory_v1 CASCADE"))
                 connection.execute(
                     text("DROP SCHEMA IF EXISTS rememberstack_graph_internal CASCADE")

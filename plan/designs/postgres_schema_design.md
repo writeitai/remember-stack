@@ -1708,7 +1708,7 @@ CREATE TABLE relations (
   CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from),
   CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at),  -- can't un-learn before learning
   CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4) AND (embedding IS NULL OR fact_label IS NOT NULL)),
-  -- SUPERSEDED BY D114: do not copy this EXCLUDE into the replacement schema.
+  -- SUPERSEDED BY D118: do not copy this EXCLUDE into the replacement schema.
   -- Distinct adjudicated identities may overlap; uniqueness belongs to application receipts.
   -- At most one BELIEVED, non-contradictory relation per (s,p,o) with overlapping world-time:
   EXCLUDE USING gist (
@@ -2746,7 +2746,7 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
     as-of query demand at target scale. Only a subsequent binding design may introduce a finite
     hot horizon and truthful fallback contract; this spike supplies evidence, not a hidden value.
 
-## D114 amendment — one mutable fact window
+## D118 amendment — one mutable fact window
 
 [Mutable fact windows](mutable_fact_windows_design.md) replaces the former
 D110/D113 schema incorporation. Their SQL appendices are retained as withdrawn

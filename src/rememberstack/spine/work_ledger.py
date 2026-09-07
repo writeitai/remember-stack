@@ -1079,7 +1079,7 @@ def _enqueue_entity_obs_flush_fanout(
         or obs_flush_component_version != FACT_FLUSH_VERSION
     ):
         raise ValueError(
-            "obsolete fact application generation cannot open the D114 barrier"
+            "obsolete fact application generation cannot open the D118 barrier"
         )
     register_version_applications_on(
         connection=connection,

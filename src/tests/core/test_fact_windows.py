@@ -1,4 +1,4 @@
-"""D114: partial dates stay unknown, and historical facts remain retrievable."""
+"""D118: partial dates stay unknown, and historical facts remain retrievable."""
 
 from datetime import datetime
 from datetime import timedelta

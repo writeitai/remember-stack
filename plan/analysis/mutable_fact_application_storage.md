@@ -1,7 +1,7 @@
-# Concrete application storage for D114
+# Concrete application storage for D118
 
 **Status:** non-binding implementation analysis, 2026-09-07.
-**Baseline:** main `8fad369d` plus the reviewed D114 design. This is replacement
+**Baseline:** main `8fad369d` plus the reviewed D118 design. This is replacement
 work, not revival of the archived framework.
 
 ## What the existing implementation already supplies
@@ -85,7 +85,7 @@ and every member's completion, including relation outputs.
 
 ## Migration and deletion costs
 
-D114 changes the meaning of existing fact dates. Conversion must run with serving
+D118 changes the meaning of existing fact dates. Conversion must run with serving
 and ordinary writers stopped; source-time values cannot simply be called world
 time. The fact window defaults to unknown until an existing adjudication or
 admissible source window actually grounds it. Current consumers and fact writers
@@ -105,7 +105,7 @@ Existing hard-forget non-resurrection and shared-fact rules still apply.
 The binding companion must pin exact DDL, output shape, support-move semantics,
 barrier membership, lock order, fingerprint content and deletion operations.
 Antigravity and Grok review it before replacement write-path code is accepted.
-The already implemented pure window value/math tests exercise approved D114
+The already implemented pure window value/math tests exercise approved D118
 semantics independently of this not-yet-enabled application path.
 
 
@@ -237,3 +237,40 @@ and created IDs cannot recover an updated predecessor or the source of a support
 move. This is the same receipt feeding the existing work ledger, not another
 payload store. The contract's earlier closed-field sentence has been corrected to
 include this already-reviewed repair inventory.
+
+## Rebase and final integration findings, 2026-09-07
+
+Main acquired D114–D117 and migrations through `p9_29_0050` during this work.
+The mutable-fact decision is now D118 and its migration is `p9_30_0051`.
+Main's renamed context operations remain intact; the new date contract advances
+LoCoMo from main's Full-v26 to Full-v27. Model-binding provenance names the actual
+fact adjudicator rather than the retired observation/supersession ladders.
+
+Grok round 3 closed the earlier premature-cutover findings: current-generation
+failed work blocks verification, source-less claims are reported without rolling
+back other seeded claims, and K reads/publication remain fenced during conversion.
+It also caught a test-composition gap: the conversion rig omitted the fact catalog
+from the downstream handler. That dependency is now identical to production, and
+acceptance must show document-label follow-up without testimony reconciliation.
+A retained claim can normalize to no assertions; document repair therefore also
+refreshes profiles from its retained fact links, independent of new applications.
+
+The remaining K/forget finding was valid but its suggested fix was insufficient.
+Skipping K compilation while conversion is closed avoids a recovery deadlock, but
+the actual Git purger retains current bytes when rewriting history. Simply skipping
+would restore forgotten text in a new commit. The existing K driver instead removes
+affected machine-owned bodies through its ordinary checkout/publish port and commit
+lease. PostgreSQL erasure has already cleared their content attestations and left
+them stale. The normal purger can then erase history without restoring those bodies;
+normal compilation recreates them after conversion. Authored/curation preflight
+remains in force. No new storage, port, scheduler or alternate fact reader is needed.
+
+Integration also found two existing behaviors missing from the replacement writer:
+new relations must increment predicate usage once per identity, and cross-identity
+window edits must remain visible to the existing unmerge review scan. The writer
+now records its related fact in the existing transcript column; unmerge includes
+ordinary `update` rows as well as historical `supersede` rows. It flags review,
+without automatically undoing dates. Tests cover ordinary retry, evidence attachment,
+recursive merged members and same-identity edits. Unreachable old mutation bodies
+are removed; rejected compatibility entrypoints and the historical read-only pair
+diagnostic remain. That diagnostic is not evidence of replacement-writer quality.

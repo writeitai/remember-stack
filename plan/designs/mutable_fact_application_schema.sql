@@ -1,4 +1,4 @@
--- D114 target storage shape; NOT a standalone migration or automatic converter.
+-- D118 target storage shape; NOT a standalone migration or automatic converter.
 -- Expansion/conversion/defaults/checks must follow contract section 7 atomically
 -- with respect to serving. Nullable expansion columns below are finalized there.
 -- Apply only with serving/intake/workers stopped and legacy staging drained.

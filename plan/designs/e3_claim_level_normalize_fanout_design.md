@@ -1,6 +1,6 @@
 # Design: claim-level E3 normalize fan-out
 
-> **D114 amendment (2026-09-07; effective when merged).** Stage relations before identity and use ordinary atomic application with safe retry (§§3–4). D110 storage/barrier specifications are withdrawn; replacement concrete storage is gated by the delivery plan.
+> **D118 amendment (2026-09-07; effective when merged).** Stage relations before identity and use ordinary atomic application with safe retry (§§3–4). D110 storage/barrier specifications are withdrawn; replacement concrete storage is gated by the delivery plan.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

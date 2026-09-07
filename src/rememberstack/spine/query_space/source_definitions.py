@@ -65,7 +65,7 @@ from rememberstack.spine.migrations.versions.p9_27_0048_query_space_canonical_bo
 from rememberstack.spine.migrations.versions.p9_27_0048_query_space_canonical_bounds import (
     CLAIMS_CLOCK_COMMENT_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_28_0049_mutable_fact_windows import (
+from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows import (
     FACT_WINDOWS_VIEW_DDL,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition

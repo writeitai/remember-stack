@@ -1,4 +1,4 @@
-"""D114 durable normalization and ordered fact-application preparation.
+"""D118 durable normalization and ordered fact-application preparation.
 
 Entity units remain membership/barrier work. Only their canonical subject's
 least admitted application may be prepared while inference runs without locks.

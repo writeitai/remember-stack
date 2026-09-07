@@ -1415,7 +1415,7 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
         forget_id=_FORGET_ID,
         requested_at=_NOW,
     )
-    # Simulate restoring a store with D114 rows under an earlier portable inventory.
+    # Simulate restoring a store with D118 rows under an earlier portable inventory.
     own, surviving = uuid4(), uuid4()
     with seeded_engine.begin() as connection:
         for claim, app, phrase in (
@@ -1527,3 +1527,49 @@ def test_conversion_seeds_historical_claims_and_keeps_partial_store_closed(
             ).scalar_one()
             is None
         )
+
+
+def test_conversion_reports_orphans_without_blocking_other_claims(
+    seeded_engine: Engine,
+) -> None:
+    """Missing source lineage blocks cutover, but does not roll back valid work."""
+    from rememberstack.spine.fact_window_conversion import FactWindowConversion
+
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text("DELETE FROM chunk_claims WHERE claim_id=:claim"),
+            {"claim": _TARGET_CLAIM_ID},
+        )
+    conversion = FactWindowConversion(engine=seeded_engine)
+    result = conversion.seed_batch(deployment_id=_DEPLOYMENT_ID)
+    assert result["created"] == 1
+    assert result["missing_source_claims"] == 1
+    assert result["enumeration_complete"]
+    report = conversion.verify(deployment_id=_DEPLOYMENT_ID)
+    assert not report["ready"]
+    problems = report["problems"]
+    assert isinstance(problems, dict)
+    assert problems["missing_source_claims"] == 1
+
+
+def test_conversion_refuses_an_unsupported_serving_generation(
+    seeded_engine: Engine,
+) -> None:
+    """A nonnull future generation is not proof that this binary can serve it."""
+    from rememberstack.spine.fact_window_conversion import FactWindowConversion
+
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation='future' WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+    with pytest.raises(RuntimeError, match="serving and intake remain closed"):
+        FactWindowConversion(engine=seeded_engine).verify(deployment_id=_DEPLOYMENT_ID)

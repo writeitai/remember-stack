@@ -1,4 +1,4 @@
-"""Atomic ordinary fact identity, evidence, and single-window mutations (D114)."""
+"""Atomic ordinary fact identity, evidence, and single-window mutations (D118)."""
 
 from datetime import datetime
 from typing import Any
@@ -150,6 +150,25 @@ def apply_fact_decision(
         )
         created.append(fact_id)
         changed.add(fact_id)
+    if kind == "relation":
+        # Count identities, not evidence attachments or retried receipts. Lock
+        # registry rows in lexical order when one split creates several facts.
+        predicates = [
+            assertions[new.assertion_application_id]["assertion"]["predicate"]
+            for new in decision.new_facts
+        ]
+        for predicate in sorted(set(predicates)):
+            connection.execute(
+                text(
+                    "UPDATE predicates SET usage_count=usage_count+:count "
+                    "WHERE deployment_id=:deployment_id AND predicate=:predicate"
+                ),
+                {
+                    **params,
+                    "predicate": predicate,
+                    "count": predicates.count(predicate),
+                },
+            )
     target = resolve_fact_reference(
         reference=decision.target, application_id=application_id
     )
@@ -338,9 +357,9 @@ def apply_fact_decision(
         }
         connection.execute(
             text(f"""INSERT INTO {kind}_adjudications(adjudication_id,deployment_id,{id_column},
-            outcome,method,confidence,triggering_claim_id,features,adjudicator_version,consumed_claim_ids)
+            outcome,method,confidence,triggering_claim_id,features,adjudicator_version,consumed_claim_ids,related_{id_column})
             VALUES (:adjudication_id,:deployment_id,:fact_id,CAST(:outcome AS adjudication_outcome),'small_model',
-                    :confidence,:claim_id,CAST(:features AS jsonb),:adjudicator_version,:consumed_claim_ids)
+                    :confidence,:claim_id,CAST(:features AS jsonb),:adjudicator_version,:consumed_claim_ids,:related_fact_id)
         """),
             {
                 **params,
@@ -357,6 +376,7 @@ def apply_fact_decision(
                 "features": canonical_json(features),
                 "adjudicator_version": snapshot["adjudicator_version"],
                 "consumed_claim_ids": sorted(claims),
+                "related_fact_id": target if fact_id != target else None,
             },
         )
     connection.execute(

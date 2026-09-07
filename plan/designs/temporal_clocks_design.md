@@ -1,19 +1,19 @@
 # Temporal Clocks — world-time flows from the claim's window (Design)
 
-> **D114 supersession (2026-09-07; effective when merged).** D107 fact kinds, dual windows, seed/matching/correction and consumer rules are superseded. Canonical arithmetic (§5), extraction vocabulary (§6) and the already published query-space contract remain in force.
+> **D118 supersession (2026-09-07; effective when merged).** D107 fact kinds, dual windows, seed/matching/correction and consumer rules are superseded. Canonical arithmetic (§5), extraction vocabulary (§6) and the already published query-space contract remain in force.
 > The [mutable fact window design](mutable_fact_windows_design.md) is the current
 > authority. Except for the explicitly retained D107 portions above, the text
 > below is historical rationale, including any old “binding” or “required” labels.
 
-**Historical status:** D107, formerly amended by D110; see D114 precedence above.
+**Historical status:** D107, formerly amended by D110; see D118 precedence above.
 
-> **Historical D110 amendment (2026-09-07; superseded by D114).**
+> **Historical D110 amendment (2026-09-07; superseded by D118).**
 > [Temporal write and lifecycle design](temporal_write_and_lifecycle_design.md)
 > closes the four §12 contracts: assertion-grain ordered relation writes,
 > autonomous guarded corrections under D108, checked cache freshness and D74
 > sanitized replay checkpoints. It also adds the `erased` endpoint basis and
 > qualifies continuous-ingest seed ordering. Its explicit amendments take
-> precedence in that historical revision only; D114 now governs fact semantics.
+> precedence in that historical revision only; D118 now governs fact semantics.
 
 **Date:** 2026-09-03 (sixth revision the same day, after five independent
 Codex design reviews; §10 records the original withdrawn alternatives;

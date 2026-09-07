@@ -347,7 +347,6 @@ def test_handle_claim_grain_returns_barrier() -> None:
             return frozenset()
 
     class _Facts:
-
         def __init__(self) -> None:
             from tests.workers.e3_test_doubles import RecordingApplications
 
@@ -438,5 +437,5 @@ def test_handle_claim_grain_returns_barrier() -> None:
     assert outcome.follow_up == ()
 
 
-# D114 replaces source-time heuristics and source-inspection atomicity checks.
+# D118 replaces source-time heuristics and source-inspection atomicity checks.
 # Real transaction, stale-input, retry and split proofs: test_fact_application_writer.py.

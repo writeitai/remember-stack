@@ -323,6 +323,10 @@ class _E3Rig:
         registry.register(
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
+                facts=FactCatalog(engine=engine),
+                chunk_catalog=chunk_catalog,
+                claim_catalog=claim_catalog,
+                chunker_version=chunker_version(params=_PARAMS),
                 adjudicator=SupersessionAdjudicator(
                     engine=engine,
                     model_provider=self.provider,
@@ -929,7 +933,11 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
             ),
             {"id": claims[0]},
         )
-        connection.execute(text("UPDATE relations SET ingested_at='2026-01-01Z',invalidated_at='2026-08-01Z'"))
+        connection.execute(
+            text(
+                "UPDATE relations SET ingested_at='2026-01-01Z',invalidated_at='2026-08-01Z'"
+            )
+        )
         connection.execute(
             text(
                 "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
@@ -941,6 +949,36 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
     assert not conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
     before = len(rig.provider.generated_prompts)
     rig.run_chain()
+    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+
+    with rig.engine.begin() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM processing_state WHERE stage='reconcile' AND component_version NOT LIKE '%-old'"
+                )
+            ).scalar_one()
+            == 0
+        )
+        changed = connection.execute(
+            text(
+                "UPDATE processing_state SET status='dead_letter' WHERE stage='adjudicate_supersession' AND component_version=:version"
+            ),
+            {"version": ADJUDICATOR_VERSION},
+        ).rowcount
+        assert changed > 0
+    blocked = conversion.verify(deployment_id=_DEPLOYMENT_ID)
+    assert not blocked["ready"]
+    problems = blocked["problems"]
+    assert isinstance(problems, dict)
+    assert problems["unfinished_work"] > 0
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status='succeeded' WHERE stage='adjudicate_supersession' AND component_version=:version"
+            ),
+            {"version": ADJUDICATOR_VERSION},
+        )
     assert conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
     assert all(
         "Claimify" not in request for request in rig.provider.generated_prompts[before:]

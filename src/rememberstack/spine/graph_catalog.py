@@ -10,7 +10,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-GRAPH_HELPER_CONTRACT_VERSION: Final = "rememberstack.live_graph_helper/v2:chosen-window"
+GRAPH_HELPER_CONTRACT_VERSION: Final = (
+    "rememberstack.live_graph_helper/v2:chosen-window"
+)
 
 _EXPECTED_EXTENSION_VERSIONS: Final = {
     "pg_partman": "5.5.0",
