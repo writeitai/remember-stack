@@ -105,3 +105,25 @@ unit, surfaces and adapters passed; contract smoke and Compose retained the
 same startup gap. The following startup change replaces that direct path with
 the actual converter rather than bypassing its guard. That new change requires
 its own CI and Antigravity review.
+
+## Round four and startup CI findings
+
+Antigravity completed its review of `ec21eb23` with **scoped approval** of
+startup, empty bootstrap, exact constraint checks and finalization. Output:
+`/tmp/rs-t1-startup-antigravity-r4.log`. It ran Ruff, targeted Pyright, the 90
+temporal/profile cases, and documentation typechecking. It explicitly retained
+the operator obligation to stop old binaries and the unfinished runtime scope.
+
+[CI34070676550](https://github.com/writeitai/remember-stack/actions/runs/34070676550)
+passed contract smoke, quality, unit, surfaces, adapters and the docs build.
+Workers reported 629 passes and one failure: a repeated full-schema teardown
+reused a pooled statement with a dropped enum OID. The isolated upgrade fixture
+now disposes its pool before rebuilding the schema. Production upgrade never
+performs that full teardown. All other startup tests, including the pre-C drain
+proof omitted locally, passed on PostgreSQL19.
+
+Compose completed fresh startup, the zero-cost pipeline and gated restart. Its
+final assertion still expected the old `p9_27_0048` head instead of `p9_30_0051`.
+The assertion now names the actual head and additionally checks the explicit
+completed zero-row conversion and fact-generation certificate. No runtime
+guard or lifecycle assertion was removed. Updated CI remains required.

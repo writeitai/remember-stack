@@ -57,6 +57,9 @@ def _config(*, engine: Engine) -> Config:
 @pytest.fixture(autouse=True)
 def conversion_boundary(database_engine: Engine) -> None:
     """Start every failure/recovery scenario at a fresh committed C milestone."""
+    # A full schema teardown replaces enum OIDs. Do not reuse pooled prepared
+    # statements from the preceding test's different physical schema.
+    database_engine.dispose()
     config = _config(engine=database_engine)
     command.downgrade(config=config, revision="base")
     command.upgrade(config=config, revision=CONVERSION_SCHEMA_REVISION)

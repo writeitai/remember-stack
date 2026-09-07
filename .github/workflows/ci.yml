@@ -371,7 +371,14 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_27_0048'
+            'SELECT version_num FROM alembic_version')" = 'p9_30_0051'
+          test "$(docker compose --env-file .env.example exec -T postgres \
+            psql -U rememberstack -d rememberstack -Atc \
+            "SELECT count(*) FROM temporal_fact_generations g
+             JOIN temporal_conversion_runs c USING (deployment_id, conversion_id)
+             WHERE g.generation = 'temporal-facts-d107-d110-1'
+               AND c.generation = g.generation AND c.state = 'complete'
+               AND c.expected_relations = 0 AND c.expected_observations = 0")" = '1'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
