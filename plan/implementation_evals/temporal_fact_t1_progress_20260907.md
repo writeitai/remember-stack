@@ -177,3 +177,39 @@ old binaries participate. Full runtime generation/serving gates, complete
 staging and writer participation, corrections, caches, hard forget/replay,
 readiness, T.2/T.3/T.5 and release remain unfinished. This startup implementation
 does not certify those remaining mechanisms.
+
+## Complete normalization publication
+
+The typed publication catalog now records one complete resolved answer per
+claim and normalizer generation: all distinct relation triples, all accepted
+observations, and an explicit accepted/empty/soft-drop disposition. It snapshots
+immutable source inputs before inference, revalidates them before publication,
+resolves identity redirects under the identity epoch, and applies D41 kind
+precedence. One transaction writes the receipt and every relation assertion;
+it does not insert facts or attach evidence. Competing accepted attempts reuse
+the first complete receipt without mixing outputs or replacing empty results.
+Reads verify both the output digest/counts and the actual assertion set.
+
+Staging now has a shared admission/identity context. The fact journal retains
+its nonempty complete-block requirement; no empty-block escape was introduced
+to authorize fact mutation. Its existing admission and identity lock prefix was
+extracted without changing maintenance authority or lock modes.
+
+Eleven private PostgreSQL15 publication cases pass, including concurrent
+different outputs, rollback after the first assertion, missing-assertion
+refusal, exact generation reuse, empty and soft-drop receipts, stale source
+refusal, foreign deployment identity refusal and redirect deduplication. The
+local probe includes actual source/table constraints and temporal finalization,
+not the full supported migration graph. The 38 existing journal/converter
+database cases and 90 temporal/profile pure cases still pass after extracting
+the admission prefix. Ruff, targeted Pyright, import boundaries and inventory
+checks pass. The new module requires its own PostgreSQL19 CI and scoped review.
+
+This catalog is not yet called by the runtime normalizer. The next integration
+must replace immediate relation upserts with complete publication, materialize
+observation inputs from receipts at the closed version barrier (including D56
+reused claims), then create relation block units after observation completion.
+Ordered relation admission/application and all remaining authority participants
+remain required. The old serial compatibility paths do not establish T.1
+completion. No normalizer or LoCoMo generation is rolled by this inactive
+catalog alone; the observable integration must roll them as the plan requires.

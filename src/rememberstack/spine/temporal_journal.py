@@ -116,6 +116,56 @@ def temporal_write(
             yield session
 
 
+@contextmanager
+def temporal_identity_admission(
+    *, connection: Connection, deployment_id: UUID
+) -> Iterator[None]:
+    """Fence staged source inputs under identity stability, without authorizing fact mutation.
+
+    Normalization has no selected fact or candidate block yet. Fact writers
+    still require temporal_write and its complete nonempty block footprint.
+    """
+    if not connection.in_transaction():
+        raise TemporalWriteConflict(
+            "temporal admission requires an explicit transaction"
+        )
+    with connection.begin_nested():
+        _lock_admission_and_identity(
+            connection=connection,
+            deployment_id=deployment_id,
+            maintenance=None,
+            authority_id=None,
+            identity_write=False,
+        )
+        yield
+
+
+def _lock_admission_and_identity(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    maintenance: Literal["conversion", "forget"] | None,
+    authority_id: UUID | None,
+    identity_write: bool,
+) -> None:
+    """Acquire the shared prefix of the staging and fact-write lock protocols."""
+    _lock_admission(
+        connection=connection,
+        deployment_id=deployment_id,
+        maintenance=maintenance,
+        authority_id=authority_id,
+    )
+    lock_identity = (
+        "pg_advisory_xact_lock"
+        if identity_write or maintenance == "forget"
+        else "pg_advisory_xact_lock_shared"
+    )
+    connection.execute(
+        text(f"SELECT {lock_identity}(hashtextextended(:key, 0))"),
+        {"key": f"{deployment_id}:identity-epoch"},
+    )
+
+
 def _lock_sources(
     *,
     connection: Connection,
@@ -239,20 +289,12 @@ def _temporal_write_locked(
         raise TemporalWriteConflict(
             "new facts must belong to the declared fact lock set"
         )
-    _lock_admission(
+    _lock_admission_and_identity(
         connection=connection,
         deployment_id=deployment_id,
         maintenance=maintenance,
         authority_id=authority_id,
-    )
-    lock_identity = (
-        "pg_advisory_xact_lock"
-        if identity_write or maintenance == "forget"
-        else "pg_advisory_xact_lock_shared"
-    )
-    connection.execute(
-        text(f"SELECT {lock_identity}(hashtextextended(:key, 0))"),
-        {"key": f"{deployment_id}:identity-epoch"},
+        identity_write=identity_write,
     )
     for block in blocks:
         root = _canonical_subject(
