@@ -17,6 +17,13 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 - Testimony currency and lineage-based evidence counting when documents change or extractors re-run
 - Watched sources and versioned document lineages (including a local directory watcher)
 
+Facts use one mutable chosen world-time window with explicit precision. Contextual
+adjudication handles identity and date corrections together; immutable source
+claims remain available as evidence. Retrieval distinguishes confirmed temporal
+matches from incomplete-date candidates. Entity descriptions and fact labels show
+dated history, and existing stores require verified retained-claim conversion
+before serving the new meaning. See [conversion operations](/docs/deployment#converting-an-existing-fact-store-to-chosen-world-dates).
+
 ### Retrieval and agent surfaces
 
 - PostgreSQL-native search indexes, a live SQL/PGQ graph, and a browsable corpus filesystem

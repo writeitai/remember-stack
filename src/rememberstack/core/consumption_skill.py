@@ -15,7 +15,7 @@ from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
 #: Bumped for the D87 four-operation clean cut and context contracts.
-CONSUMPTION_SKILL_VERSION: Final = "3.0.0"
+CONSUMPTION_SKILL_VERSION: Final = "4.0.0"
 
 
 def render_consumption_skill(
@@ -213,6 +213,15 @@ def _time_and_media() -> str:
         "occurs;\n"
         "- `valid_from` / `valid_until` say **when a fact held in the world**;\n"
         "- `ingested_at` / `believed_at` say **when the system knew it**.\n\n"
+        "Use `time.mode=history` for biographies, achievements, and 'has ever' "
+        "questions; it includes completed intervals. Use current/at for one "
+        "instant, overlap for an interval. Fact `valid_precision` preserves "
+        "the accepted granularity. Missing endpoints stay unknown; only `open` "
+        "means an explicitly ongoing interval. A `temporal_match: possible` "
+        "result is relevant but insufficiently dated for a confirmed temporal "
+        "count. Report it separately, and never claim a top-k or truncated "
+        "response is exhaustive. Claim `asserted_at` is when the source spoke, "
+        "not a fallback fact date.\n\n"
         "Live graph traversal shares PostgreSQL authority and has no snapshot"
         " generation. Its bounded-work status still matters: inspect truncation"
         " before treating absence as exhaustive.\n\n"

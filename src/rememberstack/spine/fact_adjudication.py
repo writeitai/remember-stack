@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ModelRequest
+from rememberstack.model import ProviderCallError
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.model.fact_application import FactReference
 from rememberstack.model.fact_application import NewFact
@@ -119,16 +120,26 @@ class FactAdjudicator:
             if prepared is None:
                 return tuple(results)
             if prepared.decision is None:
-                call = self._provider.generate(
-                    request=ModelRequest(
-                        model=self._settings.model,
-                        prompt=_FACT_PROMPT.format(
-                            inputs=canonical_json(prepared.inputs)
+                try:
+                    call = self._provider.generate(
+                        request=ModelRequest(
+                            model=self._settings.model,
+                            prompt=_FACT_PROMPT.format(
+                                inputs=canonical_json(prepared.inputs)
+                            ),
+                            temperature=0.0,
                         ),
-                        temperature=0.0,
-                    ),
-                    response_type=FactApplicationDecision,
-                )
+                        response_type=FactApplicationDecision,
+                    )
+                except ProviderCallError as error:
+                    if error.usage is not None:
+                        meter.record(
+                            call_key=f"{call_key}:{prepared.application_id}:{prepared.attempt_id}:failure",
+                            tier="fact_adjudication",
+                            usage=error.usage,
+                            outcome="provider_error",
+                        )
+                    raise
                 meter.record(
                     call_key=f"{call_key}:{prepared.application_id}:{prepared.attempt_id}",
                     tier="fact_adjudication",

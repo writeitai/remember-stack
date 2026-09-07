@@ -22,7 +22,8 @@ from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 
 def test_obs_flush_version_has_entity_fanout_suffix() -> None:
     """Fan-out generation is distinct from legacy version-serial flush."""
-    assert OBS_FLUSH_VERSION.endswith(":entity-fanout-1")
+    assert ":entity-fanout-1:" in OBS_FLUSH_VERSION
+    assert e3.E3_NORMALIZER_VERSION in OBS_FLUSH_VERSION
     assert "claim-fanout-1" in OBS_FLUSH_VERSION
 
 
@@ -54,30 +55,7 @@ def test_entity_handler_returns_barrier() -> None:
     assert "entity_obs_flush_barrier" in source
 
 
-def test_entity_handler_applies_global_stream_and_row_clear() -> None:
-    """D90 §5.5: entity path drains via locked global flush, not per-unit filter."""
-    source = inspect.getsource(e3.AdjudicateObservationsHandler._handle_entity_unit)
-    assert "flush_entity_global_staging" in source
-    assert "unit_assertions" not in source
-    assert 'row["version_id"] == version_id' not in source
-    assert "_profile_refresher.refresh_many" in source
-    assert "_profile_refresher.refresh(" not in source
-
-
-def test_legacy_retry_paths_recover_stable_fact_coordinates() -> None:
-    """Cutover retries derive affected facts after idempotent writes disappear."""
-    normalize = inspect.getsource(e3.NormalizeRelationsHandler._handle_version_serial)
-    flush = inspect.getsource(
-        e3.AdjudicateObservationsHandler._handle_version_serial_legacy
-    )
-    for source in (normalize, flush):
-        assert "relation_ids_for_origin_claims" in source
-        assert "observation_ids_for_origin_claims" in source
-        assert "refresh_for_facts" in source
-    assert "entity_ids=tuple(by_entity)" not in flush
-
-
-def test_supersession_retry_refreshes_the_full_stable_relation_set() -> None:
+def test_supersession_followup_does_not_adjudicate_twice() -> None:
     """An idempotent adjudication replay still repairs a failed profile refresh."""
     relation_id = uuid4()
     closed_relation_id = uuid4()
@@ -106,7 +84,7 @@ def test_supersession_retry_refreshes_the_full_stable_relation_set() -> None:
         target_kind=ProcessingTarget.DOCUMENT_VERSION,
         target_id=uuid4(),
         stage=PipelineStage.ADJUDICATE_SUPERSESSION,
-        component_version=e3.ADJUDICATOR_VERSION,
+        component_version=e3.RELATION_APPLICATION_VERSION,
         content_hash="sha256:retry-proof",
         lane=ProcessingLane.STEADY,
         attempt=1,
@@ -116,8 +94,8 @@ def test_supersession_retry_refreshes_the_full_stable_relation_set() -> None:
     handler.handle(work=work, meter=NoopCostMeter())
     handler.handle(work=work.model_copy(update={"attempt": 2}), meter=NoopCostMeter())
 
-    assert adjudicator.calls == [relation_id, relation_id]
-    affected = tuple(sorted((relation_id, closed_relation_id), key=str))
+    assert adjudicator.calls == []
+    affected = (relation_id,)
     assert refresher.fact_refreshes == [(affected, ()), (affected, ())]
 
 
@@ -133,21 +111,6 @@ def test_profile_contention_does_not_fail_paid_e3_work() -> None:
     e3._run_profile_refresh(action=contend, call_key="profile:test")
 
     assert calls == 1
-
-
-def test_adjudicator_resplit_late_arrival() -> None:
-    """D90 §5.5.3 re-split must re-enter the ladder (cap open successor)."""
-    from rememberstack.spine import observation_adjudication
-
-    source = inspect.getsource(observation_adjudication.ObservationAdjudicator)
-    assert "_resplit_later_evidence" in source
-    assert "d90_late_arrival_resplit" in source
-    assert "flush_entity_global_staging" in source
-    # Re-split re-applies via _add_with_block so open B is capped at t3.
-    resplit = inspect.getsource(
-        observation_adjudication.ObservationAdjudicator._resplit_later_evidence
-    )
-    assert "_add_with_block" in resplit
 
 
 def test_entity_obs_flush_barrier_fields() -> None:

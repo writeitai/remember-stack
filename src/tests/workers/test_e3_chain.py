@@ -38,14 +38,14 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
 from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -65,7 +65,9 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("90000000-0000-0000-0000-000000000001")
@@ -153,7 +155,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -202,6 +204,8 @@ class _E3Rig:
 
         def route(prompt: str, type_name: str) -> dict[str, object]:
             """Serve canned chain payloads and a dynamic T4 candidate id."""
+            if type_name == "FactApplicationDecision":
+                return same_fact_application_answer(prompt=prompt)
             if type_name == "T4Selection":
                 return match_first_t4_candidate(prompt, type_name)
             return payloads[type_name]
@@ -242,10 +246,10 @@ class _E3Rig:
                 small_model="openai/gpt-5.6-luna",
             ),
             facts=FactCatalog(engine=engine),
-            observation_adjudicator=ObservationAdjudicator(
+            observation_adjudicator=FactAdjudicator(
                 engine=engine,
                 model_provider=self.provider,
-                settings=ObservationSettings(),
+                settings=FactAdjudicationSettings(),
             ),
             profile_refresher=profile_refresher,
             model_provider=self.provider,
@@ -305,10 +309,10 @@ class _E3Rig:
             stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
             handler=AdjudicateObservationsHandler(
                 facts=FactCatalog(engine=engine),
-                observation_adjudicator=ObservationAdjudicator(
+                observation_adjudicator=FactAdjudicator(
                     engine=engine,
                     model_provider=self.provider,
-                    settings=ObservationSettings(),
+                    settings=FactAdjudicationSettings(),
                 ),
                 profile_refresher=profile_refresher,
                 chunk_catalog=chunk_catalog,
@@ -339,6 +343,7 @@ class _E3Rig:
             ),
         )
         self.label_handler = LabelFactsHandler(
+            profile_refresher=profile_refresher,
             facts=FactCatalog(engine=engine),
             model_provider=self.provider,
             fact_index=self.p1,
@@ -446,7 +451,9 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
         )
         adjudications = (
             connection.execute(
-                text("SELECT outcome, method FROM observation_adjudications")
+                text(
+                    "SELECT outcome, method FROM observation_adjudications ORDER BY decided_at, adjudication_id"
+                )
             )
             .mappings()
             .all()
@@ -471,7 +478,8 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
     assert observation["statement"] == "Acme employs Alice Novak as an engineer."
     assert observation["evidence_count"] == 1
     assert [dict(a) for a in adjudications] == [
-        {"outcome": "add", "method": "novelty_gate"}
+        {"outcome": "add", "method": "small_model"},
+        {"outcome": "noop", "method": "small_model"},
     ]
 
 
@@ -833,7 +841,10 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
             .one()
         )
     assert stamped == 2
-    assert relation["fact_label"] == "Alice Novak works for Acme"
+    assert (
+        relation["fact_label"]
+        == "Alice Novak works for Acme [world time: world date unknown]"
+    )
     assert relation["fact_label_version"] is not None
     assert relation["embedded"] is True
     assert relation["embedding_model"] == "qwen/qwen3-embedding-8b"
@@ -864,3 +875,107 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
         meter=NoopCostMeter(),
     )
     assert len(rig.provider.generated_prompts) == calls
+
+
+def test_retained_store_conversion_reuses_workers_and_preserves_historical_claims(
+    rig: _E3Rig,
+) -> None:
+    """Two extractor generations in one version replay without re-extraction or reopening belief."""
+    from rememberstack.spine.fact_window_conversion import FactWindowConversion
+
+    rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="staffing.md",
+            mime="text/markdown",
+            content=_SOURCE.encode("utf-8"),
+        ),
+    )
+    rig.run_chain()
+    with rig.engine.begin() as connection:
+        original_facts = set(
+            connection.execute(text("SELECT relation_id FROM relations")).scalars()
+        )
+        claims = tuple(
+            connection.execute(
+                text("SELECT claim_id FROM claims ORDER BY claim_id")
+            ).scalars()
+        )
+        assert len(claims) == 2
+        # Model a retained pre-cutover store: source/fact identities survive, old
+        # work is drained, its evidence predates application pointers.
+        connection.execute(text("UPDATE relation_evidence SET legacy_stance=stance"))
+        connection.execute(text("UPDATE observation_evidence SET legacy_stance=stance"))
+        connection.execute(text("DELETE FROM fact_applications"))
+        connection.execute(text("DELETE FROM normalization_outputs"))
+        connection.execute(
+            text(
+                "UPDATE processing_state SET component_version=component_version || '-old'"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE obs_flush_entity_units SET normalizer_version=normalizer_version || '-old'"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE obs_flush_version_state SET normalizer_version=normalizer_version || '-old'"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE claims SET extractor_version='retained-old-extractor',is_current_testimony=false WHERE claim_id=:id"
+            ),
+            {"id": claims[0]},
+        )
+        connection.execute(text("UPDATE relations SET ingested_at='2026-01-01Z',invalidated_at='2026-08-01Z'"))
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+    conversion = FactWindowConversion(engine=rig.engine)
+    assert conversion.seed_batch(deployment_id=_DEPLOYMENT_ID)["created"] == 2
+    assert not conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
+    before = len(rig.provider.generated_prompts)
+    rig.run_chain()
+    assert conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
+    assert all(
+        "Claimify" not in request for request in rig.provider.generated_prompts[before:]
+    )
+    with rig.engine.connect() as connection:
+        assert (
+            set(connection.execute(text("SELECT relation_id FROM relations")).scalars())
+            == original_facts
+        )
+        assert connection.execute(
+            text("SELECT bool_and(invalidated_at IS NOT NULL) FROM relations")
+        ).scalar_one()
+        assert (
+            connection.execute(
+                text("SELECT is_current_testimony FROM claims WHERE claim_id=:id"),
+                {"id": claims[0]},
+            ).scalar_one()
+            is False
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM normalization_outputs")
+            ).scalar_one()
+            == 2
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM normalize_observation_staging")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM cost_ledger WHERE deployment_id=:dep"),
+                {"dep": _DEPLOYMENT_ID},
+            ).scalar_one()
+            > 0
+        )

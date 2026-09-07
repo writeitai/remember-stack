@@ -59,6 +59,21 @@ class SelfHostOperations:
             engine=self._engine, settings=WorkLedgerSettings()
         ).resume_no_route(deployment_id=deployment_id, routable_mimes=frozenset(routes))
 
+    def fact_windows(
+        self, *, deployment_id: UUID, action: str, batch_size: int = 500
+    ) -> dict[str, object]:
+        """Seed retained-claim replay or verify its completed ordinary worker jobs."""
+        from rememberstack.spine.fact_window_conversion import FactWindowConversion
+
+        conversion = FactWindowConversion(engine=self._engine)
+        if action == "seed":
+            return conversion.seed_batch(
+                deployment_id=deployment_id, batch_size=batch_size
+            )
+        if action == "verify":
+            return conversion.verify(deployment_id=deployment_id)
+        raise ValueError(f"unknown fact-window maintenance action {action!r}")
+
     def replay(
         self,
         *,

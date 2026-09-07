@@ -51,6 +51,7 @@ from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.cli import _split_operation_arg
 from rememberstack.surfaces.cli import operations_list
 from rememberstack.surfaces.cli import operations_run
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -131,7 +132,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real surface proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

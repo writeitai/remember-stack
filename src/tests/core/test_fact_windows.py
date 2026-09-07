@@ -194,3 +194,24 @@ def test_historical_wording_preserves_coarse_inclusive_display() -> None:
         valid_precision=ClaimValidPrecision.YEAR,
     )
     assert describe_fact_window(window=window) == "2019 through 2022 (year precision)"
+
+
+def test_inclusive_query_bounds_preserve_the_existing_overlap_contract() -> None:
+    """A query may name one instant; the fact's own end stays exclusive."""
+    window = FactWindow(
+        valid_from=_at("2022-01-01"),
+        valid_until=_at("2023-01-01"),
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+    assert (
+        fact_match_overlap(
+            window=window, start=_at("2022-01-01"), end=_at("2022-01-01")
+        )
+        is TemporalMatch.CONFIRMED
+    )
+    assert (
+        fact_match_overlap(
+            window=window, start=_at("2023-01-01"), end=_at("2023-01-01")
+        )
+        is None
+    )

@@ -46,14 +46,14 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
 from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
@@ -76,9 +76,11 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a0000000-0000-0000-0000-000000000001")
@@ -145,6 +147,8 @@ _PAYLOADS: dict[str, dict[str, object]] = {
 
 def _provider_response(prompt: str, type_name: str) -> dict[str, object]:
     """Serve canned chain payloads and a dynamic valid T4 selection."""
+    if type_name == "FactApplicationDecision":
+        return same_fact_application_answer(prompt=prompt)
     if type_name == "T4Selection":
         return match_first_t4_candidate(prompt, type_name)
     return _PAYLOADS[type_name]
@@ -177,7 +181,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -287,8 +291,10 @@ class _ApiRig:
             model_provider=self.provider,
             embedding_model=P1Settings().embedding_model,
         )
-        obs_adjudicator = ObservationAdjudicator(
-            engine=engine, model_provider=self.provider, settings=ObservationSettings()
+        obs_adjudicator = FactAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=FactAdjudicationSettings(),
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
@@ -358,6 +364,7 @@ class _ApiRig:
         registry.register(
             stage=PipelineStage.LABEL_RELATION,
             handler=LabelFactsHandler(
+                profile_refresher=profile_refresher,
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
                 fact_index=self.p1,

@@ -462,6 +462,7 @@ class AggregateBucket(BaseModel):
 
     key: str | None
     count: int = Field(ge=0)
+    possible_count: int = Field(default=0, ge=0)
     entity_id: UUID | None = None
 
 
@@ -480,6 +481,7 @@ class AggregateReport(BaseModel):
     form: str
     buckets: tuple[AggregateBucket, ...] = ()
     total: int = Field(ge=0)
+    possible_total: int = Field(default=0, ge=0)
     bounded_by: str | None = None
 
 

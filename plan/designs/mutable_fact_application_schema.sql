@@ -3,6 +3,9 @@
 -- with respect to serving. Nullable expansion columns below are finalized there.
 -- Apply only with serving/intake/workers stopped and legacy staging drained.
 -- The implementation migration must also close its fact-generation readiness gate.
+-- The existing LABEL_RELATION stage uses source-owned application receipts as
+-- durable repair targets; no new queue or pipeline stage is introduced.
+ALTER TYPE public.processing_target ADD VALUE IF NOT EXISTS 'fact_application';
 
 CREATE TABLE public.normalization_outputs (
   deployment_id uuid NOT NULL,

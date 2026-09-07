@@ -268,11 +268,13 @@ def apply_fact_decision(
             {**params, "group": group, "fact_ids": sorted(grouped)},
         )
         changed.update(grouped)
+    changed.add(target)
     # Mark applied inside the same transaction before rebuilding the aggregate link.
     result = {
         "application_id": str(application_id),
         "fact_id": str(target),
         "created_fact_ids": [str(value) for value in created],
+        "changed_fact_ids": [str(value) for value in sorted(changed)],
     }
     connection.execute(
         text(f"""UPDATE fact_applications SET applied_at=now(),result=CAST(:result AS jsonb),
@@ -305,18 +307,19 @@ def apply_fact_decision(
             deployment_id=deployment_id,
             fact_id=fact_id,
         )
-        label_clear = (
-            "fact_label=NULL,fact_label_version=NULL,"
-            if kind == "relation"
-            else "obs_label=NULL,"
-        )
-        connection.execute(
-            text(f"""UPDATE {table} SET {label_clear} embedding=NULL,embedding_model=NULL,
-            embedding_input_policy_version=NULL,embedding_text_hash=NULL,updated_at=now()
-            WHERE deployment_id=:deployment_id AND {id_column}=:fact_id
-        """),
-            {**params, "fact_id": fact_id},
-        )
+        if fact_id in set(created) | window_updates:
+            label_clear = (
+                "fact_label=NULL,fact_label_version=NULL,"
+                if kind == "relation"
+                else "obs_label=NULL,"
+            )
+            connection.execute(
+                text(f"""UPDATE {table} SET {label_clear} embedding=NULL,embedding_model=NULL,
+                embedding_input_policy_version=NULL,embedding_text_hash=NULL,updated_at=now()
+                WHERE deployment_id=:deployment_id AND {id_column}=:fact_id
+            """),
+                {**params, "fact_id": fact_id},
+            )
         after = (
             connection.execute(
                 text(
@@ -363,6 +366,13 @@ def apply_fact_decision(
                 AND u.version_id=s.version_id AND u.normalizer_version=s.normalizer_version AND u.subject_entity_id=s.subject_entity_id)"""
         ),
         params,
+    )
+    _enqueue_projection_repair(
+        connection=connection,
+        deployment_id=deployment_id,
+        application_id=application_id,
+        kind=kind,
+        changed=tuple(sorted(changed)),
     )
     return result
 
@@ -431,4 +441,64 @@ def _recount_fact(
         WHERE f.deployment_id=:deployment_id AND f.{kind}_id=:fact_id
     """),
         {"deployment_id": deployment_id, "fact_id": fact_id},
+    )
+
+
+def _enqueue_projection_repair(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    application_id: UUID,
+    kind: str,
+    changed: tuple[UUID, ...],
+) -> None:
+    """Invalidate profiles and durably reuse label work for this application."""
+    from rememberstack.model import EnqueueWork
+    from rememberstack.model import PipelineStage
+    from rememberstack.model import ProcessingLane
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.work_ledger import enqueue_on
+    from rememberstack.workers.p1 import label_relation_component_version
+    from rememberstack.workers.p1 import P1Settings
+
+    table = "relations" if kind == "relation" else "observations"
+    objects = (
+        f"UNION SELECT object_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=ANY(:ids)"
+        if kind == "relation"
+        else ""
+    )
+    entity_ids = (
+        connection.execute(
+            text(f"""WITH RECURSIVE affected(entity_id) AS (
+      (SELECT subject_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=ANY(:ids) {objects})
+      UNION
+      SELECT e.merged_into FROM entities e JOIN affected a USING(entity_id)
+      WHERE e.deployment_id=:dep AND e.merged_into IS NOT NULL
+    ) SELECT entity_id FROM affected ORDER BY entity_id"""),
+            {"dep": deployment_id, "ids": list(changed)},
+        )
+        .scalars()
+        .all()
+    )
+    for entity_id in entity_ids:
+        connection.execute(
+            text("""UPDATE entities SET profile_summary=NULL,embedding=NULL,
+          embedding_model=NULL,embedding_input_policy_version=NULL,embedding_text_hash=NULL,
+          updated_at=now() WHERE deployment_id=:dep AND entity_id=:id"""),
+            {"dep": deployment_id, "id": entity_id},
+        )
+    enqueue_on(
+        connection=connection,
+        work=EnqueueWork(
+            deployment_id=deployment_id,
+            target_kind=ProcessingTarget.FACT_APPLICATION,
+            target_id=application_id,
+            stage=PipelineStage.LABEL_RELATION,
+            component_version=label_relation_component_version(
+                embedding_model=P1Settings().embedding_model
+            ),
+            content_hash=application_id.hex,
+            lane=ProcessingLane.STEADY,
+            payload={"application_id": str(application_id)},
+        ),
     )

@@ -51,6 +51,12 @@ class _Catalog:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
+    def profile_repair_batches(
+        self, *, manifest: ForgetManifest
+    ) -> tuple[tuple[UUID, ...], ...]:
+        """Offer the cleared fixture profiles to the normal repair loop."""
+        return (manifest.resolved_entity_ids,)
+
     def scrub_postgres(self, *, manifest: ForgetManifest) -> None:
         self.events.append("scrub-postgres")
 

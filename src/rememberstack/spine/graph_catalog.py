@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-GRAPH_HELPER_CONTRACT_VERSION: Final = "rememberstack.live_graph_helper/v1"
+GRAPH_HELPER_CONTRACT_VERSION: Final = "rememberstack.live_graph_helper/v2:chosen-window"
 
 _EXPECTED_EXTENSION_VERSIONS: Final = {
     "pg_partman": "5.5.0",
@@ -263,6 +263,7 @@ _EXPECTED_PROPERTIES_BY_ELEMENT: Final = {
         "relation_id",
         "valid_from",
         "valid_until",
+        "valid_precision",
     },
 }
 
@@ -300,6 +301,7 @@ _EXPECTED_PROPERTY_TYPES: Final = {
     ("memory_history", "relation_id", "uuid"),
     ("memory_history", "valid_from", "timestamp with time zone"),
     ("memory_history", "valid_until", "timestamp with time zone"),
+    ("memory_history", "valid_precision", "text"),
 }
 
 _EXPECTED_HELPERS: Final = {
@@ -711,7 +713,7 @@ def _check_role(*, connection: Connection, problems: list[str]) -> None:
                 "'public.relations', required.name, 'SELECT')) "
                 "FROM unnest(ARRAY['deployment_id', 'relation_id', "
                 "'subject_entity_id', 'object_entity_id', 'predicate', "
-                "'valid_from', 'valid_until', 'ingested_at', 'invalidated_at']) "
+                "'valid_from', 'valid_until', 'valid_precision', 'ingested_at', 'invalidated_at']) "
                 "AS required(name)) "
                 "AND (SELECT bool_and(has_column_privilege("
                 "'rememberstack_graph_' || current_database(), "
@@ -764,41 +766,7 @@ def _check_role(*, connection: Connection, problems: list[str]) -> None:
 
 
 def _replay_graph_catalog(*, connection: Connection) -> None:
-    """Drop/recreate only views, graph metadata, helpers, grants, and role limits."""
-    from rememberstack.spine.migrations._helpers import _split_sql
-    from rememberstack.spine.migrations.versions import (
-        p9_17_0038_postgres19_live_graph as migration,
-    )
-    from rememberstack.spine.migrations.versions import (
-        p9_19_0040_graph_tenant_planner_settings as planner_settings,
-    )
+    """Repair derived graph metadata with the current chosen-window contract."""
+    from rememberstack.spine.fact_graph_contract import rebuild_fact_graphs
 
-    for statement in (
-        "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history",
-        "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current",
-        "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid, uuid, uuid, integer, integer, integer, integer, integer)",
-        "DROP FUNCTION IF EXISTS memory_v1.graph_path(uuid, uuid, uuid, integer, text[], timestamptz, timestamptz, integer, integer, integer, integer)",
-        "DROP FUNCTION IF EXISTS memory_v1.graph_neighborhood(uuid, uuid, integer, text[], timestamptz, timestamptz, integer, integer, integer, integer)",
-        "DROP SCHEMA IF EXISTS rememberstack_graph_internal CASCADE",
-    ):
-        connection.exec_driver_sql(statement)
-    for ddl in (migration._GRAPH_SOURCES,):
-        for statement in _split_sql(sql=ddl):
-            connection.exec_driver_sql(statement)
-    for statement in (
-        migration._CURRENT_GRAPH,
-        migration._HISTORY_GRAPH,
-        migration._NEIGHBORHOOD_HELPER,
-        migration._PATH_HELPER,
-        migration._CITATION_PATH_HELPER,
-        "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA memory_v1 FROM PUBLIC",
-        migration._HELPER_COMMENTS,
-        migration._GRAPH_ROLE,
-        migration._ROLE_LIMITS,
-        migration._GRANTS,
-    ):
-        # psycopg scans percent tokens before PostgreSQL can evaluate the
-        # ``format('%I', ...)`` calls inside the administrative DO blocks.
-        connection.exec_driver_sql(statement.replace("%", "%%"))
-    for statement in _split_sql(sql=planner_settings._GRAPH_HELPER_INDEX_SETTINGS):
-        connection.exec_driver_sql(statement)
+    rebuild_fact_graphs(connection=connection)

@@ -373,6 +373,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -409,6 +415,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -4129,6 +4141,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -4165,6 +4183,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -5893,6 +5917,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -5929,6 +5959,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,

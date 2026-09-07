@@ -57,8 +57,6 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
@@ -66,6 +64,8 @@ from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import SyncCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -89,7 +89,9 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("e5000000-0000-0000-0000-000000000001")
@@ -134,6 +136,8 @@ _TABLES = (
 
 def _canned(prompt: str, type_name: str) -> dict[str, object]:
     """Deterministic model behavior for every seat the chain touches."""
+    if type_name == "FactApplicationDecision":
+        return same_fact_application_answer(prompt=prompt)
     if type_name == "ContextPrefix":
         return {"prefix": "Sits in the staffing file."}
     if type_name in {"SelectionResponse", "ClaimifyResponse"}:
@@ -188,7 +192,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -299,8 +303,10 @@ class _LifecycleRig:
             ),
         )
         facts = FactCatalog(engine=engine)
-        obs_adjudicator = ObservationAdjudicator(
-            engine=engine, model_provider=self.provider, settings=ObservationSettings()
+        obs_adjudicator = FactAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=FactAdjudicationSettings(),
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
@@ -359,6 +365,7 @@ class _LifecycleRig:
         registry.register(
             stage=PipelineStage.LABEL_RELATION,
             handler=LabelFactsHandler(
+                profile_refresher=self.profile_refresher,
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
                 fact_index=self.p1,

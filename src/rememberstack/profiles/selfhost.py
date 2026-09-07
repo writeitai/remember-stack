@@ -1350,6 +1350,7 @@ class SelfHostProfile:
                 model_provider=self._model_provider,
                 fact_index=index,
                 settings=p1_settings,
+                profile_refresher=profile_refresher,
             )
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
 

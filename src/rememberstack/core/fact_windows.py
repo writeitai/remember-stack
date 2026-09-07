@@ -49,11 +49,11 @@ def fact_match_at(*, window: FactWindow, at: datetime) -> TemporalMatch | None:
 def fact_match_overlap(
     *, window: FactWindow, start: datetime, end: datetime
 ) -> TemporalMatch | None:
-    """Match a half-open query interval without interpreting an unknown as infinity."""
+    """Match existing inclusive query bounds against canonical half-open facts."""
     start, end = _utc(start), _utc(end)
-    if end <= start:
-        raise ValueError("query interval must be nonempty")
-    if window.valid_from is not None and window.valid_from >= end:
+    if end < start:
+        raise ValueError("query interval end must not precede its start")
+    if window.valid_from is not None and window.valid_from > end:
         return None
     if window.valid_until is not None and window.valid_until <= start:
         return None

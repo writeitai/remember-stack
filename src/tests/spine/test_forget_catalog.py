@@ -321,15 +321,19 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
             {"deployment": _DEPLOYMENT_ID, "entity": _SHARED_ENTITY_ID},
         ).one()
     assert _TOKEN not in str(survivor_row.profile_summary)
-    assert "shared observation" in str(survivor_row.profile_summary)
+    assert "control claim" in str(survivor_row.profile_summary)
     assert survivor_row[1] is True
-    assert survivor_row.embedding_input_policy_version == "entity-profile-v2"
+    assert (
+        survivor_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
+    )
     assert survivor_row.embedding_text_hash != embedding_text_hash(old_input)
     assert _TOKEN not in str(absorbed_row.profile_summary)
-    assert "shared observation" in str(absorbed_row.profile_summary)
+    assert "control claim" in str(absorbed_row.profile_summary)
     assert absorbed_row[1] is True
     assert absorbed_row.embedding_model == "profile-test"
-    assert absorbed_row.embedding_input_policy_version == "entity-profile-v2"
+    assert (
+        absorbed_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
+    )
     assert absorbed_row.embedding_text_hash != embedding_text_hash(old_input)
 
 
@@ -1260,7 +1264,7 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert exclusive_embedding == (None, None, None, None)
         assert connection.execute(
             text(
-                "SELECT embedding IS NOT NULL FROM entities"
+                "SELECT embedding IS NULL FROM entities"
                 " WHERE deployment_id = :d AND entity_id = :entity"
             ),
             {"d": _DEPLOYMENT_ID, "entity": _CONTROL_ENTITY_ID},
@@ -1393,3 +1397,133 @@ def _deployment_rows(*, connection: Connection, table: str) -> int:
             {"d": _DEPLOYMENT_ID},
         ).scalar_one()
     )
+
+
+def test_mutable_fact_payloads_and_date_witnesses_are_erased(
+    seeded_engine: Engine,
+) -> None:
+    """Old manifests also remove new source outputs and mixed-source model payloads."""
+    from uuid import uuid4
+
+    catalog = ForgetCatalog(engine=seeded_engine)
+    catalog.prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
+    )
+    manifest = catalog.inventory_and_store_manifest(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=_TARGET_DOC_ID,
+        forget_id=_FORGET_ID,
+        requested_at=_NOW,
+    )
+    # Simulate restoring a store with D114 rows under an earlier portable inventory.
+    own, surviving = uuid4(), uuid4()
+    with seeded_engine.begin() as connection:
+        for claim, app, phrase in (
+            (_TARGET_CLAIM_ID, own, _TOKEN),
+            (_CONTROL_CLAIM_ID, surviving, "independent assertion"),
+        ):
+            connection.execute(
+                text("""INSERT INTO normalization_outputs
+                (deployment_id,claim_id,normalizer_version,output,accepted_outputs)
+                VALUES(:dep,:claim,'forget-test',jsonb_build_object('observations',
+                    jsonb_build_array(jsonb_build_object('statement',CAST(:phrase AS text)))), '[]')"""),
+                {"dep": _DEPLOYMENT_ID, "claim": claim, "phrase": phrase},
+            )
+            connection.execute(
+                text("""INSERT INTO fact_applications(application_id,deployment_id,
+                claim_id,normalizer_version,output_kind,output_ordinal,adjudicator_version,
+                subject_entity_id,attempt_id,input_hash,input_claim_ids,prepared,decision)
+                VALUES(:id,:dep,:claim,'forget-test','observation',0,'forget-test',:subject,
+                :attempt,'hash',CAST(:claims AS uuid[]),jsonb_build_object('source',CAST(:phrase AS text)),
+                jsonb_build_object('rationale',CAST(:phrase AS text)))"""),
+                {
+                    "id": app,
+                    "dep": _DEPLOYMENT_ID,
+                    "claim": claim,
+                    "subject": _SHARED_ENTITY_ID,
+                    "attempt": uuid4(),
+                    "claims": [_TARGET_CLAIM_ID, _CONTROL_CLAIM_ID],
+                    "phrase": _TOKEN,
+                },
+            )
+        connection.execute(
+            text("""UPDATE observations SET valid_from='2022-01-01Z',
+            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[])
+            WHERE observation_id=:id"""),
+            {"claims": [_TARGET_CLAIM_ID], "id": _SHARED_OBSERVATION_ID},
+        )
+    catalog.accept_and_enqueue(manifest=manifest)
+    catalog.scrub_postgres(manifest=manifest)
+    catalog.scrub_postgres(manifest=manifest)
+    catalog.verify_postgres_scrubbed(manifest=manifest)
+    with seeded_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM fact_applications WHERE application_id=:id"),
+                {"id": own},
+            ).scalar_one()
+            == 0
+        )
+        row = connection.execute(
+            text(
+                "SELECT attempt_id,prepared,decision,input_claim_ids FROM fact_applications WHERE application_id=:id"
+            ),
+            {"id": surviving},
+        ).one()
+        assert tuple(row) == (None, None, None, [_CONTROL_CLAIM_ID])
+        row = connection.execute(
+            text(
+                "SELECT valid_from,valid_until,valid_precision,window_claim_ids,statement FROM observations WHERE observation_id=:id"
+            ),
+            {"id": _SHARED_OBSERVATION_ID},
+        ).one()
+        assert tuple(row[:4]) == (None, None, "unknown", [])
+        assert _TOKEN not in row[4]
+
+
+def test_conversion_seeds_historical_claims_and_keeps_partial_store_closed(
+    seeded_engine: Engine,
+) -> None:
+    """The maintenance cursor covers old testimony without relying on prior jobs."""
+    from rememberstack.spine.fact_window_conversion import FactWindowConversion
+
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text("UPDATE claims SET is_current_testimony=false WHERE claim_id=:id"),
+            {"id": _TARGET_CLAIM_ID},
+        )
+    conversion = FactWindowConversion(engine=seeded_engine)
+    first = conversion.seed_batch(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+    second = conversion.seed_batch(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+    last = conversion.seed_batch(deployment_id=_DEPLOYMENT_ID, batch_size=1)
+    assert (first["created"], second["created"], last["created"]) == (1, 1, 0)
+    assert last["enumeration_complete"]
+    report = conversion.verify(deployment_id=_DEPLOYMENT_ID)
+    assert report["ready"] is False
+    problems = report["problems"]
+    assert isinstance(problems, dict)
+    assert problems["unconverted_claims"] == 2
+    with seeded_engine.connect() as connection:
+        rows = connection.execute(
+            text("""SELECT target_id,lane::text,payload->>'extractor_version'
+            FROM processing_state WHERE deployment_id=:dep AND target_kind='claim'
+              AND stage='normalize_relations'"""),
+            {"dep": _DEPLOYMENT_ID},
+        ).all()
+        assert {row[0] for row in rows} == {_TARGET_CLAIM_ID, _CONTROL_CLAIM_ID}
+        assert all(row[1] == "steady" and row[2] for row in rows)
+        assert (
+            connection.execute(
+                text(
+                    "SELECT fact_window_generation FROM deployments WHERE deployment_id=:dep"
+                ),
+                {"dep": _DEPLOYMENT_ID},
+            ).scalar_one()
+            is None
+        )

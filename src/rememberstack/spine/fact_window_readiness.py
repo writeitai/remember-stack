@@ -25,3 +25,13 @@ def require_fact_windows_ready(
         raise RuntimeError(
             "fact window conversion is incomplete; serving and intake remain closed"
         )
+
+
+def fact_windows_converting(*, connection: Connection, deployment_id: UUID) -> bool:
+    """Whether retained-claim replay owns this deployment's closed generation."""
+    return connection.execute(
+        text(
+            "SELECT fact_window_generation IS NULL FROM deployments WHERE deployment_id=:dep"
+        ),
+        {"dep": deployment_id},
+    ).scalar_one()

@@ -565,6 +565,12 @@ class AdjudicateSupersessionHandler:
             ),
             call_key=profile_call_key,
         )
+        if self._facts is not None and self._facts.converting(
+            deployment_id=work.deployment_id
+        ):
+            # Retained-claim replay revises facts, not extractor currency. The
+            # original lifecycle events remain the authority for testimony.
+            return HandlerOutcome()
         version_id = payload.get("version_id")
         representation_id = payload.get("representation_id")
         if not isinstance(version_id, str) or not isinstance(representation_id, str):

@@ -31,6 +31,8 @@ CREATE TABLE public.normalization_outputs (
     REFERENCES public.claims (deployment_id, claim_id) ON DELETE CASCADE
 );
 
+COMMENT ON TABLE public.normalization_outputs IS 'D114 immutable original normalization response and accepted original ordinals per claim and generation.';
+
 CREATE SEQUENCE public.fact_application_admission_sequence;
 CREATE TABLE public.fact_applications (
   application_id uuid PRIMARY KEY,
@@ -82,6 +84,7 @@ CREATE TABLE public.fact_applications (
   CHECK (applied_at IS NOT NULL OR
          num_nonnulls(support_relation_id, support_observation_id) = 0)
 );
+COMMENT ON TABLE public.fact_applications IS 'D114 ordered ordinary assertion application, unlocked inference attempt, atomic original receipt and mutable support pointer; source-owned and erasable.';
 CREATE INDEX ix_fact_applications_pending
   ON public.fact_applications (deployment_id, subject_entity_id, admission_sequence)
   WHERE applied_at IS NULL;
@@ -360,6 +363,13 @@ $$;
 def upgrade() -> None:
     """Fence populated stores, expand, clear ungrounded dates and install constraints."""
     connection = op.get_bind()
+    # Keep the maintenance drain check and the schema cut in one locked interval.
+    op.execute(
+        "LOCK TABLE processing_state, normalize_observation_staging IN ACCESS EXCLUSIVE MODE"
+    )
+    op.execute(
+        "ALTER TYPE processing_target ADD VALUE IF NOT EXISTS 'fact_application'"
+    )
     # Maintenance requires all old work drained, not just an empty staging snapshot.
     pending = connection.execute(
         text(
@@ -372,6 +382,9 @@ def upgrade() -> None:
         )
     for statement in _split_sql(sql=_STORAGE_DDL):
         op.execute(statement)
+    # Every prior K compile used a different writer/input contract. Its stored
+    # manifest cannot certify the new dated-history generation.
+    op.execute("UPDATE knowledge_artifacts SET status='stale' WHERE page_kind='compiled' AND status='active'")
     op.execute("ALTER TABLE deployments ADD COLUMN fact_window_generation text")
     op.execute(
         "UPDATE deployments d SET fact_window_generation='mutable-fact-window-1' WHERE NOT EXISTS(SELECT 1 FROM claims c WHERE c.deployment_id=d.deployment_id)"
@@ -430,6 +443,10 @@ def upgrade() -> None:
     op.execute(
         """DO $$ BEGIN EXECUTE format('GRANT EXECUTE ON FUNCTION memory_v1.facts_as_of(timestamptz,timestamptz,integer) TO %I','rememberstack_query_' || current_database()); END $$"""
     )
+
+    from rememberstack.spine.fact_graph_contract import rebuild_fact_graphs
+
+    rebuild_fact_graphs(connection=connection)
 
 
 def downgrade() -> None:

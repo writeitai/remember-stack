@@ -16,7 +16,7 @@ P1_VECTOR_DIMENSIONS = 1_536
 """Fixed D94 semantic dimension for every current P1 target."""
 
 CLAIM_INPUT_POLICY = "claim-text-v1"
-FACT_INPUT_POLICY = "fact-label-v1"
+FACT_INPUT_POLICY = "fact-label-v2:chosen-window"
 ENTITY_INPUT_POLICY = "entity-profile-v3:dated-history"
 
 

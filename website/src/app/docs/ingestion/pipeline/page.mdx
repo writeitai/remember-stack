@@ -181,8 +181,10 @@ span multiple entity ids are marked promiscuous and rank below unguarded
 fuzzy/phonetic matches without being dropped from the candidate set. The
 shipped cascade has no exact-name auto-accept flag.
 
-After supported open-ended observations or relations change, a deterministic refresher
-rebuilds the entity’s short summary and `entity-profile-v2` vector. Unchanged
+After supported observations or relations change, a deterministic refresher
+rebuilds the entity’s short summary and `entity-profile-v3:dated-history` vector.
+The summary includes completed history with explicit world dates. It is an identity
+description, not a list of statements guaranteed to hold today. Unchanged
 input hashes skip embedding. Supersession, merge/un-merge, terminal human review, normal
 deletion/reconciliation, and hard-forget use the same refresh seam; if no
 supported fact remains, every profile cache field clears together. A survivor
@@ -212,7 +214,15 @@ Relations use a **governed predicate vocabulary** with escape values and promoti
 | **Relation** | Entity–predicate–entity | Yes |
 | **Observation** | Untyped value/statement about one entity | No (P1 labels only) |
 
-Both are bi-temporal facts with evidence links and supersession.
+Both have evidence links and one chosen world-time window. Claims preserve what a
+source said; adjudication can revise a fact's chosen dates when new context
+justifies a correction. The fact's system belief timestamps remain separate.
+
+Both shapes pass through contextual adjudication before a fact is created or
+reused. Dates, wording and surrounding context help decide whether two reports
+refer to the same event. Repeating the same tournament name does not force a
+merge, and a corrected date does not force a new fact. There is no stored
+state/occurrence category or separate date-dispute workflow.
 
 ### Evidence links
 
@@ -220,7 +230,12 @@ Many-to-many `fact_claim_evidence` with stance **supports** | **contradicts**. C
 
 ### Supersession & contradiction
 
-- Supersession closes `valid_until` / invalidates belief per shape rules.
+- A justified successor can end its predecessor at the successor's world start.
+- Ending an interval does not retract the historical fact. Learning that a fact
+  was wrong instead closes system belief with `invalidated_at`.
+- An ordinary adjudication can change the whole chosen window, in either
+  direction, or clear dates that lack grounding. Attaching evidence without a
+  date revision preserves the chosen window.
 - Contradictions group live disagreements; both sides remain.
 - Every adjudication is a logged, replayable decision.
 
