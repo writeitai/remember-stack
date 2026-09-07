@@ -834,6 +834,7 @@ def test_worker_and_ledger_complete_relation_unit_from_application_receipts(
     from rememberstack.model import PipelineStage
     from rememberstack.model import ProcessingLane
     from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.readiness import _RELATION_FLUSH_STATUS
     from rememberstack.spine.supersession import ADJUDICATOR_VERSION
     from rememberstack.spine.work_ledger import WorkLedger
     from rememberstack.spine.work_ledger import WorkLedgerSettings
@@ -878,7 +879,7 @@ def test_worker_and_ledger_complete_relation_unit_from_application_receipts(
     ledger.complete_relation_flush(
         processing_id=work.processing_id, barrier=outcome.relation_flush_barrier
     )
-    with database_engine.connect() as connection:
+    with database_engine.begin() as connection:
         assert (
             connection.execute(
                 text(
@@ -897,6 +898,103 @@ def test_worker_and_ledger_complete_relation_unit_from_application_receipts(
             ).scalar_one()
             == 1
         )
+        version_id = connection.execute(
+            text(
+                "SELECT version_id FROM relation_flush_block_units WHERE unit_id=:unit"
+            ),
+            {"unit": unit},
+        ).scalar_one()
+        parameters = {
+            "deployment_id": inputs.deployment_id,
+            "version_ids": (version_id,),
+            "normalizer_version": E3_NORMALIZER_VERSION,
+            "adjudicator_version": ADJUDICATOR_VERSION,
+            "chunker_version": "chunk-proof",
+            "extractor_version": "source-proof",
+        }
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert (
+            readiness["status"] == "succeeded" and readiness["finished_at"] is not None
+        )
+        transaction = connection.begin_nested()
+        connection.execute(
+            text("DELETE FROM relation_application_receipts WHERE deployment_id=:dep"),
+            {"dep": inputs.deployment_id},
+        )
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert readiness["status"] == "missing" and readiness["finished_at"] is None
+        transaction.rollback()
+        readiness = (
+            connection.execute(
+                _RELATION_FLUSH_STATUS,
+                {**parameters, "adjudicator_version": "different-generation"},
+            )
+            .mappings()
+            .one()
+        )
+        assert readiness["status"] == "missing"
+        connection.execute(
+            text("DELETE FROM relation_flush_inputs WHERE unit_id=:unit"),
+            {"unit": unit},
+        )
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert readiness["status"] == "missing" and readiness["finished_at"] is None
+
+
+def test_empty_relation_readiness_requires_the_exact_closed_certificate(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """No synthetic worker is needed for zero assertions, but missing closure cannot certify ready."""
+    from rememberstack.spine.readiness import _RELATION_FLUSH_STATUS
+    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    catalog.publish(
+        prepared=catalog.input_snapshot(
+            deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+        ),
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=NormalizationOutput(outcome="empty"),
+    )
+    version, representation = _version_membership(
+        database_engine=database_engine, inputs=inputs, number=1
+    )
+    _open_observation_barrier(
+        database_engine=database_engine,
+        inputs=inputs,
+        version_id=version,
+        representation_id=representation,
+        normalizer_version=E3_NORMALIZER_VERSION,
+    )
+    parameters = {
+        "deployment_id": inputs.deployment_id,
+        "version_ids": (version,),
+        "normalizer_version": E3_NORMALIZER_VERSION,
+        "adjudicator_version": ADJUDICATOR_VERSION,
+        "chunker_version": "chunk-proof",
+        "extractor_version": "source-proof",
+    }
+    with database_engine.begin() as connection:
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert (
+            readiness["status"] == "succeeded" and readiness["finished_at"] is not None
+        )
+        connection.execute(
+            text("DELETE FROM relation_flush_version_state WHERE deployment_id=:dep"),
+            {"dep": inputs.deployment_id},
+        )
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert readiness["status"] == "missing" and readiness["finished_at"] is None
 
 
 def test_coarse_evidence_union_does_not_merge_neighboring_occurrences(

@@ -282,23 +282,24 @@ jobs:
               docker compose --env-file .env.example exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
-          # D84/D88/D90: extract is chunk-scoped; empty input skips claim
-          # normalize and takes durable empty_complete (no document_version
-          # adjudicate_observations row at the entity-fanout generation).
+          # D84/D88/D90/D110: empty input has explicit empty-complete
+          # observation and relation barriers, with no synthetic adjudication job.
           # Version-level ledger stages:
-          # convert→structure→chunk→embed_chunk→adjudicate_supersession→
-          # embed_claim→label→reconcile (8).
+          # convert→structure→chunk→embed_chunk→embed_claim→label→reconcile (7).
           observed=''
           for attempt in {1..60}; do
             observed="$(docker compose --env-file .env.example exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc \
               "SELECT count(*), count(*) FILTER (WHERE status='succeeded'), count(DISTINCT stage) FROM processing_state WHERE target_id='$version_id'")"
-            if [ "$observed" = '8|8|8' ]; then
+            if [ "$observed" = '7|7|7' ]; then
               break
             fi
             sleep 1
           done
-          test "$observed" = '8|8|8'
+          test "$observed" = '7|7|7'
+          test "$(docker compose --env-file .env.example exec -T postgres \
+            psql -U rememberstack -d rememberstack -Atc \
+            "SELECT count(*) FROM relation_flush_version_state s WHERE s.version_id='$version_id' AND s.fanout_status='empty_complete' AND s.expected_units=0 AND s.completed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM relation_flush_block_units u WHERE u.deployment_id=s.deployment_id AND u.version_id=s.version_id AND u.normalizer_version=s.normalizer_version)")" = '1'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM cost_ledger')" = '0'

@@ -35,9 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24"
-DEFAULT_PROTOCOL_KEY: Final = "full-v24"
-# T.4 changes extraction; the query-space adapter remains the v23 generation.
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25"
+DEFAULT_PROTOCOL_KEY: Final = "full-v25"
+# Temporal write generations roll; the query-space adapter remains the v23 generation.
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-query-space-canonical-bounds-v23"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -78,12 +78,12 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         ),
         "normalize_relations": (
             "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:"
-            "no-types-1:binary-t4-1:document-t0-1"
+            "no-types-1:binary-t4-1:document-t0-1:complete-receipt-1:temporal-shape-1"
         ),
         "adjudicate_observations": (
             "e3-obs-flush-2026.09b:canonical-bounds-1:temporal-gate-1:claim-fanout-1:entity-fanout-1"
         ),
-        "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
+        "adjudicate_supersession": "adjudicator-2026.09a:temp0-1:ordered-assertions-1:world-time-1",
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
         "label_relation": (
@@ -120,12 +120,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v24-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v25-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v24 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v25 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -133,8 +133,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v24-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v25-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "low"
 
@@ -241,8 +241,8 @@ class LoCoMoProtocol:
     """Which adapter serves the judge; kept on OpenRouter for comparability."""
 
 
-_FULL_V24 = LoCoMoProtocol(
-    key="full-v24",
+_FULL_V25 = LoCoMoProtocol(
+    key="full-v25",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -263,7 +263,7 @@ _FULL_V24 = LoCoMoProtocol(
     answer_word_cap=None,
 )
 
-_FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
+_FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(
     key=GEMMA_VERTEX_PROTOCOL_KEY,
     name=GEMMA_VERTEX_PROTOCOL_NAME,
     answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
@@ -287,7 +287,7 @@ _FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
     judge_provider="openrouter",
 )
 
-_FULL_V24_CODEX_SUBSCRIPTION = LoCoMoProtocol(
+_FULL_V25_CODEX_SUBSCRIPTION = LoCoMoProtocol(
     key=CODEX_SUBSCRIPTION_PROTOCOL_KEY,
     name=CODEX_SUBSCRIPTION_PROTOCOL_NAME,
     answer_agent_model=CODEX_SUBSCRIPTION_MODEL,
@@ -313,9 +313,9 @@ _FULL_V24_CODEX_SUBSCRIPTION = LoCoMoProtocol(
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
     {
-        _FULL_V24.key: _FULL_V24,
-        _FULL_V24_GEMMA_VERTEX.key: _FULL_V24_GEMMA_VERTEX,
-        _FULL_V24_CODEX_SUBSCRIPTION.key: _FULL_V24_CODEX_SUBSCRIPTION,
+        _FULL_V25.key: _FULL_V25,
+        _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
+        _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
     }
 )
 

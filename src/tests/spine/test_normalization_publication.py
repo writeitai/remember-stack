@@ -578,7 +578,7 @@ def _version_membership(
 ) -> tuple[UUID, UUID]:
     """Attach the same immutable claim to a new real version's chunk occurrence."""
     version_id, representation_id, chunk_id = uuid4(), uuid4(), uuid4()
-    section_id = uuid4()
+    section_id, structure_id = uuid4(), uuid4()
     with database_engine.begin() as connection:
         doc_id = connection.execute(
             text("SELECT doc_id FROM claims WHERE claim_id = :id"),
@@ -591,6 +591,7 @@ def _version_membership(
             "rep": representation_id,
             "chunk": chunk_id,
             "section": section_id,
+            "structure": structure_id,
             "claim": inputs.claim_id,
             "hash": str(version_id),
             "number": number,
@@ -617,10 +618,32 @@ def _version_membership(
             parameters,
         )
         connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id=:rep WHERE deployment_id=:dep AND version_id=:version"
+            ),
+            parameters,
+        )
+        connection.execute(
+            text("""INSERT INTO document_structure_generations (
+                structure_generation_id, deployment_id, doc_id, version_id, representation_id,
+                skeleton_version, skeleton_hash, skeleton_producer_family, roles_version, route_tag,
+                candidate_skeleton_hash, stats_version, stats)
+            VALUES (:structure, :dep, :doc, :version, :rep,
+                'structure-proof', 'skeleton-proof', 'deterministic', 'roles-proof', 'parser',
+                'candidate-proof', 'stats-proof', '{}'::jsonb)"""),
+            parameters,
+        )
+        connection.execute(
+            text(
+                "UPDATE document_representations SET current_structure_generation_id=:structure WHERE representation_id=:rep AND deployment_id=:dep"
+            ),
+            parameters,
+        )
+        connection.execute(
             text("""
             INSERT INTO document_sections (section_id, deployment_id, doc_id, version_id,
-                representation_id, node_path, block_start, block_end, role, char_start, char_end, ordinal)
-            VALUES (:section, :dep, :doc, :version, :rep, '0', 0, 0, 'body', 0, 18, 0)
+                representation_id, structure_generation_id, node_path, block_start, block_end, role, char_start, char_end, ordinal)
+            VALUES (:section, :dep, :doc, :version, :rep, :structure, '0', 0, 0, 'body', 0, 18, 0)
         """),
             parameters,
         )

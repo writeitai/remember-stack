@@ -131,6 +131,7 @@ _PAYLOADS: dict[str, dict[str, object]] = {
             {
                 "subject": {"name": "Alice Novak"},
                 "predicate": "works_for",
+                "shape_kind": "state",
                 "object": {"name": "Acme"},
             }
         ],
@@ -140,6 +141,11 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     },
     "FactLabelResponse": {"label": "Alice Novak works for Acme."},
     "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
+    "RelationIdentityVerdict": {
+        "decisions": [],
+        "confidence": 0.9,
+        "rationale": "No incompatible existing state.",
+    },
     "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
 }
 

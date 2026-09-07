@@ -90,6 +90,14 @@ class PipelineReadinessCatalog:
             ),
             None,
         )
+        relation_version = next(
+            (
+                version
+                for stage, version in self._expected
+                if stage is PipelineStage.ADJUDICATE_SUPERSESSION
+            ),
+            None,
+        )
         # Packing generation on chunk rows includes params (D58); the CHUNK
         # processing_state component_version is the bare algorithm pin. Use the
         # default pack params for the active grid filter (compose/selfhost default).
@@ -159,6 +167,27 @@ class PipelineReadinessCatalog:
                     .mappings()
                     .all()
                 )
+            relation_rows = ()
+            if (
+                relation_version is not None
+                and normalize_version is not None
+                and extract_version is not None
+            ):
+                relation_rows = (
+                    connection.execute(
+                        _RELATION_FLUSH_STATUS,
+                        {
+                            "deployment_id": deployment_id,
+                            "version_ids": version_ids,
+                            "adjudicator_version": relation_version,
+                            "normalizer_version": normalize_version,
+                            "extractor_version": extract_version,
+                            "chunker_version": chunk_version,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
             p1_ready = bool(
                 connection.execute(
                     _P1_READY, {"deployment_id": deployment_id}
@@ -220,6 +249,15 @@ class PipelineReadinessCatalog:
                 str(row["component_version"]),
             )
             by_key[key] = row
+        # D110 completion belongs to exact relation units and application receipts.
+        for row in relation_rows:
+            by_key[
+                (
+                    UUID(str(row["target_id"])),
+                    PipelineStage.ADJUDICATE_SUPERSESSION,
+                    str(row["component_version"]),
+                )
+            ] = row
         versions: list[VersionPipelineReadiness] = []
         terminal_at = None
         for version_id in version_ids:
@@ -690,6 +728,88 @@ _NORMALIZE_CLAIM_STATUS = text(
     ) derived
     """
 ).bindparams(bindparam("version_ids", expanding=True))
+
+_RELATION_FLUSH_STATUS = text("""
+    WITH versions AS (
+      SELECT v.version_id, v.current_representation_id, v.content_hash,
+        s.normalizer_version, s.adjudicator_version, s.representation_id,
+        s.chunker_version, s.extractor_version, s.fanout_status,
+        s.expected_units, s.completed_at, s.lane,
+        s.content_hash AS recorded_content_hash
+      FROM document_versions v
+      LEFT JOIN relation_flush_version_state s
+        ON s.deployment_id=v.deployment_id AND s.version_id=v.version_id
+       AND s.normalizer_version=:normalizer_version AND s.adjudicator_version=:adjudicator_version
+      WHERE v.deployment_id=:deployment_id AND v.version_id IN :version_ids
+    ), expected_claims AS (
+      SELECT DISTINCT v.version_id, cl.claim_id, r.receipt_id, r.relation_count
+      FROM versions v JOIN chunks c
+        ON c.deployment_id=:deployment_id AND c.version_id=v.version_id
+       AND c.representation_id=v.current_representation_id AND c.chunker_version=:chunker_version
+      JOIN chunk_claims cc ON cc.chunk_id=c.chunk_id
+      JOIN claims cl ON cl.claim_id=cc.claim_id AND cl.deployment_id=:deployment_id
+       AND cl.extractor_version=:extractor_version
+      LEFT JOIN normalize_claim_receipts r
+        ON r.deployment_id=:deployment_id AND r.claim_id=cl.claim_id
+       AND r.normalizer_version=:normalizer_version
+    ), expected AS (
+      SELECT DISTINCT e.version_id, a.assertion_id, a.subject_entity_id, a.predicate
+      FROM expected_claims e JOIN normalize_relation_assertions a
+        ON a.deployment_id=:deployment_id AND a.receipt_id=e.receipt_id
+       AND a.normalizer_version=:normalizer_version
+    ), units AS (
+      SELECT u.version_id, u.unit_id, u.subject_entity_id, u.predicate,
+        p.status::text, p.finished_at
+      FROM relation_flush_block_units u JOIN versions v ON v.version_id=u.version_id
+      LEFT JOIN processing_state p
+        ON p.deployment_id=u.deployment_id AND p.target_kind='entity' AND p.target_id=u.unit_id
+       AND p.stage='adjudicate_supersession' AND p.component_version=:adjudicator_version AND p.lane=v.lane
+      WHERE u.deployment_id=:deployment_id AND u.version_id IN :version_ids
+        AND u.normalizer_version=:normalizer_version AND u.adjudicator_version=:adjudicator_version
+    ), inputs AS (
+      SELECT u.version_id, u.unit_id, u.subject_entity_id, u.predicate, i.assertion_id,
+        i.applied_at, r.completed_at, f.relation_id
+      FROM units u LEFT JOIN relation_flush_inputs i
+        ON i.deployment_id=:deployment_id AND i.unit_id=u.unit_id
+       AND i.normalizer_version=:normalizer_version AND i.adjudicator_version=:adjudicator_version
+      LEFT JOIN relation_application_receipts r
+        ON r.deployment_id=:deployment_id AND r.assertion_id=i.assertion_id
+       AND r.adjudicator_version=:adjudicator_version
+      LEFT JOIN relations f ON f.deployment_id=r.deployment_id AND f.relation_id=r.relation_id
+    ), derived AS (
+      SELECT v.version_id AS target_id, 'adjudicate_supersession'::text AS stage,
+        :adjudicator_version AS component_version, v.completed_at AS finished_at,
+        CASE
+          WHEN v.normalizer_version IS NULL
+            OR v.representation_id IS DISTINCT FROM v.current_representation_id
+            OR v.recorded_content_hash IS DISTINCT FROM v.content_hash
+            OR v.chunker_version<>:chunker_version OR v.extractor_version<>:extractor_version
+            OR v.expected_units<>(SELECT count(*) FROM units u WHERE u.version_id=v.version_id)
+            OR EXISTS (SELECT 1 FROM expected_claims e WHERE e.version_id=v.version_id
+                AND (e.receipt_id IS NULL OR e.relation_count<>(SELECT count(*) FROM normalize_relation_assertions a
+                    WHERE a.deployment_id=:deployment_id AND a.receipt_id=e.receipt_id AND a.normalizer_version=:normalizer_version)))
+            OR EXISTS (
+                (SELECT assertion_id, subject_entity_id, predicate FROM expected e WHERE e.version_id=v.version_id
+                 EXCEPT SELECT assertion_id, subject_entity_id, predicate FROM inputs i WHERE i.version_id=v.version_id)
+                UNION ALL
+                (SELECT assertion_id, subject_entity_id, predicate FROM inputs i WHERE i.version_id=v.version_id
+                 EXCEPT SELECT assertion_id, subject_entity_id, predicate FROM expected e WHERE e.version_id=v.version_id)
+            ) THEN 'missing'
+          WHEN v.fanout_status='empty_complete' AND v.expected_units=0 AND v.completed_at IS NOT NULL THEN 'succeeded'
+          WHEN v.fanout_status='barrier_complete' AND v.completed_at IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND (u.status IS DISTINCT FROM 'succeeded' OR u.finished_at IS NULL))
+            AND NOT EXISTS (SELECT 1 FROM inputs i WHERE i.version_id=v.version_id AND (i.applied_at IS NULL OR i.completed_at IS NULL OR i.relation_id IS NULL)) THEN 'succeeded'
+          WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='dead_letter') THEN 'dead_letter'
+          WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='running') THEN 'running'
+          WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='failed') THEN 'failed'
+          WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='pending') THEN 'pending'
+          ELSE 'missing'
+        END AS status
+      FROM versions v
+    ) SELECT target_id, stage, component_version, status,
+        CASE WHEN status IN ('succeeded', 'dead_letter') THEN finished_at END AS finished_at
+      FROM derived
+""").bindparams(bindparam("version_ids", expanding=True))
 
 # D90: derive adjudicate_observations from entity units / version_state.
 # State and membership are pinned to the active normalizer generation so an

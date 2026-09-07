@@ -218,3 +218,16 @@ is now formatted using locked Ruff; repository-wide lint and format checks pass
 (486 files). The remaining supported PostgreSQL jobs must still be assessed.
 Round eight must verify the review disposition and D111 implementation; round
 seven's conditional verdict is not represented as approval.
+
+## Round eight
+
+Antigravity completed review of `0a9fcec7` and granted **scoped approval** of
+the round-seven tooling disposition, locked formatting fix and D111 implementation
+`8c4b8a24`. Output: `/tmp/rs-t1-d111-implementation-antigravity-r8.log`. It verified
+the known-start predicate across final migration, exact schema check and pure
+guards, fact generation, and 23 scoped PostgreSQL15 application cases. It
+explicitly retained incomplete full-pipeline and program gates.
+
+The subsequent readiness/protocol/provenance-fixture corrections address actual
+CI34076741576 failures and need their own supported CI and review. They are not
+covered by round eight. The separate D112 design review remains pending.

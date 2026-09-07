@@ -1,4 +1,4 @@
-# RS-LoCoMo-Full-v24 setup
+# RS-LoCoMo-Full-v25 setup
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,12 +16,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v24 \
+  --protocol full-v25 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v24` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v25` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -63,6 +63,11 @@ V17 also fingerprints D100 entity resolution: one match-biased simple-model T4
 call sees the complete bounded candidate snapshot and returns a supplied
 candidate id or `new`. There is no insufficient-evidence result or
 confidence-routed frontier call.
+
+V25 pins complete normalization receipts, temporal shape judgment and ordered
+relation application with world-time succession. This is the in-progress
+temporal implementation generation: full pipeline/review acceptance is required
+before reporting scores, and a v24 store cannot be reused as a v25 run.
 
 V24 fingerprints D107 WP-T.4: extraction teaches all four temporal kinds,
 open-ended state windows, and full source timestamps. Relative hour offsets
@@ -168,9 +173,9 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
-## Gemma 4 on Vertex as the answer agent (`full-v24-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v25-gemma-vertex`)
 
-`full-v24-gemma-vertex` is a *variant* of `full-v24`, not a new benchmark
+`full-v25-gemma-vertex` is a *variant* of `full-v25`, not a new benchmark
 identity: every pin is identical -- ingestion bindings, prompts, tool catalog,
 budgets, temperature, and the frozen Luna judge -- except that the answer
 agent is `google/gemma-4-26b-a4b-it-maas`, Google's managed Gemma 4 26B-A4B
@@ -199,7 +204,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v24-gemma-vertex \
+  --protocol full-v25-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 
@@ -241,7 +246,7 @@ any upload.
 
 ## Codex ChatGPT subscription for answer and judge
 
-`full-v24-codex-subscription` runs both evaluator seats through the official
+`full-v25-codex-subscription` runs both evaluator seats through the official
 local Codex app-server and the operator's existing ChatGPT login. It does not
 read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
 ChatGPT response route directly. Run `codex login` once, then prepare the
@@ -251,7 +256,7 @@ separately fingerprinted protocol:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v24-codex-subscription \
+  --protocol full-v25-codex-subscription \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 

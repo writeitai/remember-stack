@@ -111,6 +111,7 @@ _NORMALIZATION_PAYLOAD: dict[str, object] = {
         {
             "subject": {"name": "Alice Novak"},
             "predicate": "works_for",
+            "shape_kind": "state",
             "object": {"name": "Acme"},
         },
         {
@@ -198,6 +199,11 @@ class _E3Rig:
             "NormalizationResponse": _NORMALIZATION_PAYLOAD,
             "FactLabelResponse": {"label": "Alice Novak works for Acme."},
             "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
+            "RelationIdentityVerdict": {
+                "decisions": [],
+                "confidence": 0.9,
+                "rationale": "No incompatible existing state.",
+            },
             "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
         }
 
@@ -526,6 +532,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             # D90: empty path is durable empty_complete — no document_version
             # adjudicate_observations work row at the entity-fanout generation.
             PipelineStage.ADJUDICATE_OBSERVATIONS,
+            PipelineStage.ADJUDICATE_SUPERSESSION,
         ):
             assert outcome is RunResultOutcome.NO_WORK, stage
         else:
@@ -561,8 +568,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
 
     assert chunk_count == 0
     assert empty_complete == "empty_complete"
-    # D84/D88/D90: zero-chunk hop → durable empty_complete (no version-grain
-    # extract, claim normalize, or adjudicate_observations processing row).
+    # D110 also completes empty relations by a durable barrier, without a synthetic job.
     assert {stage for stage, _status in rows} == {
         stage.value
         for stage in (
@@ -570,13 +576,12 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
-            PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
         )
     }
-    assert len(rows) == 8
+    assert len(rows) == 7
     assert {status for _stage, status in rows} == {"succeeded"}
     assert rig.provider.generated_prompts == []
 

@@ -333,3 +333,42 @@ pass after the predicate/generation change; **42** pure temporal-authority tests
 pass. Local harnesses stop their private clusters and do not exercise the full
 supported PostgreSQL19 migration graph. Consumer disclosures and full lifecycle
 acceptance remain part of the unfinished full program.
+
+## Supported CI findings: readiness, fixtures and protocol
+
+`8c4b8a24`'s CI34076741576 completed with 636 worker/spine passes and 39 failures.
+Most new application/barrier failures were the shared fixture omitting D79's
+required structure-generation provenance; the private harness had not installed
+that later constraint. The fixture now creates actual generation rows, points
+the representation at its current generation and supplies the section FK. Both
+private application/normalization harnesses now install the actual D79 migration
+DDL and constraints as well. No production constraint was relaxed.
+
+The three full-chain canned providers now supply normalized state shape and the
+new relation identity response type. Their old responses implicitly created
+unknown-kind facts and could not answer the new semantic call. These fixtures
+still exercise real publication, ordered application and lineage-count behavior.
+
+Empty relation application now has a closed version certificate and zero unit
+jobs. Compose and the empty-chain test consequently expect seven actual
+version-level jobs, explicitly check the empty relation certificate, and retain
+public readiness and zero-cost assertions. Readiness now replaces the obsolete
+document-level relation job with exact assertion-set, source-coordinate,
+unit-generation/lane, receipt and target-existence checks. A successful marker
+alone cannot hide missing inputs or receipts; empty completion still requires
+its durable exact-generation record. This is the relation-stage read model, not
+completion of all serving-generation or cache gates.
+
+The unit pack's single failure was an obsolete normalizer protocol pin. Full-v25
+now pins the actual normalizer and relation adjudicator, changes run identity and
+fingerprint, and preserves historical v24 descriptions. All 149 focused benchmark
+protocol/runner/backup tests pass; a new guard checks the relation adjudicator pin
+as well as the normalizer/extractor/observation pins.
+
+The application harness now has 24 passing cases, including ready→missing when
+an input/receipt disappears, wrong-generation refusal, and explicit empty
+closure. The normalization harness's 22 cases pass with the added D79 constraints.
+Locked repository-wide lint/format and targeted Pyright pass. Full PostgreSQL19
+CI must rerun these concrete fixes before any broader claim. D112 design PR #386
+separately proposes multi-slice state support; it is not implemented or accepted
+by these proofs.

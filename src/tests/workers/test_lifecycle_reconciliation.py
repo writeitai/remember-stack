@@ -161,6 +161,7 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
                     {
                         "subject": {"name": "Alice Novak"},
                         "predicate": "works_for",
+                        "shape_kind": "state",
                         "object": {"name": "Acme"},
                     }
                 ],
@@ -169,6 +170,12 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
         return {"relations": [], "observations": []}
     if type_name == "FactLabelResponse":
         return {"label": "Alice Novak works for Acme."}
+    if type_name == "RelationIdentityVerdict":
+        return {
+            "decisions": [],
+            "confidence": 0.9,
+            "rationale": "No incompatible existing state.",
+        }
     if type_name == "SupersessionVerdict":
         return {"outcome": "coexist", "confidence": 0.9}
     if type_name == "ObservationVerdict":
