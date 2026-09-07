@@ -769,3 +769,18 @@ cache/correction intents, worker/barrier/readiness handoffs and generation rolls
 then the other required T.1 authority writers/cache/forget and T.2/T.3/T.5 work.
 The user explicitly requires an explanation and approval before any related
 merge or release; the PR stays draft until then.
+
+## Rebase onto the subscription evaluator addition
+
+The branch is rebased onto main `c0f5c010` (#382). Conflict resolution preserves
+the new Codex subscription adapter and its separate answer/judge provider pins,
+and carries that variant into the existing Full-v25 temporal protocol roll.
+All three provider variants use v25's temporal component generations; historical
+v24 stores/runs are not relabelled or reused. The adapter implementation itself
+was not changed. Benchmark examples, the typed registry and runner expectations
+retain the new provider choice.
+
+All 152 protocol/runner/store-backup tests pass after the rebase. Locked Ruff and
+format checks pass; the newly merged adapter adds one unit module, bringing the
+inventory to 103 unit / 61 integration / 164 total. This verifies the conflict
+resolution, not full temporal pipeline acceptance.

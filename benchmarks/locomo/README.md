@@ -260,10 +260,10 @@ uv run --extra benchmark python -m benchmarks.locomo prepare \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 
-The v24 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+The v25 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
 the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
 effort `low`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v24 score.
+provider variant, not a canonical v25 score.
 
 Each model call uses a fresh ephemeral thread, an empty temporary directory,
 read-only/no-network sandboxing, and deny-all approvals. Codex receives no

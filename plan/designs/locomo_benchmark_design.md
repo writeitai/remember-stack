@@ -467,7 +467,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v24-codex-subscription` is an additive evaluator-provider variant for
+`full-v25-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
