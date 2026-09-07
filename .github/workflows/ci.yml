@@ -323,14 +323,15 @@ jobs:
           # Build an empty prior-generation fixture. D118 intentionally refuses
           # lossy downgrade; retained-fact conversion has its own integration proof.
           docker compose --env-file .env.example run --rm --no-deps -T \
-            --entrypoint python setup - <<'PY'
+            --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
+            --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'
           from alembic import command
           from alembic.config import Config
           from sqlalchemy import create_engine, text
           from rememberstack.model import DeploymentBootstrapInput
           from rememberstack.spine import DeploymentBootstrapper
           from rememberstack.spine.settings import load_database_settings
-          from tests.database_reset import reset_database
+          from database_reset import reset_database
 
           database_url = load_database_settings().sqlalchemy_url()
           engine = create_engine(database_url)
