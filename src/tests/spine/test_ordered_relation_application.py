@@ -431,9 +431,7 @@ def test_exact_state_identity_survives_inference_about_another_candidate(
         }
     )
     applier = OrderedRelationApplier(
-        engine=database_engine,
-        model_provider=provider,
-        settings=SupersessionSettings(),
+        engine=database_engine, model_provider=provider, settings=SupersessionSettings()
     )
     unit = _stage(database_engine=database_engine, inputs=repeated, number=3)
     prepared = applier.prepare(deployment_id=inputs.deployment_id, unit_id=unit)
@@ -466,6 +464,307 @@ def test_exact_state_identity_survives_inference_about_another_candidate(
             ).scalar_one()
             == 1
         )
+
+
+def _mixed_state_coexistence(
+    *, database_engine: Engine, inputs: PublicationInputs, unknown_first: bool
+) -> None:
+    """Exercise both arrival orders through real staged identity application."""
+    second = _second_claim(
+        database_engine=database_engine, inputs=inputs, day="2019-01-01+00"
+    )
+    undated = inputs if unknown_first else second
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims SET claim_valid_from=NULL, claim_valid_until=NULL, claim_valid_kind=NULL, claim_valid_precision='unknown' WHERE claim_id=:id"
+            ),
+            {"id": undated.claim_id},
+        )
+    applier = OrderedRelationApplier(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        settings=SupersessionSettings(),
+    )
+    first_id = _apply_next(
+        applier=applier,
+        inputs=inputs,
+        unit_id=_stage(database_engine=database_engine, inputs=inputs, number=1),
+    )
+    second_id = _apply_next(
+        applier=applier,
+        inputs=second,
+        unit_id=_stage(database_engine=database_engine, inputs=second, number=2),
+        decisions={},
+    )
+    assert first_id != second_id
+    with database_engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT seed_claim_id, valid_from, contradiction_group, valid_from_basis::text FROM relations WHERE deployment_id=:dep"
+                ),
+                {"dep": inputs.deployment_id},
+            )
+            .mappings()
+            .all()
+        )
+        assert len(rows) == 2
+        assert all(row["contradiction_group"] is None for row in rows)
+        unknown = next(row for row in rows if row["seed_claim_id"] == undated.claim_id)
+        assert (
+            unknown["valid_from"] is None and unknown["valid_from_basis"] == "unknown"
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM relation_application_receipts WHERE deployment_id=:dep AND identity_outcome='new'"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 2
+        )
+
+
+def test_unknown_then_dated_same_value_states_coexist(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """D111 admits an ordinary dated slice without inventing identity with an undated state."""
+    _mixed_state_coexistence(
+        database_engine=database_engine, inputs=inputs, unknown_first=True
+    )
+
+
+def test_dated_then_unknown_same_value_states_coexist(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """An undated remention does not force evidence or an unsupported temporal cap."""
+    _mixed_state_coexistence(
+        database_engine=database_engine, inputs=inputs, unknown_first=False
+    )
+
+
+def test_known_end_unknown_start_can_coexist_with_a_dated_slice(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """An ending occurrence supplies only an end; that state still permits mixed coexistence."""
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims SET claim_valid_from=NULL, claim_valid_kind=NULL, claim_valid_precision='unknown' WHERE claim_id=:id"
+            ),
+            {"id": inputs.claim_id},
+        )
+    applier = OrderedRelationApplier(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        settings=SupersessionSettings(),
+    )
+    unknown_id = _apply_next(
+        applier=applier,
+        inputs=inputs,
+        unit_id=_stage(database_engine=database_engine, inputs=inputs, number=1),
+    )
+    ending = _second_claim(
+        database_engine=database_engine, inputs=inputs, day="2025-01-01+00"
+    )
+    dated = _second_claim(
+        database_engine=database_engine, inputs=inputs, day="2019-01-01+00"
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE claims SET claim_valid_kind='event_time' WHERE claim_id=:id"),
+            {"id": ending.claim_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE claims SET claim_valid_kind='effective_period' WHERE claim_id=:id"
+            ),
+            {"id": dated.claim_id},
+        )
+    _apply_next(
+        applier=applier,
+        inputs=ending,
+        unit_id=_stage(database_engine=database_engine, inputs=ending, number=2),
+        decisions={unknown_id: "incoming_succeeds"},
+    )
+    dated_id = _apply_next(
+        applier=applier,
+        inputs=dated,
+        unit_id=_stage(database_engine=database_engine, inputs=dated, number=3),
+        decisions={},
+    )
+    assert dated_id != unknown_id
+    with database_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT valid_from, valid_until, valid_from_basis::text, valid_until_basis::text FROM relations WHERE relation_id=:id"
+                ),
+                {"id": unknown_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert row["valid_from"] is None and row["valid_until"].year == 2025
+        assert (row["valid_from_basis"], row["valid_until_basis"]) == (
+            "unknown",
+            "verdict",
+        )
+    from rememberstack.spine.migrations._helpers import _split_sql
+    from rememberstack.spine.migrations.versions.p9_30_0051_temporal_fact_finalize import (
+        TEMPORAL_FINALIZE_DDL,
+    )
+    from rememberstack.spine.temporal_schema import require_temporal_constraints_on
+
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE relations DROP CONSTRAINT ex_rel_state_world_window")
+        )
+        for statement in _split_sql(sql=TEMPORAL_FINALIZE_DDL):
+            connection.execute(text(statement))
+        require_temporal_constraints_on(connection=connection)
+
+
+def test_state_exclusion_still_rejects_overlapping_known_starts(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """An overlapping SQL insertion cannot bypass known-start state protection."""
+    from sqlalchemy.exc import IntegrityError
+
+    from rememberstack.spine.temporal_schema import require_temporal_constraints_on
+
+    applier = OrderedRelationApplier(
+        engine=database_engine,
+        model_provider=FakeModelProvider(),
+        settings=SupersessionSettings(),
+    )
+    original = _apply_next(
+        applier=applier,
+        inputs=inputs,
+        unit_id=_stage(database_engine=database_engine, inputs=inputs, number=1),
+    )
+    with database_engine.begin() as connection:
+        require_temporal_constraints_on(connection=connection)
+        with (
+            pytest.raises(IntegrityError, match="ex_rel_state_world_window"),
+            connection.begin_nested(),
+        ):
+            connection.execute(
+                text("""INSERT INTO relations (deployment_id, relation_id, subject_entity_id, predicate, object_entity_id,
+                    normalizer_version, temporal_kind, valid_from, valid_from_basis)
+                SELECT deployment_id, gen_random_uuid(), subject_entity_id, predicate, object_entity_id,
+                    normalizer_version, temporal_kind, valid_from, valid_from_basis FROM relations WHERE relation_id=:id"""),
+                {"id": original},
+            )
+
+
+def test_start_acquisition_refusal_is_recorded_without_changing_the_state(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The shared correction rule and journal retain uncertainty before SQL exclusion fires."""
+    from datetime import datetime
+    from datetime import timezone
+
+    from rememberstack.core.fact_temporal import correct_window
+    from rememberstack.model.fact_temporal import TemporalResult
+    from rememberstack.model.temporal_write import FactPlane
+    from rememberstack.model.temporal_write import TemporalBlock
+    from rememberstack.model.temporal_write import TemporalDecision
+    from rememberstack.model.temporal_write import TemporalEffect
+    from rememberstack.model.temporal_write import TemporalFactRef
+    from rememberstack.model.temporal_write import TemporalOperationKind
+    from rememberstack.spine.temporal_journal import load_temporal_evidence
+    from rememberstack.spine.temporal_journal import temporal_write
+
+    _mixed_state_coexistence(
+        database_engine=database_engine, inputs=inputs, unknown_first=True
+    )
+    with database_engine.begin() as connection:
+        facts = connection.execute(
+            text(
+                "SELECT relation_id, valid_from FROM relations WHERE deployment_id=:dep"
+            ),
+            {"dep": inputs.deployment_id},
+        ).all()
+        target = TemporalFactRef(
+            plane=FactPlane.RELATION,
+            fact_id=next(row.relation_id for row in facts if row.valid_from is None),
+        )
+        neighbor = TemporalFactRef(
+            plane=FactPlane.RELATION,
+            fact_id=next(
+                row.relation_id for row in facts if row.valid_from is not None
+            ),
+        )
+        with temporal_write(
+            connection=connection,
+            deployment_id=inputs.deployment_id,
+            blocks=(
+                TemporalBlock(
+                    plane=FactPlane.RELATION,
+                    subject_entity_id=inputs.subject_id,
+                    predicate="works_for",
+                ),
+            ),
+            facts=(target, neighbor),
+        ) as session:
+            before = session.state(fact=target)
+            neighbor_state = session.state(fact=neighbor)
+            assert before is not None and neighbor_state is not None
+            operation_id = uuid4()
+            result = correct_window(
+                state=before,
+                start=datetime(2019, 1, 1, tzinfo=timezone.utc),
+                end=None,
+                operation_id=operation_id,
+                neighbours=(neighbor_state,),
+            )
+            assert result.result is TemporalResult.REFUSED
+            session.apply(
+                effect=TemporalEffect(
+                    operation_id=operation_id,
+                    fact=target,
+                    kind=TemporalOperationKind.CORRECTION,
+                    result=result.result,
+                    before=before,
+                    after=result.state,
+                    decision=TemporalDecision(
+                        adjudication_id=uuid4(),
+                        outcome="temporal_correct",
+                        method="exact",
+                        triggering_claim_id=inputs.claim_id,
+                    ),
+                    evidence=(
+                        load_temporal_evidence(
+                            connection=connection,
+                            deployment_id=inputs.deployment_id,
+                            claim_id=inputs.claim_id,
+                            role="support",
+                        ),
+                    ),
+                    input_fingerprint="1" * 64,
+                    identity_generation="d111-proof",
+                    policy_generation="d111-proof",
+                    reason=result.reason,
+                    recorded_at=datetime(2026, 9, 7, tzinfo=timezone.utc),
+                ),
+                written_blocks=frozenset(),
+            )
+        row = connection.execute(
+            text(
+                "SELECT valid_from, temporal_revision FROM relations WHERE relation_id=:id"
+            ),
+            {"id": target.fact_id},
+        ).one()
+        assert row.valid_from is None and row.temporal_revision == before.revision
+        recorded = connection.execute(
+            text(
+                "SELECT result::text, reason_code FROM temporal_operations WHERE operation_id=:id"
+            ),
+            {"id": operation_id},
+        ).one()
+        assert tuple(recorded) == ("refused", "invalid_combined_window")
 
 
 def test_late_historical_state_caps_at_existing_successor_world_start(

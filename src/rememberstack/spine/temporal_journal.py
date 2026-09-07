@@ -38,7 +38,7 @@ from rememberstack.model.temporal_write import TemporalSourceKind
 from rememberstack.model.temporal_write import TemporalSourceRef
 from rememberstack.spine.admission import active_forget_id_on
 
-TEMPORAL_FACT_GENERATION = "temporal-facts-d107-d110-1"
+TEMPORAL_FACT_GENERATION = "temporal-facts-d107-d111-1"
 
 
 class TemporalWriteConflict(RuntimeError):

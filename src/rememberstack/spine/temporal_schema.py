@@ -58,7 +58,7 @@ _CHECKS = {
 }
 _EXCLUSION = """EXCLUDE USING gist (deployment_id WITH =, subject_entity_id WITH =,
 predicate WITH =, object_entity_id WITH =, tstzrange(valid_from, valid_until, '[)'::text) WITH &&)
-WHERE (temporal_kind = 'state'::fact_temporal_kind AND valid_from_basis <> 'erased'::fact_temporal_basis
+WHERE (temporal_kind = 'state'::fact_temporal_kind AND valid_from IS NOT NULL AND valid_from_basis <> 'erased'::fact_temporal_basis
 AND valid_until_basis <> 'erased'::fact_temporal_basis AND invalidated_at IS NULL AND contradiction_group IS NULL)"""
 _CONSTRAINTS = text("""
     SELECT relation.relname AS table_name, constraint_row.conname, constraint_row.contype,

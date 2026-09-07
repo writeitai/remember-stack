@@ -56,6 +56,47 @@ def _state(
     )
 
 
+def test_start_acquisition_refuses_an_overlapping_known_state() -> None:
+    """D111 checks the proposed dated interval before leaving unknown-start exemption."""
+    original = _state(start=None, end=2025)
+    result = correct_window(
+        state=original,
+        start=_at(2021),
+        end=None,
+        operation_id=uuid4(),
+        neighbours=(_state(start=2020, end=2023),),
+    )
+    assert result.result is Result.REFUSED and result.state == original
+    assert result.reason == "invalid_combined_window"
+
+
+def test_start_acquisition_can_coexist_with_unknown_start_neighbors() -> None:
+    """Missing neighbor starts do not reintroduce an infinite exclusion in pure validation."""
+    result = correct_window(
+        state=_state(start=None, end=2025),
+        start=_at(2021),
+        end=None,
+        operation_id=uuid4(),
+        neighbours=(_state(start=None), _state(start=None, end=2024)),
+    )
+    assert result.result is Result.APPLIED
+    assert result.state.verdict.start == _at(2021)
+
+
+def test_end_acquisition_preserves_unknown_start_coexistence() -> None:
+    """A grounded end alone does not make an uncertain state subject to dated exclusion."""
+    result = correct_window(
+        state=_state(start=None),
+        start=None,
+        end=_at(2025),
+        operation_id=uuid4(),
+        neighbours=(_state(start=2020, end=2023),),
+    )
+    assert result.result is Result.APPLIED
+    assert result.state.verdict.start is None
+    assert result.state.verdict.end == _at(2025)
+
+
 @pytest.mark.parametrize(
     ("claim_kind", "kind", "expected_end"),
     [

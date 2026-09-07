@@ -183,3 +183,19 @@ normalization suite now has 22. It requires its own review and supported CI.
 The D111 unknown-start constraint conflict and multiple dated identity ambiguity
 are separately recorded in the progress report; scoped handoff approval does
 not settle those design decisions or certify the full pipeline.
+
+## D111 design review
+
+Antigravity completed read-only review of design commit `40609949` with
+**design-level approval and zero blockers**, output
+`/tmp/rs-t1-d111-antigravity-r1.log`. It required implementation evidence for
+recorded start-acquisition refusal and populated final-constraint installation.
+PR #385 passed [CI34076169182](https://github.com/writeitai/remember-stack/actions/runs/34076169182)
+and CLA, and merged as `7b927293`. Code-path integration jobs were skipped by
+the design-only path filter; the design approval is not runtime acceptance.
+
+The subsequent D111 implementation applies its predicate to the actual migration,
+schema verifier and pure neighbor guard, with the scoped evidence recorded in
+the progress report. Antigravity round seven separately reviews ordered writer
+commit `ada8d28b` (rebased equivalent `77a248c1`); its review was requested before
+the D111 implementation and must not be cited as approval of those later changes.

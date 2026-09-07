@@ -352,9 +352,10 @@ def _valid_window(
 
 
 def _ordinary_state(*, state: FactTemporalState, window: VerdictWindow) -> bool:
-    """Match the state exclusion's belief, contradiction, and erased-basis scope."""
+    """Match D111's known-start exclusion, belief, contradiction, and erased-basis scope."""
     return (
         state.kind is FactTemporalKind.STATE
+        and window.start is not None
         and state.invalidated_at is None
         and state.contradiction_group is None
         and FactTemporalBasis.ERASED not in (window.start_basis, window.end_basis)

@@ -312,3 +312,24 @@ correctness work, alongside complete candidate budgeting, observation and all
 other writer participation, identity reconciliation, correction execution,
 cache certificates/events, hard forget/replay, serving/readiness, T.2/T.3/T.5,
 generation/LoCoMo rolls, full CI/review and release. PR #384 remains draft.
+
+## D111 implementation after accepted amendment
+
+Design PR #385 merged as `7b927293` after Antigravity design approval and its
+required checks. The implementation branch was rebased onto that main commit.
+The final D migration, exact schema verifier and pure correction/compensation
+neighbor validation now share D111's known-start predicate. The unreleased
+fact-generation certificate rolls to `temporal-facts-d107-d111-1`, including
+the finalization guard and Compose certificate assertion.
+
+There are now **23** scoped PostgreSQL15 application cases. Added cases cover
+both mixed arrival orders, an ending occurrence leaving a NULL start/known end,
+reinstallation of the actual final DDL over populated coexisting rows, continued
+known-start overlap rejection, and a correction refusal recorded through the
+real temporal journal with unchanged endpoints and revision. The latter tests
+the shared correction rule and journal, not a completed correction worker.
+All **38** prior journal/conversion cases and **11** scoped upgrade cases still
+pass after the predicate/generation change; **42** pure temporal-authority tests
+pass. Local harnesses stop their private clusters and do not exercise the full
+supported PostgreSQL19 migration graph. Consumer disclosures and full lifecycle
+acceptance remain part of the unfinished full program.

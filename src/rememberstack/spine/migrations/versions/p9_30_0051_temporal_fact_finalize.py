@@ -15,7 +15,7 @@ down_revision: str | None = "p9_29_0050"
 branch_labels = None
 depends_on = None
 
-TEMPORAL_FACT_GENERATION = "temporal-facts-d107-d110-1"
+TEMPORAL_FACT_GENERATION = "temporal-facts-d107-d111-1"
 
 TEMPORAL_FINALIZE_DDL = r"""
 -- STEP D: a separate Alembic upgrade invocation, ONLY after resumable conversion.
@@ -29,7 +29,7 @@ ALTER TABLE public.relations
     predicate WITH =,
     object_entity_id WITH =,
     tstzrange(valid_from, valid_until, '[)') WITH &&
-  ) WHERE (temporal_kind = 'state'
+  ) WHERE (temporal_kind = 'state' AND valid_from IS NOT NULL
            AND valid_from_basis <> 'erased' AND valid_until_basis <> 'erased'
            AND invalidated_at IS NULL AND contradiction_group IS NULL);
 
@@ -51,7 +51,7 @@ BEGIN
     WHERE NOT EXISTS (
       SELECT 1 FROM public.temporal_conversion_runs c
       WHERE c.deployment_id = d.deployment_id
-        AND c.generation = 'temporal-facts-d107-d110-1'
+        AND c.generation = 'temporal-facts-d107-d111-1'
         AND c.state = 'complete'
         AND c.expected_relations = (
           SELECT count(*) FROM public.relations r WHERE r.deployment_id = d.deployment_id)
@@ -105,7 +105,7 @@ def upgrade() -> None:
         )
         SELECT deployment_id, generation, conversion_id, clock_timestamp()
         FROM public.temporal_conversion_runs
-        WHERE generation = 'temporal-facts-d107-d110-1' AND state = 'complete'
+        WHERE generation = 'temporal-facts-d107-d111-1' AND state = 'complete'
         ON CONFLICT (deployment_id) DO UPDATE SET
           generation = EXCLUDED.generation,
           conversion_id = EXCLUDED.conversion_id,
@@ -130,7 +130,7 @@ def _receipt_guard(*, plane: str) -> str:
             AND narrative.temporal_operation_id = effect.operation_id
           WHERE shadow.deployment_id = fact.deployment_id AND shadow.fact_kind = '{plane}'
             AND shadow.fact_id = fact.{plane}_id AND shadow.state = 'verified'
-            AND campaign.generation = 'temporal-facts-d107-d110-1' AND campaign.state = 'complete'
+            AND campaign.generation = 'temporal-facts-d107-d111-1' AND campaign.state = 'complete'
             AND effect.{plane}_id = fact.{plane}_id
             AND effect.operation_kind = 'migration' AND effect.result = 'applied'
             AND shadow.expected_revision = 0 AND effect.expected_revision = 0
