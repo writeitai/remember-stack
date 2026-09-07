@@ -137,6 +137,18 @@ a CHECK constraint cannot compare an update with its previous row or verify
 an adjudication history. The open-query login receives no write/execute grant
 on these internal stores.
 
+### 2.1 Observation application storage (D113)
+
+[Observation temporal application](observation_temporal_application_design.md)
+and its incorporated SQL complete this section's observation-ingestion storage
+contract. D90 work units remain, with exact semantic/flush generations and retained
+version membership. Closed observation admissions and durable prepared/original
+application results use the common protocol above. Current assertion support is
+separately owned so late-arrival re-split does not rewrite the original receipt.
+D113 also defines preserved legacy support, refusal of unrecoverable legacy
+re-splits, and linked/erased support checkpoint roots for D74; fact endpoint roots
+alone cannot prove a support assignment.
+
 ## 3. Relation normalization, admission and ordered application (#365)
 
 ### 3.1 One complete normalization answer

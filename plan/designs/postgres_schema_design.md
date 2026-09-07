@@ -2778,6 +2778,14 @@ target; evidence can support multiple compatible dated-state slices without
 merging them. D110 §3.3.1 defines membership, atomic effects, completion/replay,
 boundary authority, consumer disclosure and D74 erasure participation.
 
+D113 additionally incorporates
+[`observation_temporal_application_schema.sql`](observation_temporal_application_schema.sql)
+after that amendment. It preserves D90 work topology while adding observation
+admission/application authority, exact generation-qualified retained memberships,
+legacy evidence baselines and per-assignment linked/erased checkpoint roots.
+[Its design](observation_temporal_application_design.md) defines CAS, support
+relocation, completion, conservative legacy cap refusal and D74 recovery.
+
 Validation evidence and limits live in
 `../analysis/temporal_relation_staging.md` §8. A partial predecessor PostgreSQL15
 execution and SQL parsing do not establish full-head PostgreSQL19 migration,

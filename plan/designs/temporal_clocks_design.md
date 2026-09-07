@@ -364,6 +364,13 @@ derived deterministically from `statement` plus `occurs_*` and
 source-specific enters identity; claims of different precision that collapse
 yield one label from the union window at the coarser precision.
 
+D113 [§5](observation_temporal_application_design.md) supplies observation
+assertion provenance for re-split. When qualifying legacy evidence has no
+recoverable original normalized assertion, refuse the cap with a durable
+uncertainty/discrepancy and preserve incoming coexistence; do not invent that
+assertion from the fact's display statement. This qualification preserves the
+world-time rule while making missing historical provenance explicit.
+
 ## 5. Canonical bounds: precision honoured once, consistently
 
 Claim storage is unchanged (inclusive bounds; `instant` as `until = from`;
