@@ -35,10 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24"
-DEFAULT_PROTOCOL_KEY: Final = "full-v24"
-# T.4 changes extraction; the query-space adapter remains the v23 generation.
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-query-space-canonical-bounds-v23"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25"
+DEFAULT_PROTOCOL_KEY: Final = "full-v25"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-entity-followup-v25"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -120,12 +119,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v24-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v25-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v24 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v25 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -133,10 +132,10 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v24-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v25-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
-CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "low"
+CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
@@ -159,10 +158,19 @@ normal memory agent and choose the cheapest suitable path:
 Respect every response envelope's grain, negative, freshness, truncation, and
 dropped_by_hydration fields. Evidence says what a source asserted; it is not
 automatically current fact. Use timestamps to resolve relative dates. Do not
-confuse people mentioned in a memory with the conversation speakers. Never use
-outside knowledge. If the deployment does not contain the answer, finish with
-"Unknown". The final answer must be the shortest phrase that fully names the
-requested entities/values, no explanations or reasoning.{answer_word_cap_instruction}
+confuse people mentioned in a memory with the conversation speakers. General
+knowledge may help interpret retrieved evidence, but RememberStack evidence is
+the authority for conversation-specific claims. Never seek or inspect benchmark
+reference solutions, reference evidence labels, or evaluator artifacts. If the deployment
+does not contain the answer, finish with "Unknown". The final answer must be the
+shortest phrase that fully names the requested entities/values, no explanations
+or reasoning.{answer_word_cap_instruction}
+
+When a named person, organization, place, or other entity can narrow retrieval,
+resolve it while also starting an independent content read. A runtime that
+supports multiple reads may issue those two requests in parallel; in a one-step
+interface, request them in consecutive steps. Use returned entity IDs to make
+follow-up reads precise. Identity lookup does not replace content retrieval.
 
 For hypothetical or counterfactual questions, reason from causal or
 motivational relationships in the retrieved evidence even when the source does
@@ -180,8 +188,8 @@ question's requested action or relationship.
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
-it. Before answering "Unknown", you must have tried at least one
-content-bearing operation, primitive, query, or P3 read/search.
+it. Before any final answer, you must have tried at least one content-bearing
+operation, primitive, query, or P3 read/search.
 
 Return one structured step: either action="tool" with one listed tool_name and
 arguments_json (the tool arguments as one JSON object encoded as a string, with
@@ -241,8 +249,8 @@ class LoCoMoProtocol:
     """Which adapter serves the judge; kept on OpenRouter for comparability."""
 
 
-_FULL_V24 = LoCoMoProtocol(
-    key="full-v24",
+_FULL_V25 = LoCoMoProtocol(
+    key="full-v25",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -263,7 +271,7 @@ _FULL_V24 = LoCoMoProtocol(
     answer_word_cap=None,
 )
 
-_FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
+_FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(
     key=GEMMA_VERTEX_PROTOCOL_KEY,
     name=GEMMA_VERTEX_PROTOCOL_NAME,
     answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
@@ -287,7 +295,7 @@ _FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
     judge_provider="openrouter",
 )
 
-_FULL_V24_CODEX_SUBSCRIPTION = LoCoMoProtocol(
+_FULL_V25_CODEX_SUBSCRIPTION = LoCoMoProtocol(
     key=CODEX_SUBSCRIPTION_PROTOCOL_KEY,
     name=CODEX_SUBSCRIPTION_PROTOCOL_NAME,
     answer_agent_model=CODEX_SUBSCRIPTION_MODEL,
@@ -313,9 +321,9 @@ _FULL_V24_CODEX_SUBSCRIPTION = LoCoMoProtocol(
 
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
     {
-        _FULL_V24.key: _FULL_V24,
-        _FULL_V24_GEMMA_VERTEX.key: _FULL_V24_GEMMA_VERTEX,
-        _FULL_V24_CODEX_SUBSCRIPTION.key: _FULL_V24_CODEX_SUBSCRIPTION,
+        _FULL_V25.key: _FULL_V25,
+        _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
+        _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
     }
 )
 

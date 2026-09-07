@@ -118,27 +118,43 @@ def _provider(*, run_dir: Path, stage: ProviderStage) -> ModelProviderPort:
     has already been ingested.
     """
     protocol = run_protocol(run_dir=run_dir)
+    codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
     if stage == "ingest":
         openrouter = _seat_provider(provider_key="openrouter")
         if protocol.answer_agent_provider == "openrouter":
             return openrouter
-        answer_provider = _seat_provider(provider_key=protocol.answer_agent_provider)
+        answer_provider = _seat_provider(
+            provider_key=protocol.answer_agent_provider,
+            codex_audit_path=codex_audit_path,
+            codex_audit_stage=stage,
+        )
         return ModelRoutedProvider(
             routes={protocol.answer_agent_model: answer_provider}, default=openrouter
         )
     provider_key = (
         protocol.answer_agent_provider if stage == "answer" else protocol.judge_provider
     )
-    return _seat_provider(provider_key=provider_key)
+    return _seat_provider(
+        provider_key=provider_key,
+        codex_audit_path=codex_audit_path,
+        codex_audit_stage=stage,
+    )
 
 
-def _seat_provider(*, provider_key: ProviderKey) -> ModelProviderPort:
+def _seat_provider(
+    *,
+    provider_key: ProviderKey,
+    codex_audit_path: Path | None = None,
+    codex_audit_stage: str = "generation",
+) -> ModelProviderPort:
     """Build one configured provider without reading unrelated credentials."""
     if provider_key == "openrouter":
         return OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
     if provider_key == "vertex":
         return VertexModelProvider(settings=VertexSettings.model_validate({}))
-    return CodexSubscriptionModelProvider()
+    return CodexSubscriptionModelProvider(
+        audit_path=codex_audit_path, audit_stage=codex_audit_stage
+    )
 
 
 def _positive_decimal(value: str) -> Decimal:
@@ -157,7 +173,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v24: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v25: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )

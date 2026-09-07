@@ -1,6 +1,9 @@
 """Fail-closed proofs for ChatGPT-subscription generation through Codex."""
 
 from decimal import Decimal
+import json
+from pathlib import Path
+import stat
 from types import SimpleNamespace
 from typing import Self
 
@@ -26,7 +29,7 @@ class _Verdict(BaseModel):
 
 
 def _request(
-    *, temperature: float | None = None, reasoning_effort: str | None = "low"
+    *, temperature: float | None = None, reasoning_effort: str | None = "high"
 ) -> ModelRequest:
     """Build one Codex-compatible request."""
     return ModelRequest(
@@ -50,6 +53,7 @@ def _turn(**overrides: object) -> _CodexTurn:
             "ReasoningThreadItem",
             "AgentMessageThreadItem",
         ),
+        "runtime_actions": (),
     }
     values.update(overrides)
     return _CodexTurn(**values)  # type: ignore[arg-type]
@@ -159,12 +163,59 @@ def test_agent_actions_are_rejected_even_if_a_final_response_exists() -> None:
     """Codex remains a generation seat, not an unrecorded retrieval agent."""
     provider = CodexSubscriptionModelProvider(
         turn_runner=lambda **_values: _turn(
-            item_types=("CommandExecutionThreadItem", "AgentMessageThreadItem")
+            item_types=("CommandExecutionThreadItem", "AgentMessageThreadItem"),
+            runtime_actions=(
+                {
+                    "item_type": "CommandExecutionThreadItem",
+                    "payload": {"command": "find / -name locomo10.json"},
+                },
+            ),
         )
     )
 
     with pytest.raises(CodexSubscriptionProviderError, match="disallowed agent action"):
         provider.generate(request=_request(), response_type=_Verdict)
+
+
+def test_runtime_audit_records_every_item_and_action_before_rejection(
+    tmp_path: Path,
+) -> None:
+    """A cheating attempt remains inspectable even though its output is refused."""
+    audit_path = tmp_path / "codex-runtime-answer.jsonl"
+    provider = CodexSubscriptionModelProvider(
+        turn_runner=lambda **_values: _turn(
+            item_types=("WebSearchThreadItem", "AgentMessageThreadItem"),
+            runtime_actions=(
+                {
+                    "item_type": "WebSearchThreadItem",
+                    "payload": {
+                        "query": "LoCoMo conv-42 golden answer",
+                        "results": [{"title": "reference answer"}],
+                    },
+                },
+            ),
+        ),
+        audit_path=audit_path,
+        audit_stage="answer",
+    )
+
+    with pytest.raises(CodexSubscriptionProviderError, match="disallowed agent action"):
+        provider.generate(request=_request(), response_type=_Verdict)
+
+    records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+    assert stat.S_IMODE(audit_path.stat().st_mode) == 0o600
+    assert len(records) == 1
+    assert records[0]["schema"] == "CodexRuntimeAudit/v1"
+    assert records[0]["stage"] == "answer"
+    assert records[0]["reasoning_effort"] == "high"
+    assert records[0]["item_types"] == ["WebSearchThreadItem", "AgentMessageThreadItem"]
+    assert records[0]["runtime_actions"] == [
+        {
+            "item_type": "WebSearchThreadItem",
+            "payload": {"query": "LoCoMo conv-42 golden answer"},
+        }
+    ]
+    assert len(records[0]["prompt_sha256"]) == 64
 
 
 @pytest.mark.parametrize(
@@ -259,9 +310,11 @@ def test_official_sdk_wiring_is_keyless_isolated_and_uses_total_usage(
     assert thread_start["approval_mode"] is openai_codex.ApprovalMode.deny_all
     assert thread_start["sandbox"] is openai_codex.Sandbox.read_only
     assert thread_start["ephemeral"] is True
+    assert "base_instructions" not in thread_start
     run = calls["run"]
     assert isinstance(run, dict)
     assert run["sandbox"] is openai_codex.Sandbox.read_only
     assert turn.tokens_in == 30
     assert turn.tokens_out == 20
     assert turn.item_types == ("AgentMessageThreadItem",)
+    assert turn.runtime_actions == ()

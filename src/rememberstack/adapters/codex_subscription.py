@@ -9,6 +9,10 @@ thread with approvals denied and a turn-scoped JSON Schema.
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
+import hashlib
+import json
+import os
+from pathlib import Path
 import tempfile
 import time
 from typing import cast
@@ -33,10 +37,6 @@ if TYPE_CHECKING:
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
-_GENERATOR_INSTRUCTIONS = """Act only as a structured text generator.
-Use only the user's prompt. Do not call tools, execute commands, inspect files,
-modify files, spawn agents, or use the network. Return only the JSON value that
-matches the requested output schema."""
 _ALLOWED_ITEM_TYPES = frozenset(
     {
         "AgentMessageThreadItem",
@@ -44,6 +44,9 @@ _ALLOWED_ITEM_TYPES = frozenset(
         "ReasoningThreadItem",
         "UserMessageThreadItem",
     }
+)
+_RUNTIME_RESULT_FIELDS = frozenset(
+    {"aggregatedOutput", "contentItems", "output", "result", "results"}
 )
 
 
@@ -65,6 +68,7 @@ class _CodexTurn:
     tokens_in: int | None
     tokens_out: int | None
     item_types: tuple[str, ...]
+    runtime_actions: tuple[dict[str, object], ...]
 
 
 class TurnRunner(Protocol):
@@ -91,10 +95,14 @@ class CodexSubscriptionModelProvider:
         *,
         turn_runner: TurnRunner | None = None,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
+        audit_path: Path | None = None,
+        audit_stage: str = "generation",
     ) -> None:
         """Create an adapter with injectable turn and clock seams for tests."""
         self._turn_runner = turn_runner or _run_codex_turn
         self._monotonic_ns = monotonic_ns
+        self._audit_path = audit_path
+        self._audit_stage = audit_stage
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
@@ -122,6 +130,7 @@ class CodexSubscriptionModelProvider:
                 f"Codex subscription generation failed: {error}"
             ) from error
         latency_ms = max(0, (self._monotonic_ns() - started) // 1_000_000)
+        self._record_runtime_audit(request=request, turn=turn, latency_ms=latency_ms)
         if turn.status != "completed":
             detail = turn.error_message or f"turn ended with status {turn.status!r}"
             usage = _optional_usage(
@@ -154,6 +163,47 @@ class CodexSubscriptionModelProvider:
                 usage=usage,
             ) from error
         return GeneratedResponse(output=output, usage=usage)
+
+    def _record_runtime_audit(
+        self, *, request: ModelRequest, turn: _CodexTurn, latency_ms: int
+    ) -> None:
+        """Append one complete Codex item summary before accepting its output."""
+        if self._audit_path is None:
+            return
+        record = {
+            "schema": "CodexRuntimeAudit/v1",
+            "stage": self._audit_stage,
+            "model": request.model,
+            "reasoning_effort": request.reasoning_effort,
+            "prompt_sha256": hashlib.sha256(request.prompt.encode("utf-8")).hexdigest(),
+            "status": turn.status,
+            "error_message": turn.error_message,
+            "tokens_in": turn.tokens_in,
+            "tokens_out": turn.tokens_out,
+            "latency_ms": latency_ms,
+            "item_types": list(turn.item_types),
+            "runtime_actions": [
+                _without_runtime_results(value=action)
+                for action in turn.runtime_actions
+            ],
+        }
+        encoded = (
+            json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+        try:
+            self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(
+                self._audit_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600
+            )
+            with os.fdopen(descriptor, "ab") as audit_file:
+                audit_file.write(encoded)
+        except OSError as error:
+            raise CodexSubscriptionProviderError(
+                f"could not record Codex runtime audit: {error}",
+                usage=_optional_usage(
+                    turn=turn, model=request.model, latency_ms=latency_ms
+                ),
+            ) from error
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """Reject embeddings: this adapter owns generation seats only."""
@@ -227,7 +277,6 @@ def _run_codex_turn(
                 )
             thread = codex.thread_start(
                 approval_mode=ApprovalMode.deny_all,
-                base_instructions=_GENERATOR_INSTRUCTIONS,
                 cwd=scratch,
                 ephemeral=True,
                 model=request.model,
@@ -244,11 +293,41 @@ def _run_codex_turn(
             )
 
     total_usage = None if result.usage is None else result.usage.total
+    roots = tuple(item.root for item in result.items)
     return _CodexTurn(
         status=result.status.value,
         error_message=None if result.error is None else result.error.message,
         final_response=result.final_response,
         tokens_in=None if total_usage is None else total_usage.input_tokens,
         tokens_out=None if total_usage is None else total_usage.output_tokens,
-        item_types=tuple(type(item.root).__name__ for item in result.items),
+        item_types=tuple(type(root).__name__ for root in roots),
+        runtime_actions=tuple(
+            _runtime_action(item=root)
+            for root in roots
+            if type(root).__name__ not in _ALLOWED_ITEM_TYPES
+        ),
     )
+
+
+def _runtime_action(*, item: object) -> dict[str, object]:
+    """Serialize one action request while excluding returned content."""
+    item_type = type(item).__name__
+    serializer = getattr(item, "model_dump", None)
+    if not callable(serializer):
+        return {"item_type": item_type, "payload": {}}
+    dumped = serializer(mode="json", by_alias=True, exclude_none=True)
+    payload = dumped if isinstance(dumped, dict) else {"value": dumped}
+    return {"item_type": item_type, "payload": _without_runtime_results(value=payload)}
+
+
+def _without_runtime_results(*, value: object) -> object:
+    """Remove tool-returned bodies that may contain source or secret material."""
+    if isinstance(value, dict):
+        return {
+            key: _without_runtime_results(value=nested)
+            for key, nested in value.items()
+            if isinstance(key, str) and key not in _RUNTIME_RESULT_FIELDS
+        }
+    if isinstance(value, list):
+        return [_without_runtime_results(value=item) for item in value]
+    return value

@@ -1,7 +1,8 @@
 # LoCoMo generation through a Codex ChatGPT subscription
 
 **Status:** analysis; non-binding.
-**Date:** 2026-09-06.
+**Date:** 2026-09-06; updated 2026-09-07 after the first complete conv-42
+answer/judge rescore.
 **Question:** can the LoCoMo answer and judge seats use the operator's Codex
 ChatGPT login without copying an access token or issuing an API key, while
 preserving the harness's staged execution and durable records?
@@ -13,7 +14,9 @@ preserving the harness's staged execution and durable records?
   API key for these seats.
 - The answer loop remains the existing RememberStack loop. Codex supplies one
   schema-constrained decision at a time; it does not receive native access to
-  RememberStack tools, the benchmark corpus, or the host filesystem.
+  RememberStack tools or the benchmark corpus. Its runtime remains confined to
+  an empty, read-only/no-network sandbox, and any out-of-band action must be
+  recorded and rejected before its output can enter the score.
 - Each call must retain token usage when the SDK returns it; the harness must
   never fabricate counters for a failure raised before usage is returned.
 - Existing OpenRouter and Vertex protocols and historical run fingerprints
@@ -66,11 +69,26 @@ It is the selected boundary.
 
 ## Recommended contract
 
-Add one additive protocol, `full-v24-codex-subscription`, with both evaluator
-seats pinned to Codex's `gpt-5.6-luna`, reasoning effort `low`, and temperature
-`null`. It retains the v24 prompts, schemas, tool loop, tool/call limits,
-retrieval surface, judge rubric, and scoring. It is a distinct protocol rather
-than a comparable execution of `full-v24` because provider controls differ.
+The first implementation added `full-v24-codex-subscription`. The conv-42
+rescore exposed an avoidable ambiguity: its supplemental system instruction
+said not to call tools, while the shared benchmark prompt asks the model to
+emit RememberStack tool decisions. Four of twenty questions ended immediately
+without a RememberStack read. The instruction was intended to prohibit Codex's
+own shell/web/MCP plane, not the benchmark's typed tool-choice JSON, but those
+meanings were not distinguishable to the model.
+
+Advance the shared evaluator protocol to v25. All three variants use one answer
+prompt constant. That prompt permits general knowledge as interpretation,
+forbids seeking benchmark gold artifacts, requires a content read before every
+answer, and tells clients to pair entity resolution with an independent content
+read (in parallel when supported) before following up by entity id. The default
+retrieval bound remains 50; this change does not tune result counts.
+
+The Codex variant pins both seats to `gpt-5.6-luna`, reasoning effort `high`,
+and temperature `null`. It removes the supplemental system instruction rather
+than trying to explain two meanings of "tool". The empty temporary directory,
+read-only/no-network sandbox, and deny-all approvals remain the preventive
+boundary.
 
 The adapter creates a fresh ephemeral Codex thread for every model call. It:
 
@@ -79,12 +97,21 @@ The adapter creates a fresh ephemeral Codex thread for every model call. It:
    responsible for refreshing its own login when necessary;
 2. uses a new empty temporary working directory, read-only sandbox, disabled
    network, and deny-all approval policy;
-3. tells Codex to act only as a structured generator and rejects a completed
-   turn if its item trace contains a command, file change, MCP call, web search,
-   sub-agent, or other agent action;
+3. appends every returned Codex item type plus the request-side identity,
+   arguments/query, and status of any command, file change, MCP call, web search,
+   sub-agent, or other runtime action to a run-local
+   `codex-runtime-<stage>.jsonl` audit, then rejects such a turn; returned tool
+   bodies are omitted so the audit cannot become a new secret or corpus store;
 4. supplies the Pydantic response model as the turn's JSON Schema, then validates
    the returned JSON again locally; and
 5. records the turn-total input/output tokens and wall-clock latency.
+
+RememberStack reads remain separately durable in each answer record, including
+tool name, arguments, response, and latency. The two traces deliberately do not
+merge: one proves what the benchmark runner retrieved, while the other proves
+whether Codex attempted an out-of-band action. A completed audit record with an
+empty `runtime_actions` array is positive evidence that no shell/web/MCP action
+appeared in the SDK's returned turn trace.
 
 The CLI composes providers per stage. `ingest` still uses OpenRouter for the
 deployment embedding preflight and routes its chat probe through the pinned
