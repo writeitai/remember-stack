@@ -650,52 +650,52 @@ def _run_projects(args: argparse.Namespace) -> int:
             return 1
         print(f"{'PROJECT ID':<36} {'NAME':<20} {'STATUS':<10} {'ACTIVE'}")
 
-        # D108 / D56: If control plane credentials exist, query live projects from control plane
+        cp_attempted = False
+        cp_failed = False
+        cp_fail_reason = ""
+        # D108 / D56: If control plane credentials exist, query live deployments from control plane
         if stored.control_plane and stored.control_plane.access_token:
+            cp_attempted = True
             cp_url = stored.control_plane.url or "https://api.remember.dev"
             token = stored.control_plane.access_token.get_secret_value()
             org_id = stored.control_plane.org_id or stored.org_id
-            endpoints = [
-                f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments",
-                f"/v1/orgs/{org_id}/projects" if org_id else "/v1/projects",
-                "/v1/projects",
-            ]
-            for endpoint in endpoints:
-                try:
-                    with httpx.Client(base_url=cp_url, timeout=5.0) as client:
-                        resp = client.get(
-                            endpoint, headers={"Authorization": f"Bearer {token}"}
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            items = (
-                                data.get("deployments")
-                                or data.get("projects")
-                                or (data if isinstance(data, list) else [])
+            endpoint = f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments"
+            try:
+                with httpx.Client(base_url=cp_url, timeout=5.0) as client:
+                    resp = client.get(
+                        endpoint, headers={"Authorization": f"Bearer {token}"}
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        items: list[Any] = []
+                        if isinstance(data, list):
+                            items = data
+                        elif isinstance(data, dict):
+                            raw_items = (
+                                data.get("deployments") or data.get("projects") or []
                             )
-                            if items:
-                                for item in items:
-                                    pid = str(
-                                        item.get("id")
-                                        or item.get("deployment_id")
-                                        or item.get("project_id")
-                                        or ""
-                                    )
-                                    name = str(
-                                        item.get("name") or item.get("label") or pid[:8]
-                                    )
-                                    state = str(
-                                        item.get("state")
-                                        or item.get("status")
-                                        or "ready"
-                                    )
-                                    is_act = (
-                                        "*" if pid == stored.active_project_id else " "
-                                    )
-                                    print(f"{pid:<36} {name:<20} {state:<10} {is_act}")
-                                return 0
-                except Exception:
-                    pass
+                            if isinstance(raw_items, list):
+                                items = raw_items
+                        for item in items:
+                            pid = str(
+                                item.get("project_id")
+                                or item.get("id")
+                                or item.get("deployment_id")
+                                or ""
+                            )
+                            name = str(item.get("name") or item.get("label") or pid[:8])
+                            state = str(
+                                item.get("state") or item.get("status") or "ready"
+                            )
+                            is_act = "*" if pid == stored.active_project_id else " "
+                            print(f"{pid:<36} {name:<20} {state:<10} {is_act}")
+                        return 0
+                    else:
+                        cp_failed = True
+                        cp_fail_reason = f"HTTP {resp.status_code}"
+            except Exception as exc:
+                cp_failed = True
+                cp_fail_reason = str(exc)
 
         if stored.projects:
             for pid, p in stored.projects.items():
@@ -707,10 +707,15 @@ def _run_projects(args: argparse.Namespace) -> int:
             print(
                 f"{str(stored.deployment_id):<36} {name:<20} {'ready':<10} {active_marker}"
             )
-        if not (stored.control_plane and stored.control_plane.access_token):
+        if cp_failed:
+            print(
+                f"\nWarning: Could not fetch live projects from control plane ({cp_fail_reason}); showing locally cached projects.",
+                file=sys.stderr,
+            )
+        elif not cp_attempted:
             print()
             print(
-                "Note: Showing locally cached projects. For live organization discovery, run: remember login --audience control"
+                "Note: Showing locally cached projects. For live organization discovery, run: remember login --control-plane"
             )
         return 0
 
@@ -1135,11 +1140,11 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
     try:
         if command == "text":
             query_text = args.query_text
-            if getattr(args, "answer", False):
-                ans = client.answer_context(query=query_text)
+            if getattr(args, "combined", False):
+                ans = client.combined_context(query=query_text)
                 print(ans.model_dump_json(indent=2))
             else:
-                fact = client.fact_context(query=query_text)
+                fact = client.facts_context(query=query_text)
                 print(fact.model_dump_json(indent=2))
             return 0
         if command == "sql":
@@ -1630,10 +1635,11 @@ def _login_locked(args: argparse.Namespace) -> int:
                     _retry_pending_revocation()
                     raise
                 if existing is not None:
-                    if (
+                    is_cp_token = (
                         getattr(token, "token_prefix", "") == "umc_cp"
-                        or audience == "control"
-                    ):
+                        or getattr(token, "deployment_id", None) is None
+                    )
+                    if is_cp_token:
                         if (
                             existing.control_plane
                             and existing.control_plane.access_token
@@ -1647,21 +1653,32 @@ def _login_locked(args: argparse.Namespace) -> int:
                                 or existing.token_id,
                             )
                     else:
-                        dep_str = str(credential.deployment_id)
-                        if existing.deployment_id == credential.deployment_id:
-                            predecessor_to_revoke = PendingRevocation(
-                                version=1,
-                                token_host=existing.token_host,
-                                access_token=existing.access_token,
-                                token_id=existing.token_id,
-                            )
-                        elif existing.projects and dep_str in existing.projects:
-                            old_p = existing.projects[dep_str]
+                        target_key = credential.active_project_id or (
+                            str(credential.deployment_id)
+                            if credential.deployment_id
+                            else None
+                        )
+                        if (
+                            target_key
+                            and existing.projects
+                            and target_key in existing.projects
+                        ):
+                            old_p = existing.projects[target_key]
                             predecessor_to_revoke = PendingRevocation(
                                 version=1,
                                 token_host=old_p.token_host or existing.token_host,
                                 access_token=old_p.data_plane_token,
                                 token_id=old_p.token_id or existing.token_id,
+                            )
+                        elif (
+                            credential.deployment_id is not None
+                            and existing.deployment_id == credential.deployment_id
+                        ):
+                            predecessor_to_revoke = PendingRevocation(
+                                version=1,
+                                token_host=existing.token_host,
+                                access_token=existing.access_token,
+                                token_id=existing.token_id,
                             )
 
                 if predecessor_to_revoke is not None:
@@ -1732,15 +1749,27 @@ def _login_locked(args: argparse.Namespace) -> int:
         # credential at all, having destroyed the working one to make room.
         if predecessor_to_revoke is not None:
             _retry_pending_revocation()
-        if getattr(args, "audience", "deployment") == "control":
+        is_cp_token = (
+            getattr(token, "token_prefix", "") == "umc_cp"
+            or getattr(token, "deployment_id", None) is None
+        )
+        if is_cp_token:
+            org_id = (
+                credential.control_plane.org_id if credential.control_plane else None
+            )
             print("[✓] Authenticated with Remember Cloud organization control plane.")
-            if credential.control_plane and credential.control_plane.org_id:
-                print(f"org_id: {credential.control_plane.org_id}")
+            if org_id:
+                print(f"org_id: {org_id}")
             print(f"token_host: {credential.token_host}")
-            print("Run 'remember projects list' to discover all organization projects.")
+            print("Run 'remember projects list' to view organization deployments.")
         else:
+            print("[✓] Authenticated with Remember Cloud.")
+            if credential.deployment_id:
+                print(f"deployment_id: {credential.deployment_id}")
+            if credential.active_project_id:
+                print(f"active_project: {credential.active_project_id}")
             print(f"token_prefix: {credential.token_prefix}")
-            print(f"deployment_id: {credential.deployment_id}")
+            print(f"token_host: {credential.token_host}")
             print(f"api_url: {credential.api_url}")
             if credential.expires_at is not None:
                 print(f"expires_at: {credential.expires_at.isoformat()}")
@@ -1841,6 +1870,15 @@ def _retry_pending_revocation() -> None:
         if current.token_id is not None:
             active_identities.add(
                 (credential_origin(token_host=current.token_host), current.token_id)
+            )
+        if current.control_plane and current.control_plane.token_id is not None:
+            active_identities.add(
+                (
+                    credential_origin(
+                        token_host=current.control_plane.url or current.token_host
+                    ),
+                    current.control_plane.token_id,
+                )
             )
         if current.projects:
             for p in current.projects.values():
@@ -2255,10 +2293,10 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     text_p.add_argument("query_text", help="query text")
     text_p.add_argument(
-        "--answer",
+        "--combined",
         action="store_true",
         default=False,
-        help="run answer_context instead of fact_context",
+        help="run combined_context instead of facts_context",
     )
     sql = query_commands.add_parser(
         "sql", parents=[client_flags], help="run one sandboxed SQL statement"
@@ -2366,7 +2404,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--audience",
         choices=["deployment", "control"],
         default="deployment",
-        help="credential audience: 'deployment' (default, memory data plane) or 'control' (organization control plane, D56)",
+        help="credential audience: 'deployment' (default, memory data plane access) or 'control' (organisation control plane status)",
     )
     login.add_argument(
         "--control-plane",

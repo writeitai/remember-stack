@@ -408,28 +408,28 @@
         "title": "CoMember",
         "type": "object"
       },
-      "ContextBundleV1": {
+      "ContextBundleV2": {
         "additionalProperties": false,
-        "description": "The sole side-by-side response for complete testimony and fact reads.",
+        "description": "The sole side-by-side response for complete source and fact reads.",
         "properties": {
+          "claims_and_sources": {
+            "$ref": "#/components/schemas/Envelope"
+          },
           "contract": {
-            "const": "ContextBundle/v1",
-            "default": "ContextBundle/v1",
+            "const": "ContextBundle/v2",
+            "default": "ContextBundle/v2",
             "title": "Contract",
             "type": "string"
           },
           "facts": {
             "$ref": "#/components/schemas/Envelope"
-          },
-          "testimony": {
-            "$ref": "#/components/schemas/Envelope"
           }
         },
         "required": [
-          "testimony",
+          "claims_and_sources",
           "facts"
         ],
-        "title": "ContextBundleV1",
+        "title": "ContextBundleV2",
         "type": "object"
       },
       "Contradiction": {
@@ -709,7 +709,7 @@
       },
       "Envelope": {
         "additionalProperties": false,
-        "description": "The D49 envelope: results plus the answer's machine-readable self-account.\n\nEach answer is one operation's cohesive typed result. Independent complete\ntestimony and fact responses use ``ContextBundleV1`` instead of nesting or\nblending payloads inside an envelope.",
+        "description": "The D49 envelope: results plus the answer's machine-readable self-account.\n\nEach answer is one operation's cohesive typed result. Independent complete\ntestimony and fact responses use ``ContextBundleV2`` instead of nesting or\nblending payloads inside an envelope.",
         "properties": {
           "aggregate": {
             "anyOf": [
@@ -4181,7 +4181,7 @@
                       "$ref": "#/components/schemas/Envelope"
                     },
                     {
-                      "$ref": "#/components/schemas/ContextBundleV1"
+                      "$ref": "#/components/schemas/ContextBundleV2"
                     }
                   ],
                   "title": "Response Run Operation Operations  Name  Post"

@@ -429,7 +429,7 @@ not a defect of the anchor.
 ### 7.1 The current-fact predicate and activation/expiry
 
 "Current" is one predicate — the interval containment `memory_v1.facts_current`
-and `fact_context` already use — evaluated at an explicit instant `E`:
+and `facts_context` already use — evaluated at an explicit instant `E`:
 
 ```
 ingested_at <= E AND invalidated_at IS NULL
@@ -492,7 +492,7 @@ answer agent, which additionally names the envelope fields (`asserted_at`,
   and the `memory_v1` fact views.
 - Because every envelope-returning operation derives its result schema from
   the shared `Envelope` schema, all of them roll: `resolve_entity@2`,
-  `testimony_context@2`, `fact_context@3`, `answer_context@3`; the surface
+  `claims_and_sources_context@2`, `facts_context@3`, `combined_context@4`; the surface
   manifest hash, the query-space manifest, the generated OpenAPI/SDK
   artifacts, and the benchmark protocol roll with them.
 - The open-query confirmation surface (`query_sandbox/nomination.py`) returns

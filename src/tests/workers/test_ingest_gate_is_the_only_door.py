@@ -1,4 +1,4 @@
-"""D114 holds only while E0 is the single door into a document version.
+"""D115 holds only while E0 is the single door into a document version.
 
 `UploadIngestor` supplies deployment route configuration to the catalog,
 which decides parking using canonical stored MIME. Three things could quietly undo that,
@@ -100,7 +100,7 @@ def test_only_the_catalog_writes_document_versions() -> None:
 def test_the_route_table_cannot_be_omitted_by_a_composition() -> None:
     """`routable_mimes` has no default, so no composition can skip the gate.
 
-    An earlier draft defaulted it to None. That made D114 as strong as every
+    An earlier draft defaulted it to None. That made D115 as strong as every
     composer remembering to pass it, which is not what an invariant means.
     """
     parameter = inspect.signature(UploadIngestor.__init__).parameters["routable_mimes"]

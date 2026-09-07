@@ -33,9 +33,9 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 | Need | Use |
 | --- | --- |
 | Navigate / read / grep | **Mounts** (P3, artifacts, K) when published for the deployment |
-| “What is true now?” with typed envelope | **`fact_context`** |
-| High-recall source context for a question | **`testimony_context`** |
-| Both complete authority views | **`answer_context`** |
+| “What is true now?” with typed envelope | **`facts_context`** |
+| High-recall source context for a question | **`claims_and_sources_context`** |
+| Both complete authority views | **`combined_context`** |
 | Exact name → entity | **`resolve_entity`** (T0 exact) |
 | Ad-hoc analytics / joins / graph patterns | **Open SQL / graph helpers / saved queries** |
 | Why do we believe X? | Evidence hydration / audit SQL / transcript endpoints where exposed |
@@ -50,9 +50,9 @@ These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patte
 | Operation | Args (required) | Grain | Intent |
 | --- | --- | --- | --- |
 | `resolve_entity` | `name` | entity candidates (envelope packaging) | Exact-name disambiguation |
-| `testimony_context` | `query` (optional `entity_ids`, `k`, `candidate_k`) | **evidence** | Current claims + source chunks only |
-| `fact_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `k`, `evidence_per_fact`, `time`) | **fact** | Entity-neighborhood relations and observations + associated testimony |
-| `answer_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `time`) | `ContextBundle/v1` | Complete testimony and neighborhood-aware fact envelopes, kept separate |
+| `claims_and_sources_context` | `query` (optional `entity_ids`, `k`, `candidate_k`) | **evidence** | Current claims + source chunks only |
+| `facts_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `k`, `evidence_per_fact`, `time`) | **fact** | Entity-neighborhood relations and observations + associated testimony |
+| `combined_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `time`) | `ContextBundle/v2` | Complete claims-and-sources and neighborhood-aware fact envelopes, kept separate |
 
 Entity IDs are optional. Omit them for deployment-wide retrieval. Testimony
 accepts up to 20 confirmed IDs; the neighborhood-aware fact and answer
@@ -60,7 +60,7 @@ operations accept up to 19 so the 20-entity combined scope always reserves one
 neighbor slot. Resolve ambiguous names first. The operations never guess a name
 or silently drop an unknown ID.
 
-For a current or point-in-time read with `entity_ids`, `fact_context` starts
+For a current or point-in-time read with `entity_ids`, `facts_context` starts
 from those anchors, walks one live-graph hop by default, then searches relation labels
 and observation statements only inside the anchor-plus-neighbor scope. The
 default predicate list is empty, which means **all stored relations**, including
@@ -81,7 +81,7 @@ filter. It reuses the query embedding and adds no completion model call.
 
 | Don’t | Do |
 | --- | --- |
-| Answer present-tense from `testimony_context` alone | Verify with `fact_context` / facts |
+| Answer present-tense from `claims_and_sources_context` alone | Verify with `facts_context` / facts |
 | Filter claim validity windows as “true at T” | Use fact `valid_at` / `facts_current` |
 | Hide one side of a contradiction | Report co-members |
 | Trust a compiled K page as live | Check `freshness.k`; verify facts |
@@ -101,8 +101,8 @@ Discovery: `GET /query/space` opens with the two-layer headline, honesty warning
 ## Envelope (assured path)
 
 Single-grain answers are **flat** (`facts`, `evidence`, `fact_evidence`,
-`freshness.pg_live_ts`, …). `answer_context` is the separate
-`ContextBundle/v1` wrapper around two complete envelopes. Full wire contract:
+`freshness.pg_live_ts`, …). `combined_context` is the separate
+`ContextBundle/v2` wrapper around two complete envelopes. Full wire contract:
 [Response envelope](/docs/retrieval/envelope).
 
 ## Engine primitives vs public call surface
@@ -119,7 +119,7 @@ Assured ops and operations compose **typed zero-LLM engine primitives** internal
 
 | Param | Meaning |
 | --- | --- |
-| `fact_context.time` | World-time selection: `current`, `at`, `overlap`, or `history` under current system belief |
+| `facts_context.time` | World-time selection: `current`, `at`, `overlap`, or `history` under current system belief |
 | `facts_as_of(valid_at, believed_at, …)` | Open-SQL audit of what the system believed about world time at a past system time |
 
 Every envelope carries a required discriminated `temporal_scope` describing

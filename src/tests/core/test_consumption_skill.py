@@ -59,19 +59,19 @@ def _context(
                     answer_intent=AssuredAnswerIntent.IDENTITY,
                 ),
                 ConsumptionOperation(
-                    name="testimony_context",
+                    name="claims_and_sources_context",
                     description="High-recall source testimony.",
                     output_grain=Grain.EVIDENCE,
-                    answer_intent=AssuredAnswerIntent.TESTIMONY,
+                    answer_intent=AssuredAnswerIntent.CLAIMS_AND_SOURCES,
                 ),
                 ConsumptionOperation(
-                    name="fact_context",
+                    name="facts_context",
                     description="Evidence-backed facts across a requested time scope.",
                     output_grain=Grain.FACT,
                     answer_intent=AssuredAnswerIntent.FACTS,
                 ),
                 ConsumptionOperation(
-                    name="answer_context",
+                    name="combined_context",
                     description="Both authorities, kept side by side.",
                     output_grain=None,
                     answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
@@ -105,8 +105,8 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
     assert "/memory/corpus" in skill.content
     assert "`target-state`" in skill.content
     assert "`resolve_entity`" in skill.content
-    assert "`testimony_context`" in skill.content
-    assert "`fact_context`" in skill.content
+    assert "`claims_and_sources_context`" in skill.content
+    assert "`facts_context`" in skill.content
     # The old intent-first steering is gone.
     assert "Default motion: orient, verify, audit" not in skill.content
 
@@ -130,8 +130,8 @@ def test_only_enabled_operations_are_advertised() -> None:
         context=_context(mounted=False, knowledge_page_count=0, operations=False)
     )
 
-    assert "`testimony_context`" in skill.content
-    assert "`fact_context`" in skill.content
+    assert "`claims_and_sources_context`" in skill.content
+    assert "`facts_context`" in skill.content
     assert "there is no compatibility operation catalog" in skill.content
     assert "include_superseded_testimony" not in skill.content
 
@@ -146,7 +146,7 @@ def test_noncore_rows_are_not_advertised_as_assured_operations() -> None:
                     name="claims_as_of",
                     description="Historical source assertions.",
                     output_grain=Grain.EVIDENCE,
-                    answer_intent=AssuredAnswerIntent.TESTIMONY,
+                    answer_intent=AssuredAnswerIntent.CLAIMS_AND_SOURCES,
                 ),
             )
         }

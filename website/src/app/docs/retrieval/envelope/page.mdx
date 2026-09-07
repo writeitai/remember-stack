@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Response envelope",
   description:
-    "Envelope and ContextBundle/v1 wire contracts: explicit temporal scope, separate authorities, freshness, contradictions, and typed negatives.",
+    "Envelope and ContextBundle/v2 wire contracts: explicit temporal scope, separate authorities, freshness, contradictions, and typed negatives.",
 };
 
 # Response envelope
@@ -76,7 +76,7 @@ Provenance is **flat on the claim** (and via top-level `sources[]`), not a neste
 
 ### `fact_evidence` + `evidence_totals`
 
-How `fact_context` binds facts to testimony without blending grains:
+How `facts_context` binds facts to testimony without blending grains:
 
 - `fact_evidence[]` — explicit fact↔claim stance edges returned with the answer
 - `evidence_totals[]` — exact per-fact stance counts (`returned` / `total`) so caps stay honest
@@ -85,16 +85,16 @@ Both arrays identify a fact by `(fact_kind, fact_id)`. Relation and observation
 UUIDs are separate namespaces and may contain the same UUID, so consumers must
 never join or group these records by `fact_id` alone.
 
-## ContextBundle/v1: both authorities, still separate
+## ContextBundle/v2: both authorities, still separate
 
-`answer_context` is the sole side-by-side testimony/fact response. It does not
+`combined_context` is the sole side-by-side testimony/fact response. It does not
 use `grain = composite`, and it does not nest parts inside an envelope:
 
 ```text
 {
-  contract: "ContextBundle/v1",
-  testimony: Envelope,  // complete evidence-grain testimony_context response
-  facts: Envelope       // complete fact-grain fact_context response
+  contract: "ContextBundle/v2",
+  claims_and_sources: Envelope,  // complete evidence-grain claims_and_sources_context response
+  facts: Envelope       // complete fact-grain facts_context response
 }
 ```
 
@@ -171,7 +171,7 @@ Hard-forgotten content is **not** a separate kind — it is indistinguishable fr
 
 ## Temporal scope
 
-`temporal_scope` is required and discriminated by `mode`. `fact_context`
+`temporal_scope` is required and discriminated by `mode`. `facts_context`
 returns `current`, `at`, `overlap`, or `history`; each response includes its
 evaluation and belief instant plus the requested world-time coordinates.
 These modes use current system belief. A historical system-belief audit uses
@@ -188,8 +188,8 @@ beliefs when an explicit identity-as-of audit is requested.
 3. If `contradiction` — report all sides (or fetch continuation).  
 4. If `truncated` — decide whether to continue.  
 5. If `dropped_by_hydration` high — consider re-query / freshness.  
-6. Prefer `fact_evidence` + `evidence_totals` when using `fact_context`.
-7. For `ContextBundle/v1`, inspect both complete child envelopes separately.
+6. Prefer `fact_evidence` + `evidence_totals` when using `facts_context`.
+7. For `ContextBundle/v2`, inspect both complete child envelopes separately.
 8. If using K — check `freshness.k`.
 
 ## Related

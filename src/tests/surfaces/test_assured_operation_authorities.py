@@ -12,18 +12,18 @@ import pytest
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.spine import CANONICAL_OPERATIONS
-from rememberstack.surfaces.query_engine import _configure_fact_context_connection
+from rememberstack.surfaces.query_engine import _configure_facts_context_connection
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS
 from rememberstack.surfaces.query_engine import _CONFIRM_CHUNKS_SCOPED
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT
 from rememberstack.surfaces.query_engine import _CONFIRM_CLAIMS_CURRENT_SCOPED
-from rememberstack.surfaces.query_engine import _confirm_fact_context
-from rememberstack.surfaces.query_engine import _CONFIRM_FACT_CONTEXT_BY_KIND
+from rememberstack.surfaces.query_engine import _confirm_facts_context
+from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import _CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_EVIDENCE
 from rememberstack.surfaces.query_engine import _CURRENT_FACT_LABELS
-from rememberstack.surfaces.query_engine import _fact_context_confirmation_batch_size
-from rememberstack.surfaces.query_engine import _FACT_CONTEXT_CONTRADICTION_MEMBERS
+from rememberstack.surfaces.query_engine import _facts_context_confirmation_batch_size
+from rememberstack.surfaces.query_engine import _FACTS_CONTEXT_CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
 
@@ -32,9 +32,9 @@ def test_public_catalog_is_exactly_the_four_assured_operations() -> None:
     """Demoted patterns cannot re-enter API, CLI, SDK, or MCP discovery."""
     assert {operation.name.value for operation in CANONICAL_OPERATIONS} == {
         "resolve_entity",
-        "testimony_context",
-        "fact_context",
-        "answer_context",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
     }
 
 
@@ -49,10 +49,10 @@ def test_entity_resolution_uses_memory_v1_identity_and_adjacency() -> None:
     assert "FROM relations" not in adjacency_sql
 
 
-def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
+def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     """Current membership, D54 state, and co-members come from memory_v1."""
     confirmation_sql = "\n".join(
-        str(statement) for statement in _CONFIRM_FACT_CONTEXT_BY_KIND.values()
+        str(statement) for statement in _CONFIRM_FACTS_CONTEXT_BY_KIND.values()
     )
     evidence_sql = str(_CURRENT_FACT_EVIDENCE)
     ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
@@ -95,11 +95,15 @@ def test_fact_context_uses_fact_and_contradiction_authorities() -> None:
     assert "FROM observations" not in label_sql
 
 
-def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() -> None:
+def test_facts_context_bounds_planning_and_keeps_contradictions_kind_qualified() -> (
+    None
+):
     """Interactive fact reads stop before transport and avoid nested-loop expansion."""
     connection = MagicMock()
 
-    _configure_fact_context_connection(connection=connection, deadline=125.0, now=100.0)
+    _configure_facts_context_connection(
+        connection=connection, deadline=125.0, now=100.0
+    )
 
     assert [call.args[0] for call in connection.exec_driver_sql.call_args_list] == [
         "SET LOCAL statement_timeout = '25000ms'",
@@ -110,7 +114,7 @@ def test_fact_context_bounds_planning_and_keeps_contradictions_kind_qualified() 
         "SET LOCAL max_parallel_workers_per_gather = 0",
         "SET LOCAL enable_nestloop = off",
     ]
-    contradiction_sql = str(_FACT_CONTEXT_CONTRADICTION_MEMBERS)
+    contradiction_sql = str(_FACTS_CONTEXT_CONTRADICTION_MEMBERS)
     assert "memory_v1.facts_visible_history" in contradiction_sql
     assert "fact.ingested_at <= :evaluated_at" in contradiction_sql
     assert "fact.fact_kind AS kind" in contradiction_sql
@@ -150,7 +154,7 @@ def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
         return result
 
     connection.execute.side_effect = execute
-    rows = _confirm_fact_context(
+    rows = _confirm_facts_context(
         connection=connection,
         deployment_id=uuid4(),
         candidate_keys=(
@@ -177,27 +181,29 @@ def test_fact_confirmation_splits_kinds_and_restores_global_order() -> None:
     ]
 
 
-def test_fact_context_confirmation_batch_tracks_requested_output() -> None:
+def test_facts_context_confirmation_batch_tracks_requested_output() -> None:
     """Default fact context does not expand the maximum 30-row deep batch."""
-    assert _fact_context_confirmation_batch_size(k=1) == 16
-    assert _fact_context_confirmation_batch_size(k=15) == 16
-    assert _fact_context_confirmation_batch_size(k=20) == 21
-    assert _fact_context_confirmation_batch_size(k=30) == 30
+    assert _facts_context_confirmation_batch_size(k=1) == 16
+    assert _facts_context_confirmation_batch_size(k=15) == 16
+    assert _facts_context_confirmation_batch_size(k=20) == 21
+    assert _facts_context_confirmation_batch_size(k=30) == 30
 
 
-def test_fact_context_refuses_another_statement_after_its_shared_deadline() -> None:
+def test_facts_context_refuses_another_statement_after_its_shared_deadline() -> None:
     """A refill loop cannot multiply the transport timeout by its batch count."""
     connection = MagicMock()
 
     with pytest.raises(TimeoutError, match="operation budget"):
-        _configure_fact_context_connection(
+        _configure_facts_context_connection(
             connection=connection, deadline=100.0, now=100.0
         )
 
     connection.exec_driver_sql.assert_not_called()
 
 
-def test_testimony_context_confirms_claims_and_chunks_through_memory_v1() -> None:
+def test_claims_and_sources_context_confirms_claims_and_chunks_through_memory_v1() -> (
+    None
+):
     """The retained evidence operation cannot revive orphan or stale content."""
     claim_sql = str(_CONFIRM_CLAIMS_CURRENT)
     chunk_sql = str(_CONFIRM_CHUNKS)

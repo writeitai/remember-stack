@@ -45,7 +45,7 @@ from remember.errors import Unauthenticated
 from remember.models import BillingStatus
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
-from remember.models import ContextBundleV1
+from remember.models import ContextBundleV2
 from remember.models import Deployment
 from remember.models import DeploymentBuildInfo
 from remember.models import Envelope
@@ -256,13 +256,13 @@ class MemoryClient:
 
     def run_operation(
         self, *, name: str, arguments: Mapping[str, object] | None = None
-    ) -> Envelope | ContextBundleV1:
+    ) -> Envelope | ContextBundleV2:
         """Run one assured operation and validate its exact wire contract."""
         path = f"/operations/{quote(name, safe='')}"
         endpoint = f"POST {path}"
         payload = self._json("POST", path, json_body=dict(arguments or {}))
-        if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v1":
-            return _validated(ContextBundleV1, payload, endpoint=endpoint)
+        if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v2":
+            return _validated(ContextBundleV2, payload, endpoint=endpoint)
         return _validated(Envelope, payload, endpoint=endpoint)
 
     def query_sql(
@@ -300,7 +300,7 @@ class MemoryClient:
         res = self.explain_sql(sql=sql, parameters=list(parameters))
         return QueryResultDict(res)
 
-    def fact_context(
+    def facts_context(
         self,
         query: str,
         *,
@@ -309,7 +309,7 @@ class MemoryClient:
         predicate: str | None = None,
         entity_ids: Sequence[str | UUID] | None = None,
     ) -> Envelope:
-        """Run the assured fact_context operation."""
+        """Run the assured facts_context operation."""
         args: dict[str, object] = {"query": query}
         if time is not None:
             args["time"] = dict(time)
@@ -319,24 +319,26 @@ class MemoryClient:
             args["predicate"] = predicate
         if entity_ids is not None:
             args["entity_ids"] = [str(e) for e in entity_ids]
-        res = self.run_operation(name="fact_context", arguments=args)
+        res = self.run_operation(name="facts_context", arguments=args)
         assert isinstance(res, Envelope)
         return res
 
-    def answer_context(
+    def combined_context(
         self, query: str, *, time: Mapping[str, object] | None = None
-    ) -> ContextBundleV1:
-        """Run the assured answer_context operation."""
+    ) -> ContextBundleV2:
+        """Run the assured combined_context operation."""
         args: dict[str, object] = {"query": query}
         if time is not None:
             args["time"] = dict(time)
-        res = self.run_operation(name="answer_context", arguments=args)
-        assert isinstance(res, ContextBundleV1)
+        res = self.run_operation(name="combined_context", arguments=args)
+        assert isinstance(res, ContextBundleV2)
         return res
 
-    def testimony_context(self, query: str) -> Envelope:
-        """Run the assured testimony_context operation."""
-        res = self.run_operation(name="testimony_context", arguments={"query": query})
+    def claims_and_sources_context(self, query: str) -> Envelope:
+        """Run the assured claims_and_sources_context operation."""
+        res = self.run_operation(
+            name="claims_and_sources_context", arguments={"query": query}
+        )
         assert isinstance(res, Envelope)
         return res
 

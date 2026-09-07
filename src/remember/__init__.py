@@ -24,7 +24,7 @@ from remember.models import BillingStatus
 from remember.models import CapabilityReadiness
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
-from remember.models import ContextBundleV1
+from remember.models import ContextBundleV2
 from remember.models import Deployment
 from remember.models import Envelope
 from remember.models import IngestedVersion
@@ -55,7 +55,7 @@ __all__ = (
     "ConnectorCreate",
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
-    "ContextBundleV1",
+    "ContextBundleV2",
     "Deployment",
     "Envelope",
     "IngestedVersion",

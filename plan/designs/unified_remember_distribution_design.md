@@ -98,7 +98,7 @@ Authenticated via user session credentials obtained through OAuth device-grant l
 Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or pre-shared bearer secrets (`API_BEARER_BIND` in self-hosted mode):
 - **`remember setup [OPTIONS]`**: The Sentry-like AI harness bootstrapper (see §4).
 - **`remember ingest <path> [OPTIONS]`**: Streams markdown or source files through the E0 ingestion endpoint.
-- **`remember query <text> [OPTIONS]`**: Executes assured context retrieval (`fact_context` or `answer_context`) and prints formatted JSON or markdown summaries.
+- **`remember query <text> [OPTIONS]`**: Executes assured context retrieval (`facts_context` or `combined_context`) and prints formatted JSON or markdown summaries.
 - **`remember operations list|run`**: Discovers and invokes remote assured operations by name.
 - **`remember mcp [OPTIONS]`**: Runs the Model Context Protocol (MCP) server over `stdio` (or Streamable HTTP) forwarding requests to the resolved data plane.
 - **`remember doctor`**: Verifies connectivity, auth token validity, tenant endpoint health, and agent harness configurations.

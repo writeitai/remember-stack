@@ -131,7 +131,7 @@ from rememberstack.model.envelope import AtTemporalScope
 from rememberstack.model.envelope import ChangeRecord
 from rememberstack.model.envelope import ChunkEvidenceResult
 from rememberstack.model.envelope import CoMember
-from rememberstack.model.envelope import ContextBundleV1
+from rememberstack.model.envelope import ContextBundleV2
 from rememberstack.model.envelope import Contradiction
 from rememberstack.model.envelope import current_temporal_scope
 from rememberstack.model.envelope import CurrentTemporalScope
@@ -440,7 +440,7 @@ __all__ = (
     "ConsumptionOperation",
     "ConsumptionScope",
     "ConsumptionSkillContext",
-    "ContextBundleV1",
+    "ContextBundleV2",
     "ConvertSource",
     "CurrentTemporalScope",
     "CoreManifestConflictError",

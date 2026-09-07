@@ -130,7 +130,7 @@ def test_agent_calls_public_recipe_then_answers() -> None:
     assert answer.generated_answer == "Prague"
     assert answer.agent_call_count == 2
     assert answer.first_step_retries == 0
-    assert [call.name for call in answer.tool_calls] == ["testimony_context"]
+    assert [call.name for call in answer.tool_calls] == ["claims_and_sources_context"]
     assert len(provider.generated_prompts) == 2
 
 
@@ -160,7 +160,7 @@ def test_unknown_after_identity_only_forces_one_content_read() -> None:
             assert "GUARD FEEDBACK" in prompt
             return {
                 "action": "tool",
-                "tool_name": "testimony_context",
+                "tool_name": "claims_and_sources_context",
                 "arguments_json": '{"query":"Caroline"}',
                 "answer": None,
             }
@@ -193,7 +193,7 @@ def test_unknown_after_identity_only_forces_one_content_read() -> None:
     assert answer.unknown_guard_retries == 1
     assert [call.name for call in answer.tool_calls] == [
         "resolve_entity",
-        "testimony_context",
+        "claims_and_sources_context",
     ]
 
 
@@ -1057,9 +1057,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_reader_completions",
     ),
     (
-        ("full-v25", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
+        ("full-v26", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
         (
-            "full-v25-codex-subscription",
+            "full-v26-codex-subscription",
             "gpt-5.6-luna",
             "gpt-5.6-luna",
             "high",
@@ -1704,7 +1704,7 @@ def test_ingest_refuses_model_binding_drift_before_upload(
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full-v25 cannot silently process with document-local T0 disabled."""
+    """Full-v26 cannot silently process with document-local T0 disabled."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
@@ -1930,8 +1930,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v25","protocol_fingerprint":'
-        '"8d3998009306a78940399f16e150132f0154c849c0a87fb5619c63eb7081e2df",'
+        '{"protocol_name":"RS-LoCoMo-Full-v26","protocol_fingerprint":'
+        '"981537b88316979ec86480b559cf06c7c2372a32544cc20a2e7638ee9b7fbc56",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2084,7 +2084,7 @@ def test_merge_preserves_ingests_for_chunk_session_diagnostics(
         update={
             "tool_calls": (
                 ToolCallRecord(
-                    name="testimony_context",
+                    name="claims_and_sources_context",
                     arguments={"query": "Where?"},
                     latency_ms=1,
                     response=Envelope(
@@ -2150,7 +2150,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v25"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v26"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2242,7 +2242,7 @@ def _empty_envelope() -> Envelope:
 
 def _tool() -> ToolDescriptor:
     return ToolDescriptor(
-        name="testimony_context",
+        name="claims_and_sources_context",
         description="What sources asserted",
         input_schema={"type": "object"},
         result_schema={"type": "object"},
@@ -2270,7 +2270,7 @@ def _tool_then_answer(prompt: str, type_name: str) -> dict[str, object]:
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "testimony_context",
+            "tool_name": "claims_and_sources_context",
             "arguments_json": '{"query": "Where?"}',
             "answer": None,
         }
@@ -2295,7 +2295,7 @@ def _private_tool_answer_and_judge(prompt: str, type_name: str) -> dict[str, obj
     if "TOOL TRACE SO FAR:\n[]" in prompt:
         return {
             "action": "tool",
-            "tool_name": "testimony_context",
+            "tool_name": "claims_and_sources_context",
             "arguments_json": '{"query": "PRIVATE_TOOL_ARGUMENT_BODY"}',
             "answer": None,
         }
@@ -2435,7 +2435,7 @@ class _CostProvider:
             payload = (
                 {
                     "action": "tool",
-                    "tool_name": "testimony_context",
+                    "tool_name": "claims_and_sources_context",
                     "arguments_json": '{"query": "Where?"}',
                     "answer": None,
                 }
@@ -3422,7 +3422,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v25-gemma-vertex"]
+    protocol = PROTOCOL_REGISTRY["full-v26-gemma-vertex"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",
@@ -3470,7 +3470,7 @@ class _DiscriminatedProvider:
         if "TOOL TRACE SO FAR:\n[]" in request.prompt:
             payload = (
                 '{"action":"tool","arguments_json":"{\\"query\\":\\"Where?\\"}",'
-                '"tool_name":"testimony_context"}'
+                '"tool_name":"claims_and_sources_context"}'
             )
         else:
             payload = '{"action":"answer","answer":"Prague"}'
@@ -3514,5 +3514,5 @@ def test_answer_loop_completes_with_the_discriminated_step_schema() -> None:
     assert record.failure is None
     assert record.generated_answer == "Prague"
     assert record.agent_call_count == 2
-    assert [call.name for call in record.tool_calls] == ["testimony_context"]
+    assert [call.name for call in record.tool_calls] == ["claims_and_sources_context"]
     assert record.tool_calls[0].arguments == {"query": "Where?"}

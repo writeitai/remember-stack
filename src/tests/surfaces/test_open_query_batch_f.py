@@ -441,9 +441,9 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
     names = {row["name"] for row in operations.json()}
     assert names == {
         "resolve_entity",
-        "testimony_context",
-        "fact_context",
-        "answer_context",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
     }
     # open routes — full first-call discovery, not a shortened subset
     space = client.get("/query/space")
@@ -774,7 +774,12 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
     assert (
         set(descriptors)
         == expected_names
-        == {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
+        == {
+            "resolve_entity",
+            "claims_and_sources_context",
+            "facts_context",
+            "combined_context",
+        }
     )
     for operation in CANONICAL_OPERATIONS:
         descriptor = descriptors[operation.name.value]
@@ -786,9 +791,9 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         assert descriptor.answer_intent == operation.answer_intent.value
     # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["testimony_context"].version == 1
-    assert descriptors["fact_context"].version == 2
-    assert descriptors["answer_context"].version == 2
+    assert descriptors["claims_and_sources_context"].version == 1
+    assert descriptors["facts_context"].version == 2
+    assert descriptors["combined_context"].version == 3
 
 
 def _expected_input_schema(operation: object) -> dict[str, object]:
@@ -961,7 +966,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "c7a7c0e5bfc9126ba1d7ed7bedcf2489a8537393801b4288742fdbd29079539e"
+        == "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
     )
 
 

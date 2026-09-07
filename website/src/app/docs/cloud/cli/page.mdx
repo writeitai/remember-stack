@@ -23,6 +23,8 @@ remember login
 
 The CLI prints a verification URL and a one-time user code. Visit the URL in your browser to approve the device. Once approved, the CLI receives project deployment credentials and stores them securely in `~/.config/remember/credentials.json` with `0600` permissions.
 
+> **Zero deployment ID configuration required:** You do not need to export `deployment_id` or juggle raw deployment UUIDs manually. Remember Cloud CLI automatically resolves the active deployment from your selected project context.
+
 To terminate your session and revoke active session credentials:
 ```bash
 remember logout

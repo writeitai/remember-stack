@@ -26,7 +26,7 @@ why the system believes or believed the fact.
 | Goal | Tool |
 | --- | --- |
 | **Store** memory | `ingest`, then poll `pipeline_readiness` |
-| **Recall** testimony / current or historical facts | `testimony_context`, `fact_context`, or `answer_context` |
+| **Recall** testimony / current or historical facts | `claims_and_sources_context`, `facts_context`, or `combined_context` |
 | **Resolve** an ambiguous identity | `resolve_entity` |
 | **Explore** SQL / saved queries | Seven open-query infrastructure tools when composed |
 
@@ -64,7 +64,7 @@ Stable order:
 3. **Open-query tools** when the open facade is composed
 
 The operation registry contains exactly:
-`resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`. The eighteen
+`resolve_entity`, `claims_and_sources_context`, `facts_context`, and `combined_context`. The eighteen
 demoted patterns are discoverable `examples.*` saved queries, not tools.
 
 | Infrastructure tool | Purpose |
@@ -150,7 +150,7 @@ envelope).
    (set `p3=true` only when you specifically need the published corpus tree).
 4. While `ready=false` and no stage is `failed` / `dead_letter`: wait 30–60s
    (back-off, floor ~15s), poll again.
-5. On `ready=true`: call the appropriate assured operation (often `answer_context`).
+5. On `ready=true`: call the appropriate assured operation (often `combined_context`).
 6. On `failed` / `dead_letter`: **STOP** polling and report the stage to the
    user — do not keep polling.
 7. After ~20–30 minutes without `ready=true` and without a terminal stage
@@ -165,7 +165,7 @@ Operation tools render from the registry:
 {
   "tools": [
     {
-      "name": "fact_context",
+      "name": "facts_context",
       "description": "Current or historical adjudicated facts matching a question …",
       "inputSchema": {
         "type": "object",
@@ -194,7 +194,7 @@ rather than coercing them.
   `agent_action`, optional `reason_code`).
 - **Operation tools** run the named operation and return its declared contract
   serialized to JSON in one text content block. Three return `Envelope`;
-  `answer_context` returns `ContextBundle/v1`.
+  `combined_context` returns `ContextBundle/v2`.
 - **Open-query tools** return `QueryResult/v1` or discovery/metadata JSON in
   one text content block.
 
@@ -229,8 +229,8 @@ Three operation tools return the self-accounting envelope: the answer, its grain
 and any typed negative. Because the grain travels with the answer, a client
 can tell a **current-fact** answer from **what a source asserted** — a operation
 that answers "what holds now" can never be one that returns evidence (the
-registry's grain bar guarantees it). `answer_context` keeps the complete
-evidence and fact envelopes in separate `testimony` and `facts` fields; it has
+registry's grain bar guarantees it). `combined_context` keeps the complete
+evidence and fact envelopes in separate `claims_and_sources` and `facts` fields; it has
 no single output grain and never flattens the two authorities.
 
 Open-query tools return `QueryResult/v1` with grade `exploratory_tabular` or

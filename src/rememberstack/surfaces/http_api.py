@@ -46,7 +46,7 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
@@ -1028,12 +1028,12 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
         """The four assured operations for this deployment."""
         return list(surface.descriptors())
 
-    @app.post("/operations/{name}", response_model=Envelope | ContextBundleV1)
+    @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(
         name: str,
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
-    ) -> Envelope | ContextBundleV1:
+    ) -> Envelope | ContextBundleV2:
         """Run one assured operation by name over JSON arguments.
 
         The route-level table cannot classify this one: operations are registry

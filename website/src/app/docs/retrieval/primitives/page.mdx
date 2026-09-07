@@ -22,7 +22,7 @@ Parent: [Retrieval](/docs/retrieval). Shipped HTTP: [API reference](/docs/refere
 
 | Surface | Call |
 | --- | --- |
-| Assured ops | `POST /operations/resolve_entity`, `testimony_context`, `fact_context`, `answer_context` |
+| Assured ops | `POST /operations/resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context` |
 | Open SQL | `POST /query/sql` (+ explain, space discovery, saved queries) |
 | Direct primitives (subset) | See API reference: resolve / lookup / search claims & chunks / hydrate / transcript endpoints as composed |
 
@@ -78,7 +78,7 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 
 | | |
 | --- | --- |
-| **Surface** | **Internal** composition (also frozen inside operations like `testimony_context`) |
+| **Surface** | **Internal** composition (also frozen inside operations like `claims_and_sources_context`) |
 | **Job** | RRF merge, inspectable re-sort, typed evidence combination without UUID soup |
 
 ### `hydrate`
@@ -107,7 +107,7 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 
 ## How assured ops use them
 
-### `testimony_context` (evidence)
+### `claims_and_sources_context` (evidence)
 
 Conceptual chain:
 
@@ -115,7 +115,7 @@ Conceptual chain:
 2. Semantic + lexical **chunk** nomination → fuse → hydrate once  
 3. `combine_evidence` under one evidence envelope  
 
-### `fact_context` (fact)
+### `facts_context` (fact)
 
 Conceptual chain:
 
@@ -139,9 +139,9 @@ Without `entity_ids`, profile prose is a second bounded nomination path for
 fact text. “List banks” can therefore reach a bank observation; no `type`
 argument or query-path completion model exists.
 
-### `answer_context` (`ContextBundle/v1`)
+### `combined_context` (`ContextBundle/v2`)
 
-Purely composes the complete `testimony_context` and `fact_context` responses
+Purely composes the complete `claims_and_sources_context` and `facts_context` responses
 under separate named fields. It adds no retrieval, ranking, hydration, or
 flattening.
 

@@ -49,7 +49,7 @@ from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from rememberstack.surfaces.query_engine import FACT_CONTEXT_CANDIDATE_K
+from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-000000000001")
@@ -913,20 +913,20 @@ def test_retrieval_snapshot_reuses_one_read_only_mvcc_cut(corpus: _Corpus) -> No
             )
 
 
-def test_fact_context_returns_both_fact_kinds_with_both_stances(
+def test_facts_context_returns_both_fact_kinds_with_both_stances(
     corpus: _Corpus,
 ) -> None:
     engine, index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Where does Alice work and what does she prefer?",
         k=2,
         evidence_per_fact=2,
     )
 
-    assert index.requested_k == [FACT_CONTEXT_CANDIDATE_K + 1]
+    assert index.requested_k == [FACTS_CONTEXT_CANDIDATE_K + 1]
     assert tuple(fact.kind for fact in answer.facts) == ("relation", "observation")
     for fact in answer.facts:
         assert {
@@ -941,14 +941,14 @@ def test_fact_context_returns_both_fact_kinds_with_both_stances(
     assert corpus.claims["support-old-same-lineage"] not in selected_support
 
 
-def test_default_fact_context_expands_empty_predicate_neighborhood_for_observations(
+def test_default_facts_context_expands_empty_predicate_neighborhood_for_observations(
     corpus: _Corpus,
 ) -> None:
     """A neighbor's observation is found as fact text, never as a graph node."""
     engine, index = corpus.query_engine(fact_ids=(corpus.observation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="What does Alice prefer?",
@@ -980,14 +980,14 @@ def test_default_fact_context_expands_empty_predicate_neighborhood_for_observati
     ]
 
 
-def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
+def test_default_facts_context_obeys_the_real_live_graph_clock_contract(
     corpus: _Corpus,
 ) -> None:
     """The current recipe gives the production graph its operation-entry clocks."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=graph,
         query="Where does Alice work?",
@@ -999,14 +999,14 @@ def test_default_fact_context_obeys_the_real_live_graph_clock_contract(
     assert corpus.subject_id in {node.entity_id for node in answer.nodes}
 
 
-def test_default_fact_context_supplies_paired_clocks_for_at_time(
+def test_default_facts_context_supplies_paired_clocks_for_at_time(
     corpus: _Corpus,
 ) -> None:
     """An explicit world time travels with the operation's belief-time clock."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="Where did Alice work?",
@@ -1028,7 +1028,7 @@ def test_live_graph_rejects_an_expired_composed_operation_deadline() -> None:
         graph.neighborhood(entity_id=uuid4(), _deadline=0.0)
 
 
-def test_default_fact_context_keeps_anchor_fact_rank_after_neighborhood_expansion(
+def test_default_facts_context_keeps_anchor_fact_rank_after_neighborhood_expansion(
     corpus: _Corpus,
 ) -> None:
     """A two-endpoint neighbor relation cannot evict a better anchor observation."""
@@ -1040,7 +1040,7 @@ def test_default_fact_context_keeps_anchor_fact_rank_after_neighborhood_expansio
     )
     graph = _GraphNeighborhood(neighbor_ids=(corpus.subject_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="list banks",
@@ -1052,7 +1052,7 @@ def test_default_fact_context_keeps_anchor_fact_rank_after_neighborhood_expansio
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
 
 
-def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts(
+def test_default_facts_context_drops_a_stale_neighbor_without_losing_anchor_facts(
     corpus: _Corpus,
 ) -> None:
     """A concurrently stale graph node is disclosed without vetoing anchor facts."""
@@ -1060,7 +1060,7 @@ def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(stale_neighbor_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="Where does Alice work?",
@@ -1080,7 +1080,7 @@ def test_default_fact_context_drops_a_stale_neighbor_without_losing_anchor_facts
     assert index.requested_entity_ids == [(str(corpus.subject_id),)]
 
 
-def test_default_fact_context_rechecks_only_caller_supplied_anchors(
+def test_default_facts_context_rechecks_only_caller_supplied_anchors(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A graph-derived neighbor retiring late cannot veto valid anchor facts."""
@@ -1100,7 +1100,7 @@ def test_default_fact_context_rechecks_only_caller_supplied_anchors(
         return {corpus.subject_id}
 
     monkeypatch.setattr(query_engine_module, "_current_context_entity_ids", current_ids)
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="Where does Alice work?",
@@ -1125,13 +1125,13 @@ def test_default_fact_context_rechecks_only_caller_supplied_anchors(
         SQLAlchemyTimeoutError("graph pool timed out"),
     ],
 )
-def test_default_fact_context_maps_graph_failures_to_a_boundary(
+def test_default_facts_context_maps_graph_failures_to_a_boundary(
     corpus: _Corpus, error: Exception
 ) -> None:
     """Busy, stale, and database-failed graph reads never escape as HTTP 500s."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, _FailingGraph(error=error)),
         query="Where does Alice work?",
@@ -1145,7 +1145,7 @@ def test_default_fact_context_maps_graph_failures_to_a_boundary(
     assert index.requested_k == []
 
 
-def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
+def test_default_facts_context_maps_fact_pool_admission_timeout_to_boundary(
     corpus: _Corpus,
 ) -> None:
     """The shared 25-second budget includes fact-authority pool admission."""
@@ -1160,7 +1160,7 @@ def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
     )
     started = monotonic()
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, _GraphNeighborhood(neighbor_ids=())),
         query="Where does Alice work?",
@@ -1176,7 +1176,7 @@ def test_default_fact_context_maps_fact_pool_admission_timeout_to_boundary(
     assert started + 24.0 < read_pool.deadlines[0] < started + 26.0
 
 
-def test_default_fact_context_maps_primary_p1_unavailability_to_boundary(
+def test_default_facts_context_maps_primary_p1_unavailability_to_boundary(
     corpus: _Corpus,
 ) -> None:
     """An unpublished primary fact channel is a typed negative, never HTTP 500."""
@@ -1189,7 +1189,7 @@ def test_default_fact_context_maps_primary_p1_unavailability_to_boundary(
         fact_read_pool=corpus.read_pool,
     )
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=None,
         query="What is current?",
@@ -1202,7 +1202,7 @@ def test_default_fact_context_maps_primary_p1_unavailability_to_boundary(
     assert answer.facts == ()
 
 
-def test_default_fact_context_fails_closed_without_bounded_fact_pool(
+def test_default_facts_context_fails_closed_without_bounded_fact_pool(
     corpus: _Corpus,
 ) -> None:
     """A library composition cannot expose D97 through the general SQL pool."""
@@ -1214,7 +1214,7 @@ def test_default_fact_context_fails_closed_without_bounded_fact_pool(
         embedding_model="batch-c",
     )
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=None,
         query="What is current?",
@@ -1226,7 +1226,7 @@ def test_default_fact_context_fails_closed_without_bounded_fact_pool(
     assert index.requested_k == []
 
 
-def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
+def test_default_facts_context_stops_graph_expansion_at_the_shared_deadline(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Sequential anchor traversals consult the 25-second operation deadline."""
@@ -1241,7 +1241,7 @@ def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
     monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
     monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="shared context",
@@ -1256,14 +1256,14 @@ def test_default_fact_context_stops_graph_expansion_at_the_shared_deadline(
     assert index.requested_k == []
 
 
-def test_default_fact_context_reserves_neighbor_capacity_and_graph_predicate_size(
+def test_default_facts_context_reserves_neighbor_capacity_and_graph_predicate_size(
     corpus: _Corpus,
 ) -> None:
     """Direct callers receive the same 19-anchor/200-character bounds as HTTP."""
     engine, _index = corpus.query_engine(fact_ids=())
 
     with pytest.raises(ValueError, match="at most 19"):
-        engine.default_fact_context(
+        engine.default_facts_context(
             deployment_id=_DEPLOYMENT_ID,
             graph_queries=None,
             query="context",
@@ -1271,7 +1271,7 @@ def test_default_fact_context_reserves_neighbor_capacity_and_graph_predicate_siz
             evaluated_at=_NOW,
         )
     with pytest.raises(ValueError, match="between 1 and 200"):
-        engine.default_fact_context(
+        engine.default_facts_context(
             deployment_id=_DEPLOYMENT_ID,
             graph_queries=None,
             query="context",
@@ -1281,14 +1281,14 @@ def test_default_fact_context_reserves_neighbor_capacity_and_graph_predicate_siz
         )
 
 
-def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmation(
+def test_default_facts_context_forwards_dynamic_predicate_to_graph_and_confirmation(
     corpus: _Corpus,
 ) -> None:
     """An `other:` predicate is legal and enforced again by PostgreSQL."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.dynamic_relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=(corpus.object_id,))
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="Where did Alice travel?",
@@ -1296,7 +1296,7 @@ def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmati
         predicate="other:traveled",
         evaluated_at=_NOW,
     )
-    wrong_filter = engine.default_fact_context(
+    wrong_filter = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=cast(Any, graph),
         query="Where did Alice travel?",
@@ -1311,14 +1311,14 @@ def test_default_fact_context_forwards_dynamic_predicate_to_graph_and_confirmati
     assert wrong_filter.facts == ()
 
 
-def test_default_fact_context_reports_missing_graph_without_widening(
+def test_default_facts_context_reports_missing_graph_without_widening(
     corpus: _Corpus,
 ) -> None:
     """No graph dependency is a boundary before P1 nomination or embedding."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     embedded_before = len(corpus.provider.embedded_texts)
 
-    answer = engine.default_fact_context(
+    answer = engine.default_facts_context(
         deployment_id=_DEPLOYMENT_ID,
         graph_queries=None,
         query="Where does Alice work?",
@@ -1333,7 +1333,7 @@ def test_default_fact_context_reports_missing_graph_without_widening(
     assert len(corpus.provider.embedded_texts) == embedded_before
 
 
-def test_default_fact_context_discloses_the_combined_entity_cap(
+def test_default_facts_context_discloses_the_combined_entity_cap(
     corpus: _Corpus,
 ) -> None:
     """A large neighborhood returns 19 nodes beside one anchor and marks loss."""
@@ -1371,7 +1371,7 @@ def test_default_fact_context_discloses_the_combined_entity_cap(
     try:
         engine, _index = corpus.query_engine(fact_ids=())
         graph = _GraphNeighborhood(neighbor_ids=neighbor_ids)
-        answer = engine.default_fact_context(
+        answer = engine.default_facts_context(
             deployment_id=_DEPLOYMENT_ID,
             graph_queries=cast(Any, graph),
             query="neighbor context",
@@ -1397,7 +1397,9 @@ def test_default_fact_context_discloses_the_combined_entity_cap(
             )
 
 
-def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) -> None:
+def test_facts_context_uses_profile_text_to_rescue_list_queries(
+    corpus: _Corpus,
+) -> None:
     """“List banks” can nominate Acme's profile, then its bank observation."""
     index = _ProfileRescueIndex(
         entity_id=corpus.object_id, fact_id=corpus.bank_observation_id
@@ -1411,15 +1413,15 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
     )
     embedded_before = len(corpus.provider.embedded_texts)
 
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="list banks", evaluated_at=_NOW
     )
 
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
     assert index.profile_requests == 1
     assert index.requested_k == [
-        FACT_CONTEXT_CANDIDATE_K + 1,
-        FACT_CONTEXT_CANDIDATE_K + 1,
+        FACTS_CONTEXT_CANDIDATE_K + 1,
+        FACTS_CONTEXT_CANDIDATE_K + 1,
     ]
     assert len(index.requested_deadlines) == 2
     assert index.requested_deadlines[0] == index.requested_deadlines[1]
@@ -1427,7 +1429,7 @@ def test_fact_context_uses_profile_text_to_rescue_list_queries(corpus: _Corpus) 
     assert len(corpus.provider.embedded_texts) == embedded_before + 1
 
 
-def test_fact_context_falls_back_while_profile_channel_is_unpublished(
+def test_facts_context_falls_back_while_profile_channel_is_unpublished(
     corpus: _Corpus,
 ) -> None:
     """Profile backfill cannot turn ordinary deployment-wide facts into a 500."""
@@ -1440,7 +1442,7 @@ def test_fact_context_falls_back_while_profile_channel_is_unpublished(
         fact_read_pool=corpus.read_pool,
     )
 
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice employment", evaluated_at=_NOW
     )
 
@@ -1476,7 +1478,7 @@ def test_profile_rescue_rrf_counts_each_fact_once_per_channel() -> None:
     assert fused[0].score == pytest.approx(1.0 / 61.0)
 
 
-def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(
+def test_facts_context_keeps_evidence_separate_across_kind_id_collisions(
     corpus: _Corpus,
 ) -> None:
     """Relations and observations with one UUID retain distinct evidence."""
@@ -1486,7 +1488,7 @@ def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(
             ("observation", corpus.kind_collision_id),
         )
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="shared identity",
         k=2,
@@ -1535,12 +1537,12 @@ def test_fact_context_keeps_evidence_separate_across_kind_id_collisions(
         (1, 6, "evidence_per_fact"),
     ),
 )
-def test_fact_context_enforces_public_bounds(
+def test_facts_context_enforces_public_bounds(
     corpus: _Corpus, k: int, evidence_per_fact: int, message: str
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     with pytest.raises(ValueError, match=message):
-        engine.fact_context(
+        engine.facts_context(
             deployment_id=_DEPLOYMENT_ID,
             query="Alice",
             k=k,
@@ -1548,9 +1550,9 @@ def test_fact_context_enforces_public_bounds(
         )
 
 
-def test_fact_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
+def test_facts_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=tuple(corpus.budget_fact_ids))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="all budget facts",
         k=30,
@@ -1571,7 +1573,7 @@ def test_fact_context_respects_the_60_record_budget(corpus: _Corpus) -> None:
 
 def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice employment", k=1, evidence_per_fact=1
     )
     totals = {
@@ -1601,7 +1603,7 @@ def test_evidence_totals_are_exact_under_per_stance_truncation(corpus: _Corpus) 
         (AtFactTime(at=_NOW + timedelta(days=3)), ("future",), "at"),
     ),
 )
-def test_fact_context_time_modes_apply_world_and_belief_time(
+def test_facts_context_time_modes_apply_world_and_belief_time(
     corpus: _Corpus, time: FactTime, expected: tuple[str, ...], mode: str
 ) -> None:
     """Ended/future intervals are selectable; retracted facts never return."""
@@ -1611,7 +1613,7 @@ def test_fact_context_time_modes_apply_world_and_belief_time(
         "invalidated": corpus.invalidated_id,
     }
     engine, _index = corpus.query_engine(fact_ids=tuple(ids.values()))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="project assignments over time",
         k=3,
@@ -1627,12 +1629,12 @@ def test_fact_context_time_modes_apply_world_and_belief_time(
     assert corpus.invalidated_id not in {fact.fact_id for fact in answer.facts}
 
 
-def test_current_fact_context_uses_the_disclosed_half_open_boundary(
+def test_current_facts_context_uses_the_disclosed_half_open_boundary(
     corpus: _Corpus,
 ) -> None:
     """A fact ending exactly at evaluated_at is outside current membership."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.ended_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="boundary assignment",
         time=CurrentFactTime(),
@@ -1648,7 +1650,7 @@ def test_withdrawn_fact_keeps_historical_provenance_and_zero_live_totals(
 ) -> None:
     """D54 flags a historically backed fact instead of making it disappear."""
     engine, _index = corpus.query_engine(fact_ids=(corpus.withdrawn_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="legacy project", evaluated_at=_NOW
     )
 
@@ -1661,12 +1663,12 @@ def test_withdrawn_fact_keeps_historical_provenance_and_zero_live_totals(
     } == {"supports": (0, 0), "contradicts": (0, 0)}
 
 
-def test_fact_context_rejects_unknown_entity_ids_without_partial_results(
+def test_facts_context_rejects_unknown_entity_ids_without_partial_results(
     corpus: _Corpus,
 ) -> None:
     """One unavailable anchor makes the whole scoped fact response opaque."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Alice employment",
         entity_ids=(corpus.subject_id, uuid4()),
@@ -1679,13 +1681,13 @@ def test_fact_context_rejects_unknown_entity_ids_without_partial_results(
     assert index.requested_k == []
 
 
-def test_fact_context_orders_multi_anchor_coverage_before_relevance(
+def test_facts_context_orders_multi_anchor_coverage_before_relevance(
     corpus: _Corpus,
 ) -> None:
     """A two-anchor fact outranks a semantically earlier one-anchor fact."""
     one_anchor = corpus.budget_fact_ids[0]
     engine, _index = corpus.query_engine(fact_ids=(one_anchor, corpus.relation_id))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Alice and Acme",
         entity_ids=(corpus.subject_id, corpus.object_id),
@@ -1702,7 +1704,7 @@ def test_fact_context_orders_multi_anchor_coverage_before_relevance(
 
 def test_tombstoned_and_noncurrent_evidence_is_excluded(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice employment", k=1, evidence_per_fact=5
     )
     returned = {claim.claim_id for claim in answer.evidence}
@@ -1719,7 +1721,7 @@ def test_unbacked_fact_is_dropped_and_never_returned_without_evidence(
     corpus: _Corpus,
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=(corpus.unbacked_id,))
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="unbacked relationship"
     )
 
@@ -1730,12 +1732,12 @@ def test_unbacked_fact_is_dropped_and_never_returned_without_evidence(
     assert answer.negative.kind is NegativeKind.KNOWN_EMPTY
 
 
-def test_fact_context_refills_a_dropped_head_candidate(corpus: _Corpus) -> None:
+def test_facts_context_refills_a_dropped_head_candidate(corpus: _Corpus) -> None:
     """The final k applies after confirmation, so a stale head does not waste it."""
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.unbacked_id, corpus.relation_id)
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="employment after a stale nomination",
         k=1,
@@ -1746,11 +1748,11 @@ def test_fact_context_refills_a_dropped_head_candidate(corpus: _Corpus) -> None:
     assert answer.dropped_by_hydration == 1
 
 
-def test_fact_context_refill_crosses_the_default_confirmation_batch(
+def test_facts_context_refill_crosses_the_default_confirmation_batch(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One stale row cannot prevent a full page at the 16-row boundary."""
-    original_confirm = query_engine_module._confirm_fact_context
+    original_confirm = query_engine_module._confirm_facts_context
     confirmed_batch_sizes: list[int] = []
 
     def observed_confirm(**kwargs: Any) -> tuple[Any, ...]:
@@ -1759,11 +1761,11 @@ def test_fact_context_refill_crosses_the_default_confirmation_batch(
         confirmed_batch_sizes.append(len(candidate_keys))
         return original_confirm(**kwargs)
 
-    monkeypatch.setattr(query_engine_module, "_confirm_fact_context", observed_confirm)
+    monkeypatch.setattr(query_engine_module, "_confirm_facts_context", observed_confirm)
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.unbacked_id, corpus.ended_id, *corpus.budget_fact_ids[:16])
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="budget facts after one stale nomination",
         k=15,
@@ -1783,7 +1785,7 @@ def test_no_results_uses_the_query_driven_known_empty_convention(
     corpus: _Corpus,
 ) -> None:
     engine, _index = corpus.query_engine(fact_ids=())
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="nothing resembles this"
     )
 
@@ -1802,7 +1804,7 @@ def test_envelope_associations_are_explicit_and_never_order_based(
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice context", k=2, evidence_per_fact=1
     )
     evidence_ids = {claim.claim_id for claim in answer.evidence}
@@ -1817,7 +1819,7 @@ def test_fact_nomination_k_probe_discloses_truncation(corpus: _Corpus) -> None:
     engine, _index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
-    answer = engine.fact_context(
+    answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID, query="Alice", k=1, evidence_per_fact=1
     )
 

@@ -10,7 +10,7 @@ rules are contract, not garnish — proved here over a seeded corpus:
 - **A withdrawn fact is flagged, not vanished (D54).** An open
   `support_withdrawn` review marks the fact `support=withdrawn`; it is still
   returned.
-- **Combined answers preserve both authorities (D87).** `ContextBundle/v1`
+- **Combined answers preserve both authorities (D87).** `ContextBundle/v2`
   carries complete testimony and fact envelopes side by side.
 - **Identity regime and believed_at horizons are stated (S61, §3).** Reads
   echo which identity boundary answered; a query before a finite channel
@@ -36,7 +36,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
@@ -433,8 +433,8 @@ def test_hydrate_also_discloses_contradiction_and_support(corpus: _Corpus) -> No
 def test_context_bundle_keeps_testimony_and_facts_separate() -> None:
     """The combined contract has two complete children and no blended payload."""
     scope = current_temporal_scope(evaluated_at=_NOW)
-    bundle = ContextBundleV1(
-        testimony=Envelope(
+    bundle = ContextBundleV2(
+        claims_and_sources=Envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=scope,
             freshness=Freshness(pg_live_ts=_NOW),
@@ -443,8 +443,8 @@ def test_context_bundle_keeps_testimony_and_facts_separate() -> None:
             grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
         ),
     )
-    assert bundle.contract == "ContextBundle/v1"
-    assert bundle.testimony.grain is Grain.EVIDENCE
+    assert bundle.contract == "ContextBundle/v2"
+    assert bundle.claims_and_sources.grain is Grain.EVIDENCE
     assert bundle.facts.grain is Grain.FACT
 
 
@@ -454,8 +454,8 @@ def test_context_bundle_rejects_swapped_authorities() -> None:
     fact = Envelope(
         grain=Grain.FACT, temporal_scope=scope, freshness=Freshness(pg_live_ts=_NOW)
     )
-    with pytest.raises(ValidationError, match="testimony"):
-        ContextBundleV1(testimony=fact, facts=fact)
+    with pytest.raises(ValidationError, match="claims_and_sources"):
+        ContextBundleV2(claims_and_sources=fact, facts=fact)
 
 
 # --- S61 identity regime, horizons, and the negative taxonomy --------------

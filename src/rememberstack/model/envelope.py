@@ -539,7 +539,7 @@ class Envelope(BaseModel):
     """The D49 envelope: results plus the answer's machine-readable self-account.
 
     Each answer is one operation's cohesive typed result. Independent complete
-    testimony and fact responses use ``ContextBundleV1`` instead of nesting or
+    testimony and fact responses use ``ContextBundleV2`` instead of nesting or
     blending payloads inside an envelope.
     """
 
@@ -569,20 +569,20 @@ class Envelope(BaseModel):
     negative: Negative | None = None
 
 
-class ContextBundleV1(BaseModel):
-    """The sole side-by-side response for complete testimony and fact reads."""
+class ContextBundleV2(BaseModel):
+    """The sole side-by-side response for complete source and fact reads."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    contract: Literal["ContextBundle/v1"] = "ContextBundle/v1"
-    testimony: Envelope
+    contract: Literal["ContextBundle/v2"] = "ContextBundle/v2"
+    claims_and_sources: Envelope
     facts: Envelope
 
     @model_validator(mode="after")
-    def _child_grains_are_exact(self) -> "ContextBundleV1":
+    def _child_grains_are_exact(self) -> "ContextBundleV2":
         """Keep the two authorities explicit instead of accepting mixed children."""
-        if self.testimony.grain is not Grain.EVIDENCE:
-            raise ValueError("ContextBundle testimony must be evidence grain")
+        if self.claims_and_sources.grain is not Grain.EVIDENCE:
+            raise ValueError("ContextBundle claims_and_sources must be evidence grain")
         if self.facts.grain is not Grain.FACT:
             raise ValueError("ContextBundle facts must be fact grain")
         return self

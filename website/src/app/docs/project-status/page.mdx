@@ -20,8 +20,8 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 ### Retrieval and agent surfaces
 
 - PostgreSQL-native search indexes, a live SQL/PGQ graph, and a browsable corpus filesystem
-- Four assured operations: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`
-- ID-scoped `fact_context` / `answer_context` use bounded live graph
+- Four assured operations: `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`
+- ID-scoped `facts_context` / `combined_context` use bounded live graph
   neighborhoods for `current` and `at`; unavailable graph authority is an
   explicit boundary, while `history` and `overlap` remain visibly anchor-scoped
 - Open query: sandboxed SQL, typed live-graph helpers, saved examples, schema discovery
@@ -114,7 +114,7 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 
 ## What landed after v0.5.0 (in v0.6.0)
 
-- `fact_context` now composes lexical/vector search, referent resolution,
+- `facts_context` now composes lexical/vector search, referent resolution,
   bounded live-graph expansion, and evidence hydration under one snapshot and
   deadline. Same-name exact matches remain visible candidates rather than a
   silent entity choice.
@@ -125,7 +125,7 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 
 ## Unreleased on `main`
 
-- **Stored originals remain usable without a converter (D114).** Otherwise
+- **Stored originals remain usable without a converter (D115).** Otherwise
   admissible uploads retain their raw bytes. Conversion starts parked with
   `defer_reason=no_route`; missing routing does not mark the version failed.
   A worker with stale configuration also parks without consuming an attempt allowance.

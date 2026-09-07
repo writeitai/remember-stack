@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import { FileText, Search } from "lucide-react";
-import { searchDocs, type SearchOutcome } from "@/lib/search/pagefind";
+import { searchDocs, sanitizeDocUrl, type SearchOutcome } from "@/lib/search/pagefind";
 
 const EMPTY: SearchOutcome = { status: "empty", results: [] };
 
@@ -76,7 +76,7 @@ export function SearchCommand() {
   const onSelect = useCallback(
     (url: string) => {
       setOpen(false);
-      router.push(url);
+      router.push(sanitizeDocUrl(url));
     },
     [router]
   );

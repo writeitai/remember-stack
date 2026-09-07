@@ -504,7 +504,12 @@ def _core_operation_descriptors() -> dict[str, CanonicalValue]:
     from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
     from rememberstack.surfaces.operation_surface import operation_descriptors
 
-    assured = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
+    assured = {
+        "resolve_entity",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
+    }
     canonical = {operation.name.value: operation for operation in CANONICAL_OPERATIONS}
     if set(canonical) != assured:
         raise SchemaManifestError("the canonical catalog is not the exact D87 set")
@@ -528,12 +533,12 @@ def _core_operation_descriptors() -> dict[str, CanonicalValue]:
             "intent": public.answer_intent,
             "implementation_plan_hash": public.implementation_plan_hash,
         }
-        if name == "testimony_context":
+        if name == "claims_and_sources_context":
             descriptor["channels"] = {
                 "claims": {"enabled": True, "grain": "evidence", "hybrid": True},
                 "chunks": {"enabled": True, "grain": "evidence", "hybrid": True},
             }
-        if name == "fact_context":
+        if name == "facts_context":
             descriptor["channels"] = {
                 "facts": {
                     "grain": "fact",

@@ -726,12 +726,12 @@ or fact transaction derives both `statement_timeout` and
 a typed `boundary`; it never silently widens scope or falls back to anchor-only
 retrieval.
 
-Assured operations (`fact_context`, `answer_context`, D87) follow the
+Assured operations (`facts_context`, `combined_context`, D87) follow the
 same default: do not require a predicate list to return an entity’s
 facts and one-hop relations. Because this changes the pre-D97 selection
 semantics, parameters, and entity bound, the canonical descriptors are
-`fact_context@2` and `answer_context@2`. The unaffected
-`resolve_entity` and `testimony_context` descriptors remain version 1.
+`facts_context@2` and, after D114's response rename, `combined_context@3`. The unaffected
+`resolve_entity` and `claims_and_sources_context` descriptors remain version 1.
 Primary P1 fact-channel unavailability returns a typed `boundary`; it
 must not escape as an untyped HTTP 500 or widen to another authority.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 from pydantic import BaseModel
@@ -62,7 +63,7 @@ def test_setup_cursor_configuration(tmp_path: Path) -> None:
     assert mcp_data["mcpServers"]["remember"]["args"] == args
 
     rule_text = rule_file.read_text(encoding="utf-8")
-    assert "fact_context" in rule_text
+    assert "facts_context" in rule_text
     assert "bitemporal" in rule_text
 
 
@@ -604,7 +605,7 @@ def test_doctor_token_origin_isolation(
 def test_query_free_text_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """CLI query defaults to fact_context for free text and answer_context with --answer."""
+    """CLI query defaults to facts_context and uses combined_context with --combined."""
     captured_calls: list[tuple[str, str]] = []
 
     class MockClient:
@@ -614,23 +615,23 @@ def test_query_free_text_dispatch(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def fact_context(self, query: str) -> object:
+        def facts_context(self, query: str) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
                 operation: str
                 facts: list[str]
 
-            return MockEnvelope(operation="fact_context", facts=["test fact"])
+            return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def answer_context(self, query: str) -> object:
+        def combined_context(self, query: str) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):
                 operation: str
                 query: str
 
-            return MockBundle(operation="answer_context", query=query)
+            return MockBundle(operation="combined_context", query=query)
 
     monkeypatch.setattr(
         "rememberstack.surfaces.cli._cli_memory_client", lambda args: MockClient()
@@ -642,8 +643,8 @@ def test_query_free_text_dispatch(
     assert captured_calls[-1] == ("fact", "What were our decisions on auth?")
     assert "test fact" in capsys.readouterr().out
 
-    # 2. Free text query with --answer
-    res2 = main(["query", "How does indexing work?", "--answer"])
+    # 2. Free text query with --combined
+    res2 = main(["query", "How does indexing work?", "--combined"])
     assert res2 == 0
     assert captured_calls[-1] == ("answer", "How does indexing work?")
     assert "How does indexing work?" in capsys.readouterr().out
@@ -652,7 +653,7 @@ def test_query_free_text_dispatch(
 def test_query_free_text_with_preceding_flags(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Flags like --answer or --url can precede the free-text query string (Finding 8b)."""
+    """Flags like --combined or --url can precede free-text query strings (Finding 8b)."""
     captured_calls: list[tuple[str, str]] = []
 
     class MockClient:
@@ -662,30 +663,30 @@ def test_query_free_text_with_preceding_flags(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def fact_context(self, query: str) -> object:
+        def facts_context(self, query: str) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
                 operation: str
                 facts: list[str]
 
-            return MockEnvelope(operation="fact_context", facts=["test fact"])
+            return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def answer_context(self, query: str) -> object:
+        def combined_context(self, query: str) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):
                 operation: str
                 query: str
 
-            return MockBundle(operation="answer_context", query=query)
+            return MockBundle(operation="combined_context", query=query)
 
     monkeypatch.setattr(
         "rememberstack.surfaces.cli._cli_memory_client", lambda args: MockClient()
     )
 
     # Flag before query
-    res = main(["query", "--answer", "How does indexing work?"])
+    res = main(["query", "--combined", "How does indexing work?"])
     assert res == 0
     assert captured_calls[-1] == ("answer", "How does indexing work?")
 
@@ -1918,3 +1919,336 @@ def test_setup_dry_run_does_not_claim_write(
     assert "[✓] Stored access token" not in out
     assert "[✓] Configured self-hosted endpoint" not in out
     assert "Mode: DRY RUN (no files will be written)" in out
+
+
+def test_unified_login_default_deployment_audience(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """remember login (no flags) defaults to deployment audience, saving active deployment and project."""
+    config_dir = tmp_path / "cfg-login-unified"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    recorded_requests: list[tuple[str, str, Any]] = []
+
+    dep_uuid = "74000000-0000-0000-0000-000000000001"
+    proj_uuid = "74000000-0000-0000-0000-000000000002"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_path = request.url.path
+        if url_path.endswith("/v1/device/authorize"):
+            json_body = json.loads(request.read()) if request.read() else {}
+            recorded_requests.append(("POST", str(request.url), json_body))
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code-dep-123",
+                    "user_code": "UNIF-9999",
+                    "verification_uri": "https://remember.dev/app/device",
+                    "verification_uri_complete": "https://remember.dev/app/device?user_code=UNIF-9999",
+                    "expires_in": 900,
+                    "interval": 1,
+                },
+            )
+        if url_path.endswith("/v1/device/token"):
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "umc_pat_live_deployment_secret",
+                    "token_type": "Bearer",
+                    "token_id": "0191ffff-0000-7000-8000-000000000001",
+                    "org_id": "0191ffff-0000-7000-8000-000000000002",
+                    "deployment_id": dep_uuid,
+                    "project_id": proj_uuid,
+                    "label": "production",
+                    "token_prefix": "umc_pat",
+                    "data_plane_hostname": "dep-74000000.api.remember.dev",
+                    "data_plane_hostname_live": True,
+                    "audience": "deployment",
+                    "expires_at": None,
+                },
+            )
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    # Run unified login with no --audience flag
+    code = main(["login", "--token-host", "https://api.remember.dev"])
+    assert code == 0
+
+    # Verify authorize request defaulted to audience='deployment'
+    auth_req = [r for r in recorded_requests if r[1].endswith("/v1/device/authorize")]
+    assert len(auth_req) == 1
+    assert auth_req[0][2].get("audience") == "deployment"
+
+    # Verify credential has deployment_id and active_project_id populated
+    cred = load_credentials()
+    assert cred is not None
+    assert cred.deployment_id == UUID(dep_uuid)
+    assert cred.active_project_id == proj_uuid
+    assert cred.projects is not None
+    assert proj_uuid in cred.projects
+    proj_cred = cred.projects[proj_uuid]
+    assert proj_cred.name == "production"
+    assert proj_cred.data_plane_url == "https://dep-74000000.api.remember.dev"
+    assert (
+        proj_cred.data_plane_token.get_secret_value()
+        == "umc_pat_live_deployment_secret"
+    )
+
+    out = capsys.readouterr().out
+    assert "[✓] Authenticated with Remember Cloud." in out
+    assert f"deployment_id: {dep_uuid}" in out
+    assert f"active_project: {proj_uuid}" in out
+
+
+def test_login_control_plane_shorthand_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """remember login --control-plane requests control audience and saves control_plane credentials."""
+    config_dir = tmp_path / "cfg-login-control-flag"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    recorded_requests: list[tuple[str, str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_path = request.url.path
+        if url_path.endswith("/v1/device/authorize"):
+            json_body = json.loads(request.read()) if request.read() else {}
+            recorded_requests.append(("POST", str(request.url), json_body))
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code-ctrl-flag-123",
+                    "user_code": "FLAG-9999",
+                    "verification_uri": "https://remember.dev/app/device",
+                    "verification_uri_complete": "https://remember.dev/app/device?user_code=FLAG-9999",
+                    "expires_in": 900,
+                    "interval": 1,
+                },
+            )
+        if url_path.endswith("/v1/device/token"):
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "umc_cp_flag_secret",
+                    "token_type": "Bearer",
+                    "token_id": "0191ffff-0000-7000-8000-000000000001",
+                    "org_id": "0191ffff-0000-7000-8000-000000000002",
+                    "deployment_id": None,
+                    "label": "cli-control-session",
+                    "token_prefix": "umc_cp",
+                    "data_plane_hostname": "",
+                    "data_plane_hostname_live": True,
+                    "audience": "control",
+                    "expires_at": None,
+                },
+            )
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    # Run login with --control-plane shorthand flag
+    code = main(
+        ["login", "--control-plane", "--token-host", "https://api.remember.dev"]
+    )
+    assert code == 0
+
+    # Verify authorize request had audience='control'
+    auth_req = [r for r in recorded_requests if r[1].endswith("/v1/device/authorize")]
+    assert len(auth_req) == 1
+    assert auth_req[0][2].get("audience") == "control"
+
+    # Verify credential has control_plane populated
+    cred = load_credentials()
+    assert cred is not None
+    assert cred.control_plane is not None
+    assert cred.control_plane.access_token.get_secret_value() == "umc_cp_flag_secret"
+
+    out = capsys.readouterr().out
+    assert "[✓] Authenticated with Remember Cloud organization control plane." in out
+    assert "org_id: 0191ffff-0000-7000-8000-000000000002" in out
+
+
+def test_multi_project_relogin_a_b_a(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Relogin pattern A -> B -> A properly journals and revokes project A's predecessor."""
+    config_dir = tmp_path / "cfg-login-aba"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    proj_a = "74000000-0000-0000-0000-00000000000a"
+    proj_b = "74000000-0000-0000-0000-00000000000b"
+    dep_a = "74000000-0000-0000-0000-00000000001a"
+    dep_b = "74000000-0000-0000-0000-00000000001b"
+
+    recorded_requests: list[tuple[str, str, Any]] = []
+    current_token_resp: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_path = request.url.path
+        if url_path.endswith("/v1/device/authorize"):
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code-aba",
+                    "user_code": "ABA-1111",
+                    "verification_uri": "https://remember.dev/app/device",
+                    "verification_uri_complete": "https://remember.dev/app/device?user_code=ABA-1111",
+                    "expires_in": 900,
+                    "interval": 1,
+                },
+            )
+        if url_path.endswith("/v1/device/token"):
+            return httpx.Response(200, json=current_token_resp)
+        if (
+            url_path.endswith("/v1/api-tokens/self")
+            or url_path.endswith("/v1/control-tokens/self")
+            or url_path.endswith("/v1/tokens/self")
+        ) and request.method == "DELETE":
+            recorded_requests.append(
+                ("DELETE", str(request.url), dict(request.headers))
+            )
+            return httpx.Response(200, json={"state": "revoked"})
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    # 1. Login to project A
+    current_token_resp = {
+        "access_token": "token_a_1",
+        "token_type": "Bearer",
+        "token_id": "0191ffff-0000-7000-8000-000000000001",
+        "org_id": "0191ffff-0000-7000-8000-000000000002",
+        "deployment_id": dep_a,
+        "project_id": proj_a,
+        "label": "proj-a",
+        "token_prefix": "umc_pat",
+        "data_plane_hostname": "dep-a.api.remember.dev",
+        "data_plane_hostname_live": True,
+        "audience": "deployment",
+    }
+    assert main(["login", "--token-host", "https://api.remember.dev"]) == 0
+    assert len([r for r in recorded_requests if r[0] == "DELETE"]) == 0
+
+    # 2. Login to project B
+    current_token_resp = {
+        "access_token": "token_b_1",
+        "token_type": "Bearer",
+        "token_id": "0191ffff-0000-7000-8000-000000000002",
+        "org_id": "0191ffff-0000-7000-8000-000000000002",
+        "deployment_id": dep_b,
+        "project_id": proj_b,
+        "label": "proj-b",
+        "token_prefix": "umc_pat",
+        "data_plane_hostname": "dep-b.api.remember.dev",
+        "data_plane_hostname_live": True,
+        "audience": "deployment",
+    }
+    assert main(["login", "--token-host", "https://api.remember.dev"]) == 0
+    assert len([r for r in recorded_requests if r[0] == "DELETE"]) == 0
+
+    # 3. Login to project A again: must revoke token_a_1!
+    current_token_resp = {
+        "access_token": "token_a_2",
+        "token_type": "Bearer",
+        "token_id": "0191ffff-0000-7000-8000-000000000003",
+        "org_id": "0191ffff-0000-7000-8000-000000000002",
+        "deployment_id": dep_a,
+        "project_id": proj_a,
+        "label": "proj-a",
+        "token_prefix": "umc_pat",
+        "data_plane_hostname": "dep-a.api.remember.dev",
+        "data_plane_hostname_live": True,
+        "audience": "deployment",
+    }
+    assert main(["login", "--token-host", "https://api.remember.dev"]) == 0
+
+    delete_reqs = [r for r in recorded_requests if r[0] == "DELETE"]
+    assert len(delete_reqs) == 1
+    assert delete_reqs[0][2].get("authorization") == "Bearer token_a_1"
+
+    # Both projects exist in credentials, project A has token_a_2, project B has token_b_1
+    cred = load_credentials()
+    assert cred is not None
+    assert cred.projects is not None
+    assert proj_a in cred.projects
+    assert proj_b in cred.projects
+    assert cred.projects[proj_a].data_plane_token.get_secret_value() == "token_a_2"
+    assert cred.projects[proj_b].data_plane_token.get_secret_value() == "token_b_1"
+
+
+def test_projects_list_live_json_array(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """projects list parses a top-level JSON array response from /v1/orgs/{org_id}/deployments."""
+    config_dir = tmp_path / "cfg-proj-list-array"
+    config_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(config_dir))
+
+    # Save credentials with control plane and active project
+    cred = CredentialFile(
+        version=1,
+        active_project_id="84000000-0000-0000-0000-000000000001",
+        control_plane=ControlPlaneCredentials(
+            access_token=SecretStr("cp_secret_token"),
+            org_id=UUID("0191ffff-0000-7000-8000-000000000002"),
+            url="https://api.remember.dev",
+        ),
+    )
+    write_credentials(credential=cred)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/deployments"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "74000000-0000-0000-0000-000000000001",
+                        "project_id": "84000000-0000-0000-0000-000000000001",
+                        "name": "prod-deployment",
+                        "status": "ready",
+                    }
+                ],
+            )
+        return httpx.Response(404)
+
+    orig_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: orig_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+
+    code = main(["projects", "list"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "84000000-0000-0000-0000-000000000001" in out
+    assert "prod-deployment" in out
+    assert "ready" in out
+    assert "*" in out

@@ -77,11 +77,11 @@ print("Ingestion complete and searchable!")
 
 Remember provides four assured retrieval methods with strict response envelope contracts.
 
-### `client.fact_context(...)`
+### `client.facts_context(...)`
 Retrieves current or historical adjudicated facts with live source testimony under a hard token budget:
 
 ```python
-envelope = client.fact_context(
+envelope = client.facts_context(
     query="What database do we use for the spine?",
     time={"mode": "current"},  # or {"mode": "at", "at": "2026-01-01T00:00:00Z"}
 )
@@ -93,14 +93,14 @@ for ev in envelope.evidence:
     print(f"  Source claim: {ev.claim_text}")
 ```
 
-### `client.answer_context(...)`
-Returns a comprehensive `ContextBundle/v1` containing both evidence-grain testimony and fact-grain worldview:
+### `client.combined_context(...)`
+Returns a comprehensive `ContextBundle/v2` containing both evidence-grain testimony and fact-grain worldview:
 
 ```python
-bundle = client.answer_context("Explain our bitemporal storage design")
+bundle = client.combined_context("Explain our bitemporal storage design")
 
 # Access evidence-grain testimony (claims and chunk texts)
-for ev in bundle.testimony.evidence:
+for ev in bundle.claims_and_sources.evidence:
     print(f"- Testimony: {ev.claim_text}")
 
 # Access adjudicated fact-grain relationships
@@ -108,11 +108,11 @@ for fact in bundle.facts.facts:
     print(f"- Fact: {fact.label} (evidence count: {fact.evidence_count})")
 ```
 
-### `client.testimony_context(...)`
+### `client.claims_and_sources_context(...)`
 High-recall retrieval over raw claims and chunk source text (testimony grain):
 
 ```python
-evidence_envelope = client.testimony_context("Alice's role changes")
+evidence_envelope = client.claims_and_sources_context("Alice's role changes")
 for ev in evidence_envelope.evidence:
     print(f"- Claim: {ev.claim_text} (Doc: {ev.doc_id})")
 ```
@@ -181,7 +181,7 @@ All HTTP and contract errors raise `MemoryApiError`:
 from remember import MemoryApiError
 
 try:
-    client.fact_context("Who is Bob?")
+    client.facts_context("Who is Bob?")
 except MemoryApiError as exc:
     print(f"Status Code: {exc.status_code}")
     print(f"Error Code:  {exc.code}")

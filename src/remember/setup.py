@@ -35,9 +35,9 @@ alwaysApply: false
 
 Before making architectural decisions, refactoring core subsystems, or answering
 questions about past codebase designs, consult Remember bitemporal memory via the
-available MCP tools (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`, `query_sql`).
+available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`).
 
-- Use `fact_context` or `answer_context` to retrieve attested facts and evidence.
+- Use `facts_context` or `combined_context` to retrieve attested facts and evidence.
 - Use `query_sql` to run sandboxed SQL against `facts_current` or `graph_edges_current`.
 - Check past decisions and bitemporal validity before asserting assumptions.
 - Never guess historical rationale when it is recorded in Remember.
@@ -51,11 +51,11 @@ description: Open bitemporal memory infrastructure for AI agents. Use when looki
 # Remember Bitemporal Memory Skill
 
 You have access to Remember, an open bitemporal memory infrastructure for AI agents.
-Use the Remember MCP tools (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`, `query_sql`, `describe_query_space`)
+Use the Remember MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`, `describe_query_space`)
 to query past system decisions, architectural records, and entity-relationship knowledge graphs.
 
 ## Core Guidelines
-1. Query attested facts using `fact_context` or `query_sql`.
+1. Query attested facts using `facts_context` or `query_sql`.
 2. Inspect bitemporal validity ranges (`valid_at`, `believed_at`) when examining changes.
 3. Trust attested records over unverified guesswork.
 """

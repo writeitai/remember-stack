@@ -696,7 +696,7 @@ class WorkLedger:
                 )
 
     def park_no_route(self, *, processing_id: UUID, attempt: int) -> None:
-        """Return a convert claim that found no route before doing work (D114).
+        """Return a convert claim that found no route before doing work (D115).
 
         Only the matching running convert attempt can transition. The unused
         claim is refunded, historical errors remain, and no retry is scheduled.
@@ -1474,7 +1474,7 @@ _CLAIM_SELECT = text(
       AND status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
-      -- D114: no_route work is parked on a CONFIGURATION fact, not a clock.
+      -- D115: no_route work is parked on a CONFIGURATION fact, not a clock.
       -- There is no instant at which it becomes ready, so it is excluded by
       -- its reason rather than by a sentinel timestamp; registering the
       -- converter and resuming is what releases it.

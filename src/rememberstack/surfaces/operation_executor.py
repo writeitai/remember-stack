@@ -8,7 +8,7 @@ from uuid import UUID
 
 from rememberstack.model import AssuredOperation
 from rememberstack.model import AssuredOperationName
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.spine.surface_cost import open_surface_scope
@@ -23,7 +23,7 @@ class OperationExecutionError(Exception):
     """A stored operation plan cannot be executed by this build."""
 
 
-OperationResult = Envelope | ContextBundleV1
+OperationResult = Envelope | ContextBundleV2
 
 
 class OperationExecutor:
@@ -71,8 +71,8 @@ class OperationExecutor:
         query = cast(str, arguments["query"])
         entity_ids = cast(tuple[UUID, ...], arguments.get("entity_ids", ()))
         selected_time = cast(FactTime | None, arguments.get("time"))
-        if name is AssuredOperationName.TESTIMONY_CONTEXT:
-            return self._engine.testimony_context(
+        if name is AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT:
+            return self._engine.claims_and_sources_context(
                 deployment_id=deployment_id,
                 query=query,
                 entity_ids=entity_ids,
@@ -80,8 +80,8 @@ class OperationExecutor:
                 candidate_k=cast(int, arguments.get("candidate_k", 200)),
                 evaluated_at=evaluation,
             )
-        if name is AssuredOperationName.FACT_CONTEXT:
-            return self._engine.default_fact_context(
+        if name is AssuredOperationName.FACTS_CONTEXT:
+            return self._engine.default_facts_context(
                 deployment_id=deployment_id,
                 graph_queries=self._graph,
                 query=query,
@@ -93,8 +93,8 @@ class OperationExecutor:
                 time=selected_time,
                 evaluated_at=evaluation,
             )
-        if name is AssuredOperationName.ANSWER_CONTEXT:
-            testimony = self._engine.testimony_context(
+        if name is AssuredOperationName.COMBINED_CONTEXT:
+            claims_and_sources = self._engine.claims_and_sources_context(
                 deployment_id=deployment_id,
                 query=query,
                 entity_ids=entity_ids,
@@ -102,7 +102,7 @@ class OperationExecutor:
                 candidate_k=200,
                 evaluated_at=evaluation,
             )
-            facts = self._engine.default_fact_context(
+            facts = self._engine.default_facts_context(
                 deployment_id=deployment_id,
                 graph_queries=self._graph,
                 query=query,
@@ -114,5 +114,5 @@ class OperationExecutor:
                 time=selected_time,
                 evaluated_at=evaluation,
             )
-            return ContextBundleV1(testimony=testimony, facts=facts)
+            return ContextBundleV2(claims_and_sources=claims_and_sources, facts=facts)
         raise OperationExecutionError(f"unknown assured operation {name!r}")

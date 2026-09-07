@@ -91,6 +91,9 @@ class DeviceTokenSuccess(BaseModel):
     label: str = "default"
     token_prefix: str = "umc_dp"
     audience: str = "deployment"
+    project_id: UUID | None = None
+    profile: str | None = None
+    profile_version: int | None = None
     #: Where this deployment answers, and whether that name resolves yet (D33).
     #: Advertised by the control plane; the CLI stores it so a caller does not
     #: have to be told the host separately.
@@ -355,7 +358,7 @@ def credential_from_token(
             access_token=SecretStr(""),
             token_id=token.token_id or uuid4(),
             org_id=token.org_id,
-            deployment_id=uuid4(),
+            deployment_id=None,
             control_plane=control_cred,
         )
 
@@ -377,7 +380,7 @@ def credential_from_token(
                 "run `remember login` again when it is"
             )
         api_url = f"https://{hostname}"
-    active_proj_id = str(token.deployment_id)
+    active_proj_id = str(token.project_id or token.deployment_id)
     proj_map = dict(existing.projects) if existing and existing.projects else {}
     proj_map[active_proj_id] = ProjectCredentials(
         name=token.label or "default",

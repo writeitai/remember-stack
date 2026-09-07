@@ -174,7 +174,7 @@ gates everything downstream:
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
-- **Missing conversion routes park work — D114.** E0 accepts and stores otherwise
+- **Missing conversion routes park work — D115.** E0 accepts and stores otherwise
   admissible uploads even when no conversion route exists. It passes the configured
   route set into the catalog transaction, which checks the effective
   `content_objects.mime` (first-write-wins per content hash). Convert work starts
@@ -558,7 +558,7 @@ https://cloud.google.com/storage/docs/cloud-storage-fuse/overview.)
 
 ## 6. The corpus filesystem — P3, a projection — D40
 
-### Stored originals and processed currency — D114
+### Stored originals and processed currency — D115
 
 P3 exports every live lineage with at least one durable, nondeleted version.
 It selects the latest stored version by descending `version_no`, independently

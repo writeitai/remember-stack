@@ -39,7 +39,7 @@ Three facts drive every operational decision:
   `none` for both. It is the sole executable protocol and is not comparable with
   historical v1–v14 runs.
 - The answer agent can use the complete public read plane: the four assured
-  operations (`testimony_context`, `fact_context`, `answer_context`, and
+  operations (`claims_and_sources_context`, `facts_context`, `combined_context`, and
   `resolve_entity`), direct primitives, open SQL, typed live-graph helpers,
   saved queries, and the P3 mount. Public Cypher is absent. It is allowed 8 tool calls / 9 total agent calls per
   question and must return the shortest phrase that fully answers the question.

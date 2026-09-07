@@ -1052,7 +1052,7 @@ _SELECT_READY_CYCLES = text(
            AND w.target_kind = 'document_version'
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed')
-            -- D114: live no-route work still lacks conversion evidence and
+            -- D115: live no-route work still lacks conversion evidence and
             -- holds the retraction barrier. Explicitly deleted sources no
             -- longer participate, and must not strand their cycle forever.
             AND (

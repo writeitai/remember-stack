@@ -202,7 +202,7 @@ class _Corpus:
             model_provider=FakeModelProvider(generate_payloads={}),
             embedding_model="batch-e",
         )
-        answer = engine.testimony_context(
+        answer = engine.claims_and_sources_context(
             deployment_id=_DEPLOYMENT_ID,
             query="launch",
             k=k,

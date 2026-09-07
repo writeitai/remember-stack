@@ -3593,6 +3593,12 @@ Unknown **predicates** remain D5.
 
 ## D87. Context operations mirror identity, testimony, and fact authorities
 
+> **D114 amendment (2026-09-07).** The three retrieval operation names become
+> `claims_and_sources_context`, `facts_context`, and `combined_context` as one
+> clean break. Their D87 authorities and composition are unchanged. The
+> composite response advances to `ContextBundle/v2`, whose evidence child is
+> named `claims_and_sources`.
+>
 > **D98 amendment (2026-08-27).** The four context operations and their grain
 > boundaries survive. Cypher/P2 snapshot confirmation is removed; graph
 > context uses typed live PostgreSQL operations and bounded helpers.
@@ -5421,7 +5427,52 @@ Amends D90's detailed locking/staging keys, completes D110 observation preparati
 and D74 support replay, and qualifies D107 re-split for unrecoverable legacy
 assertion provenance. Implementation and release remain separate gates.
 
-## D114. Store originals, park missing conversion routes, and expose raw availability separately
+## D114. Context operations use literal claims, sources, facts, and composition names
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D87's boundaries are correct, but `testimony_context` hides that
+the evidence response contains both claims and source chunks, singular
+`fact_context` returns many facts, and `answer_context` sounds like answer
+generation instead of retrieval composition. Names are repeated through HTTP,
+SDK, CLI, MCP, benchmark prompts and documentation, so explaining them on only
+one surface would preserve the ambiguity.
+
+**Decision.** Rename the three operations atomically to
+`claims_and_sources_context`, `facts_context`, and `combined_context`.
+`resolve_entity` is unchanged. The replacement operations preserve D87's
+parameters, membership, ranking, authority, bounds and failure behavior;
+`combined_context` remains the exact composition of the other two operations.
+
+The composite response advances to `ContextBundle/v2`. Its evidence child is
+`claims_and_sources` and its fact child remains `facts`; this prevents the old
+term from surviving in the public response. The claims-and-sources operation's
+answer intent is likewise `claims_and_sources`. Existing databases rename the
+closed enum values and reconcile stored canonical descriptors in a forward
+migration. Current deployments and the checked-in manifest therefore expose
+one vocabulary at a time.
+
+There are no aliases, deprecated SDK methods, duplicate MCP tools, or transport
+fallbacks. Unknown former names fail exactly like any other unknown operation.
+The surface-manifest hash and LoCoMo protocol identity roll with the catalog.
+Historical migrations and completed run records retain the identifiers that
+actually existed at their revision; they are not current API documentation.
+
+**Alternatives and consequences.** Better prose with the old names leaves
+callers dependent on internal terminology. `all_db_layers` and
+`all_layers_context` overclaim because the composite does not return every
+table, projection, or P3 artifact. Compatibility aliases make the MCP catalog
+larger and permanently preserve the naming problem without protecting any
+customer. The clean break requires coordinated code, database, fixture,
+benchmark and documentation changes, but it is cheapest before external use.
+
+**Authority.** [Context-operation analysis](plan/analysis/context_operation_model_analysis.md),
+[open query-space design](plan/designs/open_query_space_design.md) §3.1, and
+[retrieval design](plan/designs/retrieval_design.md) §5. Amends D87's public
+names and composite wire spelling; preserves D49/D87 authority separation and
+D98's live-PostgreSQL graph behavior.
+
+## D115. Store originals, park missing conversion routes, and expose raw availability separately
 
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 

@@ -1,7 +1,54 @@
 # Context operation model analysis
 
-*2026-08-10. Non-binding analysis supporting D87 and the context-operation
-amendment to `plan/designs/open_query_space_design.md`.*
+*2026-08-10; naming review added 2026-09-07. Non-binding analysis supporting
+D87/D114 and the context-operation amendments to
+`plan/designs/open_query_space_design.md`.*
+
+## 2026-09-07 naming review
+
+The shipped D87 boundaries are still the right boundaries, but their public
+names make callers learn internal terminology before they can choose a tool:
+
+- `testimony_context` does not say that its evidence envelope contains both
+  extracted claims and confirmed source chunks;
+- singular `fact_context` is inconsistent with a result containing multiple
+  adjudicated facts; and
+- `answer_context` sounds as though it generates an answer, even though it
+  only returns both retrieval layers side by side.
+
+Three alternatives were considered. Keeping the names and improving prose
+would leave the ambiguity in every API, MCP and CLI interaction. Naming the
+composite `all_db_layers` would overclaim because the response does not include
+every database table or P3 material. `all_layers_context` has the same problem
+and obscures that the operation is pure composition.
+
+The clearest clean-cut vocabulary is therefore:
+
+| Former public name | Replacement | What it returns |
+| --- | --- | --- |
+| `testimony_context` | `claims_and_sources_context` | current claims and confirmed source chunks |
+| `fact_context` | `facts_context` | adjudicated relations and observations under the selected time scope |
+| `answer_context` | `combined_context` | both complete child responses, kept separate |
+
+The replacement changes names, not retrieval membership, ranking or authority.
+`claims_and_sources_context` is intentionally explicit that chunks remain in
+the result. `combined_context` avoids claiming that every storage layer is
+read or that an answer is synthesized.
+
+Because there are no external consumers to preserve, aliases and deprecation
+paths would add lasting ambiguity without providing compatibility value. The
+cut should be atomic across the registry, HTTP accepted path values, SDK, CLI,
+MCP descriptors, generated manifest, benchmark prompt/catalog identity and
+current documentation. Existing databases need a forward migration so a
+deployed catalog cannot retain names the new runtime rejects.
+
+The composite wire member should change from `testimony` to
+`claims_and_sources`; otherwise the most visible response would reintroduce the
+term the rename removes. That is a wire-shape change, so the wrapper advances
+from `ContextBundle/v1` to `ContextBundle/v2`. The `facts` member remains
+accurate. Historical migrations and run reports retain the names that existed
+when they were created; current documentation identifies the former names only
+when migration history needs them.
 
 ## Question
 

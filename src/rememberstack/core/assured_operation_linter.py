@@ -19,18 +19,18 @@ _CONTRACTS = {
         Grain.FACT,
         AssuredAnswerIntent.IDENTITY,
     ),
-    AssuredOperationName.TESTIMONY_CONTEXT: (
+    AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT: (
         AssuredResultContract.ENVELOPE,
         Grain.EVIDENCE,
-        AssuredAnswerIntent.TESTIMONY,
+        AssuredAnswerIntent.CLAIMS_AND_SOURCES,
     ),
-    AssuredOperationName.FACT_CONTEXT: (
+    AssuredOperationName.FACTS_CONTEXT: (
         AssuredResultContract.ENVELOPE,
         Grain.FACT,
         AssuredAnswerIntent.FACTS,
     ),
-    AssuredOperationName.ANSWER_CONTEXT: (
-        AssuredResultContract.CONTEXT_BUNDLE_V1,
+    AssuredOperationName.COMBINED_CONTEXT: (
+        AssuredResultContract.CONTEXT_BUNDLE_V2,
         None,
         AssuredAnswerIntent.COMBINED_CONTEXT,
     ),
@@ -38,15 +38,15 @@ _CONTRACTS = {
 
 _PRIMITIVE_CHAINS = {
     AssuredOperationName.RESOLVE_ENTITY: ("resolve_entity",),
-    AssuredOperationName.TESTIMONY_CONTEXT: ("testimony_context",),
-    AssuredOperationName.FACT_CONTEXT: ("graph_neighborhood", "fact_context"),
+    AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT: ("claims_and_sources_context",),
+    AssuredOperationName.FACTS_CONTEXT: ("graph_neighborhood", "facts_context"),
 }
 
 _VERSIONS = {
     AssuredOperationName.RESOLVE_ENTITY: 1,
-    AssuredOperationName.TESTIMONY_CONTEXT: 1,
-    AssuredOperationName.FACT_CONTEXT: 2,
-    AssuredOperationName.ANSWER_CONTEXT: 2,
+    AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT: 1,
+    AssuredOperationName.FACTS_CONTEXT: 2,
+    AssuredOperationName.COMBINED_CONTEXT: 3,
 }
 
 
@@ -76,14 +76,17 @@ def lint_assured_operation(
             f"operation {operation.name.value!r} has contract tuple {actual!r};"
             f" expected {expected_contract!r}"
         )
-    if operation.name is AssuredOperationName.ANSWER_CONTEXT:
+    if operation.name is AssuredOperationName.COMBINED_CONTEXT:
         if not isinstance(operation.execution_plan, OperationBundlePlan):
             raise AssuredOperationLintError(
-                "answer_context must use the exact operation_bundle plan"
+                "combined_context must use the exact operation_bundle plan"
             )
-        if operation.execution_plan.children != ("testimony_context", "fact_context"):
+        if operation.execution_plan.children != (
+            "claims_and_sources_context",
+            "facts_context",
+        ):
             raise AssuredOperationLintError(
-                "answer_context must bundle testimony_context then fact_context"
+                "combined_context must bundle claims_and_sources_context then facts_context"
             )
     else:
         if not isinstance(operation.execution_plan, PrimitiveChainPlan):

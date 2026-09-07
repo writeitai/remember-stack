@@ -186,7 +186,7 @@ def test_top_level_exports() -> None:
     assert hasattr(remember, "Client")
     assert hasattr(remember, "CloudClient")
     assert hasattr(remember, "Envelope")
-    assert hasattr(remember, "ContextBundleV1")
+    assert hasattr(remember, "ContextBundleV2")
     assert hasattr(remember, "IngestedVersion")
     assert hasattr(remember, "MemoryApiError")
     assert hasattr(remember, "ReadinessRequirements")

@@ -43,7 +43,7 @@ _logger = logging.getLogger(__name__)
 
 
 class NoRouteHandlerError(Exception):
-    """Convert found no configured route before any I/O or provider work (D114)."""
+    """Convert found no configured route before any I/O or provider work (D115)."""
 
 
 class ExtractChunkBarrier(BaseModel):

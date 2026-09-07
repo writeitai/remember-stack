@@ -61,10 +61,10 @@ res = client.ingest(filename="notes.md", content=b"# Team\nAlice is the CFO of A
 client.wait_for_readiness([res.version_id], timeout=30)
 
 # Retrieve current fact context
-facts = client.fact_context("Who is the CFO of Acme?")
+facts = client.facts_context("Who is the CFO of Acme?")
 
 # Retrieve comprehensive dual-grain bundle
-bundle = client.answer_context("CFO of Acme")
+bundle = client.combined_context("CFO of Acme")
 
 # Execute sandboxed open SQL query (open query space parity)
 query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10")
@@ -85,7 +85,7 @@ query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_
 - `remember members list` / `invite`: Manage team seats and roles.
 - `remember ingest <file>`: Ingest document into bitemporal spine.
 - `remember query sql <sql>`: Execute sandboxed SQL statement against `memory_v1`.
-- `remember operations list` / `run`: Run assured operations (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`).
+- `remember operations list` / `run`: Run assured operations (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`).
 - `remember mcp`: Launch Model Context Protocol stdio server.
 
 ---
