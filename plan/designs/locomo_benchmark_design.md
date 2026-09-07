@@ -1,12 +1,21 @@
 # LoCoMo full-system benchmark design
 
+> **Binding evaluator-provider variant (updated 2026-09-07).**
+> `RS-LoCoMo-Full-v24-CodexSubscription` retains v24's dataset, ingestion,
+> prompts, schemas, retrieval loop, tool/call bounds, rubric, and scoring, but
+> sends both answer and judge generation through the official local Codex
+> app-server using ChatGPT-managed authentication. It pins Codex model
+> `gpt-5.6-luna`, reasoning effort `low`, and temperature `null`. It is an
+> experimental, separately fingerprinted protocol and does not replace or
+> produce scores comparable to canonical `RS-LoCoMo-Full-v24`. Analysis:
+> `plan/analysis/locomo_codex_subscription_bridge.md`.
+
 > **D107 WP-T.4 protocol amendment (2026-09-06).** Full-v24 retains the
 > existing query-space contract and rolls extraction to teach all four D41
 > kinds and open-ended windows with full source timestamps. Both the default
 > and Gemma/Vertex variants use this extraction generation. Protocol identity
 > and fingerprints change; earlier protocol scores are directional comparisons.
 > Binding extraction semantics: `temporal_clocks_design.md` §6.
-
 
 > **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
 > two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
@@ -448,6 +457,52 @@ choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
 
+#### 2.1.1 Codex ChatGPT-subscription variant
+
+`full-v24-codex-subscription` is an additive evaluator-provider variant for
+answer and judge experiments on an operator machine already logged into Codex
+with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
+app-server runtime. The benchmark never reads Codex's auth file, never receives
+an OAuth token, and never accepts an OpenAI API key for these seats. Before each
+call, the adapter reads the current account and requires type `chatgpt`;
+app-server owns refresh of its cached login when necessary.
+
+Every generation gets a fresh ephemeral thread in an empty temporary working
+directory with read-only sandboxing, network unavailable, and approvals denied.
+The model is instructed to use no agent action; after completion, the adapter
+also rejects any trace containing commands, file changes, MCP calls, web search,
+or sub-agents. The existing LoCoMo runner still owns every RememberStack tool
+call and supplies the resulting trace to the next ordinary structured model
+call. This preserves the same retrieval behavior instead of letting Codex use
+an unrecorded second tool plane.
+
+Codex app-server supports a turn-scoped JSON Schema, so the adapter passes the
+existing answer or judge Pydantic schema and validates the returned JSON again.
+It records the turn-total reported input/output tokens and local wall-clock
+latency. ChatGPT does not report a per-turn USD charge: `cost_usd=0` means no
+provider-reported marginal charge, not a free subscription. The run's call
+ceilings and Codex's service quota are the applicable guards; the evaluator
+USD ceiling cannot cap subscription usage.
+
+If the SDK raises a failed turn before returning its usage event, the adapter
+preserves the real provider error and records no fabricated usage. Publication
+use would require the lower-level event stream if partial failed-turn token
+accounting becomes a material requirement.
+
+The provider controls force a distinct protocol. Codex does not expose
+temperature, so both seats pin `temperature=null`; its Luna seat starts at
+reasoning effort `low`, rather than v24's OpenRouter-specific `none`. The v24
+prompts, schemas, budgets, catalog, and judge rubric remain byte-identical.
+These runs are useful for smoke/development comparison but are not canonical
+v24 publication results. The SDK's synchronous turn currently has no
+benchmark-enforced deadline, so this variant is not the default unattended
+publication path.
+
+Provider composition is stage-local. Ingest still composes OpenRouter for the
+deployment embedding preflight and routes its chat probe to Codex. Once the
+store is ingested, `answer` and `judge` require only the local ChatGPT login;
+they do not instantiate or read OpenRouter/Vertex credentials.
+
 ### 2.2 Provenance: the serving image, not the checkout
 
 `repository_revision` is read with `git rev-parse HEAD` in the directory the CLI
@@ -848,9 +903,10 @@ uv run --extra benchmark python -m benchmarks.locomo prepare \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The choices are `full-v24` and `full-v24-gemma-vertex`; ingest,
-answer, judge, and summarize read it from the prepared run and expose no
-protocol override.
+`--protocol` exists only on `prepare`. Canonical runs use `full-v24`; the
+explicit `full-v24-gemma-vertex` and `full-v24-codex-subscription` choices are
+separately fingerprinted provider variants. Ingest, answer, judge, and summarize
+read the frozen choice from the prepared run and expose no protocol override.
 
 Per isolated sample:
 

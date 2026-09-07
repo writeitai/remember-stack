@@ -7,7 +7,9 @@ from decimal import Decimal
 from decimal import InvalidOperation
 from pathlib import Path
 import sys
+from typing import Literal
 
+from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -19,6 +21,7 @@ from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
+from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
@@ -53,13 +56,13 @@ def main(argv: list[str] | None = None) -> int:
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
-                    provider=_provider(run_dir=args.run),
+                    provider=_provider(run_dir=args.run, stage="ingest"),
                 )
             for record in records:
                 print(record.model_dump_json())
             return 0
         if args.command == "answer":
-            provider = _provider(run_dir=args.run)
+            provider = _provider(run_dir=args.run, stage="answer")
             with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                 records = answer_sample(
                     run_dir=args.run,
@@ -82,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_judge_calls=args.max_judge_calls,
                 max_evaluator_cost_usd=args.max_evaluator_cost_usd,
                 execute=args.execute,
-                provider=_provider(run_dir=args.run),
+                provider=_provider(run_dir=args.run, stage="judge"),
             )
             for record in records:
                 print(record.model_dump_json())
@@ -102,31 +105,40 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _provider(*, run_dir: Path) -> ModelProviderPort:
-    """Compose the adapters the run's frozen protocol needs, from settings.
+ProviderStage = Literal["ingest", "answer", "judge"]
 
-    OpenRouter is always composed: it serves embeddings for the preflight and
-    every seat the protocol leaves on it. When the protocol pins a seat to
-    Vertex, the keyless Vertex adapter is composed eagerly -- so a missing
-    project id or credential fails here, before any stage work -- and the
-    pinned model names route to it while everything else stays on OpenRouter.
+
+def _provider(*, run_dir: Path, stage: ProviderStage) -> ModelProviderPort:
+    """Compose only the provider needed by this frozen protocol stage.
+
+    Ingest uses OpenRouter for the deployment embedding preflight and routes
+    its chat probe to the answer provider. Answer and judge select their
+    independently pinned seats. Stage-local composition lets a
+    Codex-subscription evaluation run without an OpenRouter key once its store
+    has already been ingested.
     """
     protocol = run_protocol(run_dir=run_dir)
-    openrouter = OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
-    vertex_models = {
-        model
-        for model, provider in (
-            (protocol.answer_agent_model, protocol.answer_agent_provider),
-            (protocol.judge_model, protocol.judge_provider),
+    if stage == "ingest":
+        openrouter = _seat_provider(provider_key="openrouter")
+        if protocol.answer_agent_provider == "openrouter":
+            return openrouter
+        answer_provider = _seat_provider(provider_key=protocol.answer_agent_provider)
+        return ModelRoutedProvider(
+            routes={protocol.answer_agent_model: answer_provider}, default=openrouter
         )
-        if provider == "vertex"
-    }
-    if not vertex_models:
-        return openrouter
-    vertex = VertexModelProvider(settings=VertexSettings.model_validate({}))
-    return ModelRoutedProvider(
-        routes={model: vertex for model in vertex_models}, default=openrouter
+    provider_key = (
+        protocol.answer_agent_provider if stage == "answer" else protocol.judge_provider
     )
+    return _seat_provider(provider_key=provider_key)
+
+
+def _seat_provider(*, provider_key: ProviderKey) -> ModelProviderPort:
+    """Build one configured provider without reading unrelated credentials."""
+    if provider_key == "openrouter":
+        return OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
+    if provider_key == "vertex":
+        return VertexModelProvider(settings=VertexSettings.model_validate({}))
+    return CodexSubscriptionModelProvider()
 
 
 def _positive_decimal(value: str) -> Decimal:

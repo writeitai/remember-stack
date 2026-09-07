@@ -32,6 +32,7 @@ from remember.models import ContextBundleV1 as RememberContextBundleV1
 from remember.models import Envelope as RememberEnvelope
 from rememberstack.model import ContextBundleV1
 from rememberstack.model import Envelope
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24"
@@ -132,6 +133,10 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v24-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v24-codex-subscription"
+CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
+CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "low"
 
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
@@ -223,12 +228,12 @@ class LoCoMoProtocol:
     tool_catalog_sha256: str
     max_tool_calls_per_question: int
     max_agent_calls_per_question: int
-    answer_agent_temperature: float
-    judge_temperature: float
+    answer_agent_temperature: float | None
+    judge_temperature: float | None
     judge_repetitions: int
     answer_reader_retry_budget: int
-    answer_agent_reasoning_effort: str | None
-    judge_reasoning_effort: str | None
+    answer_agent_reasoning_effort: ReasoningEffort | None
+    judge_reasoning_effort: ReasoningEffort | None
     answer_word_cap: int | None = None
     answer_agent_provider: ProviderKey = "openrouter"
     """Which adapter serves the answer agent; the CLI composes it from this."""
@@ -282,8 +287,36 @@ _FULL_V24_GEMMA_VERTEX = LoCoMoProtocol(
     judge_provider="openrouter",
 )
 
+_FULL_V24_CODEX_SUBSCRIPTION = LoCoMoProtocol(
+    key=CODEX_SUBSCRIPTION_PROTOCOL_KEY,
+    name=CODEX_SUBSCRIPTION_PROTOCOL_NAME,
+    answer_agent_model=CODEX_SUBSCRIPTION_MODEL,
+    judge_model=CODEX_SUBSCRIPTION_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=AnswerAgentStep,
+    judge_schema=JudgeOutput,
+    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
+    tool_catalog_sha256=tool_catalog_sha256(),
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=None,
+    judge_temperature=None,
+    judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort=CODEX_SUBSCRIPTION_REASONING_EFFORT,
+    judge_reasoning_effort=CODEX_SUBSCRIPTION_REASONING_EFFORT,
+    answer_word_cap=None,
+    answer_agent_provider="codex_subscription",
+    judge_provider="codex_subscription",
+)
+
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {_FULL_V24.key: _FULL_V24, _FULL_V24_GEMMA_VERTEX.key: _FULL_V24_GEMMA_VERTEX}
+    {
+        _FULL_V24.key: _FULL_V24,
+        _FULL_V24_GEMMA_VERTEX.key: _FULL_V24_GEMMA_VERTEX,
+        _FULL_V24_CODEX_SUBSCRIPTION.key: _FULL_V24_CODEX_SUBSCRIPTION,
+    }
 )
 
 
