@@ -24,8 +24,8 @@
 > protocol when replacement semantics ship; see
 > [D114](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
 
-> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
-> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
+> `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,
 > tools, budgets, prompts, scoring, and ingest component versions. The query
 > space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
 > `examples.claims_as_of` overlaps the half-open canonical window and counts

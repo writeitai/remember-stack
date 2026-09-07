@@ -4915,6 +4915,8 @@ counterfactual instruction.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
+**Status:** superseded by D114 when that amendment merges.
+
 **Decision (2026-09-03).** The observation adjudicator (D43) gains a
 deterministic temporal-compatibility rung that runs before any model call,
 reading the D41 valid-time each claim already carries:
@@ -5268,7 +5270,7 @@ D32, D43's untyped statement, D98, D100–D105.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 separates source, world and belief clocks but leaves four
 implementation gates (#365–#368). D108 subsequently makes autonomous
@@ -5323,7 +5325,7 @@ the design gates; it does not certify T.1 implementation, conversion or release.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 prohibits mixed dated/undated evidence attachment and requires
 coexistence without a supported succession or contradiction. Its exclusion
@@ -5359,7 +5361,7 @@ mixed-state contract conflict; implementation and release remain separate gates.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** A broad same-value state claim can overlap several existing disjoint
 state slices. D107 requires evidence attachment, but D110's scalar application
@@ -5397,7 +5399,7 @@ the library boundary. Implementation and release remain separate gates.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D110 requires observation inference outside locks with durable
 prepared answers and exact application. D90's disposable, version-qualified

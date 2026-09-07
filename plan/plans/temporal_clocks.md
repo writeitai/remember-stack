@@ -39,7 +39,13 @@ A package cannot claim readiness until its named behavior and dependencies work.
 Before replacement write-path code, publish the exact narrow preparation/receipt
 schema, adjudication output models, application identity, lock order, stale-input
 check, deletion inventory and recovery procedure required by D114 §§3–4,7–8.
-Choose concrete response fields for confirmed/possible temporal matches (§5).
+Implement D114 §2's shape table with fact-specific CHECK constraints; do not copy
+claim CHECKs or canonicalize incomplete/already-canonical fact windows. Specify
+D114 §5's per-result `temporal_match: confirmed | possible` in the exact versioned
+response schema; existing closed envelopes cannot accept an unversioned extra
+field. Define the unique application key/index using deployment, normalized
+assertion identity (including its normalization generation) and adjudicator
+generation. Text, triple or interval equality is not a retry key.
 Show why each new durable field is needed; reuse the existing ledger, transcripts
 and source lifecycle wherever possible. Independent review must cover concurrent
 helpers, late inference replies, identity changes and forget before code lands.
@@ -68,8 +74,12 @@ full migration, worker, surface and Compose checks for the integrated change.
 
 ### C. Retrieval, profiles and consumer cutover
 
-Coordinate release with B so completed events do not vanish from callers still
-using the current default. Reuse current/at/overlap/history, add honest precision
+**Release blocker:** do not enable B's data conversion or serving cutover without
+C's historical/achievement caller routing, prompts and versioned response changes.
+Every served consumer must use the compatible contract; unsupported legacy
+generations must be upgraded or refused at the cutover. Completed events must not
+vanish behind a caller still using the current default for a historical question.
+Reuse current/at/overlap/history, add honest precision
 and unknown-date handling, update P1 and final SQL confirmation consistently, and
 preserve dated evidence through deduplication. Assured historical and bounded
 queries must include relevant unknown-date candidates with explicit uncertainty.

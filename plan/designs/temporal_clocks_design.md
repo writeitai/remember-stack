@@ -7,13 +7,13 @@
 
 **Historical status:** D107, formerly amended by D110; see D114 precedence above.
 
-> **D110 amendment (2026-09-07).**
+> **Historical D110 amendment (2026-09-07; superseded by D114).**
 > [Temporal write and lifecycle design](temporal_write_and_lifecycle_design.md)
 > closes the four §12 contracts: assertion-grain ordered relation writes,
 > autonomous guarded corrections under D108, checked cache freshness and D74
 > sanitized replay checkpoints. It also adds the `erased` endpoint basis and
 > qualifies continuous-ingest seed ordering. Its explicit amendments take
-> precedence over the original D107 revision history below.
+> precedence in that historical revision only; D114 now governs fact semantics.
 
 **Date:** 2026-09-03 (sixth revision the same day, after five independent
 Codex design reviews; §10 records the original withdrawn alternatives;

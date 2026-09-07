@@ -34,21 +34,42 @@ removes that duplicated authority and lets ordinary adjudication update dates.
 ## 2. One chosen window, with honest precision
 
 Each fact has one authoritative world-time window: the existing `valid_from` and
-`valid_until`. It also retains the precision needed to interpret that window
-(`valid_precision`, using the existing claim precision vocabulary). Claims keep
+`valid_until`. It also stores the precision needed to interpret that window
+(`valid_precision`, a new fact column using the existing claim precision vocabulary,
+non-null with `unknown` as its default). SQL NULL is not a second representation
+of unknown precision. Claims keep
 their original dates, precision, temporal kind and source timestamp. No
 `temporal_kind`, `occurs_*`, permanent seed authority, endpoint owner, or
 date-dispute state is stored on a fact.
 
 Windows use the existing UTC half-open convention: start included, end excluded.
-Reuse `core/temporal.py` canonical arithmetic, including a nonempty interval for
-an instant. A day-precision 10 May win means that calendar day, not an exact
-midnight event. Canonical endpoints are not canonicalized a second time.
+When importing a complete claim window, reuse `core/temporal.py` canonical
+arithmetic once, including a nonempty interval for an instant. A day-precision
+10 May win means that calendar day, not an exact midnight event. The resulting
+fact endpoints are already canonical.
+
+Fact windows allow incomplete information that the claim schema does not:
+
+| Meaning | `valid_from` | `valid_until` | `valid_precision` |
+| --- | --- | --- | --- |
+| Entirely unknown | NULL | NULL | `unknown` |
+| Explicitly ongoing | Known start | NULL | `open` |
+| Known start, unknown end | Known start | NULL | Unit of the known boundary; not `open` |
+| Unknown start, known end | NULL | Known end | Unit of the known boundary |
+| Known finite interval | Known start | Known end, strictly later | Recorded interval precision; neither `unknown` nor `open` |
+
+The boundary units are `instant`, `day`, `month`, `quarter` and `year`. These are
+shapes of one window, not categories of facts. Do not copy claim CHECK constraints
+onto facts: those constraints reject the two partial shapes. Do not run claim
+`canonical_bounds()` on fact rows or incomplete windows. For a bounded claim
+precision that helper substitutes the start when the end is missing; a partial
+fact must preserve the unknown end. Do not canonicalize known fact endpoints a
+second time. The concrete fact constraints must implement this table.
 
 Unknown and open mean different things:
 
-- No known window has null endpoints and null precision. It must not acquire an
-  ingestion or source date as a substitute.
+- An entirely unestablished window has null endpoints and `unknown` precision.
+  It must not acquire an ingestion or source date as a substitute.
 - `open` precision with a null end explicitly means an ongoing, open-ended
   period. An absent end in an otherwise incomplete window means unknown, not
   proof that the fact holds forever.
@@ -205,8 +226,13 @@ every year. Assured retrieval performs the corresponding unknown-date candidate
 pass and distinguishes confirmed from possible matches in its response contract.
 This distinction is query-specific, not a stored dispute status. Responses must
 preserve precision and unknown endpoints so consumers can explain it plainly.
-The concrete versioned response shape belongs in the consumer implementation
-contract; an ambiguous mixed list cannot satisfy this design.
+Versioned assured fact results carry a per-result `temporal_match` value of
+`confirmed` or `possible`, relative to the response's requested time scope. This
+field describes the query match, not confidence in the fact or a stored dispute
+state. A history match does not mean the fact holds now. The concrete consumer
+contract must include this field in its closed response schema and surface
+generation; an ambiguous mixed list or silently dropped field cannot satisfy
+this design.
 
 For example: "Three wins are dated to 2022; one additional win has no accepted
 date." An exact count requires an exhaustive query over distinct adjudicated
@@ -299,7 +325,8 @@ consumer semantics and another refresh/forget obligation. A separate correction
 framework records detailed endpoint ownership, but ordinary mutable facts and
 before/after adjudication history meet the chosen requirement without it.
 
-Current-only cached prose is a coherent alternative. It requires boundary
+[Current-only cached prose](../proposals/current_only_generated_summaries.md)
+is a coherent alternative. It requires boundary
 scheduling and stale-read protection, including delays and restarts. Date-qualified
 profiles and snapshots are chosen instead because they retain useful history
 without that wall-clock dependency. This is a product-contract choice, not a
@@ -331,6 +358,7 @@ documents and DDL remain marked as historical rationale, not parallel authority.
 | D111 unknown-start state exclusion exception | Unnecessary without kind-based identity or universal overlap exclusion |
 | D112 deterministic all-overlapping-state evidence attachment | Removed; support targets follow semantic identity, not interval overlap |
 | D113 assertion provenance, atomic support movement and stable retry result | Retained as properties (§§3.2–4); its mandatory stores and proof graph are withdrawn |
+| D43 fixed-period measurement no-cap rule | A known reporting period is the chosen finite world window. A later measurement does not automatically cap that period, and its end does not invalidate the belief (`invalidated_at` stays unchanged). Conflicting same-period figures still coexist; an open world window is not required to preserve historical belief. |
 | D41 / D55 / D74 | Claims remain immutable; world time is separate from withdrawal; hard forget still covers all durable derived copies |
 
 Existing general review/audit capabilities are not removed. This design adds no

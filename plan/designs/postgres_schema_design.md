@@ -1708,6 +1708,8 @@ CREATE TABLE relations (
   CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from),
   CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at),  -- can't un-learn before learning
   CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4) AND (embedding IS NULL OR fact_label IS NOT NULL)),
+  -- SUPERSEDED BY D114: do not copy this EXCLUDE into the replacement schema.
+  -- Distinct adjudicated identities may overlap; uniqueness belongs to application receipts.
   -- At most one BELIEVED, non-contradictory relation per (s,p,o) with overlapping world-time:
   EXCLUDE USING gist (
     deployment_id WITH =, subject_entity_id WITH =, predicate WITH =, object_entity_id WITH =,

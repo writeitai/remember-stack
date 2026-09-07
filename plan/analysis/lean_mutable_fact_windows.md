@@ -185,3 +185,23 @@ directions, contextual identity, distinct same-day events, historical retrieval,
 unknown-date disclosure, atomic retry, stale inference rejection and forgetting.
 Independent Antigravity and Grok reviews are required by the user. Neither review
 authorizes a merge or release; the user retains that decision.
+
+
+## Independent external review clarification
+
+Antigravity and Grok reviewed committed redesign `5e2fd916`. Both confirmed the
+main-based cleanup and favored one mutable window. Grok identified a concrete
+semantic gap: claim CHECKs reject partial windows, and `core/temporal.py` fills a
+missing bounded claim end from its start. Applying either rule to a partial fact
+would invent a date. The design therefore needs its own explicit window-shape
+table, keeps unknown precision as the existing `unknown` enum value, and prohibits
+claim canonicalization on partial or already-canonical fact rows. This clarifies
+the one-window representation; it adds no second window or fact category.
+
+Antigravity requested explicit query-match output and a strict consumer/conversion
+release gate. A query-specific `temporal_match` field distinguishes confirmed and
+possible candidates; it is not stored date-dispute state. Both the wire schema
+and stable application uniqueness are concrete implementation-contract gates.
+Grok also requested explicit D43 measurement semantics and supersession labels
+at the old rule/DDL sites. Known reporting periods are finite world windows;
+reaching their end does not invalidate belief in the historical figure.
