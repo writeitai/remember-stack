@@ -46,21 +46,34 @@ MCP share the same schemas and strict argument validation. Shipped
 `examples.*` saved queries are **never** top-level tools — they run only
 through `run_saved_query`.
 
-Write tools (`ingest`, `pipeline_readiness`) are always present on the remote
-stdio server (`remember mcp`). The in-process `OperationMcpServer` advertises them
-only when both ingest and pipeline-readiness ports are composed; operation-only
-compositions omit them rather than advertising tools that cannot run.
+Write tools (`ingest`, `pipeline_readiness`) are present on the remote
+stdio server (`remember mcp`) unless the process is started with
+`remember mcp --read-only`. Read-only mode is a typed server configuration,
+not an environment branch: it omits every write/readiness descriptor, including
+when a dynamically discovered assured operation reuses a reserved write name,
+rejects a direct `tools/call` for those names without falling through to an
+assured operation of the same name, and still advertises the remaining
+assured operations plus composed open-query tools. Auth and transport errors
+during read-only discovery fail closed. The in-process `OperationMcpServer`
+advertises write tools only when both ingest and pipeline-readiness ports are
+composed; operation-only compositions omit them rather than advertising tools
+that cannot run.
 
 ## `tools/list`
 
 Stable order:
 
-1. **Static write tools** (when composed): `ingest`, `pipeline_readiness`
+1. **Static write tools** (when composed): `ingest`, `pipeline_readiness`.
+   Omitted entirely by `remember mcp --read-only`.
 2. **Assured operations** from the registry (`GET /operations` / in-process registry).
+   `--read-only` also drops any assured-operation descriptor whose name is in
+   the reserved write set (`ingest`, `pipeline_readiness`).
    Remote MCP treats HTTP **404** on `GET /operations` as “registry not
-   mounted” and still returns the write tools. Auth and transport failures
-   **on `GET /operations`** still fail `tools/list`. A missing or
-   untrustworthy `GET /query/space` only omits open-query tools.
+   mounted” and still returns the write tools in the default full catalog.
+   Auth and transport failures **on `GET /operations`** still fail `tools/list`.
+   A missing or untrustworthy `GET /query/space` only omits open-query tools
+   in the default catalog; `--read-only` fails closed on auth and transport
+   errors from `GET /query/space` (HTTP 404 still means “not composed”).
 3. **Open-query tools** when the open facade is composed
 
 The operation registry contains exactly:
@@ -244,9 +257,10 @@ the deployment at `REMEMBERSTACK_API_URL`, uses `REMEMBERSTACK_API_AUTHORIZATION
 `tools/list` as write tools + `GET /operations` (omitted when that route is
 404) + the seven open-query tools when composed, and proxies `tools/call` to
 `POST /ingest`, `POST /readiness`,
-`POST /operations/{name}`, or the matching `/query/…` route. The server supports
-the MCP `initialize`, `tools/list`, and `tools/call` lifecycle; notifications
-produce no response.
+`POST /operations/{name}`, or the matching `/query/…` route. Pass
+`--read-only` to omit write/readiness tools for query-only agents. The server
+supports the MCP `initialize`, `tools/list`, and `tools/call` lifecycle;
+notifications produce no response.
 
 The operation registry and execution remain deployment-side. The MCP process is
 therefore a client transport, not another server composition and not a second

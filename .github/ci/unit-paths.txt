@@ -26,6 +26,8 @@ src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
 src/tests/benchmarks/test_locomo_sharding.py
 src/tests/benchmarks/test_locomo_store_backup.py
+src/tests/benchmarks/test_workspacebench_core.py
+src/tests/benchmarks/test_workspacebench_runner.py
 src/tests/core/test_blockizer_corpus.py
 src/tests/core/test_chunker.py
 src/tests/core/test_consumption_skill.py
@@ -75,6 +77,7 @@ src/tests/surfaces/test_postgres_graph_sql.py
 src/tests/surfaces/test_query_sandbox_graph_d98.py
 src/tests/surfaces/test_remember_cloud_client.py
 src/tests/surfaces/test_remember_facade.py
+src/tests/surfaces/test_remote_mcp_read_only.py
 src/tests/surfaces/test_route_scope.py
 src/tests/test_d98_removal_audit.py
 src/tests/test_forget_port_contract.py

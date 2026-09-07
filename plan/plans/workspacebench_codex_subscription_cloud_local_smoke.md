@@ -183,9 +183,26 @@ Required behavior:
   requests so the unattended run cannot expand its authority;
 - leave command network access disabled; only the runner-owned Remember stdio MCP may reach the
   configured local tunnel;
-- native arm exposes no Remember MCP configuration;
-- memory arm registers `remember mcp --read-only` through per-process Codex config overrides,
-  marks it required, and sets both `enabled_tools` and bounded startup/tool timeouts;
+- native arm exposes no Remember MCP configuration and no Remember config-dir
+  environment;
+- memory arm registers `remember mcp --read-only` through per-process Codex `--config`
+  overrides only, marks it required, and sets both `enabled_tools` and bounded
+  startup/tool timeouts;
+- isolate the pinned `codex-cli` 0.147.0 app-server with a disposable `CODEX_HOME`
+  and OS-keyring ChatGPT credentials (`cli_auth_credentials_store=keyring`).
+  `app-server` rejects `--ignore-user-config` (exit 2). Fail closed unless
+  keyring login succeeds under the disposable home. Do not read, copy, parse,
+  or log `auth.json`. The SDK copies `os.environ` then updates
+  `CodexConfig.env` before `Popen`; do not mutate the parent process
+  environment. Account attestation, the live canary, and task runs launch the
+  pinned binary through `/usr/bin/env -i` with allowlisted non-secret
+  `KEY=VALUE` arguments so the app-server, model commands, and MCP child
+  receive only the sanitized environment. The protocol fingerprint includes
+  the observed bundled CLI SHA-256 (platform-specific) from preflight;
+  live execution fails closed if that pin is missing or drifts;
+- validate path topology before creating output or cloning: task-dir may nest
+  under the pinned upstream checkout; workspace and output must remain disjoint
+  from each other and from every source root;
 - inject a fixed, versioned memory-consumption instruction only in the memory arm; preserve the
   upstream task prompt verbatim otherwise;
 - allow ordinary command executions, workspace-local file changes, and allowlisted Remember MCP
@@ -269,6 +286,15 @@ Minimum acceptance tests:
 - ChatGPT account attestation rejects API-key/missing accounts without exposing account secrets;
 - task outputs cannot escape the allowed output root through `..` or symlinks;
 - timeouts kill the complete fake process group and retain a classified receipt;
+- the documented task-dir-under-upstream layout passes topology validation;
+  output nested in workspace is rejected with no output directory created;
+  other workspace/output/source overlaps remain rejected;
+- generated app-server argv is accepted by bundled `codex-cli` 0.147.0 (no
+  unsupported flags); a secret-shaped ambient variable is absent from a
+  child launched through the same `/usr/bin/env -i` isolation prefix;
+  parent `os.environ` is not mutated; arbitrary user MCP/config cannot
+  enter either arm; protocol identity includes the observed CLI SHA-256
+  and live execution fails closed on pin drift;
 - fake credentials cannot appear in serialized configs, traces, logs, or result trees;
 - disallowed runtime actions produce a protocol-violation result rather than a scoreable success;
 - partial/missing/invalid artifacts remain explicit failures; and
@@ -297,7 +323,8 @@ credential boundary:
 
 1. **MCP checkpoint:** read-only mode is based on current `remember` MCP composition and cannot
    call hidden write tools.
-2. **Authentication checkpoint:** no code reads/copies `auth.json`, and the fake-secret canary is
+2. **Authentication checkpoint:** no code reads/copies `auth.json`; ChatGPT credentials must
+   come from the OS keyring under a disposable `CODEX_HOME`; and the fake-secret canary is
    green.
 3. **Isolation checkpoint:** both arms receive identical pristine local workspace bytes; evaluator
    metadata stays hidden.

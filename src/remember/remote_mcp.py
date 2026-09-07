@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 import json
 import re
 import sys
@@ -10,12 +11,16 @@ from typing import Literal
 from typing import TextIO
 from uuid import UUID
 
+from pydantic import BaseModel
+from pydantic import ConfigDict
+
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.mcp_memory_tools import handle_memory_write_tool
 from remember.mcp_memory_tools import memory_write_tool_descriptors
 from remember.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
+from remember.mcp_memory_tools import ToolError
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -32,6 +37,31 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 _OPEN_QUERY_SCHEMA = "memory_v1"
 _OPEN_QUERY_SCHEMA_MAJOR = 1
 _SURFACE_MANIFEST_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class RemoteMcpMode(StrEnum):
+    """Constructor-selected remote MCP catalog: full surface or read-only."""
+
+    FULL = "full"
+    READ_ONLY = "read_only"
+
+
+class RemoteMcpServerConfig(BaseModel):
+    """Typed remote MCP composition. Not an ambient environment branch."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: RemoteMcpMode = RemoteMcpMode.FULL
+
+    @classmethod
+    def full(cls) -> RemoteMcpServerConfig:
+        """Advertise write/readiness tools, assured operations, and open query."""
+        return cls(mode=RemoteMcpMode.FULL)
+
+    @classmethod
+    def read_only(cls) -> RemoteMcpServerConfig:
+        """Omit ingest and pipeline_readiness; keep read tools only."""
+        return cls(mode=RemoteMcpMode.READ_ONLY)
 
 
 class _RemoteMemoryWriteBackend:
@@ -85,19 +115,29 @@ class _RemoteMemoryWriteBackend:
 class RemoteOperationMcpServer:
     """Render remote writes, assured operations, and open-query tools."""
 
-    def __init__(self, *, client: MemoryClient) -> None:
+    def __init__(
+        self, *, client: MemoryClient, config: RemoteMcpServerConfig | None = None
+    ) -> None:
         self._client = client
+        self._config = config if config is not None else RemoteMcpServerConfig.full()
         self._write_backend = _RemoteMemoryWriteBackend(client=client)
+
+    @property
+    def config(self) -> RemoteMcpServerConfig:
+        """The constructor-selected catalog mode for this server."""
+        return self._config
 
     def list_tools(self) -> dict[str, object]:
         """List remote write tools, assured operations, then open-query tools.
 
-        Order is stable: write/readiness tools, operations from
-        ``GET /operations``, then the seven open-query tools when the remote
-        deployment mounts the open facade (same composition gate as local MCP
-        and HTTP).
+        Order is stable: write/readiness tools (omitted in read-only mode),
+        operations from ``GET /operations``, then the seven open-query tools
+        when the remote deployment mounts the open facade (same composition
+        gate as local MCP and HTTP).
         """
-        tools: list[dict[str, object]] = list(memory_write_tool_descriptors())
+        tools: list[dict[str, object]] = []
+        if self._config.mode is RemoteMcpMode.FULL:
+            tools.extend(memory_write_tool_descriptors())
         tools.extend(
             {
                 "name": descriptor.name,
@@ -105,6 +145,8 @@ class RemoteOperationMcpServer:
                 "inputSchema": descriptor.input_schema,
             }
             for descriptor in self._assured_operation_descriptors()
+            if self._config.mode is RemoteMcpMode.FULL
+            or descriptor.name not in MEMORY_WRITE_TOOL_NAMES
         )
         if self._remote_open_query_is_composed():
             tools.extend(open_query_tool_descriptors())
@@ -115,6 +157,8 @@ class RemoteOperationMcpServer:
     ) -> dict[str, object]:
         """The MCP ``tools/call`` result containing one JSON text block."""
         if name in MEMORY_WRITE_TOOL_NAMES:
+            if self._config.mode is RemoteMcpMode.READ_ONLY:
+                return _write_tool_disabled_result(name=name)
             return handle_memory_write_tool(
                 name=name, arguments=arguments, backend=self._write_backend
             )
@@ -172,9 +216,34 @@ class RemoteOperationMcpServer:
         """
         try:
             payload = self._client.describe_query_space()
-        except MemoryApiError:
+        except MemoryApiError as error:
+            if (
+                self._config.mode is RemoteMcpMode.READ_ONLY
+                and error.status_code != 404
+            ):
+                raise
             return False
         return _is_authoritative_open_query_discovery(payload)
+
+
+def _write_tool_disabled_result(*, name: str) -> dict[str, object]:
+    """Fail a hidden write tool without dispatching ingest or an assured alias."""
+    error = ToolError(
+        code="write_tool_disabled",
+        message=(
+            f"MCP tool {name!r} is omitted in read-only mode and cannot be called."
+        ),
+        http_status=404,
+        retryable=False,
+        agent_action=(
+            "Use a read tool from tools/list. Restart without --read-only to "
+            "enable ingest and pipeline_readiness."
+        ),
+    )
+    return {
+        "content": [{"type": "text", "text": json.dumps(error.as_dict())}],
+        "isError": True,
+    }
 
 
 def _is_authoritative_open_query_discovery(payload: object) -> bool:
