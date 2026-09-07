@@ -1174,6 +1174,21 @@ def downgrade() -> None:
         # teardown revisions. Restoring their old keys first can reject valid
         # multi-generation memberships that this whole-schema teardown removes.
         observation_statements = observation_statements[:1]
+        # D90's owning downgrade drops version state before entity units. Remove
+        # our added dependency without restoring keys over multiple generations.
+        observation_statements += (
+            """
+        DO $teardown$ DECLARE dependency text; BEGIN
+          FOR dependency IN SELECT conname FROM pg_constraint
+            WHERE conrelid='public.obs_flush_entity_units'::regclass
+              AND confrelid='public.obs_flush_version_state'::regclass
+              AND contype='f'
+          LOOP
+            EXECUTE format('ALTER TABLE public.obs_flush_entity_units DROP CONSTRAINT %I', dependency);
+          END LOOP;
+        END $teardown$;
+        """,
+        )
     for statement in observation_statements + _split_sql(sql=_DOWNGRADE_DDL):
         # A downgrade to base already means removing the entire schema and data.
         # Do not temporarily impose the legacy exclusion on overlapping events

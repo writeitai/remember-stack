@@ -520,3 +520,25 @@ relation and downstream observation barrier lookups also need the new pins.
 This is a work-in-progress checkpoint on the draft implementation branch, not a
 mergeable schema-only release or runtime observation completion claim. The rest
 of T.1 and T.2/T.3/T.5 remains in scope as previously listed.
+
+## D113 teardown dependency follow-up
+
+Supported CI run `34083894302` at `51ec0f5f` still failed. Removing legacy-key
+restoration exposed the next real teardown dependency: D90 drops
+`obs_flush_version_state` before `obs_flush_entity_units`, while D113 added
+a foreign key from units to version state. The full-base teardown path now
+removes that added foreign key without restoring narrow legacy uniqueness
+constraints over valid multi-generation data. Ordinary partial rollback retains
+its populated-data guard and full structural reversal.
+
+The private PostgreSQL 15 probe executed the actual 0050 downgrade followed
+by the actual owning 0031 downgrade over populated legacy plus two semantic
+generations; both completed and both D90 tables were absent. It also retained
+the preceding 34-statement expansion, nullable receipt guards, source cascade,
+and legacy-baseline assertions. This is targeted evidence, not the full
+supported PostgreSQL 19 migration graph or worker acceptance. CI must rerun.
+
+Antigravity R12 independently approved the prior membership/admission scope
+with no blockers: 22 membership/admission and 38 journal/conversion PostgreSQL
+15 proofs plus the migration probe and static checks. That approval did not
+cover the observation planner/applier, worker handoff, full T.1, or release.
