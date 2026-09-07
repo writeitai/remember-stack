@@ -414,6 +414,7 @@ def _seed_from_application(
     coordinates: ObservationVersionCoordinates,
     statement: str = "Café\nCEO",
     generation: str | None = None,
+    predecessors: tuple[UUID, ...] = (),
 ) -> UUID:
     """Exercise real revision-zero insertion and assertion-authorized journal seed in one transaction."""
     from datetime import datetime
@@ -519,6 +520,7 @@ def _seed_from_application(
                     triggering_assertion_id=assertion,
                 ),
                 evidence=(evidence,),
+                semantic_predecessors=predecessors,
                 input_fingerprint="1" * 64,
                 identity_generation="proof",
                 policy_generation=generation or coordinates.adjudicator_version,
@@ -539,16 +541,17 @@ def test_observation_journal_records_original_assertion_and_rejects_misattributi
     _source(database_engine=database_engine, inputs=inputs)
     coordinates = _coordinates(database_engine=database_engine, inputs=inputs)
     _materialize(database_engine=database_engine, coordinates=coordinates)
-    for overrides in (
-        {"statement": "fabricated statement"},
-        {"generation": "wrong-generation"},
+    for statement, generation in (
+        ("fabricated statement", None),
+        ("Café\nCEO", "wrong-generation"),
     ):
         with pytest.raises(TemporalWriteConflict):
             _seed_from_application(
                 database_engine=database_engine,
                 inputs=inputs,
                 coordinates=coordinates,
-                **overrides,
+                statement=statement,
+                generation=generation,
             )
         assert (
             _counts(

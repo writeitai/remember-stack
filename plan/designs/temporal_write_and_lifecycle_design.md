@@ -423,8 +423,12 @@ compensation follows the same ownership and evidence checks; it is not a toggle.
 This is the narrow recorded exception to ordinary monotonic endpoint moves,
 explicitly replacing D107's human-over-human reversal rule.
 
-D55 remains separate: source withdrawal closes belief time at the persisted
-reconciliation instant. A valid world-time cap may shorten a state under the
+D55 remains separate: ordinary existing-fact source withdrawal closes belief
+time at the persisted reconciliation instant. New historical identities use
+the empty-interval creation qualification in
+[D107 §4.4](temporal_clocks_design.md#44-closing-temporal-succession-separate-from-processing-order): they retain
+the original withdrawal event while never claiming a live belief before their
+recorded creation. A valid world-time cap may shorten a state under the
 chronological guard. If that guard refuses it, preserve the existing window,
 including any finite end; do not replace it with NULL. Occurrences remain
 uncapped and keep historical occurrence metadata. No source-removed bound is

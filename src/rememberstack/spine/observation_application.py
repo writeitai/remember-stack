@@ -23,6 +23,7 @@ from rememberstack.model.observation_application import ObservationApplicationPl
 from rememberstack.model.observation_application import (
     ObservationApplicationPreparation,
 )
+from rememberstack.model.observation_application import ObservationApplicationResult
 from rememberstack.model.observation_application import ObservationCurrentSupport
 from rememberstack.model.observation_application import ObservationTestimony
 from rememberstack.model.observation_application import StagedObservation
@@ -39,6 +40,7 @@ from rememberstack.spine.observation_admission import _FAMILY
 from rememberstack.spine.observation_admission import admit_observation_head_on
 from rememberstack.spine.observation_identity import ObservationIdentityLadder
 from rememberstack.spine.observation_planning import ObservationPlanBuilder
+from rememberstack.spine.observation_support import require_observation_support_on
 from rememberstack.spine.temporal_journal import _canonical_subject
 from rememberstack.spine.temporal_journal import _evidence_ref
 from rememberstack.spine.temporal_journal import _load_claim_input
@@ -215,6 +217,16 @@ class ObservationApplicationStore:
             }
         )
 
+    def apply(
+        self, *, prepared: ObservationApplicationPreparation
+    ) -> ObservationApplicationResult:
+        """Execute the recorded plan under the same authority locks used for preparation."""
+        from rememberstack.spine.observation_execution import apply_prepared_observation
+
+        return apply_prepared_observation(
+            engine=self._engine, store=self, prepared=prepared
+        )
+
     def publish_plan(
         self,
         *,
@@ -365,22 +377,14 @@ class ObservationApplicationStore:
                             raise TemporalWriteConflict(
                                 "observation support source and destination have different canonical subjects"
                             )
-                        support.append(
-                            ObservationCurrentSupport(
-                                assertion=source,
-                                adjudicator_version=current["adjudicator_version"],
-                                original_observation_id=current[
-                                    "original_observation_id"
-                                ],
-                                current_observation_id=current[
-                                    "current_observation_id"
-                                ],
-                                support_owner_operation_id=current[
-                                    "support_owner_operation_id"
-                                ],
-                                support_checkpoint_id=current["support_checkpoint_id"],
-                            )
+                        verified = require_observation_support_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            application=current,
+                            source=source,
                         )
+                        if verified is not None:
+                            support.append(verified)
             finally:
                 cursor.close()
             yield (
@@ -648,9 +652,10 @@ _FACT_OPERATION = text("""SELECT operation_id FROM temporal_operations WHERE dep
     AND resulting_revision=:revision AND result='applied' ORDER BY recorded_at DESC,operation_id DESC LIMIT 1""")
 _CURRENT_SUPPORT = text(
     _FAMILY
-    + """SELECT a.* FROM observation_applications a JOIN observations o
+    + """SELECT a.* FROM observation_applications a
+    JOIN family f ON f.entity_id=a.normalized_subject_entity_id
+    LEFT JOIN observations o
     ON o.deployment_id=a.deployment_id AND o.observation_id=a.current_observation_id
-    JOIN family f ON f.entity_id=o.subject_entity_id
-    WHERE a.deployment_id=:dep AND a.completed_at IS NOT NULL AND a.support_state='linked' AND o.invalidated_at IS NULL
+    WHERE a.deployment_id=:dep AND a.completed_at IS NOT NULL AND o.invalidated_at IS NULL
     ORDER BY a.assertion_id,a.adjudicator_version"""
 )

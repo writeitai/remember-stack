@@ -335,6 +335,21 @@ the same way. This is the per-shape judgement D55 asks for and
 `close_observations` could not make while shape was semantic;
 `temporal_kind` makes it mechanical.
 
+**New historical identities.** When a new fact is materialized whose entire
+support was already withdrawn for a D55 reason (including a new identity
+created by a late observation re-split), it was never a current system belief.
+For that creation path, set `invalidated_at` to the later of its recorded
+`ingested_at` and the persisted withdrawal instant: earlier withdrawal yields
+an empty belief interval at creation. Retain the original withdrawal time and
+cause in the existing prepared/journal provenance. Seed and closure commit
+atomically, without a visible live intermediate fact. Do not backdate ingestion,
+weaken the nonnegative belief-interval check, or consult the execution clock.
+This qualification does not clamp ordinary existing-fact lifecycle history or
+revise an existing invalidation. D54 re-extraction still follows its support
+flag rule. World-time endpoints and occurrence metadata do not change because
+of this belief-time qualification. Rationale and alternatives:
+[historical fact creation analysis](../analysis/historical_fact_belief_creation.md).
+
 **Residual, measured rather than assumed:** undated, differently worded
 restatements of a changing state coexist as unknown-bounds rows instead of
 capping. Identical wording collapses (§4.2), so growth comes only from

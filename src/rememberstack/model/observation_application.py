@@ -340,3 +340,15 @@ class ObservationApplicationPlan(BaseModel):
         if seeded != set(creations):
             raise ValueError("an observation plan leaves an unseeded speculative fact")
         return self
+
+
+class ObservationApplicationResult(BaseModel):
+    """A verified original application and its separately maintained current support."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    assertion_id: UUID
+    adjudicator_version: str
+    identity_outcome: Literal["new", "evidence"]
+    original_observation_id: UUID
+    current_observation_id: UUID | None
+    support_state: Literal["linked", "erased"]

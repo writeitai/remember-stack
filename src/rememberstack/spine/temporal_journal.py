@@ -27,6 +27,7 @@ from rememberstack.core.temporal import canonical_bounds
 from rememberstack.model.fact_temporal import FactTemporalState
 from rememberstack.model.fact_temporal import TemporalResult
 from rememberstack.model.forget import ForgetInProgressError
+from rememberstack.model.observation_application import ObservationSupportMove
 from rememberstack.model.temporal_write import FactPlane
 from rememberstack.model.temporal_write import TemporalBlock
 from rememberstack.model.temporal_write import TemporalBlockState
@@ -327,7 +328,19 @@ def _temporal_write_locked(
             block_key=key,
             revision=row["revision"],
             sequence=row["last_sequence"],
-            operation_id=row["operation_id"],
+            # A FOR UPDATE join can retain its statement snapshot for the
+            # joined effect while returning the newer block tuple after a lock
+            # wait. Read the effect in a fresh statement after owning the row.
+            operation_id=connection.execute(
+                _BLOCK_OPERATION,
+                {
+                    "deployment_id": deployment_id,
+                    "key": key,
+                    "sequence": row["last_sequence"],
+                },
+            ).scalar_one_or_none()
+            if row["last_sequence"]
+            else None,
         )
         if head.sequence and head.operation_id is None:
             raise TemporalWriteConflict("block sequence has no corresponding effect")
@@ -409,6 +422,7 @@ class TemporalWriteSession:
         self._identity_write = identity_write
         self._seeded: set[TemporalFactRef] = set()
         self._source_states = source_states
+        self._observation_moves: list[tuple[ObservationSupportMove, UUID]] = []
         self._open = True
         self._failed = False
 
@@ -569,13 +583,90 @@ class TemporalWriteSession:
             self._seeded.add(effect.fact)
 
     def verify_complete(self) -> None:
-        """Refuse a committed revision-zero placeholder or unused speculative leaf."""
+        """Require all speculative seeds and support moves to finish in this transaction."""
         if not self._open or self._failed:
             raise TemporalWriteConflict("failed application group cannot commit")
         if self._seeded != self._new_facts:
             raise TemporalWriteConflict(
                 "new fact insertion lacks its atomic seed receipt"
             )
+        self._verify_observation_moves()
+
+    def _verify_observation_moves(self) -> None:
+        """A recorded relocation must finish its assignment and conserve every affected evidence link."""
+        from rememberstack.spine.observation_application import observation_assertion_on
+        from rememberstack.spine.observation_support import (
+            require_observation_support_on,
+        )
+
+        final = {
+            (move.assertion_id, move.adjudicator_version): move
+            for move, _claim in self._observation_moves
+        }
+        for (assertion_id, generation), move in final.items():
+            application = (
+                self.connection.execute(
+                    text("""SELECT * FROM observation_applications
+                WHERE deployment_id=:dep AND assertion_id=:assertion AND adjudicator_version=:generation"""),
+                    {
+                        "dep": self.deployment_id,
+                        "assertion": assertion_id,
+                        "generation": generation,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                application is None
+                or application["support_state"] != "linked"
+                or application["current_observation_id"]
+                != move.destination_observation_id
+                or application["support_owner_operation_id"]
+                != move.establishing_operation_id
+                or application["support_checkpoint_id"] is not None
+            ):
+                raise TemporalWriteConflict(
+                    "observation support move lacks its final assignment"
+                )
+            source = observation_assertion_on(
+                connection=self.connection,
+                deployment_id=self.deployment_id,
+                assertion_id=assertion_id,
+                adjudicator_version=generation,
+            )
+            require_observation_support_on(
+                connection=self.connection,
+                deployment_id=self.deployment_id,
+                application=application,
+                source=source,
+            )
+        affected = {
+            (fact, claim)
+            for move, claim in self._observation_moves
+            for fact in (move.previous_observation_id, move.destination_observation_id)
+        }
+        for fact, claim in sorted(affected):
+            links = (
+                self.connection.execute(
+                    text("""SELECT
+                EXISTS (SELECT 1 FROM observation_evidence e WHERE e.deployment_id=:dep
+                  AND e.observation_id=:fact AND e.claim_id=:claim) AS attached,
+                EXISTS (SELECT 1 FROM observation_evidence e WHERE e.deployment_id=:dep
+                  AND e.observation_id=:fact AND e.claim_id=:claim AND e.legacy_support)
+                OR EXISTS (SELECT 1 FROM observation_applications a JOIN normalize_claim_receipts r
+                  ON r.deployment_id=a.deployment_id AND r.receipt_id=a.receipt_id AND r.normalizer_version=a.normalizer_version
+                  WHERE a.deployment_id=:dep AND a.current_observation_id=:fact
+                    AND a.support_state='linked' AND r.claim_id=:claim) AS required"""),
+                    {"dep": self.deployment_id, "fact": fact, "claim": claim},
+                )
+                .mappings()
+                .one()
+            )
+            if links["attached"] != links["required"]:
+                raise TemporalWriteConflict(
+                    "observation support move did not conserve evidence membership"
+                )
 
     def record_stale_preparation(self, *, effect: TemporalEffect) -> None:
         """Record an exact retired attempt as a diagnostic, never an application or fake fact.
@@ -765,6 +856,14 @@ class TemporalWriteSession:
         from rememberstack.model.normalization import NormalizedObservation
         from rememberstack.spine.normalization import _receipt_on
 
+        generation = effect.decision.features.get(
+            "source_adjudicator_version", effect.policy_generation
+        )
+        if not isinstance(generation, str) or not generation:
+            raise TemporalWriteConflict(
+                "observation effect has no valid source adjudicator generation"
+            )
+
         assertion = (
             self.connection.execute(
                 text("""
@@ -776,7 +875,7 @@ class TemporalWriteSession:
                 {
                     "dep": self.deployment_id,
                     "assertion": effect.decision.triggering_assertion_id,
-                    "generation": effect.policy_generation,
+                    "generation": generation,
                 },
             )
             .mappings()
@@ -818,6 +917,9 @@ class TemporalWriteSession:
             raise TemporalWriteConflict(
                 "observation assertion UUID differs from the binding original tuple"
             )
+        self._check_observation_assignment_authority(
+            effect=effect, assertion=assertion, generation=generation
+        )
         if effect.kind is not TemporalOperationKind.SEED:
             return
         if (
@@ -855,6 +957,110 @@ class TemporalWriteSession:
             raise TemporalWriteConflict(
                 "observation seed kind disagrees with D41/normalized source authority"
             )
+
+    def _check_observation_assignment_authority(
+        self, *, effect: TemporalEffect, assertion: RowMapping, generation: str
+    ) -> None:
+        """An older source generation participates through verified support, never by pretending to be fresh input."""
+        from pydantic import ValidationError
+
+        from rememberstack.core.observation_temporal import observation_bounds
+        from rememberstack.core.observation_temporal import observation_kind
+        from rememberstack.model.fact_temporal import FactTemporalKind
+        from rememberstack.spine.observation_application import observation_assertion_on
+        from rememberstack.spine.observation_support import (
+            require_observation_support_on,
+        )
+
+        payload = effect.decision.features.get("support_move")
+        if payload is None and generation == effect.policy_generation:
+            if (
+                effect.kind is TemporalOperationKind.SEED
+                and assertion["completed_at"] is not None
+            ):
+                raise TemporalWriteConflict(
+                    "a completed observation source needs a support move to seed another identity"
+                )
+            return
+        source = observation_assertion_on(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            assertion_id=assertion["assertion_id"],
+            adjudicator_version=generation,
+        )
+        support = require_observation_support_on(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            application=assertion,
+            source=source,
+        )
+        if support is None:
+            raise TemporalWriteConflict(
+                "erased observation support cannot authorize another effect"
+            )
+        if payload is None:
+            if (
+                effect.kind is TemporalOperationKind.SEED
+                or support.support_owner_operation_id
+                not in effect.semantic_predecessors
+            ):
+                raise TemporalWriteConflict(
+                    "an older observation source needs its exact current support authority"
+                )
+            return
+        try:
+            move = ObservationSupportMove.model_validate(payload)
+        except ValidationError as exc:
+            raise TemporalWriteConflict(
+                "observation effect has an invalid support-move payload"
+            ) from exc
+        old_fact = TemporalFactRef(
+            plane=FactPlane.OBSERVATION, fact_id=move.previous_observation_id
+        )
+        if (
+            old_fact not in self._states
+            or self._states[old_fact] is None
+            or effect.kind
+            not in (TemporalOperationKind.SEED, TemporalOperationKind.EVIDENCE)
+            or effect.result is not TemporalResult.APPLIED
+            or move.assertion_id != assertion["assertion_id"]
+            or move.adjudicator_version != generation
+            or move.previous_observation_id != support.current_observation_id
+            or move.previous_support_owner_operation_id
+            != support.support_owner_operation_id
+            or move.destination_observation_id != effect.fact.fact_id
+            or move.establishing_operation_id != effect.operation_id
+            or move.previous_observation_id == move.destination_observation_id
+            or not {
+                move.previous_support_owner_operation_id,
+                move.causal_cap_operation_id,
+            }.issubset(effect.semantic_predecessors)
+        ):
+            raise TemporalWriteConflict(
+                "observation support move changed its locked previous or destination authority"
+            )
+        cap = (
+            self.connection.execute(
+                text("""SELECT observation_id,new_valid_until FROM temporal_operations
+            WHERE deployment_id=:dep AND operation_id=:cap AND operation_kind='cap' AND result='applied'"""),
+                {"dep": self.deployment_id, "cap": move.causal_cap_operation_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        start = observation_bounds(assertion=source).start
+        if (
+            cap is None
+            or cap["observation_id"] != move.previous_observation_id
+            or observation_kind(assertion=source) is not FactTemporalKind.STATE
+            or start is None
+            or cap["new_valid_until"] is None
+            or start < cap["new_valid_until"]
+        ):
+            raise TemporalWriteConflict(
+                "observation support move is not displaced by its applied world-time cap"
+            )
+        self._observation_moves.append((move, source.testimony.claim_id))
 
     def _check_compensation(self, *, effect: TemporalEffect) -> None:
         """Prove reversal target identity and endpoint ownership against durable history."""
@@ -1252,7 +1458,25 @@ def _evidence_ref(
         claim_id=row["claim_id"],
         role=role,
         was_current=row["is_current_testimony"],
-        fingerprint=temporal_fingerprint(value=dict(row)),
+        # Evidence queries may add link metadata such as stance or legacy
+        # attribution. Those fields belong in the preparation, but do not
+        # change the identity of the underlying claim witness.
+        fingerprint=temporal_fingerprint(
+            value={
+                field: row[field]
+                for field in (
+                    "claim_id",
+                    "doc_id",
+                    "claim_text",
+                    "asserted_at",
+                    "claim_valid_from",
+                    "claim_valid_until",
+                    "claim_valid_precision",
+                    "claim_valid_kind",
+                    "is_current_testimony",
+                )
+            }
+        ),
     )
 
 
@@ -1384,11 +1608,12 @@ _ENSURE_BLOCK = text("""
     VALUES (:deployment_id, :key) ON CONFLICT DO NOTHING
 """)
 _LOCK_BLOCK = text("""
-    SELECT b.revision, b.last_sequence, e.operation_id
-    FROM temporal_blocks b LEFT JOIN temporal_operation_blocks e
-      ON e.deployment_id = b.deployment_id AND e.block_key = b.block_key
-      AND e.sequence = b.last_sequence
+    SELECT b.revision, b.last_sequence FROM temporal_blocks b
     WHERE b.deployment_id = :deployment_id AND b.block_key = :key FOR UPDATE OF b
+""")
+_BLOCK_OPERATION = text("""
+    SELECT operation_id FROM temporal_operation_blocks
+    WHERE deployment_id=:deployment_id AND block_key=:key AND sequence=:sequence
 """)
 _ENSURE_SOURCE = text("""
     INSERT INTO temporal_sources (deployment_id, source_kind, source_id, source_key, revision)

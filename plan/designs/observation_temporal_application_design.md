@@ -124,6 +124,13 @@ The revision-zero insertion never escapes the transaction; seed, evidence,
 creator and revision-one authority commit together. Evidence attachment changes
 occurrence metadata and support counters but never verdict endpoints or seed.
 
+A newly materialized historical observation, including a re-split destination,
+whose entire support was already withdrawn for D55 reasons applies the
+[D107 §4.4 historical-creation rule](temporal_clocks_design.md#44-closing-temporal-succession-separate-from-processing-order):
+seed and an empty belief interval at recorded creation commit together. Preserve
+the earlier withdrawal time/cause in provenance. D54 re-extraction uncertainty
+still requests the existing support flag rather than closing belief.
+
 Completed original fields—outcome, original observation ID, admitted coordinates,
 input digest and completion time—are immutable. Retry consumes them and the
 recorded effects without model calls or target renomination. The adjudication

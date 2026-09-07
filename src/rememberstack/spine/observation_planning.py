@@ -608,7 +608,7 @@ class _VirtualBlock:
                 mutation = withdraw_fact(
                     state=candidate.state,
                     boundary=None,
-                    reconciliation_at=at,
+                    reconciliation_at=max(at, candidate.state.ingested_at),
                     operation_id=operation,
                 )
                 after, reason = mutation.state, mutation.reason
@@ -621,6 +621,16 @@ class _VirtualBlock:
                 ),
                 method="exact",
             )
+            withdrawal_reasons: list[JsonValue] = [
+                reason
+                for reason in sorted(
+                    reason for reason in final_reasons if reason is not None
+                )
+            ]
+            withdrawal_features: dict[str, JsonValue] = {
+                "occurred_at": at.isoformat(),
+                "reasons": withdrawal_reasons,
+            }
             self._record(
                 identity=created.observation_id,
                 before=candidate.state,
@@ -633,6 +643,7 @@ class _VirtualBlock:
                 reason=reason,
                 outcome=outcome,
                 flag_support_withdrawn=flag,
+                source_withdrawal=withdrawal_features,
             )
             self.facts[created.observation_id] = candidate.model_copy(
                 update={"state": after, "operation_id": operation}
@@ -658,6 +669,7 @@ class _VirtualBlock:
         dependencies: tuple[UUID, ...] = (),
         related_id: UUID | None = None,
         flag_support_withdrawn: bool = False,
+        source_withdrawal: dict[str, JsonValue] | None = None,
     ) -> None:
         """Record exact effect state, source authority and typed support movement without SQL."""
         witnesses: dict[tuple[UUID, str], TemporalEvidenceRef] = {
@@ -702,6 +714,8 @@ class _VirtualBlock:
         }
         if move is not None:
             features["support_move"] = move.model_dump(mode="json", by_alias=True)
+        if source_withdrawal is not None:
+            features["source_withdrawal"] = source_withdrawal
         effect = TemporalEffect(
             operation_id=operation,
             fact=TemporalFactRef(plane=FactPlane.OBSERVATION, fact_id=identity),

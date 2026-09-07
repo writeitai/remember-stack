@@ -295,3 +295,58 @@ also passed all 79 cases.
 The full dependent effect planner, atomic observation applier/support moves,
 worker handoffs, source/cache/forget lifecycle and consumer packages remain
 unfinished. These scoped review results do not approve #384 for merge or release.
+
+## D113 planner and assignment verification — R16 through R19
+
+R16's type narrowing and D54/D55 conflation findings were applied in `13797a8f`.
+R17 approved that revised planner/preparation scope, independently rerunning
+41 observation unit cases, ten private PostgreSQL preparation proofs and static
+checks. That approval did not cover the subsequent executor.
+
+R18 reviewed the current-assignment reader. Its JSON-null features finding was
+fixed with an explicit object check and corruption test. Move payload parsing
+now uses direct typed validation; no datetime fields require a JSON round trip.
+Actual cross-generation A→B→A execution, rollback, moved-receipt reuse and altered
+move authority tests replace the earlier missing execution coverage. A cycle
+test deliberately recomputes a matching corrupted inventory digest, ensuring
+the semantic cycle itself is refused.
+
+R18 also recommended rejecting every invalidated assignment target. That
+interpretation was declined: current evidence assignment describes where a
+retained assertion supports a historical identity; it does not assert that the
+identity remains a current belief. Live candidate nomination excludes invalidated
+facts. Reusing a historical D55 receipt verifies its retained evidence and owner
+without resurrecting it. The real source-withdrawal execution test checks both
+behaviors, including refusal of corrupted historical ownership.
+
+Connecting that test to PostgreSQL exposed an existing design ambiguity: a new
+identity cannot be invalidated before it was learned. Independent analyses
+converged on an empty belief interval at recorded creation for already-withdrawn
+historical support. R19 approved the narrow clarification in
+`temporal_clocks_design.md` §4.4, with no new schema, clocks, queues or settings.
+Its wording correction was applied. The planner preserves the actual prior
+withdrawal cause/time in existing operation-linked adjudication features;
+ordinary existing-fact closure is not universally clamped. Pure tests cover
+withdrawal on either side of creation; the real D55 test covers atomic creation,
+world-date preservation, retained provenance, live nomination and exact retry.
+
+R20 approved the combined executor, assignment reader, shared journal
+conservation guards and these dispositions, with two nonblocking suggestions:
+
+- Direct Python dictionary validation was declined for preparation/plan models:
+  their strict UTC datetime fields accept ISO strings in JSON mode but reject
+  those strings in Python mode. A direct reproduction confirms `datetime_type`
+  errors with `model_validate` and exact equality with `model_validate_json`.
+  Unlike these timestamp-bearing models, support-move payloads do use direct
+  dictionary validation.
+- The outer canonical block lock was retained and documented: it serializes
+  candidate discovery and completed receipt reads before the application row
+  lock. The inner session adds discovered fact locks under that prefix.
+
+R20 reviewed the 20-case execution snapshot. A subsequent local cap check fix
+retains D107's ending-occurrence authority and distinguishes source-supplied
+incoming dates from existing-successor starts; the added real resignation test
+brings local execution proofs to 21. This follow-up does not alter the accepted
+design. Full worker/lifecycle/cache/forget integration and supported acceptance
+remain required. The user's explicit merge/release approval remains a separate
+final gate.

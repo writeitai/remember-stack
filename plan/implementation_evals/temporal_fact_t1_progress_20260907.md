@@ -684,8 +684,8 @@ applier; it does not introduce a public human review workflow.
   a claim that the legacy lifecycle writer already participates in every T.1 lock.
 - Locked Ruff, full-library Pyright, import boundaries and inventory pass
   (102 unit modules, 61 integration modules, 163 discovered).
-- Antigravity R17 is reviewing the revised planner, currency handling, source
-  inventory, typed validation and build/publication handoff.
+- Antigravity R17 approved the revised planner, currency handling, source
+  inventory, typed validation and build/publication handoff with no scoped blockers.
 - The preceding `fe8d4ace` CI run `34086376209` passes contract smoke, quality,
   unit, adapters and PR gate. Worker/surface/Compose runtime integration still
   fails on the unfinished legacy observation handoff. That CI predates this
@@ -697,3 +697,75 @@ receipts/checkpoints, commit application and membership retirement with every
 cache/correction/support-marker intent, then replace the E3 worker/barriers and
 roll/register their generations. Full T.1 writer/lifecycle/cache/forget/readiness
 work, T.2/T.3/T.5, supported acceptance, final reviews and release remain in scope.
+
+## D113 atomic observation execution and current evidence assignment
+
+`ObservationApplicationStore.apply` now executes a retained complete plan in one
+short transaction. It reacquires canonical locks, checks the exact admitted
+attempt and complete source/candidate/policy fingerprint, inserts new facts,
+applies ordered evidence and temporal effects, and records application receipts
+and source-membership retirement. D54 support markers commit in that transaction.
+Retries verify the original group and its separately maintained current evidence
+assignment without another model call. This is a callable store implementation;
+the E3 worker has not yet switched to it.
+
+The shared journal owns support-move validation and commit verification. A move
+requires its exact original source generation, previous assignment owner, applied
+world-time cap, locked destination and semantic predecessors. At group exit the
+final pointer must match, the ordinary move must clear the active checkpoint
+pointer, and physical evidence links must match the remaining application or
+legacy support. The executor's duplicate move checks were removed. Actual caps
+also revalidate against the source's supported world instant or the locked
+successor's start, according to the direction of succession; a dated resignation
+can end a state while remaining an occurrence. Canonical claim fingerprints
+now use the same source fields for candidate reads and journal validation; link
+metadata no longer accidentally changes that witness.
+
+Current assignment reads verify original or relocated ownership, complete
+required semantic support (including cycle detection), and exact per-assignment
+checkpoint proofs. Missing original targets require accepted checkpoint history.
+Checkpoint tests construct explicit accepted fixtures; they do not demonstrate a
+completed hard-forget writer. Completion after the prepared plan has been scrubbed
+still refuses and needs the full checkpoint recovery integration.
+
+Two real execution failures led to small fixes. Waiting helpers now lock a block
+before reading its last operation in a fresh statement, avoiding a mixed snapshot
+after another helper commits. A newly materialized historical fact whose support
+was already withdrawn gets an empty belief interval at its recorded creation
+instant, preserving the earlier withdrawal cause/time in adjudication features.
+This applies only to new historical identities, introduces no schema or clock,
+and preserves ordinary existing-fact closure and D54 behavior. Binding rationale:
+`temporal_clocks_design.md` §4.4 and `historical_fact_belief_creation.md`.
+
+Validation for this increment:
+
+- 21 private PostgreSQL 15 preparation/execution cases pass using real receipts,
+  relevant migration DDL and finalized constraints. Cases include two-helper
+  execution, failure after journal writes, actual cross-generation A→B→A
+  relocation and retry, shared testimony across generations, D54 and D55 events,
+  substituted cap dates, incomplete pointer/link moves, corrupted ownership and
+  inventories, exact linked/erased checkpoint fixtures, and cyclic/erased support.
+- The existing 38 journal/conversion PostgreSQL 15 cases pass after the shared
+  journal changes. These remain scoped proofs, not PostgreSQL 19/full migration
+  or Compose acceptance. Each private cluster was stopped; shared Docker was
+  not restarted.
+- 95 focused planner/identity/fact/correction unit tests pass. Locked Ruff,
+  full-library Pyright, import boundaries and inventory pass (102 unit modules,
+  61 integration modules, 163 total).
+- The full CI unit inventory reports 1,606 passed, six skipped and one failure:
+  `test_sdk_pushes_lineage_metadata_to_e0` expects `text/markdown`, while this
+  host reports `application/octet-stream`. This unchanged SDK test has the same
+  host MIME failure recorded under R11; the temporal code is not on its path.
+- R18/R19 dispositions are recorded in `temporal_journal_review_20260907.md`.
+  R20 approved the combined execution increment with two nonblocking suggestions;
+  dispositions and the subsequent ending-occurrence cap proof are recorded in
+  that report. No full PR approval is
+  claimed. CI34094742000 at the preceding `13797a8f` failed worker/surface/Compose
+  integration while quality/unit/contract/adapters passed; it does not test the
+  uncommitted execution code.
+
+Next implementation remains complete checkpoint receipt recovery, lifecycle
+cache/correction intents, worker/barrier/readiness handoffs and generation rolls,
+then the other required T.1 authority writers/cache/forget and T.2/T.3/T.5 work.
+The user explicitly requires an explanation and approval before any related
+merge or release; the PR stays draft until then.

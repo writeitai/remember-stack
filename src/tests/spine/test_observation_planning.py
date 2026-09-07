@@ -264,10 +264,13 @@ def test_legacy_support_refuses_cap_and_preserves_primary_new_identity() -> None
     assert refused.after == candidate.state
 
 
-def test_historical_creation_closes_belief_at_recorded_currency_instant() -> None:
+@pytest.mark.parametrize("withdrawal_year", [2028, 2032])
+def test_historical_creation_preserves_withdrawal_and_nonnegative_belief(
+    withdrawal_year: int,
+) -> None:
     """Retained withdrawn source can establish historical identity without becoming a current belief."""
     source = _assertion()
-    ended = datetime(2028, 2, 3, tzinfo=timezone.utc)
+    ended = datetime(withdrawal_year, 2, 3, tzinfo=timezone.utc)
     source = source.model_copy(
         update={
             "testimony": source.testimony.model_copy(
@@ -285,7 +288,11 @@ def test_historical_creation_closes_belief_at_recorded_currency_instant() -> Non
     assert len(plan.steps) == 2
     close = plan.steps[-1].effect
     assert close.kind is TemporalOperationKind.SOURCE_REMOVAL
-    assert close.after.invalidated_at == ended
+    assert close.after.invalidated_at == max(ended, close.after.ingested_at)
+    assert close.decision.features["source_withdrawal"] == {
+        "occurred_at": ended.isoformat(),
+        "reasons": ["version_deleted"],
+    }
     assert close.after.verdict == plan.steps[0].effect.after.verdict
     assert close.after.occurrence == plan.steps[0].effect.after.occurrence
 
