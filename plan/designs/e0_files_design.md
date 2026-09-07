@@ -192,6 +192,15 @@ gates everything downstream:
   the router's exact MIME lookup. The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
+  **Connector completeness:** a live observation parked with `no_route` keeps
+  its sync cycle unfinalized, because unread content cannot justify source-absence
+  retraction. The cycle remains completed but not finalized until processing
+  resumes and finishes, or the parked version/lineage is explicitly deleted.
+  Deleted parked observations no longer block the document-work barrier; other
+  unfinished work still does. Independent source-tombstone cascades continue.
+  This can retain a cycle's absence-based closures indefinitely and is the
+  deliberate cost of not deriving absence from unsupported content.
+
   Raw availability is separate from processed currency: §6 defines the latest
   stored-original fields and §5 the provider mount. A parked file becomes browsable
   after the next successful P3 rebuild and mount publication, without conversion.

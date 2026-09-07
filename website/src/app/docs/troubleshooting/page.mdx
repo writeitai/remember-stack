@@ -70,6 +70,12 @@ parked. Released work can convert on the next worker pass without re-uploading.
 
 Versions dead-lettered by an unroutable MIME *before* parking existed are still `failed`, and adding a route does not convert them retroactively — reopen those with `remember ops replay`.
 
+For connector sync, a live parked observation keeps its cycle completed but
+unfinalized (`completed_at` set, `finalized_at` null). Absence-based fact closure
+waits for complete evidence. Add the route and finish processing, or explicitly
+delete the unsupported version/lineage if it should no longer be retained.
+Source-deletion cascades still run independently.
+
 ### 2. Missing / bad provider key
 
 Extraction and embeddings need a live provider. Bad credentials surface as stage failures / DLQ after retries.

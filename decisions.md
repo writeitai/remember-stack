@@ -5452,5 +5452,11 @@ mounts, D74 barriers and purge, D55 currency and existing snapshot freshness rem
 binding. This is engine behavior, not evidence of production SeaweedFS provisioning
 or changed cloud billing policy.
 
+Live parked connector observations keep cycle finalization pending: missing
+conversion is not evidence of source absence. Resuming processing or explicitly
+deleting the parked observation resolves that barrier; source-deletion cascades
+remain independent. This conservative completeness rule can delay a cycle's
+absence-based closures indefinitely.
+
 **Authority:** [E0 §3 and P3 §6](plan/designs/e0_files_design.md).
 **Analysis:** [Stored originals and conversion without a route](plan/analysis/unroutable_mime_parking.md).

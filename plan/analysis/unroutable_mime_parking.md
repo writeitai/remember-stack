@@ -69,6 +69,22 @@ differ during a rolling restart, so missing routing at dispatch must park again
 without declaring failure or consuming the attempt allowance. Genuine converter
 errors still follow ordinary failure/retry rules.
 
+## Connector-cycle completeness
+
+Review traced `lifecycle.py::_SELECT_READY_CYCLES` and
+`workers/reconcile.py::SyncCycleFinalizer`: source absence can close unsupported
+facts only after observed processing has completed. A live `no_route` observation
+is incomplete evidence, so it retains the existing conservative cycle barrier
+(`completed_at` set, `finalized_at` null). Treating parking as success or lossy
+finalization would either infer absence from unread content or need a second
+recovery protocol when the converter arrives. Explicitly deleting that version
+or lineage makes its parked row irrelevant to the barrier. Other work-state
+barriers remain unchanged. Resuming and finishing the pipeline allows ordinary
+finalization; source-tombstone cascades continue independently. The cost is that
+one retained unsupported observation can delay absence-based closure for its
+whole sync cycle indefinitely. This is deliberate preservation of evidence,
+not a promise that unsupported content has been processed.
+
 ## Mount publication, security, cost and failure
 
 P3 already rebuilds explicitly (`SelfHostProfile.run_projection`), independently

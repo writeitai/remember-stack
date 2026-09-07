@@ -1052,6 +1052,20 @@ _SELECT_READY_CYCLES = text(
            AND w.target_kind = 'document_version'
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed')
+            -- D114: live no-route work still lacks conversion evidence and
+            -- holds the retraction barrier. Explicitly deleted sources no
+            -- longer participate, and must not strand their cycle forever.
+            AND (
+                w.defer_reason IS DISTINCT FROM 'no_route'::processing_defer_reason
+                OR (
+                    v.deleted_at IS NULL
+                    AND EXISTS (
+                        SELECT 1 FROM documents d
+                        WHERE d.deployment_id = v.deployment_id
+                          AND d.doc_id = v.doc_id AND d.deleted_at IS NULL
+                    )
+                )
+            )
       )
       AND NOT EXISTS (
           SELECT 1

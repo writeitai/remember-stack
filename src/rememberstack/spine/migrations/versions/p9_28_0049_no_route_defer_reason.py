@@ -62,6 +62,13 @@ def upgrade() -> None:
         )
         """
     )
+    # P3 checks durable raw availability for each selected version. Index the
+    # unaccepted managed subset instead of scanning the measurement outbox per file.
+    op.execute(
+        "CREATE INDEX ix_managed_ingest_unaccepted_version "
+        "ON managed_ingest_measurements (deployment_id, version_id) "
+        "WHERE document_version_disposition = 'new_version' AND accepted_at IS NULL"
+    )
     op.execute(
         "COMMENT ON TABLE processing_state IS "
         "'Per-(target,stage,version) idempotency and work-truth ledger (D12/D67). "
@@ -78,6 +85,7 @@ def downgrade() -> None:
     violate the restored CHECK, so they are released to ordinary pending
     first. Older application code can then convert or fail according to its
     existing routing behavior; downgrade does not preserve D114 parking."""
+    op.execute("DROP INDEX IF EXISTS ix_managed_ingest_unaccepted_version")
     op.execute(
         "UPDATE processing_state SET defer_reason = NULL "
         "WHERE defer_reason::text = 'no_route'"

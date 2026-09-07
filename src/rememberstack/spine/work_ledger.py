@@ -1449,13 +1449,16 @@ _RESUME_NO_ROUTE = text(
     """
     UPDATE processing_state p
     SET defer_reason = NULL, not_before = now()
-    FROM document_versions v, content_objects c
+    FROM document_versions v, content_objects c, documents d
     WHERE p.deployment_id = :deployment_id
       AND p.status = 'pending' AND p.stage = 'convert'
       AND p.target_kind = 'document_version'
       AND p.defer_reason::text = 'no_route'
       AND v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+      AND d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
+      AND d.deleted_at IS NULL AND v.deleted_at IS NULL
       AND c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+      AND c.purged_at IS NULL
       AND c.mime = ANY(CAST(:routable_mimes AS text[]))
     RETURNING p.processing_id
     """

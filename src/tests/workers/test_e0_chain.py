@@ -1870,3 +1870,30 @@ def test_retried_tree_write_returns_the_first_attempts_truth(rig: _E0Rig) -> Non
     assert [section.title for section in retry.sections] == ["first"]
     assert retry.placement_path == "/first/"
     assert retry.skeleton_hash == "first-hash"
+
+
+@pytest.mark.parametrize("tombstone", ["version", "lineage", "content"])
+def test_resume_does_not_release_deleted_or_purged_sources(
+    rig: _E0Rig, tombstone: str
+) -> None:
+    """A new converter never resurrects explicitly removed originals."""
+    version = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="removed.bin", mime="application/x-unknown", content=b"removed"
+        ),
+    )
+    statements = {
+        "version": "UPDATE document_versions SET deleted_at=now() WHERE version_id=:id",
+        "lineage": "UPDATE documents SET deleted_at=now() WHERE doc_id=(SELECT doc_id FROM document_versions WHERE version_id=:id)",
+        "content": "UPDATE content_objects SET purged_at=now() WHERE (deployment_id,content_hash)=(SELECT deployment_id,content_hash FROM document_versions WHERE version_id=:id)",
+    }
+    with rig.engine.begin() as connection:
+        connection.execute(text(statements[tombstone]), {"id": version.version_id})
+    assert (
+        rig.ledger.resume_no_route(
+            deployment_id=_DEPLOYMENT_ID, routable_mimes={"application/x-unknown"}
+        )
+        == ()
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
