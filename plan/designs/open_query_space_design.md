@@ -51,10 +51,10 @@ D54, D80, and D87 remain controlling.*
    views compile row-level invariants; P1 ranked scans, SQL/PGQ fixed patterns,
    and recursive graph helpers apply those authorities in the same transaction.
 2. **The assured surface mirrors the authority layers.** `resolve_entity`,
-   `testimony_context`, `fact_context`, and `answer_context` are the complete
-   shipped platform-operation set. `testimony_context` returns source testimony,
-   `fact_context` returns temporally selected adjudicated facts, and
-   `answer_context` composes their complete responses without flattening the two
+   `claims_and_sources_context`, `facts_context`, and `combined_context` are the complete
+   shipped platform-operation set. `claims_and_sources_context` returns source testimony,
+   `facts_context` returns temporally selected adjudicated facts, and
+   `combined_context` composes their complete responses without flattening the two
    grains. SQL execution, discovery, saved-query execution, and the
    allowlisted SQL functions are query infrastructure, not additional intent
    operations.
@@ -111,7 +111,7 @@ D54, D80, and D87 remain controlling.*
     Dataset names, question classes,
     benchmark-only views, prompts, functions, branches, or limits are forbidden
     in product code.
-13. **Accretion requires evidence.** D87 admits `answer_context` as one narrow
+13. **Accretion requires evidence.** D87 admits `combined_context` as one narrow
     exception because it is a typed transport bundle of two complete existing
     operations and adds no retrieval, ranking, hydration, or transformation.
     That exception does not generalize: a fifth assured operation, another
@@ -138,8 +138,8 @@ D54, D80, and D87 remain controlling.*
 
 ## 2. Naming alignment with the existing corpus
 
-The shipping intent surface contains `resolve_entity`, `testimony_context`,
-`fact_context`, and `answer_context`. The first is retained; the other three
+The shipping intent surface contains `resolve_entity`, `claims_and_sources_context`,
+`facts_context`, and `combined_context`. The first is retained; the other three
 replace the mixed-grain `question_context` and current-only `current_context`
 contracts. There are no compatibility aliases.
 
@@ -155,21 +155,21 @@ current-fact examples already cover `current_context`'s SQL pattern.
 | Existing recipe | Target disposition | Example implementation after demotion |
 |---|---|---|
 | `resolve_entity` | **Retained platform operation** | Full D49 `Envelope`; no saved-query substitute |
-| `testimony_context` | **Platform operation** | Full D49 evidence `Envelope`; claims and source passages only |
-| `fact_context` | **Platform operation** | Full D49 fact `Envelope`; current, valid-at, overlap, or historical facts with both time axes and explicit evidence associations |
-| `answer_context` | **Platform composition** | `ContextBundle/v1` containing the complete testimony and fact envelopes |
+| `claims_and_sources_context` | **Platform operation** | Full D49 evidence `Envelope`; claims and source passages only |
+| `facts_context` | **Platform operation** | Full D49 fact `Envelope`; current, valid-at, overlap, or historical facts with both time axes and explicit evidence associations |
+| `combined_context` | **Platform composition** | `ContextBundle/v2` containing the complete claims-and-sources and fact envelopes |
 | `relation_current` | `examples.relation_current` | Filter `facts_current` to `fact_kind = 'relation'` |
 | `observation_current` | `examples.observation_current` | Filter `facts_current` to `fact_kind = 'observation'` |
 | `entity_timeline` | `examples.entity_timeline` | Group `facts_visible_history` by disclosed time bucket |
 | `claims_verbatim` | `examples.claims_verbatim` | `semantic_claims` joined to `claims_live` |
 | `claims_hybrid_rrf` | `examples.claims_hybrid_rrf` | `semantic_claims` + `lexical_claims` with documented SQL RRF; no parity claim with the former recipe implementation |
 | `chunks_hybrid_rrf` | `examples.chunks_hybrid_rrf` | `semantic_chunks` + `lexical_chunks` with documented SQL RRF; no parity claim with the former recipe implementation |
-| `question_context` | **Removed** | Replaced by `testimony_context`; facts and entities are no longer optional flags on testimony retrieval |
+| `question_context` | **Removed** | Replaced by `claims_and_sources_context`; facts and entities are no longer optional flags on testimony retrieval |
 | `documents_about` | `examples.documents_about` | `entity_document_mentions` joined to `documents_live` |
 | `claims_about` | `examples.claims_about` | `mentions_live` joined through `claim_occurrences_live` to `claims_live` |
 | `claims_as_of` | `examples.claims_as_of` | Inclusive claim-evidence overlap over `claims_visible_history`; unknown precision excluded and counted |
 | `chunk_neighbors` | `examples.chunk_neighbors` | Current-section ordinal neighbors from `chunks_live`; bodies use the confirmed body-fetch path |
-| `current_context` | **Removed** | Replaced by the default-current mode of `fact_context` |
+| `current_context` | **Removed** | Replaced by the default-current mode of `facts_context` |
 | `explain` | `examples.explain` | `facts_visible_history`, `fact_claim_evidence_live`, `evidence_lineage`, and sources |
 | `identity_as_of` | `examples.identity_as_of` | Bounded `identity_events_visible` transcript; interpretation remains customer-owned |
 | `changed_since` | `examples.changed_since` | Bounded `changes_visible` query |
@@ -222,9 +222,9 @@ The four assured operations are pinned in the manifest as:
 | Operation | Version | Contract |
 |---|---:|---|
 | `resolve_entity` | 1 | D49 fact `Envelope`; ranked survivor candidates, `unknown_entity`/`boundary`, current identity regime |
-| `testimony_context` | 1 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
-| `fact_context` | 1 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
-| `answer_context` | 1 | `ContextBundle/v1`; the complete `testimony_context` and `fact_context` responses in separately named fields, never one mixed result list |
+| `claims_and_sources_context` | 1 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
+| `facts_context` | 1 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
+| `combined_context` | 1 | `ContextBundle/v2`; the complete `claims_and_sources_context` and `facts_context` responses in separately named fields, never one mixed result list |
 
 The exact public input schemas are below. Their numeric defaults and hard caps
 are the starting contract carried from the measured predecessor paths; changing
@@ -233,12 +233,12 @@ one after measurement requires an operation-version and manifest roll.
 | Operation | Inputs |
 |---|---|
 | `resolve_entity` | Existing v1 schema, unchanged |
-| `testimony_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: integer 1–400, default 200 |
-| `fact_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–30, default 15; `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
-| `answer_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `time`: the same closed fact-time union, default `{"mode":"current"}` |
+| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: integer 1–400, default 200 |
+| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–30, default 15; `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
+| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `time`: the same closed fact-time union, default `{"mode":"current"}` |
 
 All objects forbid unknown fields. A present `entity_ids` array cannot be empty
-or contain duplicates, and `testimony_context.candidate_k` cannot be smaller
+or contain duplicates, and `claims_and_sources_context.candidate_k` cannot be smaller
 than its `k`. Malformed UUIDs, unknown fields, invalid bounds, an invalid time
 shape, or `time.to < time.from` for overlap mode fail `invalid_parameter`
 before retrieval. PostgreSQL then confirms every supplied ID as a current
@@ -249,7 +249,7 @@ not disclose which case occurred and whose workaround says to call
 `resolve_entity` and retry. It never drops only the bad IDs or silently
 re-resolves names.
 
-`testimony_context` independently fuses semantic and lexical claim nominations
+`claims_and_sources_context` independently fuses semantic and lexical claim nominations
 and semantic and lexical current-source chunk nominations, then confirms each
 final list through PostgreSQL. It returns only `evidence[]` and `chunks[]`.
 `candidate_k` applies to each of the four nomination channels and `k` applies
@@ -258,7 +258,7 @@ separately to the final claim and chunk lists; the maximum payload is therefore
 Omitting IDs preserves deployment-wide semantic retrieval. The operation never
 returns entity candidates.
 
-`fact_context` uses the discriminated `time` object below. Each variant forbids
+`facts_context` uses the discriminated `time` object below. Each variant forbids
 fields belonging to another variant:
 
 | Mode | Additional fields | World-time membership; system belief |
@@ -281,7 +281,7 @@ survivor/provenance conditions apply in every mode.
 evaluated_at`; callers use `at` or `overlap` explicitly for future world-time
 windows rather than receiving scheduled facts in an operation named history.
 
-Every `fact_context` result envelope carries a required `temporal_scope` block.
+Every `facts_context` result envelope carries a required `temporal_scope` block.
 Its result schema is the following closed union; unknown fields are forbidden:
 
 ```text
@@ -343,8 +343,8 @@ entity associations into P1 when they are not used there. In every case, a
 globally bounded P1 result followed by entity or time filtering is forbidden.
 P1 metadata remains a proposal: live PostgreSQL repeats every selector before
 returning data, so stale metadata can cost disclosed recall but never
-correctness. `testimony_context` applies its public `candidate_k` inside this
-scope. `fact_context` uses a descriptor-pinned internal candidate depth of 200
+correctness. `claims_and_sources_context` applies its public `candidate_k` inside this
+scope. `facts_context` uses a descriptor-pinned internal candidate depth of 200
 with a hard ceiling of 400; it is not another public planning knob.
 
 Ending a fact's world-valid interval does not delete its label from P1: an
@@ -363,17 +363,17 @@ relation ranks ahead of an otherwise comparable A-only fact. Association with
 any supplied ID remains sufficient—there is no public any/all switch. With no
 IDs, deployment-wide nomination is unchanged.
 
-`answer_context` passes the confirmed IDs unchanged to both children and the
-time selector to `fact_context`. It deliberately exposes no child depth knobs:
-`testimony_context` runs with `k=50, candidate_k=200`; `fact_context` runs with
+`combined_context` passes the confirmed IDs unchanged to both children and the
+time selector to `facts_context`. It deliberately exposes no child depth knobs:
+`claims_and_sources_context` runs with `k=50, candidate_k=200`; `facts_context` runs with
 `k=15, evidence_per_fact=3`. Call a single-layer operation directly to tune its
 depth. The exact response is:
 
 ```text
-ContextBundleV1 {
-  contract:  literal("ContextBundle/v1")
-  testimony: Envelope  // evidence grain; complete testimony_context result
-  facts:     Envelope  // fact grain; complete fact_context result
+ContextBundleV2 {
+  contract:  literal("ContextBundle/v2")
+  claims_and_sources: Envelope  // evidence grain; complete claims_and_sources_context result
+  facts:     Envelope  // fact grain; complete facts_context result
 }
 ```
 
@@ -403,10 +403,12 @@ remain. `resolve_entity` is the sole assured name/alias authority, while
 
 An implementation change that alters any descriptor, selection semantics,
 bound, field, negative, or association increments that operation's version and
-rolls `surface_manifest_hash`. D97 applies that rule: `fact_context@2` adds the
+rolls `surface_manifest_hash`. D97 applies that rule: `facts_context@2` adds the
 bounded live-graph neighborhood before P1 fact-text nomination, and
-`answer_context@2` carries that changed fact child. `resolve_entity@1` and
-`testimony_context@1` remain unchanged. Explicit deeper or path-shaped graph
+the pre-D114 composite advanced to version 2 with that changed fact child.
+D114 renames it to `combined_context@3` and changes its response to
+`ContextBundle/v2`; `resolve_entity@1`, `claims_and_sources_context@1`, and
+`facts_context@2` otherwise retain their behavior. Explicit deeper or path-shaped graph
 work still uses the live SQL helpers or `examples.multi_hop_context`; it is not
 silently added to an assured response.
 
@@ -686,7 +688,7 @@ This table is the public SRF filter allowlist, not the assured-operation
 nomination contract. The §3.1 context operations additionally use their
 descriptor-pinned entity/time scope metadata inside the shared P1 adapter; that
 metadata does not become a caller-authored filter language. In particular,
-`fact_context` non-current modes do not call the current-confirmed
+`facts_context` non-current modes do not call the current-confirmed
 `semantic_facts` SRF, and entity-scoped chunk retrieval does not manufacture a
 public `semantic_chunks` filter absent from this allowlist.
 
@@ -1084,8 +1086,8 @@ exact totals unless disclosed, deterministic order unless disclosed, or
 freedom from caller-authored filter/join/aggregation errors. There is no
 `snapshot_graph` grade, graph-generation block, or generic result-to-Envelope
 adapter. Typed graph operations and the four assured operations return their
-own binding envelopes; `answer_context` returns the complete testimony and
-fact envelopes in `ContextBundle/v1`.
+own binding envelopes; `combined_context` returns the complete claims-and-sources and
+fact envelopes in `ContextBundle/v2`.
 
 
 ## 5. Saved-query registry
@@ -1330,7 +1332,7 @@ canonical JSON with exactly these top-level members:
    time selector, matching required `temporal_scope` result union, both-stance
    evidence budget, and optional confirmed entity anchors; the answer
    descriptor pins the exact two child descriptors and
-   `ContextBundle/v1`; its plan hash incorporates the ordered child descriptor
+   `ContextBundle/v2`; its plan hash incorporates the ordered child descriptor
    hashes, so a child roll necessarily rolls the bundle descriptor. The catalog replacement rolls the public tool catalog
    and this manifest atomically;
 4. `limits`: the exact public SQL grammar/operator/function allowlists and all
@@ -1398,8 +1400,8 @@ never grants raw tables or bypasses deployment/time/provenance predicates.
 |---|---|
 | PostgreSQL unavailable | SQL, saved-query, graph-helper, and core paths fail `pg_unavailable` with no rows |
 | P1 extension/index unavailable | Plain relational SQL and graph reads remain available while PostgreSQL is healthy; affected semantic/lexical/body operations fail `p1_unavailable`; a core operation can return only a descriptor-permitted non-P1 channel with a D49 `boundary`, otherwise it fails |
-| One `answer_context` child returns a typed D49 negative | The request succeeds with both complete child envelopes; the other child is neither suppressed nor relabeled |
-| One `answer_context` child has a schema, timeout, cancellation, or store/execution failure | The entire request fails with that typed transport error and returns no `ContextBundle/v1`; half-bundles are forbidden |
+| One `combined_context` child returns a typed D49 negative | The request succeeds with both complete child envelopes; the other child is neither suppressed nor relabeled |
+| One `combined_context` child has a schema, timeout, cancellation, or store/execution failure | The entire request fails with that typed transport error and returns no `ContextBundle/v2`; half-bundles are forbidden |
 | Property-graph catalog or grants disagree with the graph contract | Typed graph operations and graph helpers fail `graph_unavailable`; unrelated relational SQL and assured operations remain available |
 | Traversal reaches a declared work/result/depth cap | The closed graph result reports the reached boundary and `truncated=true`; it makes no absence or shortest-path claim beyond the explored boundary |
 | Artifact/chunk body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
@@ -1418,8 +1420,8 @@ protect nobody while preserving duplicate invariant logic.
    helpers, discovery, allowlisted functions, saved-query governance, the 17
    demoted examples plus `examples.graph_citation_path`, and exactly four
    assured operations.
-2. Seed and expose only `resolve_entity`, `testimony_context`, `fact_context`,
-   and `answer_context`. Bootstrap atomically replaces the deployment catalog
+2. Seed and expose only `resolve_entity`, `claims_and_sources_context`, `facts_context`,
+   and `combined_context`. Bootstrap atomically replaces the deployment catalog
    with those canonical descriptors, and registry reads pin their canonical
    versions, so neither an old row nor a same-name custom version can replace
    or add a tool. `question_context` and `current_context` are deleted rather
@@ -1560,7 +1562,7 @@ for the shipping surface pass before release.
    correct grade, truncation/work-bound fields, and non-guarantee state. The
    three single-layer operations pass the existing D49 Envelope
    suite without weakened grain, negative, contradiction, freshness, or
-   association guarantees; `answer_context` passes the `ContextBundle/v1`
+   association guarantees; `combined_context` passes the `ContextBundle/v2`
    composition contract. Named honesty fixtures reproduce the reviewer's queries (b) and
    (d) across `facts_visible_history`, `facts_as_of`, and
    `graph_edges_visible_history`: after current testimony changes, historical/
@@ -1573,8 +1575,8 @@ for the shipping surface pass before release.
    full fact → `fact_claim_evidence_live` → `claims_live` → `documents_live`
    source audit, latest-contradicting-testimony divergence, and a bounded live
    graph-to-relational composition. Context-operation fixtures prove:
-   `testimony_context` returns claims/chunks and never facts/entities;
-   `fact_context` default-current membership equals `facts_current` at the same
+   `claims_and_sources_context` returns claims/chunks and never facts/entities;
+   `facts_context` default-current membership equals `facts_current` at the same
    evaluation instant; each result
    carries the exact required `temporal_scope` variant and applied timestamps;
    its `at`,
@@ -1592,7 +1594,7 @@ for the shipping surface pass before release.
    `invalid_parameter`; aliases never get silently re-resolved. Multi-anchor
    coverage orders a two-anchor claim/chunk and a direct relation ahead of
    otherwise equivalent one-anchor results without excluding the latter.
-   `answer_context`'s literal child envelopes, including `temporal_scope`, are
+   `combined_context`'s literal child envelopes, including `temporal_scope`, are
    field-for-field equivalent to
    direct default child calls under a frozen store, active P1 configuration, and clock; typed
    child negatives remain independent, while an execution failure proves that
@@ -1631,7 +1633,7 @@ for the shipping surface pass before release.
 
 | Deferred | Bound reason | Adoption trigger and required decision gate |
 |---|---|---|
-| `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and same-statement authority contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `fact_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
+| `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and same-statement authority contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `facts_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
 | Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
 | Public arbitrary SQL/PGQ | The pinned default-deny public SQL parser does not understand PostgreSQL 19 property-graph grammar, and string/token allowlisting would not be an acceptable isolation boundary. The current release therefore exposes only server-owned parameterized PGQ templates and typed/bounded graph functions. | Adopt only after the public AST gate parses the complete admitted PG19 grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
 | Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing an additional index extension without a present need violates YAGNI | The open proposal may inform a later binding decision. D94 does not install, test, benchmark, or pre-authorize it; a future promotion changes only the private vector index, never the public query contract or storage boundary. |
@@ -1660,7 +1662,7 @@ for the shipping surface pass before release.
    repeated-element exclusion where required; truncation telemetry; and the
    PGQ/recursive parity, tenancy, catalog, privilege, fault, and cap proofs in
    §9.1–§9.10. P1/PostgreSQL remain the authorities inside
-   `testimony_context` and `fact_context`.
+   `claims_and_sources_context` and `facts_context`.
 5. **Batch E — customer space:** immutable registry, governance, all 18
    `examples.*` mappings (17 demoted plus citation path), drift and deletion behavior.
 6. **Batch F — integrated surface:** API/SDK/CLI/MCP additions, exactly four

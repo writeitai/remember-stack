@@ -127,6 +127,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_25_0046",
         "p9_26_0047",
         "p9_27_0048",
+        "p9_28_0049",
     )
     assert len(script.get_heads()) == 1
 
@@ -665,8 +666,157 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_27_0048"
+    assert head_before_noop == head_after_noop == "p9_28_0049"
     assert _inventory(database_url=database_url) == restored_inventory
+
+
+def test_context_operation_rename_migrates_existing_catalog_rows() -> None:
+    """D114 upgrades and downgrades names, plans, intents, and bundle shape."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.downgrade(config=config, revision="base")
+    command.upgrade(config=config, revision="p9_27_0048")
+    deployment_id = uuid4()
+    rows = (
+        {
+            "operation_id": uuid4(),
+            "name": "testimony_context",
+            "description": (
+                "High-recall current testimony: confirmed claims and source passages only."
+            ),
+            "execution_plan": (
+                '{"kind":"primitive_chain","steps":[{"op":"testimony_context"}]}'
+            ),
+            "result_contract": "envelope",
+            "output_grain": "evidence",
+            "answer_intent": "testimony",
+            "version": 1,
+            "result_schema": "{}",
+        },
+        {
+            "operation_id": uuid4(),
+            "name": "fact_context",
+            "description": "facts",
+            "execution_plan": (
+                '{"kind":"primitive_chain","steps":'
+                '[{"op":"graph_neighborhood"},{"op":"fact_context"}]}'
+            ),
+            "result_contract": "envelope",
+            "output_grain": "fact",
+            "answer_intent": "facts",
+            "version": 2,
+            "result_schema": "{}",
+        },
+        {
+            "operation_id": uuid4(),
+            "name": "answer_context",
+            "description": (
+                "Complete testimony and neighborhood-aware fact responses side by side"
+                " in ContextBundle/v1."
+            ),
+            "execution_plan": (
+                '{"kind":"operation_bundle","children":'
+                '["testimony_context","fact_context"]}'
+            ),
+            "result_contract": "context_bundle_v1",
+            "output_grain": None,
+            "answer_intent": "combined_context",
+            "version": 2,
+            "result_schema": (
+                '{"title":"ContextBundleV1","description":"complete testimony and fact'
+                ' reads","properties":{"contract":{"const":"ContextBundle/v1"},'
+                '"testimony":{},"facts":{}},"required":["testimony","facts"]}'
+            ),
+        },
+    )
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment_id, 'd114', 'D114', 'mem://raw', 'mem://artifacts',"
+                    " 'mem://corpusfs')"
+                ),
+                {"deployment_id": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO assured_operations (operation_id, deployment_id, name,"
+                    " description, parameters, result_schema, execution_plan,"
+                    " result_contract, output_grain, answer_intent, version) VALUES"
+                    " (:operation_id, :deployment_id, CAST(:name AS assured_operation_name),"
+                    " :description, '{}'::jsonb, CAST(:result_schema AS jsonb),"
+                    " CAST(:execution_plan AS jsonb),"
+                    " CAST(:result_contract AS assured_result_contract),"
+                    " CAST(:output_grain AS assured_output_grain),"
+                    " CAST(:answer_intent AS assured_answer_intent), :version)"
+                ),
+                tuple({**row, "deployment_id": deployment_id} for row in rows),
+            )
+
+        command.upgrade(config=config, revision="head")
+        with engine.connect() as connection:
+            migrated = {
+                row["name"]: row
+                for row in connection.execute(
+                    text(
+                        "SELECT name::text AS name, result_contract::text AS result_contract,"
+                        " answer_intent::text AS answer_intent, version, execution_plan,"
+                        " result_schema FROM assured_operations"
+                        " WHERE deployment_id = :deployment_id"
+                    ),
+                    {"deployment_id": deployment_id},
+                ).mappings()
+            }
+        assert set(migrated) == {
+            "claims_and_sources_context",
+            "facts_context",
+            "combined_context",
+        }
+        assert migrated["claims_and_sources_context"]["answer_intent"] == (
+            "claims_and_sources"
+        )
+        assert migrated["claims_and_sources_context"]["execution_plan"]["steps"] == [
+            {"op": "claims_and_sources_context"}
+        ]
+        assert migrated["facts_context"]["execution_plan"]["steps"][-1] == {
+            "op": "facts_context"
+        }
+        combined = migrated["combined_context"]
+        assert combined["result_contract"] == "context_bundle_v2"
+        assert combined["version"] == 3
+        assert combined["execution_plan"]["children"] == [
+            "claims_and_sources_context",
+            "facts_context",
+        ]
+        assert combined["result_schema"]["title"] == "ContextBundleV2"
+        assert "claims_and_sources" in combined["result_schema"]["properties"]
+        assert "testimony" not in combined["result_schema"]["properties"]
+
+        command.downgrade(config=config, revision="p9_27_0048")
+        with engine.connect() as connection:
+            restored = {
+                row["name"]: row
+                for row in connection.execute(
+                    text(
+                        "SELECT name::text AS name, result_contract::text AS result_contract,"
+                        " answer_intent::text AS answer_intent, version, result_schema"
+                        " FROM assured_operations WHERE deployment_id = :deployment_id"
+                    ),
+                    {"deployment_id": deployment_id},
+                ).mappings()
+            }
+        assert set(restored) == {"testimony_context", "fact_context", "answer_context"}
+        assert restored["testimony_context"]["answer_intent"] == "testimony"
+        assert restored["answer_context"]["result_contract"] == "context_bundle_v1"
+        assert restored["answer_context"]["version"] == 2
+        assert "testimony" in restored["answer_context"]["result_schema"]["properties"]
+    finally:
+        engine.dispose()
+        command.downgrade(config=config, revision="base")
+        command.upgrade(config=config, revision="head")
 
 
 def test_global_resolution_eval_migration_preserves_the_default_band() -> None:

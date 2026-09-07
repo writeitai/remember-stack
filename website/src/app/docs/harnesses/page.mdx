@@ -65,7 +65,7 @@ alwaysApply: true
 # Remember Memory Instructions
 
 You have access to Remember via MCP tools.
-- Before refactoring or making architectural assumptions, call `fact_context` or `answer_context` to check for existing decisions and invariants.
+- Before refactoring or making architectural assumptions, call `facts_context` or `combined_context` to check for existing decisions and invariants.
 - If a query returns contradictions (`contradictions` array in the response), disclose them explicitly.
 - For deep structural exploration, use `query_sql` against `facts_current` or `graph_edges_current`.
 ```
@@ -146,7 +146,7 @@ args = ["remember", "mcp"]
 
 The generated `SKILL.md` teaches Antigravity agents the **Orient, Verify, Audit** lifecycle:
 1. **Orient**: Check high-level knowledge documents.
-2. **Verify**: Call `fact_context` for load-bearing facts.
+2. **Verify**: Call `facts_context` for load-bearing facts.
 3. **Audit**: Trace claims and source citations before irreversible actions.
 
 ---
@@ -157,9 +157,9 @@ When your agent connects to `remember mcp`, the following tools are advertised:
 
 | Tool Name | Intent | Description |
 | :--- | :--- | :--- |
-| `fact_context` | Fact Recall | Retrieves current or historical adjudicated facts with supporting evidence under a token budget. |
-| `answer_context` | Comprehensive | Returns a dual-grain `ContextBundle` containing both raw testimony (claims) and adjudicated truth (facts). |
-| `testimony_context` | Evidence Search | High-recall semantic retrieval over raw claims and chunk source text. |
+| `facts_context` | Fact Recall | Retrieves current or historical adjudicated facts with supporting evidence under a token budget. |
+| `combined_context` | Comprehensive | Returns a dual-grain `ContextBundle` containing both raw testimony (claims) and adjudicated truth (facts). |
+| `claims_and_sources_context` | Evidence Search | High-recall semantic retrieval over raw claims and chunk source text. |
 | `resolve_entity` | Disambiguation | Resolves ambiguous entity names (e.g. "Postgres", "Alice") to canonical entity IDs. |
 | `query_sql` | Open Query | Executes AST-sandboxed, read-only SQL queries against the `memory_v1` view schema. |
 | `describe_query_space` | Schema Discovery | Returns the complete `memory_v1` relational views, columns, and graph helper signatures. |

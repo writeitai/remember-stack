@@ -2,8 +2,8 @@
 
 The shipping surface is:
 
-* **Assured operations** — ``resolve_entity``, ``testimony_context``,
-  ``fact_context``, and ``answer_context``
+* **Assured operations** — ``resolve_entity``, ``claims_and_sources_context``,
+  ``facts_context``, and ``combined_context``
 * **Open query** — SQL / query-space discovery / saved queries when the
   deployment has them wired
 
@@ -25,7 +25,7 @@ import urllib.request
 _DEFAULT_ANSWER_MODEL: Final = "openai/gpt-5.6-luna"
 _OPENROUTER_URL: Final = "https://openrouter.ai/api/v1/chat/completions"
 
-_PRIMARY_OPERATION: Final = "answer_context"
+_PRIMARY_OPERATION: Final = "combined_context"
 
 # Ability-specific secondary claim/chunk queries to widen recall.
 _ABILITY_QUERIES: Final[dict[str, tuple[str, ...]]] = {
@@ -300,7 +300,7 @@ def _ingest_envelope(
             ):
                 bundle.entities.append(entity)
 
-    # Ranking may carry entity candidates from resolve / testimony_context.
+    # Ranking may carry entity candidates from resolve / claims_and_sources_context.
     for rank in envelope.get("ranking") or []:
         if not isinstance(rank, dict):
             continue
@@ -362,18 +362,18 @@ def _ingest_envelope(
 def _ingest_operation_response(
     bundle: RetrievalBundle, *, operation: str, response: dict[str, Any]
 ) -> None:
-    """Ingest one Envelope or both explicit ContextBundle/v1 authorities."""
-    if response.get("contract") != "ContextBundle/v1":
+    """Ingest one Envelope or both explicit ContextBundle/v2 authorities."""
+    if response.get("contract") != "ContextBundle/v2":
         _ingest_envelope(bundle, operation=operation, envelope=response)
         return
     bundle.operation_calls.append(
         {
             "operation": operation,
-            "contract": "ContextBundle/v1",
-            "authorities": ["testimony", "facts"],
+            "contract": "ContextBundle/v2",
+            "authorities": ["claims_and_sources", "facts"],
         }
     )
-    for authority in ("testimony", "facts"):
+    for authority in ("claims_and_sources", "facts"):
         child = response.get(authority)
         if isinstance(child, dict):
             _ingest_envelope(
@@ -471,9 +471,9 @@ def retrieve_full_plane(
 
     # Ability-specific secondary queries (claims/chunks only; keep light).
     for extra_q in _ABILITY_QUERIES.get(ability, ()):
-        if "testimony_context" in available:
+        if "claims_and_sources_context" in available:
             run(
-                "testimony_context",
+                "claims_and_sources_context",
                 {"query": extra_q, "k": 20, "candidate_k": 80},
                 timeout_s=60.0,
             )
@@ -506,7 +506,7 @@ def retrieve_full_plane(
         }
         if entity_ids:
             history_arguments["entity_ids"] = entity_ids[:20]
-        run("fact_context", history_arguments, timeout_s=30.0)
+        run("facts_context", history_arguments, timeout_s=30.0)
 
     # Phase 4 — open-query plane (non-fatal if unavailable).
     try:

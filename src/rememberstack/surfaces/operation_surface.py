@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 from pydantic import ValidationError
 
 from rememberstack.model import AssuredOperation
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.client import ToolDescriptor
@@ -31,7 +31,7 @@ class InvalidArgumentError(Exception):
     """An operation argument violates its closed input schema."""
 
 
-OperationResult = Envelope | ContextBundleV1
+OperationResult = Envelope | ContextBundleV2
 
 _FACT_TIME: TypeAdapter[FactTime] = TypeAdapter(FactTime)
 
@@ -81,7 +81,7 @@ def operation_descriptors(
     plan_hashes = {
         operation.name.value: _plan_hash(operation=operation, child_hashes={})
         for operation in operations
-        if operation.name.value != "answer_context"
+        if operation.name.value != "combined_context"
     }
     return tuple(
         _descriptor(operation=operation, child_hashes=plan_hashes)
@@ -129,9 +129,10 @@ def _plan_hash(*, operation: AssuredOperation, child_hashes: dict[str, str]) -> 
     payload: dict[str, object] = {
         "plan": operation.execution_plan.model_dump(mode="json")
     }
-    if operation.name.value == "answer_context":
+    if operation.name.value == "combined_context":
         payload["child_plan_hashes"] = [
-            child_hashes[name] for name in ("testimony_context", "fact_context")
+            child_hashes[name]
+            for name in ("claims_and_sources_context", "facts_context")
         ]
     return hashlib.sha256(
         canonical_json_bytes(cast("CanonicalValue", payload))

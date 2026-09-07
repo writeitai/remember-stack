@@ -1,5 +1,10 @@
 # Retrieval Design — the Query Machine
 
+> **Binding D114 amendment (2026-09-07).** The assured retrieval names are
+> `claims_and_sources_context`, `facts_context`, and `combined_context`.
+> `ContextBundle/v2` exposes `claims_and_sources` and `facts`; no former-name
+> aliases ship. The authority boundaries and algorithms below are unchanged.
+
 > **Binding D110 amendment (2026-09-07).** D110 §§5–6 require checked cache text/vector freshness and explicit temporal-membership uncertainty when an endpoint basis is erased. Current aggregates and absence cannot turn omitted uncertain facts into complete counts or confident negatives; D107 source/occurrence clocks remain.
 > Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
 
@@ -9,7 +14,7 @@
 > `memory_v1` fact views and the open-query confirmation rows gain
 > per-endpoint bases, temporal kind and the occurrence window (additive), and
 > because the envelope schema is shared, `resolve_entity@2`,
-> `testimony_context@2`, `fact_context@3` and `answer_context@3` roll; P1
+> `claims_and_sources_context@2`, `facts_context@3` and `combined_context@4` roll; P1
 > accepts is-about claim filters and an `occurs` fact mode;
 > `aggregate(form="timeline")` buckets by occurrence with an explicit
 > `undated` bucket; "current" is the single evaluated-at predicate of §7.1.
@@ -42,9 +47,11 @@ points to measure, not committed constants (CLAUDE.md).
 > **Amended 2026-08-26 (D97).** Ordinary questions resolve to ids, load observations **and**
 > relations, hop `neighborhood` with an **empty** predicate list, and match fact text.
 > Predicates are optional filters. This selection change publishes
-> `fact_context@2` and `answer_context@2`; the v1 identities are historical,
+> `facts_context@2` and `combined_context@2`; the v1 identities are historical,
 > not aliases for the new behavior. Details:
 > [`entity_identity_and_retrieval_design.md`](entity_identity_and_retrieval_design.md) §7.
+> D114 subsequently advances the renamed composite to `combined_context@3`
+> because its child field and wire contract change to `ContextBundle/v2`.
 
 > **Reading this cold (CLAUDE.md Rule 1).** The memory has three planes: **E** (evidence —
 > immutable claims, adjudicated relations/observations, all anchored on canonical entities with
@@ -241,15 +248,15 @@ Two honest limits on `believed_at`, stated rather than discovered (S43, S61):
 ## 4. Assured operations — frozen plans as registry data (D50, D87)
 
 The public intent catalog contains exactly `resolve_entity`,
-`testimony_context`, `fact_context`, and `answer_context`. The former
+`claims_and_sources_context`, `facts_context`, and `combined_context`. The former
 `question_context` and `current_context` names and the older named recipe
 catalog are superseded by `open_query_space_design.md` §§2–3; reusable query
 patterns live as non-tool `examples.*` saved queries. There is no compatibility
 alias layer.
 
 An **assured operation** is a named, versioned zero-LLM execution plan.
-`resolve_entity`, `testimony_context`, and `fact_context` are compositions of
-primitives with fixed fusion/rerank settings; `answer_context` is the sole
+`resolve_entity`, `claims_and_sources_context`, and `facts_context` are compositions of
+primitives with fixed fusion/rerank settings; `combined_context` is the sole
 `operation_bundle` plan and references the two canonical child descriptors.
 Operations are **closed platform registry rows, not independent
 invariant implementations** — the same move as predicates (D5), ontology
@@ -257,9 +264,9 @@ invariant implementations** — the same move as predicates (D5), ontology
 `description`, typed `parameters`, a discriminated **`execution_plan`**:
 `primitive_chain` with ordered §3 operations and fixed settings, or the sole
 `operation_bundle` value whose ordered children are exactly
-`testimony_context` and `fact_context`;
-**`result_contract`** (`envelope` | `context_bundle_v1`), nullable-only-for-the-bundle
-**`output_grain`**, **`answer_intent`** (`identity` | `testimony` | `facts` |
+`claims_and_sources_context` and `facts_context`;
+**`result_contract`** (`envelope` | `context_bundle_v2`), nullable-only-for-the-bundle
+**`output_grain`**, **`answer_intent`** (`identity` | `claims_and_sources` | `facts` |
 `combined_context`), plus `version` and MCP-rendering metadata. The database closes these fields
 to the four canonical tuples; the bundle has no false single-grain declaration. (Full DDL joins
 the control-plane tables in
@@ -269,7 +276,8 @@ the control-plane tables in
    constraint, not a prose judgment: `answer_intent = facts` requires
    `output_grain = fact` and a chain built only over validity-filtered
    relation/observation primitives. The bundle plan is accepted only for
-   `answer_context` with those exact two children. `testimony_context` declares `testimony` over
+   `combined_context` with those exact two children. `claims_and_sources_context` declares
+   `claims_and_sources` over
    `evidence`, so the D41 bar ("claims never answer *is it true now*") is violated only by a
    registration the constraint rejects. A *name/description* smell-check (a recipe named like
    a fact query but declared evidence-grain) is an advisory lint for humans, not the
@@ -285,7 +293,7 @@ Assured operations never add base capability — anything they do is composed fr
 invariant-compiled `memory_v1` authorities. That is a testable property: the eval harness
 replays each operation through those authorities and checks membership equivalence.
 
-The ordinary high-recall evidence entry is **`testimony_context`**. Its frozen chain independently
+The ordinary high-recall evidence entry is **`claims_and_sources_context`**. Its frozen chain independently
 fuses cheap semantic + lexical claim-ID nominations, independently fuses cheap semantic +
 lexical chunk-ID nominations, hydrates each fused list exactly once through D48, then
 returns the two payloads under one evidence envelope. This order avoids
@@ -296,14 +304,14 @@ same PostgreSQL ranked statement, through normalized associations, before
 candidate depth is applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
 relevance and before the candidate cut. The operation contains no fact or entity-candidate channel.
 
-`fact_context` is the fact-grain counterpart: semantic facts nomination followed by
+`facts_context` is the fact-grain counterpart: semantic facts nomination followed by
 PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
 applies entity and time eligibility before its internal candidate depth by
 joining the normalized fact authority in the ranked PostgreSQL statement; the current-only public
 `semantic_facts` SRF is not the historical implementation. It returns facts with their
-supporting and contradicting evidence associations. `answer_context`
-does not add a retrieval path; it returns the complete testimony and fact responses as separate
-members of `ContextBundle/v1`. The exact contracts and bounds live in
+supporting and contradicting evidence associations. `combined_context`
+does not add a retrieval path; it returns the complete claims-and-sources and fact responses as separate
+members of `ContextBundle/v2`. The exact contracts and bounds live in
 `open_query_space_design.md` §3.1.
 
 ## 5. The response envelope — the contract is the answer's self-account (D49)
@@ -336,7 +344,7 @@ answer itself** — because the caller is an agent that must *reason about* the 
 ```
 
 `temporal_scope` is required and discriminated by `mode`; an operation exposes
-only the variants it actually supports. In particular, `fact_context` returns
+only the variants it actually supports. In particular, `facts_context` returns
 exactly one of `current`, `at`, `overlap`, or `history`, with the mode-specific
 fields and invariants defined in `open_query_space_design.md` §3.1. This makes
 the applied world-time selection distinguishable on the wire instead of
@@ -352,13 +360,13 @@ the distinction.
 Single-grain answers are the common case. A `composite` envelope is one operation's cohesive
 typed result, such as a fact hydrated with its explicitly associated evidence; it is not a
 container for independent complete responses. D87 removes `Envelope.parts` and `EnvelopePart`.
-The sole side-by-side testimony/fact form is `ContextBundle/v1`:
+The sole side-by-side testimony/fact form is `ContextBundle/v2`:
 
 ```text
-ContextBundleV1 {
-  contract:  literal("ContextBundle/v1")
-  testimony: Envelope  // evidence grain; complete testimony_context result
-  facts:     Envelope  // fact grain; complete fact_context result
+ContextBundleV2 {
+  contract:  literal("ContextBundle/v2")
+  claims_and_sources: Envelope  // evidence grain; complete claims_and_sources_context result
+  facts:     Envelope  // fact grain; complete facts_context result
 }
 ```
 
@@ -431,7 +439,7 @@ The fact/evidence split (`concepts.md`; requirements §Retrieval) becomes a **ty
 discipline** rather than documentation:
 
 - Every primitive and assured operation that returns an `Envelope` **declares its grain**; every
-  envelope **carries it**. `answer_context` instead declares `ContextBundle/v1` explicitly.
+  envelope **carries it**. `combined_context` instead declares `ContextBundle/v2` explicitly.
 - Source chunks are **evidence grain**, returned through a distinct typed payload. They say what
   the current source text contains; they are not atomic claims and never answer current-fact
   questions without extraction/adjudication.
@@ -440,10 +448,10 @@ discipline** rather than documentation:
   interval (D41) is testimony, never verdict, and the registry linter bars any composition
   that would let it pose as one (S4, S11).
 - Mixed answers are **explicitly two-part**, never blended: S47 ("everything Alice *said*
-  about pricing, plus what we *believe*") routes through `answer_context`, whose
-  `ContextBundle/v1` carries the complete evidence and fact envelopes as separately named
+  about pricing, plus what we *believe*") routes through `combined_context`, whose
+  `ContextBundle/v2` carries the complete evidence and fact envelopes as separately named
   members.
-- **`testimony_context` returns current testimony** (D54): claims superseded by a newer
+- **`claims_and_sources_context` returns current testimony** (D54): claims superseded by a newer
   extraction generation, or left behind by a living document's current version, are excluded.
   It has no mode flag; historical source-version testimony remains available through
   `claims_visible_history`, direct audit primitives, and `examples.claims_as_of`. Fact-grain
@@ -510,7 +518,7 @@ curriculum, explicitly:
   *current* testimony only — claims superseded by a newer extraction generation or left
   behind by a living document's current version are history, reachable through
   `claims_visible_history`, direct audit queries, or `examples.claims_as_of`;
-  `testimony_context` has no history flag.
+  `claims_and_sources_context` has no history flag.
 - **The `support: withdrawn` marker**: a fact carrying it has lost all current support (its
   case is in review) — read it as "standing but shaky": fine to report with the caveat, not
   fine to build plans on without checking the transcript.
@@ -613,8 +621,8 @@ skill's acceptance test. Rerank weights (graph distance, evidence count) are tun
 harness, never in production.
 
 The D22 retrieval measurements separately report semantic claims, lexical claims, hybrid
-claims, semantic chunks, lexical chunks, `testimony_context`, and each temporal mode of
-`fact_context`. Exact source/dialog recall and
+claims, semantic chunks, lexical chunks, `claims_and_sources_context`, and each temporal mode of
+`facts_context`. Exact source/dialog recall and
 complete-evidence recall are recorded before any reader or judge result, so a planner or answer
 failure cannot be mislabeled a retrieval miss.
 

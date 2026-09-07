@@ -99,7 +99,7 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 - **Python SDK Reference**: Complete guide to `from remember import RememberClient`, with examples for ingestion, fact search, and assured operations.
 - **Platform CLI Reference**: Comprehensive manual for `remember ingest`, `remember query`, and `remember operations`.
 - **Model Context Protocol (MCP)**: Tool catalog, stdio integration, and how agents call memory tools.
-- **Assured Retrieval Operations**: Contract specifications for `fact_context` and `answer_context`.
+- **Assured Retrieval Operations**: Contract specifications for `facts_context` and `combined_context`.
 - **Open Query Space (`open_query`)**: Full guide to querying the bitemporal relational graph schema (`memory_v1` views: `facts_current`, `graph_edges_current`, `contradiction_members_current`) via SQL.
 
 ### 3.4 Section 4: Self-Hosting & Operations (Open Source)

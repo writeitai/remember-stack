@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
-from remember.models import ContextBundleV1
+from remember.models import ContextBundleV2
 from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -129,7 +129,7 @@ def is_correctable_query_error(*, code: str | None) -> bool:
 
 
 def query_result_failure(
-    response: Envelope | ContextBundleV1 | JsonValue,
+    response: Envelope | ContextBundleV2 | JsonValue,
 ) -> tuple[str, str] | None:
     """Extract a typed failure from an HTTP-200 QueryResult payload."""
     if not isinstance(response, dict) or response.get("contract") != "QueryResult/v1":
@@ -154,7 +154,7 @@ def dispatch_answer_tool(
     p3: P3Mount | None,
     name: str,
     arguments: Mapping[str, object],
-) -> Envelope | ContextBundleV1 | JsonValue:
+) -> Envelope | ContextBundleV2 | JsonValue:
     """Dispatch one catalogued read through the public SDK or P3 mount."""
     if name in {tool.name for tool in assured_tool_catalog()}:
         operation_arguments = dict(arguments)

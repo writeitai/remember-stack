@@ -270,7 +270,12 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
     api_names = {
         descriptor["name"] for descriptor in deployment.client.get("/operations").json()
     }
-    expected = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
+    expected = {
+        "resolve_entity",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
+    }
     assert mcp_names == registry_names == expected
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
@@ -452,19 +457,19 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
     """A wrong-typed argument or a misspelled parameter is a 422 / MCP error,
     never a 500 or a silently-broadened query (Codex findings)."""
     bad_integer = deployment.client.post(
-        "/operations/fact_context", json={"query": "Alice", "k": "not-an-integer"}
+        "/operations/facts_context", json={"query": "Alice", "k": "not-an-integer"}
     )
     assert bad_integer.status_code == 422
     assert bad_integer.json()["detail"]["code"] == "invalid_parameter"
 
     bad_query = deployment.client.post(
-        "/operations/testimony_context", json={"query": 42}
+        "/operations/claims_and_sources_context", json={"query": 42}
     )
     assert bad_query.status_code == 422
     assert bad_query.json()["detail"]["code"] == "invalid_parameter"
 
     empty_time = deployment.client.post(
-        "/operations/fact_context", json={"query": "Alice", "time": {}}
+        "/operations/facts_context", json={"query": "Alice", "time": {}}
     )
     assert empty_time.status_code == 422
     assert empty_time.json()["detail"]["code"] == "invalid_parameter"
@@ -478,7 +483,7 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         },
     ):
         naive_time = deployment.client.post(
-            "/operations/fact_context", json={"query": "Alice", "time": time}
+            "/operations/facts_context", json={"query": "Alice", "time": time}
         )
         assert naive_time.status_code == 422
         assert naive_time.json()["detail"]["code"] == "invalid_parameter"
@@ -487,7 +492,7 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
     assert typo.status_code == 422  # a typo never silently broadens the query
 
     mcp_bad = deployment.mcp.call_tool(
-        name="fact_context", arguments={"query": "Alice", "k": "not-an-integer"}
+        name="facts_context", arguments={"query": "Alice", "k": "not-an-integer"}
     )
     assert mcp_bad["isError"] is True
 
@@ -500,7 +505,7 @@ def test_invalid_and_unknown_arguments_are_typed_failures(
         {"query": "Alice", "time": {"mode": "at", "at": "20260810"}},
     )
     for arguments in wrong_json_types:
-        response = deployment.client.post("/operations/fact_context", json=arguments)
+        response = deployment.client.post("/operations/facts_context", json=arguments)
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "invalid_parameter"
 
@@ -517,7 +522,7 @@ def test_operation_provider_failure_is_a_generic_503(
     monkeypatch.setattr(deployment.surface, "run", fail_operation)
 
     response = deployment.client.post(
-        "/operations/fact_context", json={"query": "Alice"}
+        "/operations/facts_context", json={"query": "Alice"}
     )
 
     assert response.status_code == 503

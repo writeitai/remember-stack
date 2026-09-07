@@ -137,23 +137,28 @@ def _honesty_warnings() -> str:
 
 def _assured_operations(*, operations: tuple[ConsumptionOperation, ...]) -> str:
     """Name the complete four-operation assured surface."""
-    core = {"resolve_entity", "testimony_context", "fact_context", "answer_context"}
+    core = {
+        "resolve_entity",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
+    }
     enabled_core = [operation for operation in operations if operation.name in core]
     if enabled_core:
         core_rows = "\n".join(
-            f"- `{operation.name}` — `{operation.output_grain or 'ContextBundle/v1'}` / "
+            f"- `{operation.name}` — `{operation.output_grain or 'ContextBundle/v2'}` / "
             f"`{operation.answer_intent}`: {_one_line(value=operation.description)}"
             for operation in enabled_core
         )
     else:
         core_rows = (
             "- The four assured operations are `resolve_entity`,"
-            " `testimony_context`, `fact_context`, and `answer_context`."
+            " `claims_and_sources_context`, `facts_context`, and `combined_context`."
         )
     return (
         "## Assured operations\n\n"
         "Exactly four platform intent operations ship; three return D49"
-        " Envelopes and `answer_context` returns `ContextBundle/v1`:\n\n"
+        " Envelopes and `combined_context` returns `ContextBundle/v2`:\n\n"
         f"{core_rows}\n\n"
         "All other shipped retrieval patterns are open SQL or non-tool "
         "`examples.*` saved queries; there is no compatibility operation catalog."
@@ -176,7 +181,7 @@ def _grains() -> str:
         "truth.\n\n"
         "Never blend evidence and facts into one unlabeled answer. If a task asks "
         "both what someone said and what the system believes, use "
-        "`answer_context` and keep its complete `testimony` and `facts` child "
+        "`combined_context` and keep its complete `claims_and_sources` and `facts` child "
         "envelopes separate."
     )
 

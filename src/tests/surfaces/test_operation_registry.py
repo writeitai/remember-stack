@@ -19,7 +19,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.core import AssuredOperationLintError
 from rememberstack.core import lint_assured_operation
 from rememberstack.model import AssuredOperationName
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
@@ -86,30 +86,32 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     """Exactly four operation names and their result contracts are public."""
     assert tuple(operation.name.value for operation in CANONICAL_OPERATIONS) == (
         "resolve_entity",
-        "testimony_context",
-        "fact_context",
-        "answer_context",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
     )
     assert tuple(operation.version for operation in CANONICAL_OPERATIONS) == (
         1,
         1,
         2,
-        2,
+        3,
     )
     descriptors = {
         descriptor.name: descriptor
         for descriptor in operation_descriptors(operations=CANONICAL_OPERATIONS)
     }
     assert set(descriptors) == {name.value for name in AssuredOperationName}
-    assert descriptors["answer_context"].result_contract == "context_bundle_v1"
-    assert descriptors["answer_context"].output_grain is None
-    assert descriptors["answer_context"].implementation_plan_hash
-    assert descriptors["testimony_context"].result_contract == "envelope"
-    testimony_properties = descriptors["testimony_context"].input_schema["properties"]
-    fact_properties = descriptors["fact_context"].input_schema["properties"]
-    assert isinstance(testimony_properties, dict)
+    assert descriptors["combined_context"].result_contract == "context_bundle_v2"
+    assert descriptors["combined_context"].output_grain is None
+    assert descriptors["combined_context"].implementation_plan_hash
+    assert descriptors["claims_and_sources_context"].result_contract == "envelope"
+    claims_and_sources_properties = descriptors[
+        "claims_and_sources_context"
+    ].input_schema["properties"]
+    fact_properties = descriptors["facts_context"].input_schema["properties"]
+    assert isinstance(claims_and_sources_properties, dict)
     assert isinstance(fact_properties, dict)
-    assert "entity_ids" in testimony_properties
+    assert "entity_ids" in claims_and_sources_properties
     assert "time" in fact_properties
     assert fact_properties["hops"] == {
         "default": 1,
@@ -127,12 +129,12 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     fact_operation = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.FACT_CONTEXT
+        if operation.name is AssuredOperationName.FACTS_CONTEXT
     )
     assert isinstance(fact_operation.execution_plan, PrimitiveChainPlan)
     assert tuple(step.op for step in fact_operation.execution_plan.steps) == (
         "graph_neighborhood",
-        "fact_context",
+        "facts_context",
     )
 
 
@@ -155,7 +157,7 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
     testimony = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.TESTIMONY_CONTEXT
+        if operation.name is AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT
     )
     assert isinstance(testimony.execution_plan, PrimitiveChainPlan)
     lint_assured_operation(testimony, expected=testimony)
@@ -172,7 +174,7 @@ def test_linter_rejects_contract_tuple_or_plan_drift() -> None:
                         update={
                             "steps": (
                                 testimony.execution_plan.steps[0].model_copy(
-                                    update={"op": "fact_context"}
+                                    update={"op": "facts_context"}
                                 ),
                             )
                         }
@@ -201,7 +203,7 @@ def test_registry_linter_uses_an_immutable_canonical_baseline(
     testimony = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.TESTIMONY_CONTEXT
+        if operation.name is AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT
     )
     monkeypatch.setitem(
         testimony.parameters, "query", {"type": "integer", "required": True}
@@ -217,7 +219,7 @@ def test_dispatch_matches_the_published_json_types() -> None:
     fact = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.FACT_CONTEXT
+        if operation.name is AssuredOperationName.FACTS_CONTEXT
     )
     assert (
         _coerce_arguments(operation=fact, arguments={"query": "Alice", "k": 2.0})["k"]
@@ -253,9 +255,13 @@ def test_seed_replaces_the_catalog_atomically_and_round_trips(
     assert {operation.name for operation in active} == set(AssuredOperationName)
     expected = {operation.name: operation for operation in CANONICAL_OPERATIONS}
     assert all(operation == expected[operation.name] for operation in active)
-    assert (
-        registry.by_name(deployment_id=_DEPLOYMENT_ID, name="question_context") is None
-    )
+    for removed_name in (
+        "question_context",
+        "testimony_context",
+        "fact_context",
+        "answer_context",
+    ):
+        assert registry.by_name(deployment_id=_DEPLOYMENT_ID, name=removed_name) is None
     with database_engine.connect() as connection:
         assert (
             connection.execute(
@@ -282,7 +288,7 @@ class _AuthorityStub:
         self.evaluated_at: list[datetime] = []
         self.default_fact_arguments: list[dict[str, object]] = []
 
-    def testimony_context(self, **arguments: object) -> Envelope:
+    def claims_and_sources_context(self, **arguments: object) -> Envelope:
         """Return testimony while recording the executor's evaluation instant."""
         evaluated_at = arguments["evaluated_at"]
         assert isinstance(evaluated_at, datetime)
@@ -293,7 +299,7 @@ class _AuthorityStub:
             freshness=Freshness(pg_live_ts=_NOW),
         )
 
-    def fact_context(self, **arguments: object) -> Envelope:
+    def facts_context(self, **arguments: object) -> Envelope:
         """Return facts while recording the executor's evaluation instant."""
         evaluated_at = arguments["evaluated_at"]
         assert isinstance(evaluated_at, datetime)
@@ -304,10 +310,10 @@ class _AuthorityStub:
             freshness=Freshness(pg_live_ts=_NOW),
         )
 
-    def default_fact_context(self, **arguments: object) -> Envelope:
+    def default_facts_context(self, **arguments: object) -> Envelope:
         """Stand in for the D97 recipe while preserving composition evidence."""
         self.default_fact_arguments.append(arguments)
-        return self.fact_context(**arguments)
+        return self.facts_context(**arguments)
 
 
 def test_executor_forwards_default_neighborhood_arguments() -> None:
@@ -317,7 +323,7 @@ def test_executor_forwards_default_neighborhood_arguments() -> None:
     operation = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.FACT_CONTEXT
+        if operation.name is AssuredOperationName.FACTS_CONTEXT
     )
 
     OperationExecutor(
@@ -334,16 +340,16 @@ def test_executor_forwards_default_neighborhood_arguments() -> None:
     assert authority.default_fact_arguments[0]["predicate"] == "other:traveled"
 
 
-def test_answer_context_is_pure_composition_at_one_evaluation_cut() -> None:
+def test_combined_context_is_pure_composition_at_one_evaluation_cut() -> None:
     """The bundle is field-for-field equal to both direct child calls."""
     direct_authority = _AuthorityStub()
-    direct_testimony = direct_authority.testimony_context(evaluated_at=_NOW)
-    direct_facts = direct_authority.default_fact_context(evaluated_at=_NOW)
+    direct_testimony = direct_authority.claims_and_sources_context(evaluated_at=_NOW)
+    direct_facts = direct_authority.default_facts_context(evaluated_at=_NOW)
     authority = _AuthorityStub()
     operation = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.ANSWER_CONTEXT
+        if operation.name is AssuredOperationName.COMBINED_CONTEXT
     )
     result = OperationExecutor(query_engine=cast("QueryEngine", authority)).execute(
         deployment_id=_DEPLOYMENT_ID,
@@ -351,27 +357,27 @@ def test_answer_context_is_pure_composition_at_one_evaluation_cut() -> None:
         arguments={"query": "launch history"},
         evaluated_at=_NOW,
     )
-    assert isinstance(result, ContextBundleV1)
+    assert isinstance(result, ContextBundleV2)
     assert authority.evaluated_at[0] == authority.evaluated_at[1]
-    assert result.testimony == direct_testimony
+    assert result.claims_and_sources == direct_testimony
     assert result.facts == direct_facts
 
 
 class _FailingFactAuthority(_AuthorityStub):
     """A child authority that proves a bundle cannot be partially returned."""
 
-    def default_fact_context(self, **arguments: object) -> Envelope:
+    def default_facts_context(self, **arguments: object) -> Envelope:
         """Fail after testimony completes, as a real retrieval error could."""
         del arguments
         raise RuntimeError("fact child failed")
 
 
-def test_answer_context_returns_no_half_bundle_when_a_child_fails() -> None:
+def test_combined_context_returns_no_half_bundle_when_a_child_fails() -> None:
     """A child failure propagates instead of manufacturing a partial contract."""
     operation = next(
         operation
         for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.ANSWER_CONTEXT
+        if operation.name is AssuredOperationName.COMBINED_CONTEXT
     )
     with pytest.raises(RuntimeError, match="fact child failed"):
         OperationExecutor(

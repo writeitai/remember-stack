@@ -726,16 +726,16 @@ class Envelope(BaseModel):
     negative: Negative | None = None
 
 
-class ContextBundleV1(BaseModel):
+class ContextBundleV2(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    contract: Literal["ContextBundle/v1"] = "ContextBundle/v1"
-    testimony: Envelope
+    contract: Literal["ContextBundle/v2"] = "ContextBundle/v2"
+    claims_and_sources: Envelope
     facts: Envelope
 
     @model_validator(mode="after")
     def _child_grains_are_exact(self) -> Self:
-        if self.testimony.grain is not Grain.EVIDENCE:
-            raise ValueError("ContextBundle testimony must be evidence grain")
+        if self.claims_and_sources.grain is not Grain.EVIDENCE:
+            raise ValueError("ContextBundle claims_and_sources must be evidence grain")
         if self.facts.grain is not Grain.FACT:
             raise ValueError("ContextBundle facts must be fact grain")
         return self

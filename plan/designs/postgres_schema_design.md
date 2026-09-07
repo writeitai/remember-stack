@@ -286,11 +286,11 @@ CREATE TYPE refresh_status         AS ENUM ('pending','running','done','failed')
 
 -- D50/D87 closed assured-operation registry (§11.A):
 CREATE TYPE assured_operation_name AS ENUM
-  ('resolve_entity','testimony_context','fact_context','answer_context');
-CREATE TYPE assured_result_contract AS ENUM ('envelope','context_bundle_v1');
+  ('resolve_entity','claims_and_sources_context','facts_context','combined_context');
+CREATE TYPE assured_result_contract AS ENUM ('envelope','context_bundle_v2');
 CREATE TYPE assured_output_grain AS ENUM ('fact','evidence');
 CREATE TYPE assured_answer_intent AS ENUM
-  ('identity','testimony','facts','combined_context');
+  ('identity','claims_and_sources','facts','combined_context');
 ```
 
 `novelty_gate` (in `adjudication_method`) is the deterministic short-circuit at the front of the
@@ -2360,13 +2360,13 @@ compatibility view or old-name rows remain. Bootstrap owns the rows and exposes
 exactly one active canonical version of each enum member per deployment.
 
 The result-contract field keeps D49 honest: three operations return one complete
-`Envelope`; `answer_context` returns `ContextBundle/v1` and therefore has no
+`Envelope`; `combined_context` returns `ContextBundle/v2` and therefore has no
 single output grain. `result_schema` stores the exact closed wire schema; for
-`fact_context` it requires D87's discriminated `temporal_scope` union. The
+`facts_context` it requires D87's discriminated `temporal_scope` union. The
 database constrains the four name/contract/intent/grain tuples, while the
 registration linter proves the canonical result schema and execution-plan
-properties—for example, `fact_context` uses validity-filtered
-relation/observation authorities and `answer_context` contains only the two
+properties—for example, `facts_context` uses validity-filtered
+relation/observation authorities and `combined_context` contains only the two
 canonical child operations. `resolve_entity` retains its v1 fact grain: the
 identity registry is an authority, not source testimony.
 
@@ -2381,10 +2381,10 @@ CREATE TABLE assured_operations (
   name            assured_operation_name NOT NULL,
   description     text NOT NULL,               -- rendered into the MCP tool description (D50)
   parameters      jsonb NOT NULL,              -- typed parameter schema (JSON-Schema form)
-  result_schema   jsonb NOT NULL,              -- exact closed wire schema; includes fact_context temporal_scope
-  execution_plan  jsonb NOT NULL,              -- closed union: primitive_chain, or answer_context's exact two-child operation_bundle
+  result_schema   jsonb NOT NULL,              -- exact closed wire schema; includes facts_context temporal_scope
+  execution_plan  jsonb NOT NULL,              -- closed union: primitive_chain, or combined_context's exact two-child operation_bundle
   result_contract assured_result_contract NOT NULL,
-  output_grain    assured_output_grain,        -- null only for ContextBundle/v1
+  output_grain    assured_output_grain,        -- null only for ContextBundle/v2
   answer_intent   assured_answer_intent NOT NULL,
   version         integer NOT NULL DEFAULT 1,  -- recall@k measured per (name, version) — regressions attributable (D22)
   status          ontology_status NOT NULL DEFAULT 'active',
@@ -2393,11 +2393,11 @@ CREATE TABLE assured_operations (
   CHECK (
     (name = 'resolve_entity' AND result_contract = 'envelope'
       AND output_grain = 'fact' AND answer_intent = 'identity') OR
-    (name = 'testimony_context' AND result_contract = 'envelope'
-      AND output_grain = 'evidence' AND answer_intent = 'testimony') OR
-    (name = 'fact_context' AND result_contract = 'envelope'
+    (name = 'claims_and_sources_context' AND result_contract = 'envelope'
+      AND output_grain = 'evidence' AND answer_intent = 'claims_and_sources') OR
+    (name = 'facts_context' AND result_contract = 'envelope'
       AND output_grain = 'fact' AND answer_intent = 'facts') OR
-    (name = 'answer_context' AND result_contract = 'context_bundle_v1'
+    (name = 'combined_context' AND result_contract = 'context_bundle_v2'
       AND output_grain IS NULL AND answer_intent = 'combined_context')
   )
 );

@@ -63,7 +63,7 @@ def test_setup_cursor_configuration(tmp_path: Path) -> None:
     assert mcp_data["mcpServers"]["remember"]["args"] == args
 
     rule_text = rule_file.read_text(encoding="utf-8")
-    assert "fact_context" in rule_text
+    assert "facts_context" in rule_text
     assert "bitemporal" in rule_text
 
 
@@ -605,7 +605,7 @@ def test_doctor_token_origin_isolation(
 def test_query_free_text_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """CLI query defaults to fact_context for free text and answer_context with --answer."""
+    """CLI query defaults to facts_context and uses combined_context with --combined."""
     captured_calls: list[tuple[str, str]] = []
 
     class MockClient:
@@ -615,23 +615,23 @@ def test_query_free_text_dispatch(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def fact_context(self, query: str) -> object:
+        def facts_context(self, query: str) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
                 operation: str
                 facts: list[str]
 
-            return MockEnvelope(operation="fact_context", facts=["test fact"])
+            return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def answer_context(self, query: str) -> object:
+        def combined_context(self, query: str) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):
                 operation: str
                 query: str
 
-            return MockBundle(operation="answer_context", query=query)
+            return MockBundle(operation="combined_context", query=query)
 
     monkeypatch.setattr(
         "rememberstack.surfaces.cli._cli_memory_client", lambda args: MockClient()
@@ -643,8 +643,8 @@ def test_query_free_text_dispatch(
     assert captured_calls[-1] == ("fact", "What were our decisions on auth?")
     assert "test fact" in capsys.readouterr().out
 
-    # 2. Free text query with --answer
-    res2 = main(["query", "How does indexing work?", "--answer"])
+    # 2. Free text query with --combined
+    res2 = main(["query", "How does indexing work?", "--combined"])
     assert res2 == 0
     assert captured_calls[-1] == ("answer", "How does indexing work?")
     assert "How does indexing work?" in capsys.readouterr().out
@@ -653,7 +653,7 @@ def test_query_free_text_dispatch(
 def test_query_free_text_with_preceding_flags(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Flags like --answer or --url can precede the free-text query string (Finding 8b)."""
+    """Flags like --combined or --url can precede free-text query strings (Finding 8b)."""
     captured_calls: list[tuple[str, str]] = []
 
     class MockClient:
@@ -663,30 +663,30 @@ def test_query_free_text_with_preceding_flags(
         def __exit__(self, *args: object) -> None:
             pass
 
-        def fact_context(self, query: str) -> object:
+        def facts_context(self, query: str) -> object:
             captured_calls.append(("fact", query))
 
             class MockEnvelope(BaseModel):
                 operation: str
                 facts: list[str]
 
-            return MockEnvelope(operation="fact_context", facts=["test fact"])
+            return MockEnvelope(operation="facts_context", facts=["test fact"])
 
-        def answer_context(self, query: str) -> object:
+        def combined_context(self, query: str) -> object:
             captured_calls.append(("answer", query))
 
             class MockBundle(BaseModel):
                 operation: str
                 query: str
 
-            return MockBundle(operation="answer_context", query=query)
+            return MockBundle(operation="combined_context", query=query)
 
     monkeypatch.setattr(
         "rememberstack.surfaces.cli._cli_memory_client", lambda args: MockClient()
     )
 
     # Flag before query
-    res = main(["query", "--answer", "How does indexing work?"])
+    res = main(["query", "--combined", "How does indexing work?"])
     assert res == 0
     assert captured_calls[-1] == ("answer", "How does indexing work?")
 

@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v25 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v26 protocol."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import SerializerFunctionWrapHandler
 
-from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
-from rememberstack.model import ContextBundleV1 as RememberstackContextBundleV1
+from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
 from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
@@ -33,12 +33,12 @@ Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
 ProtocolKey = Literal[
-    "full-v25", "full-v25-gemma-vertex", "full-v25-codex-subscription"
+    "full-v26", "full-v26-gemma-vertex", "full-v26-codex-subscription"
 ]
 ProtocolName = Literal[
-    "RS-LoCoMo-Full-v25",
-    "RS-LoCoMo-Full-v25-GemmaVertex",
-    "RS-LoCoMo-Full-v25-CodexSubscription",
+    "RS-LoCoMo-Full-v26",
+    "RS-LoCoMo-Full-v26-GemmaVertex",
+    "RS-LoCoMo-Full-v26-CodexSubscription",
 ]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal[
@@ -135,7 +135,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v25"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v26"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -362,8 +362,8 @@ class ToolCallRecord(FrozenModel):
     response: Annotated[
         RememberEnvelope
         | RememberstackEnvelope
-        | RememberContextBundleV1
-        | RememberstackContextBundleV1
+        | RememberContextBundleV2
+        | RememberstackContextBundleV2
         | JsonValue,
         Field(union_mode="left_to_right"),
     ]
@@ -486,7 +486,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v25"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v26"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

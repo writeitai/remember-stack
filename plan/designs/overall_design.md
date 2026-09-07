@@ -199,11 +199,11 @@ PG entity registry             (D98)                      → GCS bytes
   grain-labeled envelope (fact / evidence / compiled), inline contradiction
   co-members, per-source freshness stamps (including K page staleness + open
   flags), explicit truncation, and a typed negative taxonomy. The sole
-  cross-authority result is `ContextBundle/v1`, which preserves two complete
+  cross-authority result is `ContextBundle/v2`, which preserves two complete
   child envelopes.
 - Composable zero-LLM primitives + four **assured operations as closed registry rows**
-  (D50/D87): `resolve_entity`, `testimony_context`, `fact_context`, and
-  `answer_context`. Testimony and facts stay separate; the bundle returns their
+  (D50/D87): `resolve_entity`, `claims_and_sources_context`, `facts_context`, and
+  `combined_context`. Testimony and facts stay separate; the bundle returns their
   complete responses without blending. Reusable
   patterns such as `entity_timeline`, `explain`, and `claims_as_of` are
   non-tool `examples.*` saved queries; MCP renders only the assured catalog

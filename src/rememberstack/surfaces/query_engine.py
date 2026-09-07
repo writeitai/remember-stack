@@ -138,31 +138,31 @@ interactive nomination ceiling and keeps hub-entity/time-window vector reads
 bounded without ever nominating globally and filtering afterward.
 """
 
-FACT_CONTEXT_EVIDENCE_BUDGET: Final = 60
+FACTS_CONTEXT_EVIDENCE_BUDGET: Final = 60
 """Hard maximum evidence associations in one fact-context envelope."""
 
-FACT_CONTEXT_CANDIDATE_K: Final = 200
+FACTS_CONTEXT_CANDIDATE_K: Final = 200
 """Descriptor-pinned fact nomination depth; deliberately not a public knob."""
 
-FACT_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
+FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 """Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
 
-FACT_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE: Final = 16
+FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE: Final = 16
 """Default-k plus one truncation sentinel, without forcing 30-row expansion."""
 
-FACT_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
+FACTS_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
 """Operation wall-clock budget; each PostgreSQL statement gets the remainder."""
 
-TESTIMONY_CONTEXT_K: Final = 50
+CLAIMS_AND_SOURCES_CONTEXT_K: Final = 50
 """The testimony channel's default per-grain result cap."""
 
-FACT_CONTEXT_PROFILE_ENTITY_K: Final = 20
+FACTS_CONTEXT_PROFILE_ENTITY_K: Final = 20
 """Maximum profile-text entity nominations used to rescue enumerative queries."""
 
-DEFAULT_FACT_CONTEXT_HOPS: Final = 1
+DEFAULT_FACTS_CONTEXT_HOPS: Final = 1
 """Ordinary D97 neighborhood depth; named graph recipes may still ask for two."""
 
-TESTIMONY_CONTEXT_CANDIDATE_K: Final = 200
+CLAIMS_AND_SOURCES_CONTEXT_CANDIDATE_K: Final = 200
 """The testimony channel's default per-channel nomination cap."""
 
 CONTEXT_ENTITY_LIMIT: Final = 20
@@ -229,7 +229,7 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
         selected_time = (
             cast(FactTime | None, call_kwargs.get("time")) or CurrentFactTime()
         )
-        deadline = monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+        deadline = monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         call_kwargs["evaluated_at"] = evaluation
         call_kwargs["_database_deadline"] = deadline
         try:
@@ -237,7 +237,7 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
                 call_kwargs["_snapshot_connection"] = connection
                 return method(*args, **call_kwargs)
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
-            return _fact_context_graph_boundary(
+            return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
                 explanation=(
@@ -279,7 +279,7 @@ class QueryEngine:
         `fact_read_pool` is the shared bounded admission authority for D97's
         P1 nomination and fact confirmation. The stock profile supplies a
         dedicated no-overflow engine. Other compositions may omit it only when
-        they do not expose `fact_context`; that operation fails closed rather
+        they do not expose `facts_context`; that operation fails closed rather
         than opening an unbounded connection.
         """
         self._engine = engine
@@ -646,7 +646,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.OPERATION)
-    def fact_context(
+    def facts_context(
         self,
         *,
         deployment_id: UUID,
@@ -662,7 +662,7 @@ class QueryEngine:
         _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
-        _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
         _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         required_entity_ids = (
@@ -682,7 +682,7 @@ class QueryEngine:
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
-            else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+            else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
         if self._fact_read_pool is None:
             raise SQLAlchemyTimeoutError(
@@ -690,7 +690,7 @@ class QueryEngine:
             )
         if required_entity_ids:
             with self._fact_connection(deadline=database_deadline) as connection:
-                _configure_fact_context_connection(
+                _configure_facts_context_connection(
                     connection=connection, deadline=database_deadline
                 )
                 if not _context_entities_are_current(
@@ -705,7 +705,7 @@ class QueryEngine:
                             time=selected_time, evaluated_at=evaluation
                         ),
                     )
-        nominated = self._nominate_fact_context(
+        nominated = self._nominate_facts_context(
             deployment_id=deployment_id,
             query=query,
             entity_ids=entity_ids,
@@ -717,7 +717,7 @@ class QueryEngine:
         )
         candidate_keys = tuple(
             (item.qualifier, UUID(item.item_id))
-            for item in nominated[:FACT_CONTEXT_CANDIDATE_K]
+            for item in nominated[:FACTS_CONTEXT_CANDIDATE_K]
             if item.qualifier in {"relation", "observation"}
         )
         evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
@@ -728,7 +728,7 @@ class QueryEngine:
             confirmed_scope_ids = entity_ids
             confirmed_optional_nodes: tuple[GraphNode, ...] = ()
             if entity_ids:
-                _configure_fact_context_connection(
+                _configure_facts_context_connection(
                     connection=connection, deadline=database_deadline
                 )
                 current_scope_ids = _current_context_entity_ids(
@@ -756,9 +756,9 @@ class QueryEngine:
                 )
             confirmed_rows: list[RowMapping] = []
             visited_candidates = 0
-            confirmation_batch_size = _fact_context_confirmation_batch_size(k=k)
+            confirmation_batch_size = _facts_context_confirmation_batch_size(k=k)
             for batch in batched(candidate_keys, confirmation_batch_size):
-                batch_rows = _confirm_fact_context(
+                batch_rows = _confirm_facts_context(
                     connection=connection,
                     deployment_id=deployment_id,
                     candidate_keys=tuple(batch),
@@ -778,7 +778,7 @@ class QueryEngine:
             has_more_confirmed = len(confirmed_rows) > k
             fact_rows = tuple(confirmed_rows[:k])
             evidence_rows = (
-                _fact_context_evidence(
+                _facts_context_evidence(
                     connection=connection,
                     deployment_id=deployment_id,
                     fact_rows=fact_rows,
@@ -792,7 +792,7 @@ class QueryEngine:
                 key = (str(row["kind"]), row["fact_id"], str(row["stance"]))
                 evidence_by_fact_stance.setdefault(key, []).append(row)
                 totals[key] = int(row["evidence_total"])
-            confirmed_facts = self._enrich_fact_context_facts(
+            confirmed_facts = self._enrich_facts_context_facts(
                 connection=connection,
                 deployment_id=deployment_id,
                 rows=fact_rows,
@@ -805,7 +805,7 @@ class QueryEngine:
             fact_keys=tuple((fact.kind, fact.fact_id) for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
             evidence_per_fact=evidence_per_fact,
-            budget=FACT_CONTEXT_EVIDENCE_BUDGET,
+            budget=FACTS_CONTEXT_EVIDENCE_BUDGET,
         )
 
         returned_counts = Counter(
@@ -856,7 +856,7 @@ class QueryEngine:
         # Only candidates that reached PostgreSQL and failed confirmation are
         # hydration drops. Unvisited nominations are disclosed by truncation.
         dropped = visited_candidates - len(confirmed_rows)
-        candidate_depth_exhausted = len(nominated) > FACT_CONTEXT_CANDIDATE_K
+        candidate_depth_exhausted = len(nominated) > FACTS_CONTEXT_CANDIDATE_K
         confirmation_incomplete = visited_candidates < len(candidate_keys)
         return _envelope(
             grain=Grain.FACT,
@@ -895,7 +895,7 @@ class QueryEngine:
 
     @_with_surface(SurfaceCostKind.OPERATION)
     @_with_fact_snapshot
-    def default_fact_context(
+    def default_facts_context(
         self,
         *,
         deployment_id: UUID,
@@ -904,7 +904,7 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...] = (),
         k: int = 15,
         evidence_per_fact: int = 3,
-        hops: int = DEFAULT_FACT_CONTEXT_HOPS,
+        hops: int = DEFAULT_FACTS_CONTEXT_HOPS,
         predicate: str | None = None,
         time: FactTime | None = None,
         evaluated_at: datetime | None = None,
@@ -921,17 +921,17 @@ class QueryEngine:
         Interval and history reads preserve their explicit anchor scope because
         neighborhood expansion requires a single world-time instant.
         """
-        _validate_fact_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
-        _validate_default_fact_context_hops(hops=hops)
+        _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        _validate_default_facts_context_hops(hops=hops)
         _validate_optional_predicate(predicate=predicate)
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
-        _validate_default_fact_context_anchor_count(anchors=anchors)
+        _validate_default_facts_context_anchor_count(anchors=anchors)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
-            else monotonic() + FACT_CONTEXT_DATABASE_BUDGET_SECONDS
+            else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
 
         def confirmed_facts(
@@ -942,7 +942,7 @@ class QueryEngine:
         ) -> Envelope:
             """Run fact confirmation inside the shared operation deadline."""
             try:
-                return self.fact_context(
+                return self.facts_context(
                     deployment_id=deployment_id,
                     query=query,
                     entity_ids=scoped_entity_ids,
@@ -956,14 +956,14 @@ class QueryEngine:
                     _optional_entity_nodes=optional_entity_nodes,
                 )
             except P1SearchUnavailableError:
-                return _fact_context_graph_boundary(
+                return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation="the primary P1 fact channels are not ready",
                     workaround="retry after P1 relation and observation publication",
                 )
             except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
-                return _fact_context_graph_boundary(
+                return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation=(
@@ -976,7 +976,7 @@ class QueryEngine:
             return confirmed_facts(scoped_entity_ids=())
         try:
             with self._fact_connection(deadline=database_deadline) as connection:
-                _configure_fact_context_connection(
+                _configure_facts_context_connection(
                     connection=connection, deadline=database_deadline
                 )
                 if not _context_entities_are_current(
@@ -992,7 +992,7 @@ class QueryEngine:
                         ),
                     )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
-            return _fact_context_graph_boundary(
+            return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
                 explanation=(
@@ -1003,14 +1003,14 @@ class QueryEngine:
         if isinstance(selected_time, (OverlapFactTime, HistoryFactTime)):
             return confirmed_facts(scoped_entity_ids=anchors)
         if graph_queries is None:
-            return _fact_context_graph_boundary(
+            return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
                 explanation="the live PostgreSQL graph authority is not configured",
             )
 
         remaining = CONTEXT_ENTITY_LIMIT - len(anchors)
-        graph_valid_at, graph_believed_at = _fact_context_graph_clocks(
+        graph_valid_at, graph_believed_at = _facts_context_graph_clocks(
             time=selected_time, evaluated_at=evaluation
         )
         neighbors: dict[UUID, GraphNode] = {}
@@ -1018,7 +1018,7 @@ class QueryEngine:
         graph_cap_applied = False
         for anchor_index, anchor in enumerate(anchors):
             if monotonic() >= database_deadline:
-                return _fact_context_graph_boundary(
+                return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation=(
@@ -1050,7 +1050,7 @@ class QueryEngine:
                 GraphHydrationError,
                 TimeoutError,
             ):
-                return _fact_context_graph_boundary(
+                return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation=(
@@ -1064,7 +1064,7 @@ class QueryEngine:
                 graph.negative is not None
                 and graph.negative.kind is not NegativeKind.KNOWN_EMPTY
             ):
-                return _fact_context_graph_boundary(
+                return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation=(
@@ -1086,7 +1086,7 @@ class QueryEngine:
 
         try:
             with self._fact_connection(deadline=database_deadline) as connection:
-                _configure_fact_context_connection(
+                _configure_facts_context_connection(
                     connection=connection, deadline=database_deadline
                 )
                 current_neighbor_ids = _current_context_entity_ids(
@@ -1095,7 +1095,7 @@ class QueryEngine:
                     entity_ids=tuple(neighbors),
                 )
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
-            return _fact_context_graph_boundary(
+            return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
                 explanation=(
@@ -1173,7 +1173,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.OPERATION)
-    def testimony_context(
+    def claims_and_sources_context(
         self,
         *,
         deployment_id: UUID,
@@ -1184,7 +1184,7 @@ class QueryEngine:
         evaluated_at: datetime | None = None,
     ) -> Envelope:
         """Return current claims and source passages, never facts or entities."""
-        _validate_testimony_context_bounds(k=k, candidate_k=candidate_k)
+        _validate_claims_and_sources_context_bounds(k=k, candidate_k=candidate_k)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         evaluation = evaluated_at or datetime.now(UTC)
         if entity_ids:
@@ -1197,7 +1197,7 @@ class QueryEngine:
                     return _unknown_context_entity(
                         grain=Grain.EVIDENCE, evaluated_at=evaluation
                     )
-        answer = self._testimony_context_retrieval(
+        answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
             query=query,
             k=k,
@@ -2185,13 +2185,13 @@ class QueryEngine:
         finally:
             connection.close()
 
-    def _testimony_context_retrieval(
+    def _claims_and_sources_context_retrieval(
         self,
         *,
         deployment_id: UUID,
         query: str,
-        k: int = TESTIMONY_CONTEXT_K,
-        candidate_k: int = TESTIMONY_CONTEXT_CANDIDATE_K,
+        k: int = CLAIMS_AND_SOURCES_CONTEXT_K,
+        candidate_k: int = CLAIMS_AND_SOURCES_CONTEXT_CANDIDATE_K,
         entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
@@ -2203,14 +2203,14 @@ class QueryEngine:
         """
 
         def hydrate_claim_context() -> Envelope:
-            semantic = self._nominate_testimony_claims(
+            semantic = self._nominate_claims_and_sources_claims(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
                 channel="semantic",
                 entity_ids=entity_ids,
             )
-            lexical = self._nominate_testimony_claims(
+            lexical = self._nominate_claims_and_sources_claims(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
@@ -2240,14 +2240,14 @@ class QueryEngine:
             )
 
         def hydrate_chunk_context() -> Envelope:
-            semantic = self._nominate_testimony_chunks(
+            semantic = self._nominate_claims_and_sources_chunks(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
                 channel="semantic",
                 entity_ids=entity_ids,
             )
-            lexical = self._nominate_testimony_chunks(
+            lexical = self._nominate_claims_and_sources_chunks(
                 deployment_id=deployment_id,
                 query=query,
                 k=candidate_k,
@@ -2279,7 +2279,7 @@ class QueryEngine:
         chunk_context = hydrate_chunk_context()
         return self.combine_evidence(inputs=(claim_context, chunk_context))
 
-    def _nominate_testimony_claims(
+    def _nominate_claims_and_sources_claims(
         self,
         *,
         deployment_id: UUID,
@@ -2309,7 +2309,7 @@ class QueryEngine:
                         {
                             "vector": self._embed(
                                 query=query,
-                                call_site=SurfaceCallSite.TESTIMONY_CLAIMS,
+                                call_site=SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS,
                                 deployment_id=deployment_id,
                             )
                         }
@@ -2338,7 +2338,7 @@ class QueryEngine:
                     {
                         "vector": self._embed(
                             query=query,
-                            call_site=SurfaceCallSite.TESTIMONY_CLAIMS,
+                            call_site=SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS,
                             deployment_id=deployment_id,
                         )
                     }
@@ -2355,7 +2355,7 @@ class QueryEngine:
             empty_explanation="no claims were nominated inside the entity scope",
         )
 
-    def _nominate_testimony_chunks(
+    def _nominate_claims_and_sources_chunks(
         self,
         *,
         deployment_id: UUID,
@@ -2387,7 +2387,7 @@ class QueryEngine:
                         {
                             "vector": self._embed(
                                 query=query,
-                                call_site=SurfaceCallSite.TESTIMONY_CHUNKS,
+                                call_site=SurfaceCallSite.CLAIMS_AND_SOURCES_CHUNKS,
                                 deployment_id=deployment_id,
                             )
                         }
@@ -2416,7 +2416,7 @@ class QueryEngine:
                     {
                         "vector": self._embed(
                             query=query,
-                            call_site=SurfaceCallSite.TESTIMONY_CHUNKS,
+                            call_site=SurfaceCallSite.CLAIMS_AND_SOURCES_CHUNKS,
                             deployment_id=deployment_id,
                         )
                     }
@@ -2434,7 +2434,7 @@ class QueryEngine:
             empty_explanation="no passages were nominated inside the entity scope",
         )
 
-    def _nominate_fact_context(
+    def _nominate_facts_context(
         self,
         *,
         deployment_id: UUID,
@@ -2455,10 +2455,10 @@ class QueryEngine:
         if not callable(method):
             method = getattr(self._search_index, "search_facts_scored", None)
         if not callable(method):
-            raise RuntimeError("fact_context requires scored, time-filtered P1 search")
+            raise RuntimeError("facts_context requires scored, time-filtered P1 search")
         query_vector = self._embed(
             query=query,
-            call_site=SurfaceCallSite.FACT_CONTEXT,
+            call_site=SurfaceCallSite.FACTS_CONTEXT,
             deployment_id=deployment_id,
         )
 
@@ -2469,7 +2469,7 @@ class QueryEngine:
             arguments: dict[str, object] = {
                 "deployment_id": str(deployment_id),
                 "vector": query_vector,
-                "k": FACT_CONTEXT_CANDIDATE_K + 1,
+                "k": FACTS_CONTEXT_CANDIDATE_K + 1,
                 "kind": None,
                 "time": time,
                 "evaluated_at": evaluated_at,
@@ -2491,7 +2491,7 @@ class QueryEngine:
                 entity_method(
                     deployment_id=str(deployment_id),
                     vector=query_vector,
-                    k=FACT_CONTEXT_PROFILE_ENTITY_K,
+                    k=FACTS_CONTEXT_PROFILE_ENTITY_K,
                     deadline=deadline,
                 ),
             )
@@ -2507,7 +2507,7 @@ class QueryEngine:
                 nominated,
                 nominate(scope=profile_ids, ranking_scope=profile_ids),
             ),
-            limit=FACT_CONTEXT_CANDIDATE_K + 1,
+            limit=FACTS_CONTEXT_CANDIDATE_K + 1,
         )
 
     def _resolve_context_entity(
@@ -2704,7 +2704,7 @@ class QueryEngine:
             for fact in facts
         )
 
-    def _enrich_fact_context_facts(
+    def _enrich_facts_context_facts(
         self,
         *,
         connection: Connection,
@@ -2741,10 +2741,12 @@ class QueryEngine:
         )
         members_by_kind_group: dict[tuple[str, UUID], list[dict[str, object]]] = {}
         if groups:
-            _configure_fact_context_connection(connection=connection, deadline=deadline)
+            _configure_facts_context_connection(
+                connection=connection, deadline=deadline
+            )
             params = _fact_time_parameters(time=time, evaluated_at=evaluated_at)
             member_rows = connection.execute(
-                _FACT_CONTEXT_CONTRADICTION_MEMBERS,
+                _FACTS_CONTEXT_CONTRADICTION_MEMBERS,
                 {"deployment_id": deployment_id, "groups": list(groups), **params},
             ).mappings()
             for row in member_rows:
@@ -3003,24 +3005,24 @@ def _validate_batch_b_k(*, k: int) -> None:
         raise ValueError("k must be between 1 and 50")
 
 
-def _validate_fact_context_bounds(*, k: int, evidence_per_fact: int) -> None:
+def _validate_facts_context_bounds(*, k: int, evidence_per_fact: int) -> None:
     """Enforce the fact-context result and per-stance evidence bounds."""
     if not 1 <= k <= 30:
-        raise ValueError("fact_context k must be between 1 and 30")
+        raise ValueError("facts_context k must be between 1 and 30")
     if not 1 <= evidence_per_fact <= 5:
         raise ValueError("evidence_per_fact must be between 1 and 5")
 
 
-def _validate_default_fact_context_hops(*, hops: int) -> None:
+def _validate_default_facts_context_hops(*, hops: int) -> None:
     """Keep the ordinary neighborhood recipe inside its measured depth."""
     if not 1 <= hops <= 2:
-        raise ValueError("fact_context hops must be between 1 and 2")
+        raise ValueError("facts_context hops must be between 1 and 2")
 
 
-def _validate_default_fact_context_anchor_count(*, anchors: tuple[UUID, ...]) -> None:
+def _validate_default_facts_context_anchor_count(*, anchors: tuple[UUID, ...]) -> None:
     """Reserve one combined-scope slot for the required graph neighborhood."""
     if len(anchors) >= CONTEXT_ENTITY_LIMIT:
-        raise ValueError("default fact_context accepts at most 19 anchor entity_ids")
+        raise ValueError("default facts_context accepts at most 19 anchor entity_ids")
 
 
 def _validate_optional_predicate(*, predicate: str | None) -> None:
@@ -3053,22 +3055,26 @@ def _fuse_fact_nominations(
     )
 
 
-def _fact_context_confirmation_batch_size(*, k: int) -> int:
+def _facts_context_confirmation_batch_size(*, k: int) -> int:
     """Confirm enough rows for k plus truncation without expanding all 30."""
     return min(
-        FACT_CONTEXT_CONFIRMATION_BATCH_SIZE,
-        max(FACT_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE, k + 1),
+        FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE,
+        max(FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE, k + 1),
     )
 
 
-def _validate_testimony_context_bounds(*, k: int, candidate_k: int) -> None:
+def _validate_claims_and_sources_context_bounds(*, k: int, candidate_k: int) -> None:
     """Enforce testimony final-list and per-channel nomination bounds."""
     if not 1 <= k <= 100:
-        raise ValueError("testimony_context k must be between 1 and 100")
+        raise ValueError("claims_and_sources_context k must be between 1 and 100")
     if not 1 <= candidate_k <= 400:
-        raise ValueError("testimony_context candidate_k must be between 1 and 400")
+        raise ValueError(
+            "claims_and_sources_context candidate_k must be between 1 and 400"
+        )
     if candidate_k < k:
-        raise ValueError("testimony_context candidate_k cannot be smaller than k")
+        raise ValueError(
+            "claims_and_sources_context candidate_k cannot be smaller than k"
+        )
 
 
 def _bound_testimony_result(
@@ -3144,7 +3150,7 @@ def _fact_time_parameters(
     }
 
 
-def _confirm_fact_context(
+def _confirm_facts_context(
     *,
     connection: Connection,
     deployment_id: UUID,
@@ -3165,9 +3171,9 @@ def _confirm_fact_context(
         fact_ids = [fact_id for kind, fact_id in candidate_keys if kind == fact_kind]
         if not fact_ids:
             continue
-        _configure_fact_context_connection(connection=connection, deadline=deadline)
+        _configure_facts_context_connection(connection=connection, deadline=deadline)
         rows = connection.execute(
-            _CONFIRM_FACT_CONTEXT_BY_KIND[fact_kind],
+            _CONFIRM_FACTS_CONTEXT_BY_KIND[fact_kind],
             {
                 "deployment_id": deployment_id,
                 "fact_ids": fact_ids,
@@ -3191,7 +3197,7 @@ def _confirm_fact_context(
     )
 
 
-def _fact_context_evidence(
+def _facts_context_evidence(
     *,
     connection: Connection,
     deployment_id: UUID,
@@ -3200,7 +3206,7 @@ def _fact_context_evidence(
     deadline: float,
 ) -> Sequence[RowMapping]:
     """Read representative D54 evidence within the shared operation budget."""
-    _configure_fact_context_connection(connection=connection, deadline=deadline)
+    _configure_facts_context_connection(connection=connection, deadline=deadline)
     return (
         connection.execute(
             _CURRENT_FACT_EVIDENCE,
@@ -3216,13 +3222,13 @@ def _fact_context_evidence(
     )
 
 
-def _configure_fact_context_connection(
+def _configure_facts_context_connection(
     *, connection: Connection, deadline: float, now: float | None = None
 ) -> None:
     """Apply planner controls and the remaining whole-operation time budget."""
     remaining = deadline - (monotonic() if now is None else now)
     if remaining <= 0:
-        raise TimeoutError("fact_context exhausted its PostgreSQL operation budget")
+        raise TimeoutError("facts_context exhausted its PostgreSQL operation budget")
     timeout_ms = max(1, math.floor(remaining * 1_000))
     connection.exec_driver_sql(
         f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
@@ -3257,7 +3263,7 @@ def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
     return HistoryTemporalScope(evaluated_at=evaluated_at, believed_at=evaluated_at)
 
 
-def _fact_context_graph_clocks(
+def _facts_context_graph_clocks(
     *, time: FactTime, evaluated_at: datetime
 ) -> tuple[datetime | None, datetime | None]:
     """Select paired operation-entry clocks for live graph traversal."""
@@ -3268,7 +3274,7 @@ def _fact_context_graph_clocks(
     raise ValueError("overlap and history fact scopes have no single graph instant")
 
 
-def _fact_context_graph_boundary(
+def _facts_context_graph_boundary(
     *,
     time: FactTime,
     evaluated_at: datetime,
@@ -3727,7 +3733,7 @@ _LOOKUP_OBSERVATIONS = text(
     """
 )
 
-_FACT_CONTEXT_TIME_PREDICATE = """
+_FACTS_CONTEXT_TIME_PREDICATE = """
       AND fact.ingested_at <= :evaluated_at
       AND fact.invalidated_at IS NULL
       AND (
@@ -3745,7 +3751,7 @@ _FACT_CONTEXT_TIME_PREDICATE = """
       )
 """
 
-_FACT_CONTEXT_ENTITY_PREDICATE = """
+_FACTS_CONTEXT_ENTITY_PREDICATE = """
       AND (
         cardinality(CAST(:entity_ids AS uuid[])) = 0
         OR fact.subject_entity_id = ANY(CAST(:entity_ids AS uuid[]))
@@ -3753,7 +3759,7 @@ _FACT_CONTEXT_ENTITY_PREDICATE = """
       )
 """
 
-_FACT_CONTEXT_COVERAGE = """
+_FACTS_CONTEXT_COVERAGE = """
       (SELECT count(DISTINCT anchor)::integer
        FROM unnest(CAST(:ranking_entity_ids AS uuid[])) AS requested(anchor)
        WHERE requested.anchor = fact.subject_entity_id
@@ -3761,7 +3767,7 @@ _FACT_CONTEXT_COVERAGE = """
 """
 
 
-def _confirm_fact_context_statement(
+def _confirm_facts_context_statement(
     *, fact_kind: Literal["relation", "observation"]
 ) -> TextClause:
     """Build one fixed-kind public-authority confirmation statement."""
@@ -3778,7 +3784,7 @@ def _confirm_fact_context_statement(
            fact.valid_from, fact.valid_until, fact.ingested_at,
            fact.invalidated_at, fact.contradiction_group,
            fact.support_state_current AS support_state,
-           {_FACT_CONTEXT_COVERAGE} AS coverage
+           {_FACTS_CONTEXT_COVERAGE} AS coverage
     FROM requested
     JOIN memory_v1.facts_visible_history AS fact
       ON fact.deployment_id = :deployment_id
@@ -3787,18 +3793,18 @@ def _confirm_fact_context_statement(
     WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
       AND (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
-      {_FACT_CONTEXT_TIME_PREDICATE} {_FACT_CONTEXT_ENTITY_PREDICATE}
+      {_FACTS_CONTEXT_TIME_PREDICATE} {_FACTS_CONTEXT_ENTITY_PREDICATE}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
     )
 
 
-_CONFIRM_FACT_CONTEXT_BY_KIND: dict[Literal["relation", "observation"], TextClause] = {
-    fact_kind: _confirm_fact_context_statement(fact_kind=fact_kind)
+_CONFIRM_FACTS_CONTEXT_BY_KIND: dict[Literal["relation", "observation"], TextClause] = {
+    fact_kind: _confirm_facts_context_statement(fact_kind=fact_kind)
     for fact_kind in ("relation", "observation")
 }
 
-_FACT_CONTEXT_CONTRADICTION_MEMBERS = text(
+_FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     f"""
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
@@ -3808,7 +3814,7 @@ _FACT_CONTEXT_CONTRADICTION_MEMBERS = text(
     FROM memory_v1.facts_visible_history AS fact
     WHERE fact.deployment_id = :deployment_id
       AND fact.contradiction_group = ANY(CAST(:groups AS uuid[]))
-      {_FACT_CONTEXT_TIME_PREDICATE}
+      {_FACTS_CONTEXT_TIME_PREDICATE}
     ORDER BY fact.contradiction_group, fact.ingested_at, fact.fact_kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragment is a module constant
 )

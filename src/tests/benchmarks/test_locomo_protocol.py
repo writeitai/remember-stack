@@ -146,7 +146,7 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     """Prompt compaction cannot discard a retrieved source passage."""
     chunk_id = uuid4()
     call = ToolCallRecord(
-        name="testimony_context",
+        name="claims_and_sources_context",
         arguments={"query": "launch code"},
         latency_ms=1,
         response=Envelope(
@@ -212,10 +212,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
     assured = assured_tool_catalog()
     assert tuple(tool.name for tool in assured) == (
-        "answer_context",
-        "fact_context",
+        "claims_and_sources_context",
+        "combined_context",
+        "facts_context",
         "resolve_entity",
-        "testimony_context",
     )
     operations = manifest["hash_members"]["core_operation_descriptors"]["operations"]
     expected_chain_hashes = {
@@ -228,9 +228,9 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     tools = answer_tool_catalog()
     assert len(tools) == 21
     assert {tool.name for tool in tools} == {
-        "answer_context",
-        "fact_context",
-        "testimony_context",
+        "combined_context",
+        "facts_context",
+        "claims_and_sources_context",
         "resolve_entity",
         "resolve",
         "lookup_relations",
@@ -253,10 +253,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v25_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v26_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v25"
-    assert DEFAULT_PROTOCOL_KEY == "full-v25"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v26"
+    assert DEFAULT_PROTOCOL_KEY == "full-v26"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -297,13 +297,13 @@ def test_protocol_is_v25_and_answer_prompt_has_reasoning_and_loop_guards() -> No
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
-        "full-v25",
-        "full-v25-gemma-vertex",
-        "full-v25-codex-subscription",
+        "full-v26",
+        "full-v26-gemma-vertex",
+        "full-v26-codex-subscription",
     )
-    protocol = PROTOCOL_REGISTRY["full-v25"]
+    protocol = PROTOCOL_REGISTRY["full-v26"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v25"
+    assert protocol.name == "RS-LoCoMo-Full-v26"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -341,7 +341,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v25"]
+    assert selected == ["full-v26"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -479,12 +479,12 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v25 pins, so its scores are
+    """The variant is a provider swap over identical v26 pins, so its scores are
     an answer-agent comparison rather than a new benchmark identity."""
-    base = PROTOCOL_REGISTRY["full-v25"]
-    variant = PROTOCOL_REGISTRY["full-v25-gemma-vertex"]
+    base = PROTOCOL_REGISTRY["full-v26"]
+    variant = PROTOCOL_REGISTRY["full-v26-gemma-vertex"]
 
-    assert variant.name == "RS-LoCoMo-Full-v25-GemmaVertex"
+    assert variant.name == "RS-LoCoMo-Full-v26-GemmaVertex"
     assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
     assert variant.answer_agent_provider == "vertex"
     assert variant.answer_agent_reasoning_effort == "none"
@@ -522,7 +522,7 @@ def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
         base.judge_repetitions,
         base.answer_word_cap,
     )
-    assert DEFAULT_PROTOCOL_KEY == "full-v25"
+    assert DEFAULT_PROTOCOL_KEY == "full-v26"
 
 
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
@@ -563,7 +563,7 @@ def test_cli_composes_only_the_vertex_answer_seat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
     built: list[VertexSettings] = []
@@ -600,12 +600,12 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v25")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v26")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
     def refuse(**_values: object) -> object:  # pragma: no cover
-        raise AssertionError("Vertex must not be composed for full-v25")
+        raise AssertionError("Vertex must not be composed for full-v26")
 
     monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
@@ -620,7 +620,7 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A missing project id is caught before any stage work or paid call."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
@@ -630,10 +630,10 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
 
 def test_codex_subscription_variant_pins_both_generation_seats() -> None:
     """The experimental variant changes provider controls, not LoCoMo logic."""
-    base = PROTOCOL_REGISTRY["full-v25"]
-    variant = PROTOCOL_REGISTRY["full-v25-codex-subscription"]
+    base = PROTOCOL_REGISTRY["full-v26"]
+    variant = PROTOCOL_REGISTRY["full-v26-codex-subscription"]
 
-    assert variant.name == "RS-LoCoMo-Full-v25-CodexSubscription"
+    assert variant.name == "RS-LoCoMo-Full-v26-CodexSubscription"
     assert variant.answer_agent_model == "gpt-5.6-luna"
     assert variant.judge_model == "gpt-5.6-luna"
     assert variant.answer_agent_provider == "codex_subscription"
@@ -654,7 +654,7 @@ def test_cli_codex_answer_and_judge_need_no_openrouter_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An already-ingested run can evaluate solely through local Codex auth."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-codex-subscription")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-codex-subscription")
     monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
 
     answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
@@ -673,10 +673,10 @@ def test_discriminated_step_reads_exactly_like_the_flat_step() -> None:
     """Same field names and reading interface; only the JSON shape differs."""
     tool = DiscriminatedAnswerAgentStep.model_validate_json(
         '{"action":"tool","arguments_json":"{\\"query\\":\\"Where?\\"} .",'
-        '"tool_name":"testimony_context"}'
+        '"tool_name":"claims_and_sources_context"}'
     )
     assert tool.action == "tool"
-    assert tool.tool_name == "testimony_context"
+    assert tool.tool_name == "claims_and_sources_context"
     assert tool.answer is None
     assert tool.parsed_arguments() == ({"query": "Where?"}, ".")
 
@@ -693,7 +693,7 @@ def test_discriminated_step_reads_exactly_like_the_flat_step() -> None:
 @pytest.mark.parametrize(
     "payload",
     (
-        '{"action":"tool","tool_name":"testimony_context"}',
+        '{"action":"tool","tool_name":"claims_and_sources_context"}',
         '{"action":"tool","tool_name":"","arguments_json":"{}"}',
         '{"action":"tool","tool_name":"t","arguments_json":"[1]"}',
         '{"action":"tool","tool_name":"t","arguments_json":"{}","answer":"x"}',

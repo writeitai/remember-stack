@@ -16,7 +16,7 @@ from rememberstack.model import AssuredAnswerIntent
 from rememberstack.model import AssuredOperation
 from rememberstack.model import AssuredOperationName
 from rememberstack.model import AssuredResultContract
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model import Grain
 from rememberstack.model import OperationBundlePlan
@@ -220,10 +220,8 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         answer_intent=AssuredAnswerIntent.IDENTITY,
     ),
     AssuredOperation(
-        name=AssuredOperationName.TESTIMONY_CONTEXT,
-        description=(
-            "High-recall current testimony: confirmed claims and source passages only."
-        ),
+        name=AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT,
+        description=("High-recall current claims and confirmed source passages."),
         parameters={
             "query": _QUERY,
             "entity_ids": _ENTITY_IDS,
@@ -244,14 +242,14 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         },
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(
-            steps=(OperationStep(op="testimony_context"),)
+            steps=(OperationStep(op="claims_and_sources_context"),)
         ),
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.EVIDENCE,
-        answer_intent=AssuredAnswerIntent.TESTIMONY,
+        answer_intent=AssuredAnswerIntent.CLAIMS_AND_SOURCES,
     ),
     AssuredOperation(
-        name=AssuredOperationName.FACT_CONTEXT,
+        name=AssuredOperationName.FACTS_CONTEXT,
         description=(
             "Adjudicated relations and observations under an explicit world-time"
             " scope, with bounded live-graph expansion for current or point-in-time"
@@ -282,7 +280,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         execution_plan=PrimitiveChainPlan(
             steps=(
                 OperationStep(op="graph_neighborhood"),
-                OperationStep(op="fact_context"),
+                OperationStep(op="facts_context"),
             )
         ),
         result_contract=AssuredResultContract.ENVELOPE,
@@ -291,10 +289,10 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         version=2,
     ),
     AssuredOperation(
-        name=AssuredOperationName.ANSWER_CONTEXT,
+        name=AssuredOperationName.COMBINED_CONTEXT,
         description=(
-            "Complete testimony and neighborhood-aware fact responses side by side"
-            " in ContextBundle/v1."
+            "Complete claims-and-sources and neighborhood-aware fact responses side by side"
+            " in ContextBundle/v2."
         ),
         parameters={
             "query": _QUERY,
@@ -303,12 +301,12 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
             "predicate": _PREDICATE,
             "time": {**_TIME_SCHEMA, "required": False},
         },
-        result_schema=ContextBundleV1.model_json_schema(mode="serialization"),
+        result_schema=ContextBundleV2.model_json_schema(mode="serialization"),
         execution_plan=OperationBundlePlan(),
-        result_contract=AssuredResultContract.CONTEXT_BUNDLE_V1,
+        result_contract=AssuredResultContract.CONTEXT_BUNDLE_V2,
         output_grain=None,
         answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
-        version=2,
+        version=3,
     ),
 )
 

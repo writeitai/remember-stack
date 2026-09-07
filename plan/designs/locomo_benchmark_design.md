@@ -1,5 +1,12 @@
 # LoCoMo full-system benchmark design
 
+> **Binding D114 / v26 amendment (2026-09-07).** The three assured context
+> tools adopt `claims_and_sources_context`, `facts_context`, and
+> `combined_context`; the last returns `ContextBundle/v2`. The catalog,
+> surface-manifest hash, adapter version, prompt text, protocol identities and
+> fingerprints roll together. Dataset, ingestion, models, retrieval behavior,
+> budgets, judge rubric and scoring are unchanged.
+
 > **Binding v25 evaluator amendment (2026-09-07).** All default, Gemma/Vertex,
 > and Codex-subscription variants reuse one answer-prompt constant. It permits
 > general knowledge only as interpretation, forbids seeking benchmark gold
@@ -140,7 +147,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v25
+protocol                RS-LoCoMo-Full-v26
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -273,7 +280,7 @@ operator-review experiment, if run, is a distinct diagnostic artifact and does
 not replace the ordinary v16 score.
 
 **v14 → v15 (2026-08-27 — D97 default entity neighborhood):** The
-`fact_context` and `answer_context` descriptors advance to version 2 because
+`facts_context` and `combined_context` descriptors advance to version 2 because
 anchored current/point-in-time reads add bounded neighborhood expansion,
 `hops`/`predicate`, and the 19-anchor cap. The `surface_manifest_hash`, catalog
 hash, adapter identity, and protocol fingerprint roll together. Dataset,
@@ -297,7 +304,7 @@ fingerprint roll together. There is no v13 compatibility mode.
 D89 keeps the v12 dataset, models, prompts, budgets, and complete 23-tool answer
 catalog. It rolls the query-space manifest and protocol identity because
 the fact views now share private current-evidence and D54 lineage authorities,
-and `fact_context` applies one operation-level PostgreSQL deadline. This fixes
+and `facts_context` applies one operation-level PostgreSQL deadline. This fixes
 the pool-exhaustion failure observed during the v12 answer pass without adding
 an answer tool or changing the fact/testimony mental model. V13 also binds the
 current D88 claim-level normalize fan-out and distinct observation-adjudication
@@ -306,13 +313,13 @@ v13 performs a fresh ingest at its recorded repository revision.
 
 **v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
 replaces the assured-operation subset with `resolve_entity`,
-`testimony_context`, `fact_context`, and `answer_context`. The removed
+`claims_and_sources_context`, `facts_context`, and `combined_context`. The removed
 `question_context`/`current_context` names and optional mixed-grain flags are
 not compatibility tools. The complete answer catalog therefore contains four
 assured operations, seven direct primitives, nine open-query operations, and
 three P3 motions: 23 descriptors. The answer prompt routes source-testimony
-questions to `testimony_context`, current or historical truth questions to
-`fact_context`, general questions needing both layers to `answer_context`, and
+questions to `claims_and_sources_context`, current or historical truth questions to
+`facts_context`, general questions needing both layers to `combined_context`, and
 identity ambiguity to `resolve_entity`. The tool-catalog hash, surface manifest,
 prompt, adapter identity, and protocol fingerprint roll together. V11 artifacts
 remain self-describing and are not comparable to v12. Decision: D87; analysis:
@@ -488,7 +495,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v25-codex-subscription` is an additive evaluator-provider variant for
+`full-v26-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -524,11 +531,11 @@ accounting becomes a material requirement.
 
 The provider controls force a distinct protocol. Codex does not expose
 temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
-reasoning effort `high`, rather than v25's OpenRouter-specific `none`. The v25
+reasoning effort `high`, rather than v26's OpenRouter-specific `none`. The v26
 prompt is the same object used by the OpenRouter and Gemma variants; schemas,
 budgets, catalog, and judge rubric remain aligned.
 These runs are useful for smoke/development comparison but are not canonical
-v25 publication results. The SDK's synchronous turn currently has no
+v26 publication results. The SDK's synchronous turn currently has no
 benchmark-enforced deadline, so this variant is not the default unattended
 publication path.
 
@@ -787,7 +794,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v25 requires to be
+- the non-secret `document_binding_generation`, which Full-v26 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -803,8 +810,8 @@ the machine-client readiness capability.
 
 The answer catalog is the exact union of:
 
-- assured operations: `resolve_entity`, `testimony_context`, `fact_context`,
-  `answer_context`;
+- assured operations: `resolve_entity`, `claims_and_sources_context`, `facts_context`,
+  `combined_context`;
 - direct primitives: `resolve`, `lookup_relations`, `transcript_relation`,
   `lookup_observations`, `search_claims`, `search_chunks`, `hydrate_relation`;
 - open query: `query_sql`, `explain_sql`, `describe_query_space`,
@@ -853,7 +860,7 @@ For each question:
    it through `MemoryClient` or the bounded P3 adapter.
 4. Append arguments, latency, and the complete JSON wire response. Single-layer
    assured and primitive responses retain their complete envelopes;
-   `answer_context` retains both complete child envelopes in `ContextBundle/v1`.
+   `combined_context` retains both complete child envelopes in `ContextBundle/v2`.
 5. For `action="answer"`, require at least one tool call. The prompt requires
    the shortest phrase that fully names the requested entities or values and
    forbids explanations or reasoning. Enforce a numeric word cap only when the
@@ -879,8 +886,8 @@ For each question:
    rejected terminal `Unknown` steps.
 
 The agent is instructed to choose the cheapest suitable channel:
-`testimony_context` for what sources said, `fact_context` for current or
-historical truth, `answer_context` when both authority layers are useful, and
+`claims_and_sources_context` for what sources said, `facts_context` for current or
+historical truth, `combined_context` when both authority layers are useful, and
 `resolve_entity` alongside an independent content read when a named entity can
 narrow retrieval, in parallel when the runtime supports it and otherwise in
 consecutive steps; returned entity ids make follow-up reads precise. Identity
@@ -936,12 +943,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v25 \
+  --protocol full-v26 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v25`; the
-explicit `full-v25-gemma-vertex` and `full-v25-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v26`; the
+explicit `full-v26-gemma-vertex` and `full-v26-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

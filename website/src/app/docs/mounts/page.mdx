@@ -27,8 +27,8 @@ Agents that can navigate files should treat memory like a **read-only codebase**
 | Situation | Do this |
 | --- | --- |
 | Mounts available | `ls` / read / `grep` first |
-| Need current truth | Leave files; call `fact_context` or query `facts_current` |
-| Need source testimony | `testimony_context` or claims views — not claim validity as “true now” |
+| Need current truth | Leave files; call `facts_context` or query `facts_current` |
+| Need source testimony | `claims_and_sources_context` or claims views — not claim validity as “true now” |
 | Load-bearing decision | Verify on the **spine** after any mount/K orientation |
 | No mounts | API/CLI/MCP carry full parity (including artifact handles) |
 
@@ -81,7 +81,7 @@ Skill contents (high level):
 2. Three neutral choices — mounted files, open SQL/live-graph helpers, or the four assured operations
 3. Bound SQL examples (wrong claim-window query vs `facts_current`, predicate vocab, audit trail, divergence)  
 4. Honest empty-K behavior  
-5. Assured catalog only: `resolve_entity`, `testimony_context`, `fact_context`, `answer_context`
+5. Assured catalog only: `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`
 6. Former patterns as `examples.*` saved queries only  
 
 Atomic publish so harnesses never read a partial skill file.
