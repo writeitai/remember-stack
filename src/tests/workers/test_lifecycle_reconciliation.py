@@ -66,6 +66,7 @@ from rememberstack.spine import SyncCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.normalization import NormalizationCatalog
+from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -334,6 +335,11 @@ class _LifecycleRig:
         registry.register(
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
+                ordered_applier=OrderedRelationApplier(
+                    engine=engine,
+                    model_provider=self.provider,
+                    settings=SupersessionSettings(),
+                ),
                 adjudicator=SupersessionAdjudicator(
                     engine=engine,
                     model_provider=self.provider,

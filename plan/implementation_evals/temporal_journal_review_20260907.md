@@ -160,3 +160,26 @@ Its ordered relation application is still unfinished and explicitly fenced;
 this increment must not be represented as a passing complete pipeline or a
 merge-ready PR. The local integration requires its own scoped review and later
 supported full-pipeline validation after the remaining writers are connected.
+
+## Round six: closed-version handoff
+
+Antigravity reviewed `267a9d8e` and returned conditional scoped approval with
+required corrections. The original process completed normally; output is
+`/tmp/rs-t1-handoff-antigravity-r6.log`. Some review prose named nonexistent
+helpers, tests and an `apply_relations` stage. Those names are not implementation
+evidence. Independently inspecting the actual code confirmed three findings:
+
+- D56 sibling versions inherited the primary version's hash/lane. Completion
+  now selects and preserves each sibling's own source-version hash and exact
+  extraction lane. The new real-ledger regression passes.
+- Claim completion checked work state after expensive materialization locks.
+  It now validates exact running work coordinates after the shared admission
+  prefix and before those locks, retaining the required lock order.
+- Missing representation lookup leaked a bare row-count error. It now reports
+  a typed temporal conflict.
+
+The working ordered-applier increment has 18 scoped PostgreSQL15 proofs; the
+normalization suite now has 22. It requires its own review and supported CI.
+The D111 unknown-start constraint conflict and multiple dated identity ambiguity
+are separately recorded in the progress report; scoped handoff approval does
+not settle those design decisions or certify the full pipeline.

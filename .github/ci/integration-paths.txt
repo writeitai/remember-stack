@@ -19,6 +19,7 @@ src/tests/spine/test_migrations.py
 src/tests/spine/test_normalization_publication.py
 src/tests/spine/test_observation_adjudication.py
 src/tests/spine/test_operations.py
+src/tests/spine/test_ordered_relation_application.py
 src/tests/spine/test_pipeline_readiness.py
 src/tests/spine/test_profile_refresher.py
 src/tests/spine/test_query_space_batch_a.py

@@ -109,6 +109,15 @@ class EmptyObsFlushComplete(BaseModel):
     lane: ProcessingLane | None
 
 
+class RelationFlushBarrier(BaseModel):
+    """Complete one leased relation unit using its durable membership coordinates."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    deployment_id: UUID
+    unit_id: UUID
+    adjudicator_version: str
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
@@ -118,6 +127,7 @@ class HandlerOutcome(BaseModel):
     extract_chunk_barrier: ExtractChunkBarrier | None = None
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
     entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
+    relation_flush_barrier: RelationFlushBarrier | None = None
     empty_obs_flush: EmptyObsFlushComplete | None = None
 
 
@@ -371,6 +381,12 @@ class Worker:
             self._ledger.complete_entity_obs_flush(
                 processing_id=claimed.processing_id,
                 barrier=outcome.entity_obs_flush_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.relation_flush_barrier is not None:
+            self._ledger.complete_relation_flush(
+                processing_id=claimed.processing_id,
+                barrier=outcome.relation_flush_barrier,
                 follow_up=outcome.follow_up,
             )
         elif outcome.empty_obs_flush is not None:

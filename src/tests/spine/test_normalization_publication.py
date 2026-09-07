@@ -1311,3 +1311,109 @@ def test_relation_work_enqueue_failure_rolls_back_the_entire_handoff(
                 ).scalar_one()
                 == 0
             )
+
+
+def test_shared_claim_completion_keeps_each_versions_own_hash_and_lane(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Completing one D56 claim must not copy steady/version-one coordinates into its backfill sibling."""
+    from rememberstack.model import EnqueueWork
+    from rememberstack.model import PipelineStage
+    from rememberstack.model import ProcessingLane
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.work_ledger import WorkLedger
+    from rememberstack.spine.work_ledger import WorkLedgerSettings
+    from rememberstack.workers.base import ClaimNormalizeBarrier
+    from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+
+    catalog = NormalizationCatalog(engine=database_engine)
+    prepared = catalog.input_snapshot(
+        deployment_id=inputs.deployment_id, claim_id=inputs.claim_id
+    )
+    catalog.publish(
+        prepared=prepared,
+        normalizer_version=E3_NORMALIZER_VERSION,
+        output=NormalizationOutput(
+            outcome="accepted", relations=_output(inputs=inputs).relations
+        ),
+    )
+    ledger = WorkLedger(engine=database_engine, settings=WorkLedgerSettings())
+    coordinates: list[tuple[UUID, UUID, ProcessingLane]] = []
+    for number, lane in ((1, ProcessingLane.STEADY), (2, ProcessingLane.BACKFILL)):
+        version_id, representation_id = _version_membership(
+            database_engine=database_engine, inputs=inputs, number=number
+        )
+        coordinates.append((version_id, representation_id, lane))
+        with database_engine.connect() as connection:
+            chunk_id = connection.execute(
+                text("SELECT chunk_id FROM chunks WHERE representation_id=:id"),
+                {"id": representation_id},
+            ).scalar_one()
+        job = ledger.enqueue(
+            work=EnqueueWork(
+                deployment_id=inputs.deployment_id,
+                target_kind=ProcessingTarget.CHUNK,
+                target_id=chunk_id,
+                stage=PipelineStage.EXTRACT_CLAIMS,
+                component_version="source-proof",
+                content_hash=str(version_id),
+                lane=lane,
+            )
+        )
+        ledger_id = job.processing_id
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET status='succeeded' WHERE processing_id=:id"
+                ),
+                {"id": ledger_id},
+            )
+    version_id, representation_id, lane = coordinates[0]
+    job = ledger.enqueue(
+        work=EnqueueWork(
+            deployment_id=inputs.deployment_id,
+            target_kind=ProcessingTarget.CLAIM,
+            target_id=inputs.claim_id,
+            stage=PipelineStage.NORMALIZE_RELATIONS,
+            component_version=E3_NORMALIZER_VERSION,
+            content_hash=str(version_id),
+            lane=lane,
+        )
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status='running' WHERE processing_id=:id"
+            ),
+            {"id": job.processing_id},
+        )
+    ledger.complete_claim_normalize(
+        processing_id=job.processing_id,
+        barrier=ClaimNormalizeBarrier(
+            deployment_id=inputs.deployment_id,
+            version_id=version_id,
+            representation_id=representation_id,
+            doc_id=prepared.claim.doc_id,
+            chunker_version="chunk-proof",
+            extractor_version="source-proof",
+            content_hash=str(version_id),
+            lane=lane,
+            normalize_component_version=E3_NORMALIZER_VERSION,
+            obs_flush_component_version=OBS_FLUSH_VERSION,
+        ),
+    )
+    with database_engine.connect() as connection:
+        for version_id, _representation_id, lane in coordinates:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT content_hash, lane::text FROM relation_flush_version_state WHERE deployment_id=:dep AND version_id=:version"
+                    ),
+                    {"dep": inputs.deployment_id, "version": version_id},
+                )
+                .mappings()
+                .one()
+            )
+            assert row["content_hash"] == str(version_id)
+            assert row["lane"] == lane.value

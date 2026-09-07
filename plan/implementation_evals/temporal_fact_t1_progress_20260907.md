@@ -260,3 +260,55 @@ and events, hard forget, serving/readiness checks, remaining generation/LoCoMo
 protocol rolls, consumer packages and release are still required. The complete
 pipeline must pass supported PostgreSQL19 CI and Antigravity review before this
 PR can merge. No full-pipeline success is claimed for the handoff increment.
+
+## Ordered relation application and review corrections
+
+The composed entity-unit handler now uses an ordered relation applier. It
+freezes one finite assertion batch in a single database snapshot, prepares only
+its least unapplied ordinal under the canonical block, runs inference outside
+the transaction, records the first complete answer, then revalidates all inputs
+before atomically applying identity, evidence, temporal operations and receipts.
+Concurrent version materialization waits for the next closed batch. Receipt
+replay repairs worker completion without repeating identity inference. An older
+active generation cannot be overtaken by a new one.
+
+State evidence retains its immutable seed and authoritative verdict window;
+occurrence metadata unions without merging neighboring occurrence identities.
+Succession uses world-time starts and does not close belief time. A deterministic
+compatible state remains the identity target when semantic inference examines
+additional candidates; model omission cannot turn it into an overlapping new
+fact. A successor already selected as evidence supplies its authoritative verdict
+start, not the new testimony's different date. Missing/disjoint evidence targets,
+lost materialized inputs, stale source currency and removed receipt targets are
+refused before effects can commit.
+
+The actual worker and work-ledger completion now reach reconciliation only after
+all expected relation application receipts exist. The handoff's temporary
+entity-unit fence is replaced in composition; this does not convert the still
+legacy observation and other authority writers.
+
+Round-six review corrections validate the exact running claim work before
+expensive sibling locks, return typed missing-representation conflicts, and
+preserve each D56 sibling version's own content hash and steady/backfill lane.
+A database test drives that sibling case through the actual claim-completion
+method.
+
+Validation: **18** private PostgreSQL15 ordered-application cases and **22**
+normalization/publication/barrier cases pass, using actual relevant constraints
+and temporal finalization. Application cases include concurrent admission,
+rollback on final receipt failure, inference without retained block locks,
+same-triple event identity, chronology, evidence union, receipt retries, the
+deterministic state match with another semantic candidate, and actual handler/
+ledger completion. The previous 123 focused pure tests also pass for this
+increment. These are not full migration-graph or supported PostgreSQL19 proofs.
+
+Implementation exposed a binding conflict for ordinary mixed dated/undated
+same-value states. D111 design PR #385 proposes known-start-only exclusion;
+this increment deliberately retains the current accepted constraint pending
+that review and merge. Multiple dated compatible state targets also lack an
+explicit uncertain identity completion contract. Neither case is silently
+converted into fabricated evidence or contradiction. They remain identified
+correctness work, alongside complete candidate budgeting, observation and all
+other writer participation, identity reconciliation, correction execution,
+cache certificates/events, hard forget/replay, serving/readiness, T.2/T.3/T.5,
+generation/LoCoMo rolls, full CI/review and release. PR #384 remains draft.

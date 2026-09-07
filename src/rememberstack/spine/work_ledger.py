@@ -346,9 +346,29 @@ class WorkLedger:
             if _uses_normalization_receipts(version=barrier.normalize_component_version)
             else nullcontext(),
         ):
-            claim_id = connection.execute(
-                _SELECT_TARGET_ID, {"processing_id": processing_id}
-            ).scalar_one()
+            row = (
+                connection.execute(_SELECT_TARGET_ID, {"processing_id": processing_id})
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise WorkNotFoundError(
+                    f"processing row {processing_id} does not exist"
+                )
+            if row["status"] != "running":
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running"
+                )
+            if (
+                row["deployment_id"] != barrier.deployment_id
+                or row["target_kind"] != "claim"
+                or row["stage"] != "normalize_relations"
+                or row["component_version"] != barrier.normalize_component_version
+            ):
+                raise TemporalWriteConflict(
+                    "claim completion does not match the leased work coordinates"
+                )
+            claim_id = row["target_id"]
             if _uses_normalization_receipts(
                 version=barrier.normalize_component_version
             ):
@@ -375,6 +395,8 @@ class WorkLedger:
                 "representation_id": barrier.representation_id,
                 "chunker_version": barrier.chunker_version,
                 "doc_id": barrier.doc_id,
+                "content_hash": barrier.content_hash,
+                "lane": barrier.lane,
             }
             by_rep[str(barrier.representation_id)] = [primary]
             for row in connection.execute(
@@ -448,8 +470,10 @@ class WorkLedger:
                             obs_flush_component_version=(
                                 barrier.obs_flush_component_version
                             ),
-                            content_hash=barrier.content_hash,
-                            lane=barrier.lane,
+                            content_hash=str(candidate["content_hash"]),
+                            lane=ProcessingLane(str(candidate["lane"]))
+                            if candidate["lane"] is not None
+                            else barrier.lane,
                             doc_id=UUID(str(candidate["doc_id"])),
                         )
                     )
@@ -580,6 +604,153 @@ class WorkLedger:
                         payload={
                             "version_id": str(barrier.version_id),
                             "representation_id": str(barrier.representation_id),
+                        },
+                    ),
+                )
+            )
+            return tuple(outcomes)
+
+    def complete_relation_flush(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """Complete only the leased unit after receipts prove every input, then release its version."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.workers.base import RelationFlushBarrier
+        from rememberstack.workers.reconcile import RECONCILE_VERSION
+
+        if not isinstance(barrier, RelationFlushBarrier):
+            raise TypeError("barrier must be RelationFlushBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with (
+            self._engine.begin() as connection,
+            temporal_identity_admission(
+                connection=connection, deployment_id=barrier.deployment_id
+            ),
+        ):
+            parameters = {
+                "dep": barrier.deployment_id,
+                "unit": barrier.unit_id,
+                "generation": barrier.adjudicator_version,
+                "processing": processing_id,
+            }
+            unit = (
+                connection.execute(
+                    text("""
+                SELECT v.* FROM relation_flush_block_units u JOIN relation_flush_version_state v
+                  ON v.deployment_id=u.deployment_id AND v.version_id=u.version_id
+                 AND v.normalizer_version=u.normalizer_version AND v.adjudicator_version=u.adjudicator_version
+                WHERE u.deployment_id=:dep AND u.unit_id=:unit AND u.adjudicator_version=:generation
+            """),
+                    parameters,
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if unit is None:
+                raise TemporalWriteConflict(
+                    "relation unit has no matching durable version membership"
+                )
+            parameters.update(
+                {
+                    "version": unit["version_id"],
+                    "normalizer": unit["normalizer_version"],
+                }
+            )
+            connection.execute(
+                _ADVISORY_LOCK_NORMALIZE_BARRIER,
+                {"representation_id": unit["representation_id"]},
+            )
+            if (
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM relation_flush_inputs WHERE deployment_id=:dep AND unit_id=:unit"
+                    ),
+                    parameters,
+                ).scalar_one()
+                == 0
+            ):
+                raise TemporalWriteConflict(
+                    "materialized relation unit has lost its assertion membership"
+                )
+            pending = connection.execute(
+                text("""SELECT EXISTS (
+                SELECT 1 FROM relation_flush_inputs i WHERE i.deployment_id=:dep AND i.unit_id=:unit
+                AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id
+                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version))"""),
+                parameters,
+            ).scalar_one()
+            if pending:
+                raise TemporalWriteConflict(
+                    "relation unit cannot complete before all application receipts exist"
+                )
+            changed = connection.execute(
+                text("""UPDATE processing_state SET status='succeeded', finished_at=clock_timestamp()
+                WHERE processing_id=:processing AND deployment_id=:dep AND target_id=:unit AND target_kind='entity'
+                  AND stage='adjudicate_supersession' AND component_version=:generation AND status='running'"""),
+                parameters,
+            ).rowcount
+            if changed != 1:
+                raise WorkNotRunningError(
+                    "matching leased relation work is not running"
+                )
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            counts = (
+                connection.execute(
+                    text("""SELECT count(*) AS expected,
+                count(*) FILTER (WHERE EXISTS (SELECT 1 FROM processing_state p WHERE p.deployment_id=u.deployment_id
+                    AND p.target_id=u.unit_id AND p.target_kind='entity' AND p.stage='adjudicate_supersession'
+                    AND p.component_version=u.adjudicator_version AND p.status='succeeded')) AS ready
+                FROM relation_flush_block_units u WHERE u.deployment_id=:dep AND u.version_id=:version
+                  AND u.normalizer_version=:normalizer AND u.adjudicator_version=:generation"""),
+                    parameters,
+                )
+                .mappings()
+                .one()
+            )
+            if counts["expected"] != unit["expected_units"]:
+                raise TemporalWriteConflict(
+                    "closed relation unit count no longer matches its version"
+                )
+            if counts["expected"] != counts["ready"]:
+                return tuple(outcomes)
+            if connection.execute(
+                text("""SELECT EXISTS (SELECT 1 FROM relation_flush_inputs i JOIN relation_flush_block_units u
+                ON u.deployment_id=i.deployment_id AND u.unit_id=i.unit_id
+                WHERE u.deployment_id=:dep AND u.version_id=:version AND u.normalizer_version=:normalizer
+                  AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id
+                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version))"""),
+                parameters,
+            ).scalar_one():
+                raise TemporalWriteConflict(
+                    "relation version has succeeded work without exact application receipts"
+                )
+            connection.execute(
+                text("""UPDATE relation_flush_version_state SET fanout_status='barrier_complete', completed_at=clock_timestamp()
+                WHERE deployment_id=:dep AND version_id=:version AND normalizer_version=:normalizer AND adjudicator_version=:generation"""),
+                parameters,
+            )
+            outcomes.append(
+                enqueue_on(
+                    connection=connection,
+                    work=EnqueueWork(
+                        deployment_id=barrier.deployment_id,
+                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                        target_id=unit["version_id"],
+                        stage=PipelineStage.RECONCILE,
+                        component_version=RECONCILE_VERSION,
+                        content_hash=unit["content_hash"],
+                        lane=ProcessingLane(unit["lane"]),
+                        payload={
+                            "version_id": str(unit["version_id"]),
+                            "representation_id": str(unit["representation_id"]),
+                            "doc_id": str(unit["doc_id"]),
                         },
                     ),
                 )
@@ -1529,17 +1700,23 @@ _CLAIM_START = text(
 
 _SELECT_TARGET_ID = text(
     """
-    SELECT target_id FROM processing_state WHERE processing_id = :processing_id
+    SELECT target_id, deployment_id, target_kind::text, stage::text, component_version, status::text FROM processing_state WHERE processing_id = :processing_id
     """
 )
 
 _VERSIONS_WITH_CLAIM_OCCURRENCE = text(
     """
     SELECT DISTINCT c.deployment_id, c.version_id, c.representation_id,
-           c.chunker_version, cl.doc_id
+           c.chunker_version, cl.doc_id, v.content_hash,
+           (SELECT CASE WHEN bool_or(p.lane = 'steady') THEN 'steady' ELSE 'backfill' END
+            FROM processing_state p JOIN chunks x ON x.chunk_id=p.target_id AND x.deployment_id=p.deployment_id
+            WHERE p.deployment_id=c.deployment_id AND x.version_id=c.version_id
+              AND x.representation_id=c.representation_id AND x.chunker_version=c.chunker_version
+              AND p.target_kind='chunk' AND p.stage='extract_claims' AND p.component_version=:extractor_version) AS lane
     FROM chunk_claims cc
-    JOIN chunks c ON c.chunk_id = cc.chunk_id
-    JOIN claims cl ON cl.claim_id = cc.claim_id
+    JOIN chunks c ON c.chunk_id = cc.chunk_id AND c.deployment_id=cc.deployment_id
+    JOIN claims cl ON cl.claim_id = cc.claim_id AND cl.deployment_id=cc.deployment_id
+    JOIN document_versions v ON v.deployment_id=c.deployment_id AND v.version_id=c.version_id AND v.doc_id=cl.doc_id
     WHERE cc.claim_id = :claim_id
       AND c.deployment_id = :deployment_id
       AND cl.extractor_version = :extractor_version
@@ -2085,7 +2262,11 @@ def _materialize_relation_units_on(
                 AND r.representation_id = :representation_id)
     """),
         parameters,
-    ).scalar_one()
+    ).scalar_one_or_none()
+    if doc_id is None:
+        raise TemporalWriteConflict(
+            "relation version has no matching document representation"
+        )
     parameters["doc_id"] = doc_id
     expected_units = int(
         connection.execute(

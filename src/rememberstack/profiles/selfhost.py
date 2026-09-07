@@ -49,6 +49,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.normalization import NormalizationCatalog
+from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -1282,6 +1283,11 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
+                ordered_applier=OrderedRelationApplier(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    settings=SupersessionSettings(),
+                ),
                 adjudicator=SupersessionAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,

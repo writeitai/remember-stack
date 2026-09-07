@@ -43,12 +43,14 @@ from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.fact_catalog import OTHER_PREDICATE_GRAMMAR
 from rememberstack.spine.normalization import NormalizationCatalog
 from rememberstack.spine.observation_adjudication import ObservationAdjudicator
+from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.resolver import CascadeResolver
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import ClaimNormalizeBarrier
 from rememberstack.workers.base import EntityObsFlushBarrier
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.base import RelationFlushBarrier
 from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 
@@ -644,6 +646,7 @@ class AdjudicateSupersessionHandler:
         self,
         *,
         adjudicator: SupersessionAdjudicator,
+        ordered_applier: OrderedRelationApplier | None = None,
         profile_refresher: ProfileRefresherPort,
         facts: FactCatalog | None = None,
         chunk_catalog: ChunkCatalog | None = None,
@@ -652,6 +655,7 @@ class AdjudicateSupersessionHandler:
     ) -> None:
         """Bind adjudication, its profile projection, and optional D88 catalogs."""
         self._adjudicator = adjudicator
+        self._ordered_applier = ordered_applier
         self._profile_refresher = profile_refresher
         self._facts = facts
         self._chunk_catalog = chunk_catalog
@@ -665,8 +669,51 @@ class AdjudicateSupersessionHandler:
         load relation ids from origin-claim evidence at the normalizer generation.
         """
         if work.target_kind is ProcessingTarget.ENTITY:
-            raise RuntimeError(
-                "ordered relation unit application is not wired; cannot complete this unit"
+            if (
+                self._ordered_applier is None
+                or work.component_version != ADJUDICATOR_VERSION
+            ):
+                raise NonRetryableHandlerError(
+                    "relation unit requires its registered ordered applier generation"
+                )
+            affected: set[UUID] = set()
+            while (
+                prepared := self._ordered_applier.prepare(
+                    deployment_id=work.deployment_id, unit_id=work.target_id
+                )
+            ) is not None:
+                output = self._ordered_applier.recorded_output(prepared=prepared)
+                if output is None:
+                    output = self._ordered_applier.publish_output(
+                        prepared=prepared,
+                        output=self._ordered_applier.infer(
+                            prepared=prepared, meter=meter
+                        ),
+                    )
+                result = self._ordered_applier.apply(prepared=prepared)
+                affected.update(result.affected_relation_ids)
+            affected.update(
+                self._ordered_applier.affected_for_unit(
+                    deployment_id=work.deployment_id, unit_id=work.target_id
+                )
+            )
+            call_key = f"profile:relation-unit:{work.target_id}"
+            _run_profile_refresh(
+                action=lambda: self._profile_refresher.refresh_for_facts(
+                    deployment_id=work.deployment_id,
+                    relation_ids=tuple(sorted(affected)),
+                    observation_ids=(),
+                    meter=meter,
+                    call_key=call_key,
+                ),
+                call_key=call_key,
+            )
+            return HandlerOutcome(
+                relation_flush_barrier=RelationFlushBarrier(
+                    deployment_id=work.deployment_id,
+                    unit_id=work.target_id,
+                    adjudicator_version=work.component_version,
+                )
             )
         payload = work.payload or {}
         relation_ids = payload.get("relation_ids") or []
