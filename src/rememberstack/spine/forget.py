@@ -26,6 +26,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.spine.admission import active_forget_id_on
+from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.work_ledger import enqueue_on
 
 HARD_FORGET_COMPONENT_VERSION = "hard-forget-v1"
@@ -540,6 +541,9 @@ class ForgetCatalog:
             deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
         )
         with self._engine.connect() as connection:
+            require_fact_windows_ready(
+                connection=connection, deployment_id=deployment_id
+            )
             forget_id = connection.execute(
                 _FORGOTTEN_INGEST,
                 {

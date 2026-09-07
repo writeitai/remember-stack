@@ -81,13 +81,13 @@ CREATE INDEX ix_fact_applications_observation_support
 
 -- No pending legacy rows are permitted at this maintenance boundary.
 ALTER TABLE public.normalize_observation_staging
-  ALTER COLUMN statement DROP NOT NULL,
   ADD COLUMN application_id uuid NOT NULL,
   DROP CONSTRAINT normalize_observation_staging_pkey,
   ADD PRIMARY KEY (deployment_id, version_id, application_id),
   ADD FOREIGN KEY (deployment_id, application_id)
     REFERENCES public.fact_applications (deployment_id, application_id)
     ON DELETE CASCADE;
+ALTER TABLE public.normalize_observation_staging ALTER COLUMN statement DROP NOT NULL;
 ALTER TABLE public.relation_evidence
   ADD COLUMN legacy_stance public.evidence_stance;
 ALTER TABLE public.observation_evidence

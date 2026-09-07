@@ -11,7 +11,6 @@ from contextlib import contextmanager
 import re
 from typing import Final
 from uuid import UUID
-from uuid import uuid4
 
 from sqlalchemy import bindparam
 from sqlalchemy import JSON
@@ -24,6 +23,7 @@ from rememberstack.model import ObservationForEmbedding
 from rememberstack.model import OtherPredicateGrammarError
 from rememberstack.model import RelationUpsert
 from rememberstack.ports.p1_index import FACT_INPUT_POLICY
+from rememberstack.spine.fact_applications import FactApplicationCatalog
 
 OTHER_PREDICATE_GRAMMAR: Final = re.compile(r"other:[a-z][a-z0-9_]{1,40}")
 """The D5 escape-value grammar: short snake_case behind the other: prefix."""
@@ -35,6 +35,7 @@ class FactCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+        self.applications = FactApplicationCatalog(engine=engine)
 
     def upsert_relation(
         self,
@@ -47,62 +48,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> RelationUpsert:
-        """Land one asserted fact: one relation row, evidence-once, recount.
-
-        An existing believed relation for the (s, p, o) key is reused; the
-        evidence link is ON CONFLICT DO NOTHING (a retry can never inflate the
-        count); the D54 recount runs in the same transaction.
-        """
-        with self._engine.begin() as connection:
-            key = {
-                "deployment_id": deployment_id,
-                "subject_entity_id": subject_entity_id,
-                "predicate": predicate,
-                "object_entity_id": object_entity_id,
-            }
-            # serialize concurrent upserts of one fact key (Codex review):
-            connection.execute(
-                _LOCK_FACT,
-                {
-                    "key": f"{deployment_id}:rel:{subject_entity_id}"
-                    f":{predicate}:{object_entity_id}"
-                },
-            )
-            existing = connection.execute(_SELECT_RELATION, key).scalar_one_or_none()
-            relation_id = existing if existing is not None else uuid4()
-            if existing is None:
-                # a re-occurring fact (a prior CLOSED row exists) starts a
-                # fresh row whose window opens at the re-occurrence boundary,
-                # so the EXCLUDE constraint's non-overlap holds and the new
-                # spell is adjudicable (Codex review; D41 refines the time):
-                reoccurrence_boundary = connection.execute(
-                    _LATEST_CLOSED_UNTIL, key
-                ).scalar_one_or_none()
-                connection.execute(
-                    _INSERT_RELATION,
-                    {
-                        **key,
-                        "relation_id": relation_id,
-                        "valid_from": reoccurrence_boundary,
-                        "normalizer_version": normalizer_version,
-                    },
-                )
-                connection.execute(  # the D5 promotion funnel's ranking input
-                    _BUMP_PREDICATE_USAGE,
-                    {"deployment_id": deployment_id, "predicate": predicate},
-                )
-            connection.execute(
-                _INSERT_RELATION_EVIDENCE,
-                {
-                    "deployment_id": deployment_id,
-                    "relation_id": relation_id,
-                    "claim_id": claim_id,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
-            connection.execute(_RECOUNT_RELATION, {"relation_id": relation_id})
-        return RelationUpsert(relation_id=relation_id, created=existing is None)
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def upsert_observation(
         self,
@@ -114,61 +63,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> UUID:
-        """Land one entity-anchored statement (D43) with the novelty gate.
-
-        The gate: an identical live statement on the entity is the same
-        observation (evidence collapses onto it); anything else coexists as a
-        new row — fail-safe, never silently resolved. Each mint records an
-        append-only `add` adjudication by the novelty_gate rung (D4).
-        """
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_FACT,
-                {"key": f"{deployment_id}:obs:{subject_entity_id}:{statement}"},
-            )
-            existing = connection.execute(
-                _SELECT_OBSERVATION,
-                {
-                    "deployment_id": deployment_id,
-                    "subject_entity_id": subject_entity_id,
-                    "statement": statement,
-                },
-            ).scalar_one_or_none()
-            observation_id = existing if existing is not None else uuid4()
-            if existing is None:
-                connection.execute(
-                    _INSERT_OBSERVATION,
-                    {
-                        "observation_id": observation_id,
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                        "statement": statement,
-                        "normalizer_version": normalizer_version,
-                    },
-                )
-                connection.execute(
-                    _INSERT_OBS_ADJUDICATION,
-                    {
-                        "adjudication_id": uuid4(),
-                        "deployment_id": deployment_id,
-                        "observation_id": observation_id,
-                        "triggering_claim_id": claim_id,
-                        "features": {"statement": statement},
-                        "adjudicator_version": normalizer_version,
-                    },
-                )
-            connection.execute(
-                _INSERT_OBS_EVIDENCE,
-                {
-                    "deployment_id": deployment_id,
-                    "observation_id": observation_id,
-                    "claim_id": claim_id,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
-            connection.execute(_RECOUNT_OBSERVATION, {"observation_id": observation_id})
-        return observation_id
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     @contextmanager
     def label_lock(self, *, deployment_id: UUID) -> Iterator[None]:
@@ -343,20 +241,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> None:
-        """Buffer one observation until the post-barrier ordered D43 flush (D88)."""
-        with self._engine.begin() as connection:
-            connection.execute(
-                _UPSERT_OBS_STAGING,
-                {
-                    "deployment_id": deployment_id,
-                    "version_id": version_id,
-                    "claim_id": claim_id,
-                    "subject_entity_id": subject_entity_id,
-                    "statement": statement,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def load_staged_observations(
         self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str

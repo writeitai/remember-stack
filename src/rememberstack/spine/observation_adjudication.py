@@ -150,18 +150,10 @@ class ObservationAdjudicator:
         meter: CostMeterPort | None = None,
         call_key: str = "observation",
     ) -> UUID:
-        """Compatibility wrapper for a one-assertion entity batch."""
-        return self.add_observations(
-            deployment_id=deployment_id,
-            subject_entity_id=subject_entity_id,
-            assertions=(
-                ObservationAssertion(
-                    statement=statement, claim_id=claim_id, doc_id=doc_id
-                ),
-            ),
-            meter=meter,
-            call_key=call_key,
-        )[0]
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def add_observations(
         self,
@@ -174,41 +166,10 @@ class ObservationAdjudicator:
         clear_staging: dict[str, object] | None = None,
         clear_staging_rows: Sequence[dict[str, object]] | None = None,
     ) -> tuple[UUID, ...]:
-        """Adjudicate one document/entity batch against one front-loaded block.
-
-        The entity lock, claim timestamps, and exhaustive candidate block are
-        read once. Assertions still apply in order so a later assertion sees
-        an observation created or closed earlier in the same batch. The batch
-        commits in one transaction and retries remain evidence-PK idempotent.
-
-        When ``clear_staging`` is provided (D88 version-serial flush), staging
-        rows for one version/entity slice are deleted in the same transaction
-        as the D43 writes so a crash cannot leave applied-but-still-staged rows.
-
-        When ``clear_staging_rows`` is provided (D90 entity-global flush), each
-        applied staging row is retired by its own primary key — required when
-        the stream spans multiple versions of the same entity.
-        """
-        if not assertions and clear_staging is None and clear_staging_rows is None:
-            return ()
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{subject_entity_id}"}
-            )
-            results = self._apply_assertions_locked(
-                connection=connection,
-                deployment_id=deployment_id,
-                subject_entity_id=subject_entity_id,
-                assertions=assertions,
-                meter=meter,
-                call_key=call_key,
-            )
-            if clear_staging_rows is not None:
-                for row in clear_staging_rows:
-                    connection.execute(_DELETE_OBS_STAGING_ROW, row)
-            elif clear_staging is not None:
-                connection.execute(_DELETE_OBS_STAGING_ENTITY, clear_staging)
-            return results
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def flush_entity_global_staging(
         self,
@@ -218,56 +179,10 @@ class ObservationAdjudicator:
         meter: CostMeterPort | None = None,
         call_key: str = "observation_flush",
     ) -> tuple[UUID, ...]:
-        """D90: load + apply + retire all unapplied entity staging under one lock.
-
-        The entity advisory lock is taken before the staging snapshot so two
-        co-present unit workers cannot both materialize the same stream and
-        double-apply after serializing on the lock.
-        """
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_ENTITY, {"key": f"{deployment_id}:obs:{subject_entity_id}"}
-            )
-            staged_rows = (
-                connection.execute(
-                    _SELECT_UNAPPLIED_OBS_STAGING_FOR_ENTITY,
-                    {
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                    },
-                )
-                .mappings()
-                .all()
-            )
-            assertions = tuple(
-                ObservationAssertion(
-                    statement=str(row["statement"]),
-                    claim_id=UUID(str(row["claim_id"])),
-                    doc_id=UUID(str(row["doc_id"])),
-                )
-                for row in staged_rows
-            )
-            results = self._apply_assertions_locked(
-                connection=connection,
-                deployment_id=deployment_id,
-                subject_entity_id=subject_entity_id,
-                assertions=assertions,
-                meter=meter,
-                call_key=call_key,
-            )
-            for row in staged_rows:
-                connection.execute(
-                    _DELETE_OBS_STAGING_ROW,
-                    {
-                        "deployment_id": deployment_id,
-                        "version_id": UUID(str(row["version_id"])),
-                        "claim_id": UUID(str(row["claim_id"])),
-                        "subject_entity_id": subject_entity_id,
-                        "statement": str(row["statement"]),
-                        "normalizer_version": str(row["normalizer_version"]),
-                    },
-                )
-            return results
+        """Reject the superseded direct writer; stage through D114 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def _apply_assertions_locked(
         self,

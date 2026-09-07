@@ -102,7 +102,7 @@ class KnowledgeFactSheetCompiler:
         )
         summary = (
             f"Fact sheet for {artifact.git_path}: "
-            f"{rendered.current_relation_count} current relations, "
+            f"{rendered.relation_count} relations in dated history, "
             f"{rendered.observation_count} observations, and "
             f"{rendered.contradiction_group_count} open contradiction groups."
         )

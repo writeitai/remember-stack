@@ -414,7 +414,8 @@ _COPY_CHUNK_DECISIONS = text(
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
     SELECT cl.claim_id, cl.deployment_id, cl.doc_id, cl.chunk_id, cl.claim_text,
-           cl.is_attributed, cl.extractor_version
+           cl.is_attributed, cl.extractor_version, cl.asserted_at, cl.claim_valid_from,
+           cl.claim_valid_until, cl.claim_valid_precision::text, cl.claim_valid_kind::text
     FROM claims cl
     JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
     WHERE cc.chunk_id = ANY(:chunk_ids)
@@ -425,7 +426,8 @@ _SELECT_CLAIMS_FOR_CHUNKS = text(
 _SELECT_CLAIM_FOR_NORMALIZE = text(
     """
     SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
-           extractor_version
+           extractor_version, asserted_at, claim_valid_from, claim_valid_until,
+           claim_valid_precision::text, claim_valid_kind::text
     FROM claims
     WHERE claim_id = :claim_id
     """

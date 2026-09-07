@@ -136,3 +136,30 @@ Otherwise contrary testimony about the same event could only be attached as
 support or turned into another fact. This is the existing claim/fact evidence
 relation, not a stored date-dispute status. Every minted handle also requires an
 explicit evidence assignment; merely updating its window cannot create a fact.
+
+Conversion readiness needs one persistent deployment field so a process restart
+cannot reopen serving after partial replay. `fact_window_generation` is NULL while
+converting and the current generation string when verified. Empty stores can start
+ready. This is one column on the existing deployment, not a conversion step ledger.
+The existing work receipts and barriers supply bounded restart progress.
+
+
+## Intermediate writer review resolution
+
+Antigravity and Grok identified sticky invalid answers, audit labels applied too
+broadly, receipt checks and canonical witness ordering. Rejected answers now roll
+back effects using the existing SQL transaction/savepoint, then clear the obsolete
+attempt before the ledger retries; no extra queue or state table is introduced.
+Staging retirement covers only versions with materialized entity units. A later
+D56 membership is also reconstructed from the frozen receipt at its version
+barrier, so an application completed by another helper cannot erase that membership.
+Post-lock nomination compares participant sets; substantive input differences
+still invalidate the complete fingerprint. Pending invalidation keeps claim inventory.
+
+Grok also questioned attaching converted testimony to system-closed facts. That
+is not itself revival: `invalidated_at` remains unchanged and believed retrieval
+excludes the row. Current testimony and current belief are different axes, already
+permitted on main. Historical conversion needs to preserve evidence on those IDs.
+The conversion acceptance test must prove system closure is preserved; ordinary
+new work continues to nominate only currently believed facts. Do not equate an
+evidence-count change with reopening belief or add a date/type identity rule.

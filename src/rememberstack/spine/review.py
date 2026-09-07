@@ -24,6 +24,8 @@ from rememberstack.model import ReviewItem
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
+from rememberstack.spine.fact_applications import application_block
+from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -247,6 +249,9 @@ class ReviewQueue:
         fact_kind: str
         fact_id: UUID
         with self._engine.begin() as connection:
+            _lock_support_review(
+                connection=connection, deployment_id=deployment_id, review_id=review_id
+            )
             item = self._claim_item(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -547,6 +552,77 @@ class ReviewQueue:
                 },
             },
         )
+
+
+def _lock_support_review(
+    *, connection: Connection, deployment_id: UUID, review_id: UUID
+) -> None:
+    """Take ordinary fact locks before the review row, preserving retry ordering."""
+    with application_fence(connection=connection, deployment_id=deployment_id):
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+            {"key": f"{deployment_id}:identity-epoch"},
+        )
+        row = (
+            connection.execute(
+                text(
+                    "SELECT candidate FROM review_queue WHERE deployment_id=:dep AND review_id=:id AND item_kind='support_withdrawn'"
+                ),
+                {"dep": deployment_id, "id": review_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise ReviewDecisionError("support review does not exist")
+        candidate = row["candidate"]
+        kind = candidate.get("fact_kind")
+        if kind not in ("relation", "observation"):
+            raise ReviewDecisionError("invalid support review fact plane")
+        fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
+        params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
+        table = "relations" if kind == "relation" else "observations"
+        subject = connection.execute(
+            text(
+                f"SELECT subject_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact"
+            ),
+            params,
+        ).scalar_one_or_none()
+        if subject is None:
+            raise ReviewDecisionError("support review fact no longer exists")
+        with application_block(
+            connection=connection,
+            deployment_id=deployment_id,
+            subject_entity_id=subject,
+        ):
+            if (
+                connection.execute(
+                    text(
+                        "SELECT claim_id FROM claims WHERE deployment_id=:dep AND claim_id=:claim FOR UPDATE"
+                    ),
+                    params,
+                ).scalar_one_or_none()
+                is None
+            ):
+                raise ReviewDecisionError("support review source no longer exists")
+            connection.execute(
+                text(
+                    f"SELECT {kind}_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact FOR UPDATE"
+                ),
+                params,
+            ).scalar_one()
+            locked = (
+                connection.execute(
+                    _SELECT_ITEM_LOCKED,
+                    {"deployment_id": deployment_id, "review_id": review_id},
+                )
+                .mappings()
+                .one()
+            )
+            if locked["candidate"] != candidate:
+                raise ReviewDecisionError(
+                    "support review changed; retry with fresh inputs"
+                )
 
 
 _SELECT_PENDING = text(
