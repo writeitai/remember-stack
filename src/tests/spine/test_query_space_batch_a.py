@@ -3021,8 +3021,9 @@ _AS_OF = (
 )
 
 
+@pytest.mark.parametrize("incomplete_precision", ["unknown", "day"])
 def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
-    corpus: _Corpus,
+    corpus: _Corpus, incomplete_precision: str
 ) -> None:
     """The view is the predicate, evaluated once per statement.
 
@@ -3031,6 +3032,20 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
     `evaluated_at`; any divergence is a difference in the predicate itself.
     """
     with corpus.engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET valid_precision=CAST(:precision AS public.claim_valid_precision),"
+                " valid_from=CASE WHEN :precision='unknown' THEN NULL ELSE :start END,"
+                " valid_until=NULL, window_claim_ids=CASE WHEN :precision='unknown' THEN '{}'::uuid[] ELSE ARRAY[:claim]::uuid[] END"
+                " WHERE relation_id=:fact"
+            ),
+            {
+                "precision": incomplete_precision,
+                "start": _PAST,
+                "claim": corpus.claim["a"],
+                "fact": corpus.fact["open_ended"],
+            },
+        )
         row = _rows(
             connection=connection,
             sql=(
@@ -3040,9 +3055,8 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
                 " FROM memory_v1.facts_visible_history AS h"
                 " WHERE h.ingested_at <= statement_timestamp()"
                 " AND h.invalidated_at IS NULL"
-                " AND (h.valid_from IS NULL"
-                "      OR h.valid_from <= statement_timestamp())"
-                " AND (h.valid_until IS NULL"
+                " AND h.valid_from <= statement_timestamp()"
+                " AND (h.valid_precision='open'"
                 "      OR h.valid_until > statement_timestamp())) AS predicate_ids,"
                 " (SELECT min(evaluated_at) = max(evaluated_at)"
                 " FROM memory_v1.facts_current) AS one_instant"
@@ -3052,6 +3066,7 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
     assert row["view_ids"] == row["predicate_ids"]
     assert row["one_instant"] is True
     assert corpus.fact["current"] in row["view_ids"]
+    assert corpus.fact["open_ended"] not in row["view_ids"]
 
 
 def test_valid_from_is_inclusive_and_valid_until_is_exclusive(corpus: _Corpus) -> None:

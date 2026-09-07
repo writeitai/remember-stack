@@ -954,7 +954,7 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
         with rig.engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE entities SET profile_summary='STALE_PRE_CONVERSION_PROFILE', embedding=NULL"
+                    "UPDATE entities SET profile_summary='STALE_PRE_CONVERSION_PROFILE', embedding=NULL, embedding_model=NULL, embedding_input_policy_version=NULL, embedding_text_hash=NULL"
                 )
             )
     conversion = FactWindowConversion(engine=rig.engine)
@@ -1001,18 +1001,19 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
                 ).scalar_one()
                 == 0
             )
-            profiles = tuple(
+            profiles = dict(
                 connection.execute(
-                    text("SELECT profile_summary FROM entities")
-                ).scalars()
+                    text("SELECT canonical_name,profile_summary FROM entities")
+                )
+                .tuples()
+                .all()
             )
-            assert len(profiles) == 2
-            assert all(
-                profile
-                and "world" in profile
-                and "STALE_PRE_CONVERSION_PROFILE" not in profile
-                for profile in profiles
-            )
+            # The relation's system belief was withdrawn above. Alice's stale
+            # profile must clear; Acme still has its supported observation.
+            assert profiles["Alice Novak"] is None
+            assert "world date unknown" in profiles["Acme"]
+            assert "STALE_PRE_CONVERSION_PROFILE" not in profiles["Acme"]
+
     assert all(
         "Claimify" not in request for request in rig.provider.generated_prompts[before:]
     )
