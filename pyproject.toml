@@ -50,6 +50,7 @@ benchmark = [
     "google-cloud-storage>=3.4,<4",
     "nltk>=3.9",
     "openai-codex==0.147.0",
+    "pyyaml>=6.0",
     "regex>=2024.11.6",
 ]
 observability = [
@@ -93,6 +94,7 @@ dev = [
     "nltk>=3.9",
     "openai-codex==0.147.0",
     "pydantic-settings>=2.10",
+    "pyyaml>=6.0",
     "pyright>=1.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",

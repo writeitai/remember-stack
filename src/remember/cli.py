@@ -29,6 +29,7 @@ from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.credentials import CredentialError
 from remember.models import ConnectorCreate
+from remember.remote_mcp import RemoteMcpServerConfig
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
 
@@ -1294,8 +1295,15 @@ def _run_connectors(args: argparse.Namespace) -> int:
 
 def _run_mcp(args: argparse.Namespace) -> int:
     """Expose the remote assured operations and open retrieval tools over MCP."""
+    config = (
+        RemoteMcpServerConfig.read_only()
+        if getattr(args, "read_only", False)
+        else RemoteMcpServerConfig.full()
+    )
     with _cli_memory_client(args) as client:
-        return serve_mcp_stdio(server=RemoteOperationMcpServer(client=client))
+        return serve_mcp_stdio(
+            server=RemoteOperationMcpServer(client=client, config=config)
+        )
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -2392,10 +2400,19 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     status.add_argument("connector_id", type=UUID)
 
-    commands.add_parser(
+    mcp = commands.add_parser(
         "mcp",
         parents=[client_flags],
         help="serve remote retrieval tools over MCP stdio",
+    )
+    mcp.add_argument(
+        "--read-only",
+        action="store_true",
+        default=False,
+        help=(
+            "omit ingest and pipeline_readiness; advertise only assured "
+            "operations and composed open-query tools"
+        ),
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
     login.add_argument("--token-host", default=None)

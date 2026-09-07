@@ -169,7 +169,12 @@ Launches the Model Context Protocol stdio server for AI coding agents:
 
 ```bash
 remember mcp
+remember mcp --read-only
 ```
+
+`--read-only` omits `ingest` and `pipeline_readiness` while keeping assured
+operations and composed open-query tools. Direct calls to the omitted write
+tools fail closed. Default `remember mcp` is unchanged.
 
 ### `remember connectors`
 Inspect and trigger external document ingestion connectors:
