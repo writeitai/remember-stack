@@ -4913,6 +4913,10 @@ counterfactual instruction.
 
 ## D106. Dated events never collapse across dates; evidence requires temporal compatibility
 
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D114 when that amendment merges.
+
 **Decision (2026-09-03).** The observation adjudicator (D43) gains a
 deterministic temporal-compatibility rung that runs before any model call,
 reading the D41 valid-time each claim already carries:
@@ -5008,6 +5012,11 @@ Preserves D41 (claims stay the one home of asserted validity), D98
 retrieval, D100/D102 identity, and D104/D105 answer-prompt contracts.
 
 ## D107. World-time flows from the claim's window; said-on time is provenance, never validity
+
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** partially superseded by D114 when that amendment merges. Canonical
+arithmetic, published SQL and extraction remain in force.
 
 **Decision (2026-09-03).** Every stage that reasons about *when* a fact held
 reads the claim's resolved D41 window (what the statement **is about**) and
@@ -5262,7 +5271,9 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D110. Ordered temporal writes, autonomous corrections, and certified cache/forget lifecycle
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 separates source, world and belief clocks but leaves four
 implementation gates (#365–#368). D108 subsequently makes autonomous
@@ -5315,7 +5326,9 @@ the design gates; it does not certify T.1 implementation, conversion or release.
 
 ## D111. Unknown-start states may coexist without fabricated identity or contradiction
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 prohibits mixed dated/undated evidence attachment and requires
 coexistence without a supported succession or contradiction. Its exclusion
@@ -5349,7 +5362,9 @@ mixed-state contract conflict; implementation and release remain separate gates.
 
 ## D112. A dated state assertion supports every compatible overlapping slice
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** A broad same-value state claim can overlap several existing disjoint
 state slices. D107 requires evidence attachment, but D110's scalar application
@@ -5385,7 +5400,9 @@ the library boundary. Implementation and release remain separate gates.
 
 ## D113. Observation applications retain original results and current assertion support
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D114 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D110 requires observation inference outside locks with durable
 prepared answers and exact application. D90's disposable, version-qualified
@@ -5420,3 +5437,44 @@ application; automatic same-application reassociation is an unchosen alternative
 Amends D90's detailed locking/staging keys, completes D110 observation preparation
 and D74 support replay, and qualifies D107 re-split for unrecoverable legacy
 assertion provenance. Implementation and release remain separate gates.
+
+
+## D114. Immutable claims, mutable facts, one world-time window
+
+**Status:** accepted when merged; replacement runtime is not implemented by this
+amendment. **Date:** 2026-09-07.
+
+**Context.** The temporal program tried to preserve historical events and correct
+source-time leakage by adding fixed fact categories, a second evidence window,
+seed/endpoint authority and a dedicated correction/replay/cache framework. The
+unreleased implementation became large before its worker cutover was complete.
+Independent write and retrieval audits found that ordinary mutable facts and the
+existing time-query modes can meet the semantic need with less machinery.
+
+**Decision.** Each fact has one chosen world-time window with honest precision;
+claims retain their original dates and source timestamps. Ordinary contextual
+adjudication can revise dates in either direction, reopen an end, attach evidence,
+and distinguish repeated events. Fixed fact categories, date-overlap identity
+vetoes, occurrence unions, permanent seed authority, and special temporal
+correction/compensation states are removed. Date-qualified historical profiles
+and generated snapshots use existing mutation repair; they do not claim cached
+prose is a current-time filter. Retrieval explicitly selects current, overlap or
+history and distinguishes unknown dates from established matches.
+
+**Alternatives and consequences.** Keeping two windows or renaming the framework
+retains duplicate authority and deletion cost. Current-only generated prose would
+require boundary scheduling and stale-read protection; stable dated content is
+chosen instead. Atomic writes, stable application results, short transactions,
+stale-inference rejection, source provenance and hard-forget non-resurrection
+remain requirements. Relation identity must precede attachment; distinct events
+can overlap, so universal same-triple interval exclusion is removed from the
+replacement contract. Extra model use for contextual identity must be measured.
+
+**Authority and delivery.** [D114 design](plan/designs/mutable_fact_windows_design.md)
+contains the full concepts, semantics, alternatives, security/recovery obligations
+and explicit supersession map for D106/D107/D110–D113. [Analysis](plan/analysis/lean_mutable_fact_windows.md)
+records the inspected code and independent audits. [Delivery](plan/plans/temporal_clocks.md)
+withdraws PR #384's incompatible unshipped framework and gates replacement code
+on concrete storage, consumer and deletion contracts. Already merged canonical
+SQL, extraction vocabulary and all evaluator variants remain intact. No schema
+upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
