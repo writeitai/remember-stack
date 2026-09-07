@@ -140,7 +140,7 @@ class KnowledgeCommitDriver:
             paths = tuple(
                 state.git_path
                 for state in self._control_plane.artifact_path_states(
-                    deployment_id=deployment_id
+                    deployment_id=deployment_id, include_tombstoned=True
                 )
                 if state.artifact_id in artifact_ids
                 and state.page_kind is KnowledgePageKind.COMPILED

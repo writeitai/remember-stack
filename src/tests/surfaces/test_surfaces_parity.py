@@ -195,7 +195,7 @@ class _Deployment:
                     " subject_entity_id, predicate, object_entity_id,"
                     " normalizer_version, fact_label, evidence_count, valid_from,"
                     " ingested_at) VALUES (:r, :d, :s, 'works_for', :o, 'toy',"
-                    " 'Alice works for Acme.', 2, '2024-01-01+00', now())"
+                    " 'Alice works for Acme.', 2, NULL, now())"
                 ),
                 {"r": uuid4(), "d": _DEPLOYMENT_ID, "s": self.alice, "o": acme},
             )

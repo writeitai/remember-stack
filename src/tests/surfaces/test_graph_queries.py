@@ -312,7 +312,7 @@ class _GraphCorpus:
         subject: str,
         predicate: str,
         obj: str,
-        valid_from: datetime | None = None,
+        valid_from: datetime | None = _JAN_2024,
         valid_until: datetime | None = None,
     ) -> UUID:
         """Create one supported relation with optional world-time bounds."""
@@ -322,9 +322,9 @@ class _GraphCorpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, valid_from,"
-                " valid_until) VALUES (:relation_id, :deployment_id,"
+                " valid_until, valid_precision, window_claim_ids) VALUES (:relation_id, :deployment_id,"
                 " :subject_entity_id, :predicate, :object_entity_id, 'toy',"
-                " :fact_label, 1, :valid_from, :valid_until)"
+                " :fact_label, 1, :valid_from, :valid_until, :precision, ARRAY[:claim]::uuid[])"
             ),
             {
                 "relation_id": relation_id,
@@ -335,6 +335,8 @@ class _GraphCorpus:
                 "fact_label": f"{subject} {predicate} {obj}",
                 "valid_from": valid_from,
                 "valid_until": valid_until,
+                "precision": "open" if valid_until is None else "instant",
+                "claim": evidence_claim,
             },
         )
         connection.execute(

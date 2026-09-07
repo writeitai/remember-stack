@@ -202,8 +202,12 @@ class _E3Rig:
             "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
         }
 
+        self.normalization_payload: dict[str, object] = _NORMALIZATION_PAYLOAD
+
         def route(prompt: str, type_name: str) -> dict[str, object]:
             """Serve canned chain payloads and a dynamic T4 candidate id."""
+            if type_name == "NormalizationResponse":
+                return self.normalization_payload
             if type_name == "FactApplicationDecision":
                 return same_fact_application_answer(prompt=prompt)
             if type_name == "T4Selection":
@@ -881,8 +885,9 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
     assert len(rig.provider.generated_prompts) == calls
 
 
+@pytest.mark.parametrize("empty_replay", [False, True])
 def test_retained_store_conversion_reuses_workers_and_preserves_historical_claims(
-    rig: _E3Rig,
+    rig: _E3Rig, empty_replay: bool
 ) -> None:
     """Two extractor generations in one version replay without re-extraction or reopening belief."""
     from rememberstack.spine.fact_window_conversion import FactWindowConversion
@@ -944,6 +949,14 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
             ),
             {"dep": _DEPLOYMENT_ID},
         )
+    if empty_replay:
+        rig.normalization_payload = {"relations": [], "observations": []}
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE entities SET profile_summary='STALE_PRE_CONVERSION_PROFILE', embedding=NULL"
+                )
+            )
     conversion = FactWindowConversion(engine=rig.engine)
     assert conversion.seed_batch(deployment_id=_DEPLOYMENT_ID)["created"] == 2
     assert not conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
@@ -980,6 +993,26 @@ def test_retained_store_conversion_reuses_workers_and_preserves_historical_claim
             {"version": ADJUDICATOR_VERSION},
         )
     assert conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
+    if empty_replay:
+        with rig.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT count(*) FROM fact_applications")
+                ).scalar_one()
+                == 0
+            )
+            profiles = tuple(
+                connection.execute(
+                    text("SELECT profile_summary FROM entities")
+                ).scalars()
+            )
+            assert len(profiles) == 2
+            assert all(
+                profile
+                and "world" in profile
+                and "STALE_PRE_CONVERSION_PROFILE" not in profile
+                for profile in profiles
+            )
     assert all(
         "Claimify" not in request for request in rig.provider.generated_prompts[before:]
     )

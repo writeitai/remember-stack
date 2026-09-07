@@ -157,7 +157,7 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
     with database_engine.begin() as connection:
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
         for table in ("chunks", "chunk_claims", "claims", "claim_extraction_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table}"))
+            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,

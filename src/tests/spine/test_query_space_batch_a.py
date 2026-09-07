@@ -1569,6 +1569,7 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
             "predicate",
             "valid_from",
             "valid_until",
+            "valid_precision",
             "ingested_at",
             "invalidated_at",
         )
@@ -3473,13 +3474,14 @@ def test_withdrawal_is_bound_to_fact_kind_when_uuids_collide(corpus: _Corpus) ->
                 " subject_entity_id, statement, valid_from, ingested_at,"
                 " confidence, obs_label, normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:fact, :deployment, :subject, 'Colliding observation',"
-                " :at, :at, 0.7, 'Colliding observation', 'normalizer-1')"
+                " :at, :at, 0.7, 'Colliding observation', 'normalizer-1', 'open', ARRAY[:claim]::uuid[])"
             ),
             {
                 "fact": fact_id,
                 "deployment": _DEPLOYMENT_ID,
                 "subject": corpus.entity["alice"],
                 "at": _PAST,
+                "claim": corpus.claim["a"],
             },
         )
         connection.execute(
