@@ -1160,12 +1160,21 @@ def downgrade() -> None:
         DO $guard$ BEGIN
           IF EXISTS (SELECT 1 FROM public.relations)
              OR EXISTS (SELECT 1 FROM public.observations)
-             OR EXISTS (SELECT 1 FROM public.temporal_operations) THEN
+             OR EXISTS (SELECT 1 FROM public.temporal_operations)
+             OR EXISTS (SELECT 1 FROM public.observation_applications)
+             OR EXISTS (SELECT 1 FROM public.obs_flush_version_state
+                 WHERE adjudicator_version <> 'legacy-unpinned:pre-d113') THEN
             RAISE EXCEPTION 'Temporal data requires forward recovery, not schema downgrade';
           END IF;
         END $guard$;
     """)
-    for statement in _split_sql(sql=_OBSERVATION_DOWNGRADE_DDL + _DOWNGRADE_DDL):
+    observation_statements = _split_sql(sql=_OBSERVATION_DOWNGRADE_DDL)
+    if teardown:
+        # Drop the new application stores, but leave D90 tables for their own
+        # teardown revisions. Restoring their old keys first can reject valid
+        # multi-generation memberships that this whole-schema teardown removes.
+        observation_statements = observation_statements[:1]
+    for statement in observation_statements + _split_sql(sql=_DOWNGRADE_DDL):
         # A downgrade to base already means removing the entire schema and data.
         # Do not temporarily impose the legacy exclusion on overlapping events
         # that the same teardown is about to delete. Ordinary rollback remains

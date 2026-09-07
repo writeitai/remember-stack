@@ -650,12 +650,27 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 99
+    assert len(fresh_inventory.tables) == 103
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
+            # Schema-only D113 fixture: two valid generation keys share the
+            # D90 coordinates. Whole-schema teardown must remove them without
+            # first attempting to restore the narrower historical primary key.
+            # These rows do not claim normalized source or runtime completion.
+            for generation in ("d113-teardown-one", "d113-teardown-two"):
+                connection.execute(
+                    text("""INSERT INTO obs_flush_version_state
+                    (deployment_id,version_id,normalizer_version,adjudicator_version,flush_version,
+                     representation_id,chunker_version,extractor_version,content_hash,lane,expected_units,fanout_status)
+                    VALUES ('00000000-0000-0000-0000-000000000001',
+                     '00000000-0000-0000-0000-000000000002','schema-teardown',:generation,:generation,
+                     '00000000-0000-0000-0000-000000000003','schema-teardown','schema-teardown',
+                     'schema-teardown','steady',0,'materialized')"""),
+                    {"generation": generation},
+                )
             connection.execute(statement=text("DROP TABLE relation_evidence_p63"))
         with engine.connect() as connection:
             with pytest.raises(SchemaContractError, match="relation_evidence_p63"):
