@@ -1,5 +1,6 @@
 """The single chosen world-time window on a mutable fact (D114)."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 from typing import Self
@@ -8,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import model_validator
 
 from rememberstack.model.claims import ClaimValidPrecision
@@ -35,6 +37,12 @@ class FactWindow(BaseModel):
     valid_until: UTCDateTime | None = None
     valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
 
+    @field_validator("valid_from", "valid_until", mode="before")
+    @classmethod
+    def parse_model_timestamp(cls, value: object) -> object:
+        """Accept provider JSON strings while retaining strict aware-UTC validation."""
+        return datetime.fromisoformat(value) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def coherent_window(self) -> Self:
         """Enforce D114 shapes without filling or recanonicalizing an endpoint."""
@@ -49,6 +57,37 @@ class FactWindow(BaseModel):
             raise ValueError("a boundary precision requires a known endpoint")
         if start is not None and end is not None and end <= start:
             raise ValueError("fact windows must be nonempty half-open intervals")
+        if self.valid_precision in {
+            ClaimValidPrecision.DAY,
+            ClaimValidPrecision.MONTH,
+            ClaimValidPrecision.QUARTER,
+            ClaimValidPrecision.YEAR,
+        }:
+            for endpoint in (start, end):
+                if endpoint is None:
+                    continue
+                if (
+                    endpoint.hour
+                    or endpoint.minute
+                    or endpoint.second
+                    or endpoint.microsecond
+                ):
+                    raise ValueError("bounded endpoints must align to their UTC unit")
+                if (
+                    self.valid_precision != ClaimValidPrecision.DAY
+                    and endpoint.day != 1
+                ):
+                    raise ValueError("month/quarter/year endpoints must start a month")
+                if (
+                    self.valid_precision == ClaimValidPrecision.QUARTER
+                    and endpoint.month not in (1, 4, 7, 10)
+                ):
+                    raise ValueError("quarter endpoints must start a quarter")
+                if (
+                    self.valid_precision == ClaimValidPrecision.YEAR
+                    and endpoint.month != 1
+                ):
+                    raise ValueError("year endpoints must start a year")
         return self
 
     @property

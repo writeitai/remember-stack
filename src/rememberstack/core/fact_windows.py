@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from rememberstack.core.temporal import _utc
 from rememberstack.core.temporal import canonical_endpoint
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.fact_windows import FactWindow
@@ -37,6 +38,7 @@ def fact_window_from_raw(
 
 def fact_match_at(*, window: FactWindow, at: datetime) -> TemporalMatch | None:
     """Containment at an instant, disclosing uncertainty in incomplete windows."""
+    at = _utc(at)
     if window.valid_from is not None and at < window.valid_from:
         return None
     if window.valid_until is not None and at >= window.valid_until:
@@ -48,6 +50,7 @@ def fact_match_overlap(
     *, window: FactWindow, start: datetime, end: datetime
 ) -> TemporalMatch | None:
     """Match a half-open query interval without interpreting an unknown as infinity."""
+    start, end = _utc(start), _utc(end)
     if end <= start:
         raise ValueError("query interval must be nonempty")
     if window.valid_from is not None and window.valid_from >= end:
@@ -61,6 +64,7 @@ def fact_match_history(
     *, window: FactWindow, evaluated_at: datetime
 ) -> TemporalMatch | None:
     """Known history up to evaluation, distinct from containment at that instant."""
+    evaluated_at = _utc(evaluated_at)
     if window.valid_from is None:
         return TemporalMatch.POSSIBLE
     if window.valid_from > evaluated_at:

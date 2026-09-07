@@ -34,10 +34,14 @@ Two new internal tables have distinct purposes:
 The only new fact data are `valid_precision` and `window_claim_ids`: the latter
 records the evidence grounding the current complete window, not a seed or an
 endpoint owner. It changes whenever that window changes. Existing evidence tables
-receive `legacy_support` to distinguish links not represented by application
-support pointers. New application-derived links set it false. No temporal
+receive nullable `legacy_stance` to retain the original stance of links not
+represented by application support pointers. New application-derived links set
+it NULL; recount never overwrites an existing legacy stance. A boolean would
+lose a legacy contradiction when an application temporarily adds support. No temporal
 operation, discrepancy, checkpoint or cache-certificate store is introduced.
 
+The ordinal indexes the original frozen `output.relations` or
+`output.observations` array, never a compacted accepted-only array.
 The complete normalizer output remains unmodified. Each application stores resolved
 entity IDs and obtains the statement from its output ordinal. `uses_claim_window`
 on each normalized output explicitly says the claim's world window applies to
@@ -71,6 +75,17 @@ entities proceed concurrently. The composed entity flush generation pins the
 normalizer and both fact adjudication contracts. An old or mixed generation cannot
 complete the new version barrier. Completion counts application IDs, not statement
 strings, and verifies every member's applied receipt before terminal follow-ups.
+Each application's adjudicator version is the version for its own fact plane;
+the entity-unit generation composes both versions and the normalizer version.
+
+This replaces D90's requirement to hold the entity lock across inference: only
+the least admitted unapplied row in the canonical subject's stream may have a
+live attempt. A concurrent helper reuses or replaces that same head's attempt;
+it may not prepare or apply a later row. Admission, preparation and application
+check the head under the entity lock. Head selection includes the full reverse
+redirect closure, including applications stored under absorbed subject IDs.
+Application subjects are not rewritten on merge; unmerge restores the appropriate
+stream. No additional scheduler or lease table is required.
 
 Application completion retires every staged membership for that application in
 the same transaction. The receipt remains for later memberships and retry. Acquire
@@ -86,7 +101,7 @@ Use READ COMMITTED transactions with this acquisition order:
    existing forget/availability fence while holding it. Forget preparation takes
    this lock exclusively. No payload publication bypasses this check.
 2. Shared identity lock `<deployment UUID>:identity-epoch`. Merge/unmerge retain
-   their existing exclusive form. Resolve redirected subjects before choosing
+   their existing exclusive form. Resolve subject and object redirects before choosing
    canonical blocks; release/retry if the required subject set changes.
 3. Existing entity block locks `<deployment UUID>:obs:<canonical entity UUID>`,
    sorted by UUID if an operation has several subjects.
@@ -121,6 +136,20 @@ protocol. Lifecycle currency updates lock claims; its fact changes and evidence
 recounts lock fact rows and cannot bypass the guarded re-read. Forget drains
 ordinary work and holds its existing fence through scrubbing/recovery.
 
+Source withdrawal changes testimony currency and system belief only. Remove
+`lifecycle._CAP_RELATION`: zero-support relations use `invalidated_at`, like
+observations; neither source timestamps nor `now()` may assign `valid_until`.
+Currency updates explicitly lock claim rows in UUID order before batch updates;
+sorting JSON input alone does not determine PostgreSQL's row-lock order.
+
+The writer cutover inventory is closed: `FactCatalog.upsert_relation`, old
+observation identity/date gates and timing aggregation, and relation supersession
+identity writes cease to run. The supersession handler becomes non-adjudicating
+follow-up. Human review (`spine/review.py`) uses this lock order; lifecycle
+currency/recount/closure uses the ordered row locks; merge/unmerge keeps the
+exclusive identity lock before any fact/support mutation. All public/internal
+wrappers either route to the new writer or reject the old generation.
+
 The accepted answer, facts, support assignments, evidence aggregates, ordinary
 transcripts and completion receipt commit together. Injected failure at any step
 rolls back all of them. Successful retry returns the original result and checks
@@ -133,6 +162,7 @@ The closed typed decision has these fields (all arrays default empty):
 | Field | Exact content |
 | --- | --- |
 | `target` | `{fact_id: UUID|null, new_handle: string|null}`; exactly one is present |
+| `stance` | `supports` (default) or `contradicts`, the existing evidence vocabulary for the incoming assertion’s target link |
 | `new_facts` | `{handle: nonempty string, assertion_application_id: UUID}` entries; the supplied original assertion defines subject, predicate/object or statement |
 | `window` | `GroundedFactWindow|null` for the identity target; contains the complete canonical window and nonempty cited claim IDs |
 | `updates` | `{target: same fact reference, window: GroundedFactWindow}` entries |
@@ -142,14 +172,18 @@ The closed typed decision has these fields (all arrays default empty):
 | `confidence` | number from 0 through 1 |
 | `rationale` | nonempty string |
 
-Handles, update targets and moved applications cannot repeat. References must
-resolve to supplied existing facts or this answer's new-fact handles. The initial
-target is the incoming assertion's support destination. All targets and moved
+Handles, update targets and moved applications cannot repeat. The identity
+window target cannot also appear in `updates`. References must
+resolve to supplied existing facts or this answer's new-fact handles. Every new handle must receive an incoming or moved evidence assignment; an update
+alone cannot create an unsupported fact. The initial
+target is the incoming assertion's evidence destination. `stance` permits contrary
+testimony on the same identity without a new date-dispute state. All targets and moved
 assertions stay in the incoming fact plane and canonical entity block; relation
 predicate identity is taken from the retained normalized output. Identity across
 relation/observation representations is not inferred by this date change.
  New fact handles are local names converted to stable UUIDs derived
-from application ID and handle; a replay cannot mint different IDs. An absent
+by UUIDv5 in a fixed namespace over the versioned tuple
+`["fact-v1", application_id, handle]`; a replay cannot mint different IDs. An absent
 window replacement preserves dates; a supplied all-unknown window clears them.
 
 Every window is already canonical `FactWindow`. Claim windows are canonicalized
@@ -170,18 +204,22 @@ Support moves identify the original application and its expected current target.
 Its retained normalized assertion must be supplied to the adjudicator. Update its
 current support pointer; preserve its immutable original result. Recount the
 source and destination evidence links from all surviving applications, with
-`supports` dominating `contradicts` for a fact/claim pair. Preserve `legacy_support`
-when present. A legacy link can move only through an explicit whole-claim decision
+`supports` dominating `contradicts` for a fact/claim pair. Include the retained
+`legacy_stance` in that aggregation, restoring it if application support moves away. A legacy link can move only through an explicit whole-claim decision
 that has inspected that complete claim; date position alone cannot move it.
 Statements and their support cannot be silently reconstructed from a different
 fact's display label. All affected participants commit atomically.
 
 The existing adjudication tables record decision, before/after windows, cited
-claims, full consumed-claim inventory and application ID in `features`. Relation
+claims and application ID in `features`. A first-class `consumed_claim_ids uuid[]`
+with a GIN index on each existing transcript table inventories every consumed
+claim; before-images and rationale are scrubbed by that inventory. Relation
 outcomes retain add/noop/supersede/contradict; both fact planes gain the generic
 `update` transcript value when existing fact values change. This is a readable
-audit label, not a new worker, correction workflow or temporal operation store. On success, clear the application's prepared inputs and
-answer; retain structural original result and current support pointers.
+audit label, not a new worker, correction workflow or temporal operation store. On success, NULL `prepared`, `decision`, `attempt_id` and `input_hash`;
+retain `input_claim_ids`, structural original result and current support pointers.
+`result` is closed to `fact_id`, `created_fact_ids`, and `application_id` only;
+no rationale, text, dates or foreign payload is copied there.
 
 ## 5. Retrieval and derived data
 
@@ -193,7 +231,10 @@ a match exclude it. An incomplete window that may match is conservatively
 History excludes known future starts and includes completed windows. Unknown and
 partial facts remain possible candidates. Strict primitives and counts include
 only confirmed matches and report possible coverage separately; top-k retrieval
-never certifies an exact complete count.
+never certifies an exact complete count. The published `facts_current`,
+`facts_as_of`, entity-profile and graph predicates use the same rule: confirmed
+at an instant requires a known start no later than the instant and either a
+known later end or precision `open`. A NULL end alone never confirms a match.
 
 Date-qualified profiles and K snapshots consume the chosen window and its
 precision. Open and unknown-end wording differ. Fact/date/evidence changes enqueue
@@ -224,7 +265,14 @@ pending replies, retries, partial purge failure and restored older manifests.
 ## 7. Existing-store cutover
 
 The migration requires stopped serving and drained old intake/workers/staging.
-It adds the structural stores and marks the fact generation unready; it must not
+It first rejects nonempty legacy staging and closes the fact-generation readiness
+gate. The SQL file describes the target storage shape, not a standalone migration.
+Add precision and witness columns nullable with no defaults; clear ungrounded
+legacy endpoints to `(NULL,NULL,'unknown',{})` under the fence. Canonicalize any
+grounded raw endpoints once (an instant is `[t,t+1 microsecond)`). Then set NOT NULL
+and defaults for new rows, remove old `>=` checks, and install the D114 shape
+checks. The enum addition commits before any writer uses `update`. No reader may
+observe intermediate shapes. It adds the structural stores while unready; it must not
 silently assign unknown precision beside old source-time endpoints and serve them.
 Clear ungrounded legacy windows under the fence, retaining IDs/system history and
 legacy support. Reprocess retained source claims with the new normalizer and

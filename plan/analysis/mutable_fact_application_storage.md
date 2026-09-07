@@ -107,3 +107,32 @@ barrier membership, lock order, fingerprint content and deletion operations.
 Antigravity and Grok review it before replacement write-path code is accepted.
 The already implemented pure window value/math tests exercise approved D114
 semantics independently of this not-yet-enabled application path.
+
+
+## Independent application-contract review, 2026-09-07
+
+Antigravity approved with fixes; Grok requested changes before runtime wiring.
+Both reviewed commit 8bbb48e3 against 8fad369d. Grok correctly identified that
+D90's replacement must explicitly serialize the least pending application across
+unlocked inference, include redirected subjects, and name the removal of source
+withdrawal's world-time cap. The contract now pins these rules, frozen array
+ordinals, plane-specific generations, structural receipt fields, indexed transcript
+claim inventory, and a fenced nullable-expand/clear/constrain migration order.
+Antigravity caught nullable relation staging statements and ordered currency locks.
+Its JSON sorting suggestion is insufficient by itself: explicit ordered row locks
+are required. These repairs use the existing work units and transcript stores.
+
+A boolean legacy-support marker also loses the baseline stance when new assertion
+support temporarily overrides a legacy contradiction. Retaining nullable
+`legacy_stance` instead is one column with enough information to restore the link;
+NULL means application-only evidence. This replaces the boolean in the contract.
+
+For canonical fact values, reject unaligned bounded endpoints instead of silently
+normalizing them a second time. Raw-to-canonical construction is a separate path.
+Query instants normalize through the existing UTC rule, matching claim helpers.
+
+The closed answer carries the existing evidence `stance` on its incoming target.
+Otherwise contrary testimony about the same event could only be attached as
+support or turned into another fact. This is the existing claim/fact evidence
+relation, not a stored date-dispute status. Every minted handle also requires an
+explicit evidence assignment; merely updating its window cannot create a fact.
