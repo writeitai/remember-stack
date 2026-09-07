@@ -1,18 +1,25 @@
 # Temporal Clocks — world-time flows from the claim's window (Design)
 
-**Status:** binding under D107
+**Status:** binding under D107, amended by D110
+
+> **D110 amendment (2026-09-07).**
+> [Temporal write and lifecycle design](temporal_write_and_lifecycle_design.md)
+> closes the four §12 contracts: assertion-grain ordered relation writes,
+> autonomous guarded corrections under D108, checked cache freshness and D74
+> sanitized replay checkpoints. It also adds the `erased` endpoint basis and
+> qualifies continuous-ingest seed ordering. Its explicit amendments take
+> precedence over the original D107 revision history below.
 
 **Date:** 2026-09-03 (sixth revision the same day, after five independent
-Codex design reviews; §10 records what each round withdrew, §12 what is
-still open)
+Codex design reviews; §10 records the original withdrawn alternatives;
+D110 now resolves the adjacent contracts in §12)
 
 **Analysis:** `plan/analysis/time_handling_audit.md` (twenty-two findings at
 `02b79904`, each cited by file and function)
 
-**Open under D107 (decided in the sequencing, not here):** deterministic
-relation seeding under D88 concurrency, the locked compare-and-swap
-application of review verdicts, cached-artifact staleness, and the D74
-hard-forget inventory — see §12.
+**Adjacent contracts:** D110 now supplies the binding relation admission,
+locked autonomous application, cache freshness and hard-forget contracts
+listed in §12. Sequencing alone never establishes those contracts.
 
 **Builds on:** D41 (claims carry an immutable, source-asserted validity
 interval; a fact's window is the adjudicator's single recorded verdict, never
@@ -93,8 +100,8 @@ testimony becomes.
 
 | Window | Columns | Authority | Changes when |
 | --- | --- | --- | --- |
-| **verdict window** | `valid_from` / `valid_until` (existing), `valid_from_basis` / `valid_until_basis` (new, `NOT NULL DEFAULT 'unknown'`: `world_time`, `verdict`, `source_removed`, `legacy`, `unknown`), `seed_claim_id` (new, nullable — `NULL` only for legacy facts whose creator is unrecoverable and after hard forget scrubs it) | the adjudicator's single recorded verdict (D3/D41/D43): over which span the fact is believed to have held | seeded **once** at insert from the seed claim (§4.1); afterwards only by a recorded verdict: a supersede cap (§4.4), a `temporal_window` review verdict (§4.3), a D55 retraction (§4.4), or a migration verdict (§9) — never automatically from evidence |
-| **occurrence window** | `occurs_from` / `occurs_until` / `occurs_precision` (new, nullable) | **non-authoritative** derived metadata: the union of the canonical D41 windows of the fact's **attached** evidence — current or withdrawn testimony alike, so a D55 withdrawal never erases a historical fact's world-time; hard forget recomputes from surviving evidence | recomputed whenever evidence attaches or is forgotten; a database check forbids it from writing the verdict window |
+| **verdict window** | `valid_from` / `valid_until` (existing), `valid_from_basis` / `valid_until_basis` (new, `NOT NULL DEFAULT 'unknown'`: `world_time`, `verdict`, `source_removed`, `legacy`, `unknown`, `erased`), `seed_claim_id` (new, nullable — `NULL` only for legacy facts whose creator is unrecoverable and after hard forget scrubs it) | the adjudicator's single recorded verdict (D3/D41/D43): over which span the fact is believed to have held | seeded **once** at insert from the seed claim (§4.1); afterwards only by a recorded verdict: a supersede cap (§4.4), an autonomous temporal correction or compensation (§4.3), a D74 sanitized checkpoint (D110 §6), a D55 retraction (§4.4), or a migration verdict (§9) — never automatically from evidence |
+| **occurrence window** | `occurs_from` / `occurs_until` / `occurs_precision` (new, nullable) | **non-authoritative** derived metadata: the union of the canonical D41 windows of the fact's **attached** evidence — current or withdrawn testimony alike, so a D55 withdrawal never erases a historical fact's world-time; hard forget recomputes from surviving evidence | recomputed whenever evidence attaches or is forgotten; the typed guarded write transaction forbids this recompute from writing the verdict window |
 
 Why two kinds and two windows: a measurement is *about* FY2023 but is
 *believed* from the day it was reported onward and is never capped (D43's
@@ -112,7 +119,7 @@ it.
 ### 4.1 Seeding at insert (once, from the seed claim)
 
 The **seed claim** is the claim whose processing created the fact row — the
-first claim for it in D90 processing order in a fresh ingest — recorded
+first applied assertion for it in the closed admission order specified by D110 §3 — recorded
 atomically with the row in `seed_claim_id` **and** as the
 `triggering_claim_id` of the fact's `add` adjudication on both planes (today
 only observation `add` rows carry one; relation `add` rows gain it). Windows
@@ -137,9 +144,9 @@ replaced, because in half-open form that is an empty fact that the
 
 ### 4.2 Matching: nomination as today, verdicts bounded by temporal relation
 
-All matching for one key runs under the per-key advisory lock the
-observation path already takes, so identity decisions are serialised and no
-database exclusion is needed to keep them consistent.
+All matching participates in D110 §2's shared block/revision protocol.
+Occurrence identity decisions serialize under the block lock and need no
+occurrence exclusion. The state exclusion remains an additional invariant.
 
 **Candidate nomination is unchanged in mechanism**: the entity/key block,
 then the similarity-ranked residue (D43 §3) — never an overlap filter, so a
@@ -173,26 +180,27 @@ states; occurrences are never superseded):
 Consequences by kind:
 
 **States.** An overlapping same-property claim with the same value attaches
-as evidence; a disjoint one seeds a new slice (disjoint ranges satisfy the
+as evidence. D112 (D110 §3.3.1) applies dated state support to every compatible
+overlapping slice while preserving their separate identities and verdicts;
+support does not fill a gap between slices. A disjoint one seeds a new slice (disjoint ranges satisfy the
 relations `EXCLUDE`, which applies `WHERE temporal_kind = 'state'`); an
 overlapping different value is the supersede/contradict question (§4.4).
 
 **Occurrences.** Identity is the ladder's verdict, not the window: there is
 **no** occurrence exclusion constraint; overlapping occurrence rows of one
 key are legal, a union expansion that comes to overlap a neighbouring
-occurrence never merges rows, and the advisory lock plus the recorded verdict
-prevent duplicates. Acceptance covers same-key recurring events, coarse and
+occurrence never merges rows, and D110's block lock plus the recorded verdict
+prevent duplicate application. Acceptance covers same-key recurring events, coarse and
 fine precision overlap judged `new`, a disjoint pair judged `contradict`, and
 a union expansion bridging two existing occurrences.
 
 **Undated claims.** A claim without a D41 window takes its shape from the
 normaliser's judgement (§3) and then follows its kind's rules with unknown
 bounds. Observations of kind `unknown`: identical wording collapses onto an
-existing `unknown` row of the same key, otherwise a new row. Relations: the
-triple *is* the content, so an undated relation claim attaches to the single
-open `state` slice if exactly one exists, else seeds one `state` slice with
-unknown bounds for the key (created once); it never attaches to an
-`occurrence` and never creates a second unbounded slice.
+existing `unknown` row of the same key, otherwise a new row. Relations follow normalized shape. Only a state-shaped undated claim may use
+an eligible unknown-bounds state slice; an occurrence-shaped claim follows
+occurrence identity adjudication and is never forced into that state shortcut.
+The exact application and idempotency contract is D110 §3.
 
 **The relation write path becomes staged.** Today `upsert_relation` finds a
 live triple and attaches evidence before the relation ladder runs, which
@@ -202,65 +210,93 @@ observation claims already are) until, under the key's block lock, candidate
 nomination and the verdict complete; `new` inserts the fact, its `add`
 adjudication (with `triggering_claim_id`) and the evidence link in one
 transaction; `evidence` attaches in one transaction; every identity verdict
-is idempotent on `(triggering_claim_id, adjudicator generation)` so a retry
+is idempotent on `(assertion_id, adjudicator generation)` so a retry
 or a concurrent D88 normaliser replays the recorded verdict rather than
 deciding again. The relation ladder's "same object after redirects → exact
-no-op" short-circuit applies to `state` and `undated` triples only.
+no-op" short-circuit applies only to compatible state-shaped assertions; missing dates do not
+make an occurrence a state. D110 §3 defines the complete staging/receipt path.
 
 **Relations schema.** The existing GiST `EXCLUDE` on `(subject, predicate,
-object) && tstzrange(valid_from, valid_until)` becomes partial on
-`temporal_kind = 'state'` (an unbounded-bounds state slice is one range
-`(,)` under it, so the "created once" rule above is what the constraint
-enforces); occurrence relations have no constraint.
+object) && tstzrange(valid_from, valid_until)` protects states with a known
+verdict start, retaining the non-invalidated and no-contradiction predicates.
+D110 further excludes intervals with an `erased` endpoint basis and requires
+explicit uncertain-membership disclosure. D111 §4.2.1 below defines ordinary
+unknown-start coexistence. Occurrences have no interval exclusion.
 
-### 4.3 Revising a verdict: a `temporal_window` review verdict (amends D24)
+### 4.2.1 Unknown-start state coexistence (D111)
 
-No automatic path changes a verdict window after seeding. A discrepancy —
-attached evidence whose occurrence start precedes a `state` slice's verdict
-start, or dated evidence attaching to a slice with an unknown window — is
-surfaced in the envelope (`occurs_from < valid_from`; bases `unknown` beside
-a dated `occurrence`) and raised as a `review_queue` item of a new kind,
-`temporal_window`. Its verdicts live in an append-only relation,
-`temporal_window_verdicts`:
+A missing start is insufficient evidence that a state occupied every earlier
+instant. For example, “Alex is CEO” without dates and “Alex was CEO during
+2019” cannot establish one identity under the mixed-pair rule above, but need
+not contradict each other. Treating the first row as an infinite interval for
+uniqueness would prohibit the required `new`/coexist outcome. The exclusion
+therefore applies only when `valid_from IS NOT NULL`, alongside the existing
+state, non-invalidated, no-contradiction and no-erased-endpoint predicates.
 
-| column | meaning |
-| --- | --- |
-| `verdict_id` | primary key; the idempotency key for apply and replay |
-| `review_id` | the `review_queue` item it answers |
-| `target_fact_kind`, `target_fact_id` | D49 fact identity (`relation` / `observation` + id) |
-| `seed_claim_id` | the seed as recorded at the time of the verdict |
-| `old_valid_from`, `old_valid_until`, `old_from_basis`, `old_until_basis` | canonical bounds and bases before |
-| `new_valid_from`, `new_valid_until`, `new_from_basis`, `new_until_basis` | canonical bounds and bases after; a changed endpoint's basis is `verdict` |
-| `rationale`, `actor`, `decided_at` | provenance (D24) |
-| `reverses_verdict_id` | set on a reversal |
+Both `(NULL, NULL)` and `(NULL, finite_end)` states may coexist with dated
+same-triple states. The latter arises when an ending occurrence lawfully caps
+an unknown-start state. A known-start open-ended state remains protected.
+Preserve temporal kind, immutable seed, endpoint bases and existing dates;
+do not invent a contradiction, an erased endpoint, or an identity attachment
+to make a row fit the constraint. Mixed `new` is an ordinary durable completed
+identity outcome, not an endlessly retried input. D110's ordered admission,
+block locks and application receipts still prevent duplicate application.
 
-Invariants checked before apply, for verdicts that are not reversals: the
-start may move earlier, never later, and an `unknown` start may become known
-(the transition `NULL → known` is the one permitted "later" move, because
-there was no start before); no endpoint moves past a neighbouring slice's
-bound; a closed end is never reopened (D41); a `state` with two known
-endpoints stays non-empty. A verdict applies only under the fact's lock and
-only when the fact's current bounds and bases still equal its `old_*`
-values (compare-and-swap); a stale verdict is not applied and returns to
-review. Review items are unique per `(fact, discrepancy fingerprint)` so a
-recurring recompute raises one item, not many. The full locked, ordered
-application contract — including how a reversal compensates only the
-endpoints its referenced verdict changed while preserving intervening caps
-and retractions — is an open item of §12. **Reversal is the one documented
-exception**: a reviewer may reverse a `temporal_window` verdict with a
-compensating verdict that restores the prior bounds and bases exactly —
-D24's reversibility applies to human verdicts over human verdicts, while
-D41's retrospective guard governs evidence-driven change; the two do not
-conflict because no evidence ever moves a window. Verdicts apply in
-`(decided_at, verdict_id)` order after caps and retractions on the same
-fact and replay in that order on rebuild (D7). Anything the invariants refuse
-stays a review item.
+Every writer that acquires a known start, including autonomous correction and
+compensation, checks the complete resulting interval against all eligible
+same-triple state neighbors under D110's locks and revisions. An overlapping
+proposal is refused with a recorded reason and unchanged previous endpoints;
+the database constraint remains the final defense. Capping an unknown-start
+state without acquiring a start preserves its exemption. Conversion and replay
+use the same predicate, and readiness verifies its exact definition. Erasure
+retains D110 §6's separate basis, deletion and replay requirements.
+
+Membership stays as defined in §7.1: ordinary missing start supplies no lower
+bound, and a known end still expires the fact. Reads expose that missing start
+and any unresolved identity overlap; they do not turn ordinary unknown timing
+into an erased-boundary result. Aggregates count eligible fact identities,
+which can include both coexisting rows. Such counts must not be described as
+proof of distinct dated spells or real-world episodes. Profiles and K pages
+preserve this uncertainty instead of constructing an unsupported chronology.
+
+This changes no public grants or mutation authority and adds no new state
+field. It removes SQL uniqueness among unknown-start identities, making
+identity adjudication and receipts responsible for that class. Forced evidence
+would collapse unresolved identities; a both-NULL exception misses the legal
+known-end case; exempting unknown ends would also lose protection of dated
+open-ended states. Explicit overlap permission would add redundant lifecycle
+state for this class. See the
+[analysis and independent challenge](../analysis/temporal_undated_state_coexistence.md).
+
+Acceptance requires both ingestion orders, unknown-start finite-end states,
+multiple dated historical slices, retained known-start exclusion, accepted and
+refused start acquisition, receipt replay, and source-removal/erasure coverage.
+
+### 4.3 Revising a verdict: autonomous recorded correction (D110/D108)
+
+D110 §4 replaces the original human `temporal_window` queue/verdict mechanism.
+New eligible evidence can trigger an explicit correction adjudication choosing
+canonical endpoints backed by claim IDs. It never directly reduces evidence
+minima/maxima into a verdict window. A completed uncertain result preserves the
+existing endpoints and remains visible as uncertainty.
+
+D110 §2 defines the common locks, complete revision revalidation and ordered
+operation history. Its §4 defines ordinary monotonic corrections and the narrow
+compensating exception that restores only components still owned by the reversed
+operation, preserving intervening caps and belief-time invalidation. Existing
+plane adjudication logs retain narrative authority; typed temporal operations
+record application. No new human queue or second narrative verdict table exists.
+Replay follows committed dependencies, not all caps followed by wall-clock
+review order. D74 erasure uses D110 §6's independently verified sanitized roots.
 
 ### 4.4 Closing: temporal succession, separate from processing order
 
 D90's deterministic **processing** order — `(asserted_at NULLS LAST,
-claim_id, statement)` — is unchanged; it makes replay total and reproducible
-and decides nothing about the world.
+claim_id, statement)` for observations — decides nothing about the world.
+D110 qualifies this as ordering within a closed admitted set and exact replay
+of recorded history; unseen future inputs cannot determine today's immutable
+seed. Its assertion-level relation order and common operation sequence govern
+relation application and interleaved corrections.
 
 **Temporal succession** is the rule for capping a `state` slice. A supersede
 verdict caps the predecessor at a **world-time instant supplied by the
@@ -277,8 +313,8 @@ mechanically over the predecessor's verdict window:
 `(valid_from IS NULL OR T > valid_from) AND (valid_until IS NULL OR T <
 valid_until)`. A boundary that fails it is not a cap — the ladder's outcome
 is recorded, the pair routes to `contradict` (both stand, grouped) when the
-values conflict and coexists otherwise, and a `temporal_window` review item
-is raised. When the successor supplies no world-time instant (an undated
+values conflict and coexists otherwise, and a temporal discrepancy
+is recorded. When the successor supplies no world-time instant (an undated
 successor), there is no succession: the pair **coexists** and the
 adjudication row records `reason = "no world-time boundary -> coexist"`.
 The cap's basis is `verdict`. Relation supersession and observation
@@ -287,12 +323,13 @@ supersession share this one rule. `now()` is never a boundary.
 **Retraction (D55) by temporal kind, fail-closed.** A withdrawn `state`
 whose withdrawing document version has a known source time is capped there
 under the guard (basis `source_removed`). When that time is unknown, **or
-the guard refuses it**, the world-time end stays `NULL` with basis `unknown`
-and the belief interval closes regardless — `invalidated_at` set from the
+the guard refuses it**, preserve the existing world-time end and basis
+(including a finite earlier cap); an already unknown end stays unknown.
+The belief interval closes regardless — `invalidated_at` set from the
 **persisted reconciliation event's timestamp**, never from the database
 clock, so a rebuild replays the same instant and a sole-support removal can
 never leave a zombie fact that later activates; a refused boundary is
-additionally sent to review as the disputed world-time endpoint. A withdrawn
+recorded as a disputed world-time endpoint for autonomous consideration. A withdrawn
 `occurrence` or `unknown`-kind fact is never capped: it closes on belief-time
 the same way. This is the per-shape judgement D55 asks for and
 `close_observations` could not make while shape was semantic;
@@ -326,6 +363,13 @@ derived deterministically from `statement` plus `occurs_*` and
 2022-09-29"), refreshed whenever the occurrence window recomputes. Nothing
 source-specific enters identity; claims of different precision that collapse
 yield one label from the union window at the coarser precision.
+
+D113 [§5](observation_temporal_application_design.md) supplies observation
+assertion provenance for re-split. When qualifying legacy evidence has no
+recoverable original normalized assertion, refuse the cap with a durable
+uncertainty/discrepancy and preserve incoming coexistence; do not invent that
+assertion from the fact's display statement. This qualification preserves the
+world-time rule while making missing historical provenance explicit.
 
 ## 5. Canonical bounds: precision honoured once, consistently
 
@@ -391,6 +435,7 @@ and `fact_context` already use — evaluated at an explicit instant `E`:
 ingested_at <= E AND invalidated_at IS NULL
 AND (valid_from IS NULL OR valid_from <= E)
 AND (valid_until IS NULL OR valid_until > E)
+AND valid_from_basis <> 'erased' AND valid_until_basis <> 'erased'
 ```
 
 A fact whose verdict start lies in the future is not yet current; a `state`
@@ -404,15 +449,15 @@ predicate-absence query, which would otherwise keep counting an expired
 relation and block a true absence answer; D49 requires fact-grain answers to
 be validity-filtered).
 
-Cached artifacts (profiles, K pages) carry, in their input hash, the earliest
-future **activation** instant (`valid_from > E`) and the earliest future
-**expiry** instant (`valid_until > E`) among their inputs, and a durable,
-indexed `fact_expiry_schedule` (keyed by the artifact, the boundary instant,
-its kind — activation or expiry — and the generation; D12 idempotent) queues
-regeneration when either instant passes, with the boundary instant as the
-evaluation time `E`; restart catches up from the schedule. The read-time
-predicate remains the correctness backstop, so a late sweep can delay a
-refresh but never serve a not-yet-current or expired fact as current.
+D110 §6 distinguishes membership uncertainty caused by an erased boundary
+from ordinary unknown source timing. Counts and absence disclose uncertain
+rows instead of presenting their exclusion as complete knowledge.
+
+D110 §5 owns cache correctness: complete pre-top-k/future candidate and routing
+dependencies, checked revision/deadline certificates, event identities and
+scheduling through the existing work ledger, current-E downtime catch-up, and
+publication revalidation. A timer alone cannot certify already-rendered text.
+Readers omit stale generated text/vectors and fall back to current facts.
 
 ### 7.2 Prompts
 
@@ -508,8 +553,8 @@ did is auditable like any verdict.
 2. **migrate** — add the new columns (`temporal_kind`, the two bases,
    `occurs_from`/`occurs_until`/`occurs_precision`, `seed_claim_id`),
    the non-empty `state` check, the partial `EXCLUDE`, the
-   `fact_expiry_schedule` table, the `temporal_window` review kind and
-   `temporal_window_verdicts`, the `adjudication_outcome` value `migrate`
+   D110 operation/admission/cache/checkpoint stores and `erased` basis,
+   the `adjudication_outcome` value `migrate`
    and `adjudication_method` value `migration`, and the `memory_v1`
    canonicalisation function and view (`relation_adjudications.triggering_claim_id`
    already exists and is populated from now on; `postgres_schema_design.md`
@@ -522,9 +567,10 @@ did is auditable like any verdict.
      recorded `add` adjudication (present today except where hard forget
      scrubbed it); a **relation's creator was never recorded**, so its seed
      is *not* recovered: `seed_claim_id` stays `NULL`, the verdict window's
-     bases become `legacy`, and the fact's `temporal_kind` is derived from
+     bases become `legacy` for retained known bounds (unknown remains unknown),
+     and the fact's `temporal_kind` is derived from
      the kinds of its attached evidence when they agree (all state, all
-     occurrence, all undated) and set to `undated` otherwise — every such
+     occurrence, all undated) and set to `unknown` otherwise — every such
      choice recorded in the migration adjudication; the same `legacy` path
      applies to any observation whose seed was scrubbed;
    - **windows** — with a recovered seed, `temporal_kind` and the verdict
@@ -542,14 +588,16 @@ did is auditable like any verdict.
      reconciliation instant with `valid_until` set to `NULL`, basis
      `unknown`; a cap that
      cannot be recomputed (successor unknown or undated) is set to `NULL`,
-     basis `unknown`, with a `legacy_unknown_boundary` review item, and a cap the
-     chronological guard would refuse is likewise routed to review;
+     basis `unknown`, with a `legacy_unknown_boundary` diagnostic, and a cap the
+     chronological guard would refuse is likewise recorded as uncertainty;
 4. **readiness** reports the fact-layer generation and the count of open
    `legacy_unknown_boundary` items; consumers refuse to serve a store whose
-   fact generation predates D107, and the operator resolves or accepts the
-   open items before promoting the store;
+   fact generation predates D107. D110 distinguishes completed explicit
+   legacy/unknown uncertainty from an incomplete conversion or replay conflict;
+   only the latter blocks promotion. No human queue acceptance is required;
 5. **rollback** is restore of the pre-migration backup, as for any
-   generation roll.
+   generation roll; all accepted forget manifests must be honored before
+   restored serving resumes (D110 §6).
 
 Conversion does not re-adjudicate identity decisions made under the old
 rules: two occurrences a pre-D106 adjudicator merged stay one row until an
@@ -612,40 +660,23 @@ Only §6's added kinds benefit from re-extraction.
   window stays the one adjudicated home; the occurrence window is derived
   metadata and is documented as such wherever it is shown.
 
-## 12. Open items this design does not yet decide
+## 12. Adjacent contracts resolved by D110
 
-Four contracts were identified by the fifth independent review as necessary
-for implementation and as touching decisions beyond this design's current
-scope. They are recorded here as open, are gated in `plan/plans/temporal_clocks.md`
-WP-T.1, and each is a spike whose result amends the named design before that
-package starts. Tracking: program issue #364; spikes #365 (1), #366 (2),
-#367 (3), #368 (4).
+The original D107 left four consequential contracts open. They are now
+specified in `temporal_write_and_lifecycle_design.md`, supported by independent
+analyses and its complete PostgreSQL schema appendix:
 
-1. **Deterministic relation seeding under D88 concurrency.** D88 lets
-   concurrent claim jobs upsert relations ("relation evidence attach is
-   commutative"); a per-key lock serialises arrival, not the D90 total
-   order, so which claim seeds a relation is a race. Required: a durable,
-   claim-idempotent relation staging relation and a post-barrier per-block
-   drain in the total order, analogous to D90 for observations — an
-   amendment to D88 and `e3_claim_level_normalize_fanout_design.md`.
-2. **The locked application of `temporal_window` verdicts.** §4.3 fixes the
-   compare-and-swap precondition, the order key and item uniqueness;
-   remaining are the per-fact locking rule between review and
-   ingestion/retraction writes, dependency validation on replay, and the
-   compensating-reversal algorithm that preserves intervening caps.
-3. **Cached-artifact staleness.** §7.1's schedule regenerates profiles and K
-   pages when their inputs' boundaries pass; remaining are how a future fact
-   that is not yet an input becomes a scheduled dependency, transactional
-   schedule maintenance on every boundary change, draining and coalescing
-   boundaries missed during downtime with the current instant as `E`, and a
-   checked stale state (or a D49-disclosed staleness) for an artifact whose
-   refresh is late, since the read-time predicate cannot protect
-   already-rendered text.
-4. **Hard-forget inventory (D74).** `seed_claim_id`, `occurs_*`, the review
-   payloads, `temporal_window_verdicts` (seed, actor, rationale, bounds),
-   migration-adjudication features, the expiry schedule, derived labels and
-   their embeddings must each be classified as delete / null / recompute in
-   `hard_forget_design.md` §4 and the canary matrix.
+| Spike | Binding answer |
+| --- | --- |
+| #365 relation ordering | D110 §§2–3: complete normalization answers, assertion-grain idempotency, closed admission, ordered guarded apply and honest continuous-ingest replay guarantee |
+| #366 correction application | D110 §§2, 4: autonomous grounded correction, complete revalidation, component-owned compensation and committed dependency replay |
+| #367 cached artifacts | D110 §5: complete future-candidate/routing dependencies, certified text/vector reads, one existing scheduler and late-work fallback |
+| #368 hard forget | D110 §6: complete new-field inventory, independent-support classification, erased endpoint basis and sanitized block checkpoint/replay |
+
+T.1 implementation requires this amendment on main, the full schema and the
+acceptance evidence in D110 §8. Design acceptance does not itself mean code,
+conversion or release is complete. Tracking remains program #364 and
+`plan/plans/temporal_clocks.md`.
 
 ## References
 

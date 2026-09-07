@@ -49,6 +49,7 @@ benchmark = [
     "google-auth>=2.39",
     "google-cloud-storage>=3.4,<4",
     "nltk>=3.9",
+    "openai-codex==0.147.0",
     "regex>=2024.11.6",
 ]
 observability = [
@@ -89,6 +90,7 @@ dev = [
     "import-linter>=2.13",
     "jsonschema>=4.23",
     "nltk>=3.9",
+    "openai-codex==0.147.0",
     "pydantic-settings>=2.10",
     "pyright>=1.1",
     "pytest>=8.3",

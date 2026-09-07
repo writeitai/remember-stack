@@ -134,6 +134,25 @@ When a new extraction basis completes, prior claims for that basis become **non-
 
 ---
 
+### Source time and claim windows
+
+The extractor receives the full source timestamp, using `source_modified_at`
+when present and otherwise `published_at`. A relative phrase such as “three
+hours ago” is resolved against that instant. The original phrase stays in
+claim text; resolved dates belong in the structured validity fields.
+
+The prompt distinguishes `event_time` (a happening), `effective_period` (a
+state or arrangement), `measurement_period` (a reporting span), and
+`proposition_validity` (when a proposition holds). “Has been CEO since 2019”
+is an open-ended window. Kind and precision are separate: a year-long
+employment period is a state period, not automatically an event.
+
+Missing dates stay unknown. Relative expressions without an anchor and
+part-of-day expressions without representable bounds are not given invented
+instants. Absolute dates stated in the text do not require a header timestamp.
+These instructions improve extraction; they do not guarantee that every
+model output has the correct kind or date.
+
 ## E3 — Facts
 
 ### Entity resolution

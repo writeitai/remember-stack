@@ -1,5 +1,12 @@
 # Hard-forget design — one fail-closed lineage purge
 
+> **Binding D110 amendment (2026-09-07).** The temporal inventory and sanitized
+> replay checkpoints in [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md)
+> §6 extend this same worker/fence/manifest contract. Checkpoint records are
+> verified domain outcomes, not a second deletion scheduler. Manifest v2 adds
+> affected surviving facts and temporal identities while preserving accepted
+> v1 canonical bytes and hashes exactly.
+
 > **Binding D98 amendment (2026-08-27).** There are no Ladybug/P2 snapshot
 > prefixes, graph generations, local graph files, or `GraphRebuildWorker` in the
 > forget inventory. Authority deletion plus the normalized PostgreSQL views
@@ -218,6 +225,39 @@ table or deletion-specific scheduler is added.
 
 If any adapter throws or verification fails, the original exception remains visible, the work row
 retries/dead-letters normally, and the barrier remains closed. There is no partial-success response.
+
+### 4.1 Temporal inventory and replay (D110)
+
+The detailed authority/recovery contract is `temporal_write_and_lifecycle_design.md`
+§6 and its complete schema appendix. Apply the existing workflow to these stores:
+
+| Store / field family | Required action |
+| --- | --- |
+| normalization receipts, outputs, relation assertions, batch/unit membership | delete source-bearing receipt/assertion data; reconcile covered batch counts and already-applied identities without renumbering surviving order |
+| fact seed/triggering IDs, occurrence windows, labels/embeddings | null erased references; recompute occurrence from surviving evidence; clear/rebuild derived text/vector inputs |
+| verdict endpoints and temporal kind | preserve only independently supported accepted authority; unsupported known bounds become NULL/erased; unsupported shape becomes unknown; preserve fact IDs and belief closure |
+| temporal operations, evidence/support/dependencies, discrepancies, prepared output and plane adjudication payloads | classify complete support before deletion; cover checkpoint prefixes; scrub contaminated dates/prose/fingerprints to permitted structural tombstones; invalidate pending proposals |
+| checkpoint roots, component support and historical snapshots | include in every subsequent forget inventory; replace affected block roots and scrub newly forbidden historic content; never replay covered source-derived effects |
+| temporal sources, source keys, boundary memberships and events | invalidate certificates before restrictive source deletion; delete/recompute duplicated dates and keys; cancel/skip obsolete work and nominate safe current repairs |
+| artifact certificates, dependencies, profile/page text, vectors, publication intermediates | clear or quarantine until safe rebuild; prevent stale producer publication; include parent dependencies, SQL/graph/P3 and real mounted artifacts |
+| temporal conversion shadows, input fingerprints, migration operation features | scrub forgotten content in prepared/applied shadows and migration history; retain only verified safe progress/replay state |
+
+Manifest v2 keeps separate `affected_relation_ids`, `affected_observation_ids`,
+`temporal_verdict_ids` (operation IDs), `temporal_event_ids`,
+`temporal_certificate_ids` and `temporal_checkpoint_ids`, each a sorted unique
+UUID set alongside existing fields. These nominate scrub/recompute; they are
+never fed into the existing exclusive-fact deletion list. Local checkpoint
+block membership is discovered and verified from these identities under the
+fence and remains part of the checkpoint inventory hash. A v1 restore discovers
+the new closure before deleting its identified claims/documents.
+
+Canary/residual cells must check each row above after ordinary forget, after a
+crash at every irreversible boundary, and after restoring an old database plus
+a v1 or v2 accepted manifest. A shared surviving fact whose seed is forgotten
+must retain an independently supported later cap but never the seed-only start,
+and replay must reproduce that cleaned state exactly. Clearing a bound into
+possible overlap produces disclosed erased-bound uncertainty, not fabricated
+contradictory testimony or a silently merged/deleted identity.
 
 ## 5. Restore non-resurrection
 

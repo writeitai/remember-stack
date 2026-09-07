@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy.engine import make_url
 
 from rememberstack.spine.query_space import load_manifest
+from rememberstack.spine.query_space import VIEW_CONTRACTS
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_sandbox.audit import AuditTrail
 from rememberstack.surfaces.query_sandbox.audit import KillSwitches
@@ -520,7 +521,7 @@ def test_discovery_serves_manifest_and_headline() -> None:
     description = describe_query_space()
     members = load_manifest()["hash_members"]
     assert description.schema == "memory_v1"
-    assert len(description.views) == 24
+    assert len(description.views) == len(VIEW_CONTRACTS)
     assert description.headline == TWO_LAYER_HEADLINE_FULL
     assert set(description.functions) == PUBLIC_SRF_NAMES
     assert description.limits == {

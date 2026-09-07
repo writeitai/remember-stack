@@ -1,5 +1,8 @@
 # Entity identity and retrieval — design (binding)
 
+> **Binding D110 amendment (2026-09-07).** D110 §5 requires generation/revision/deadline checks before generated profile text or its vector participates in T3/T4 identity or retrieval. Future activation/expiry invalidates the certificate even with no new ingestion; stale profile evidence is omitted.
+> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only across
 > the registry, but gains one narrow verdict: after a D102-contract T4
 > `match`, later occurrences of the exact normalized canonical name in that

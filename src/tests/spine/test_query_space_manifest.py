@@ -166,6 +166,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # vocabulary, and the columns it answers with, so a caller can read the
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
+        "canonical_bounds",
         "facts_as_of",
         "fetch_chunk_bodies",
         "graph_citation_path",
@@ -239,6 +240,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     grammar = limits["sql_grammar"]
     assert isinstance(grammar, dict)
     assert grammar["public_functions"] == [
+        "canonical_bounds",
         "facts_as_of",
         "fetch_chunk_bodies",
         "graph_citation_path",
@@ -307,7 +309,7 @@ def test_manifest_covers_exactly_the_declared_relations() -> None:
     names = [str(view["name"]) for view in views if isinstance(view, dict)]
     assert names == sorted(names)
     assert set(names) == {contract.name for contract in VIEW_CONTRACTS}
-    assert len(names) == 24
+    assert len(names) == len(VIEW_CONTRACTS)
 
 
 def test_deletion_matrix_artifact_matches_its_generator() -> None:

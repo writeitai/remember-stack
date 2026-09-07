@@ -18,6 +18,7 @@ Adversarial reviews of proposed designs before binding acceptance.
 | [`REVIEW_claude-opus_wp_i3_global_er_eval_r1_2026-08-27.md`](REVIEW_claude-opus_wp_i3_global_er_eval_r1_2026-08-27.md) | Claude Opus 5 xhigh | PR #312 WP-I.3 r1 blockers |
 | [`REVIEW_claude-opus_wp_i3_global_er_eval_r3_2026-08-27.md`](REVIEW_claude-opus_wp_i3_global_er_eval_r3_2026-08-27.md) | Claude Opus 5 xhigh | PR #312 WP-I.3 r3 approval |
 | [`REVIEW_agy_wp_i3_global_er_eval_r3_2026-08-27.md`](REVIEW_agy_wp_i3_global_er_eval_r3_2026-08-27.md) | Antigravity (`agy`) | Same PR #312 r3 approval |
+| [`REVIEW_agy_locomo_codex_subscription_2026-09-07.md`](REVIEW_agy_locomo_codex_subscription_2026-09-07.md) | Antigravity (`agy`) | LoCoMo Codex subscription evaluator; approved after remediation |
 
 Revised designs after these reviews:
 

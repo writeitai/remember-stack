@@ -1,5 +1,27 @@
 # LoCoMo full-system benchmark design
 
+> **Binding v25 evaluator amendment (2026-09-07).** All default, Gemma/Vertex,
+> and Codex-subscription variants reuse one answer-prompt constant. It permits
+> general knowledge only as interpretation, forbids seeking benchmark gold
+> artifacts, requires content retrieval before every answer, and tells capable
+> clients to resolve a material entity in parallel with an independent content
+> read before following up by entity id. The existing retrieval default of 50
+> is unchanged. The Codex variant pins `gpt-5.6-luna` at reasoning effort
+> `high`, supplies no supplemental system instruction, records every returned
+> runtime item and each out-of-band action's request metadata in a run-local
+> audit, and
+> rejects any command, file, MCP, web, or sub-agent action before scoring. It
+> remains an experimental, separately fingerprinted protocol and does not
+> produce scores comparable to canonical `RS-LoCoMo-Full-v25`. Analysis:
+> `plan/analysis/locomo_codex_subscription_bridge.md`.
+
+> **D107 WP-T.4 protocol amendment (2026-09-06).** Full-v24 retains the
+> existing query-space contract and rolls extraction to teach all four D41
+> kinds and open-ended windows with full source timestamps. Both the default
+> and Gemma/Vertex variants use this extraction generation. Protocol identity
+> and fingerprints change; earlier protocol scores are directional comparisons.
+> Binding extraction semantics: `temporal_clocks_design.md` §6.
+
 > **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
 > two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
 > about), and the fact-grain `validity` fields with their bases and occurrence
@@ -7,7 +29,16 @@
 > assured surface rolls this protocol; the sequencing is
 > `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
 
-> **Binding D107 amendment, WP-T.0a (2026-09-03).** The current protocol is
+> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
+> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> tools, budgets, prompts, scoring, and ingest component versions. The query
+> space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
+> `examples.claims_as_of` overlaps the half-open canonical window and counts
+> unknown precision by precision alone (audit 4.21). The surface manifest
+> hash, protocol identity, and fingerprint roll; ingestion provenance and the
+> library `claims_as_of` result set do not.
+
+> **Historical D107 amendment, WP-T.0a (2026-09-03).** The WP-T.0a protocol was
 > `RS-LoCoMo-Full-v22`. It retains v21's dataset, rendered documents, models,
 > tools, budgets, prompts, and scoring. Its pinned `adjudicate_observations`
 > component version now carries canonical half-open bounds (D107 §5): the
@@ -109,7 +140,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v22
+protocol                RS-LoCoMo-Full-v25
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -133,6 +164,30 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v24 → v25 (2026-09-07 — shared entity follow-up and audited Codex):** The
+answer prompt remains one constant shared by the default, Gemma/Vertex, and
+Codex-subscription variants. It no longer prohibits outside knowledge; general
+knowledge may interpret retrieved evidence, while RememberStack remains the
+authority for conversation-specific claims. Seeking gold answers, gold evidence
+labels, or evaluator artifacts is forbidden. Every final answer now explicitly
+requires a content-bearing read. When a named person, organization, place, or
+other entity can narrow retrieval, a capable client may resolve it in parallel
+with an independent content read and use the returned id in follow-ups; the
+one-step LoCoMo interface expresses the same work as consecutive requests. The
+retrieval default remains 50.
+
+The Codex variant moves both seats from reasoning effort `low` to `high` and
+removes the supplemental system instruction that ambiguously prohibited tools.
+Its empty read-only/no-network sandbox and deny-all approvals remain. Every
+returned Codex item type and every out-of-band action's request metadata is
+appended to `codex-runtime-<stage>.jsonl`; returned content is omitted. A
+command, file mutation, MCP call, web search, or sub-agent still makes the turn
+fail before its output is accepted. Ordinary
+RememberStack tool names, arguments, results, and latency remain in the answer
+record. Dataset, ingestion generations, tool catalog, schemas, limits, judge
+rubric, and scoring are unchanged. Prompt hashes, adapter version, protocol
+names, and fingerprints roll.
 
 **v19 → v20 (2026-09-01 — D105 complete direct values):** When retrieved
 evidence supports multiple distinct values that directly satisfy the question,
@@ -431,6 +486,57 @@ choice for the D97 surface. Answer and judge
 remain distinct typed roles because their prompts, schemas, budgets, and
 accounting differ even though they use the same model.
 
+#### 2.1.1 Codex ChatGPT-subscription variant
+
+`full-v25-codex-subscription` is an additive evaluator-provider variant for
+answer and judge experiments on an operator machine already logged into Codex
+with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
+app-server runtime. The benchmark never reads Codex's auth file, never receives
+an OAuth token, and never accepts an OpenAI API key for these seats. Before each
+call, the adapter reads the current account and requires type `chatgpt`;
+app-server owns refresh of its cached login when necessary.
+
+Every generation gets a fresh ephemeral thread in an empty temporary working
+directory with read-only sandboxing, network unavailable, and approvals denied.
+There is no supplemental system instruction: the shared benchmark prompt and
+turn-scoped JSON Schema are the complete task contract. After completion, the
+adapter appends every returned item type and the request identity,
+arguments/query, and status of every command, file change, MCP call, web search,
+sub-agent, or other runtime action to `codex-runtime-<stage>.jsonl`. Returned
+tool content is omitted. It then rejects any turn containing such an action.
+The existing LoCoMo runner owns every RememberStack tool call and
+records its name, arguments, response, and latency in the answer record. The
+separate traces make both planes auditable without allowing the second plane to
+affect a score.
+
+Codex app-server supports a turn-scoped JSON Schema, so the adapter passes the
+existing answer or judge Pydantic schema and validates the returned JSON again.
+It records the turn-total reported input/output tokens and local wall-clock
+latency. ChatGPT does not report a per-turn USD charge: `cost_usd=0` means no
+provider-reported marginal charge, not a free subscription. The run's call
+ceilings and Codex's service quota are the applicable guards; the evaluator
+USD ceiling cannot cap subscription usage.
+
+If the SDK raises a failed turn before returning its usage event, the adapter
+preserves the real provider error and records no fabricated usage. Publication
+use would require the lower-level event stream if partial failed-turn token
+accounting becomes a material requirement.
+
+The provider controls force a distinct protocol. Codex does not expose
+temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
+reasoning effort `high`, rather than v25's OpenRouter-specific `none`. The v25
+prompt is the same object used by the OpenRouter and Gemma variants; schemas,
+budgets, catalog, and judge rubric remain aligned.
+These runs are useful for smoke/development comparison but are not canonical
+v25 publication results. The SDK's synchronous turn currently has no
+benchmark-enforced deadline, so this variant is not the default unattended
+publication path.
+
+Provider composition is stage-local. Ingest still composes OpenRouter for the
+deployment embedding preflight and routes its chat probe to Codex. Once the
+store is ingested, `answer` and `judge` require only the local ChatGPT login;
+they do not instantiate or read OpenRouter/Vertex credentials.
+
 ### 2.2 Provenance: the serving image, not the checkout
 
 `repository_revision` is read with `git rev-parse HEAD` in the directory the CLI
@@ -681,7 +787,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v22 requires to be
+- the non-secret `document_binding_generation`, which Full-v25 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -775,14 +881,17 @@ For each question:
 The agent is instructed to choose the cheapest suitable channel:
 `testimony_context` for what sources said, `fact_context` for current or
 historical truth, `answer_context` when both authority layers are useful, and
-`resolve_entity` before entity-grounded retrieval when identity is ambiguous;
-direct primitives for
+`resolve_entity` alongside an independent content read when a named entity can
+narrow retrieval, in parallel when the runtime supports it and otherwise in
+consecutive steps; returned entity ids make follow-up reads precise. Identity
+metadata never replaces content evidence. Direct primitives serve
 targeted evidence and audit, discovery before unfamiliar SQL, SQL for live
 composition and P1 search functions, bounded graph helpers or typed graph
 operations for graph questions, saved queries for shipped patterns, and P3 for
 filesystem orientation/grep/read. It must inspect graph truncation/work-bound
 fields and respect grain, validity, freshness, typed negatives, and hydration
-drops. It receives no gold answer, evidence IDs, summaries, or outside retrieval.
+drops. It receives no gold answer, evidence IDs, or summaries and must not seek
+gold or evaluator artifacts through another channel.
 
 Loop guards in the frozen answer prompt (v20): never repeat a tool call with the
 same tool and the same arguments; if a tool yields nothing useful, switch tools
@@ -827,13 +936,14 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v22 \
+  --protocol full-v25 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. The sole choice is `full-v22`; ingest,
-answer, judge, and summarize read it from the prepared run and expose no
-protocol override.
+`--protocol` exists only on `prepare`. Canonical runs use `full-v25`; the
+explicit `full-v25-gemma-vertex` and `full-v25-codex-subscription` choices are
+separately fingerprinted provider variants. Ingest, answer, judge, and summarize
+read the frozen choice from the prepared run and expose no protocol override.
 
 Per isolated sample:
 

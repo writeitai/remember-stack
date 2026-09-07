@@ -308,6 +308,10 @@ def preflight_provider(
     before_call: Callable[[], None],
     record_usage: Callable[[ProviderCallUsage], None],
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
+    answer_agent_temperature: float | None = TEMPERATURE,
+    answer_agent_reasoning_effort: ReasoningEffort | None = (
+        ANSWER_AGENT_REASONING_EFFORT
+    ),
 ) -> tuple[str, ...]:
     """Prove the credential and both model kinds work before spending real time.
 
@@ -324,7 +328,10 @@ def preflight_provider(
     try:
         response = provider.generate(
             request=ModelRequest(
-                model=answer_agent_model, prompt=_PREFLIGHT_PROMPT, temperature=0.0
+                model=answer_agent_model,
+                prompt=_PREFLIGHT_PROMPT,
+                temperature=answer_agent_temperature,
+                reasoning_effort=answer_agent_reasoning_effort,
             ),
             response_type=PreflightProbe,
         )
@@ -417,7 +424,7 @@ def ingest_sample(
         _require_current_ingest_bindings(model_bindings=build.model_bindings)
         if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
             raise ExecutionGuardError(
-                "deployment document binding generation differs from RS-LoCoMo-Full-v22"
+                "deployment document binding generation differs from RS-LoCoMo-Full-v25"
             )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
@@ -457,6 +464,10 @@ def ingest_sample(
             before_call=before_preflight_call,
             record_usage=record_preflight_usage,
             answer_agent_model=context.configuration.answer_agent_model,
+            answer_agent_temperature=(context.configuration.answer_agent_temperature),
+            answer_agent_reasoning_effort=(
+                context.configuration.answer_agent_reasoning_effort
+            ),
         ):
             print(f"preflight: {line}", file=sys.stderr)
         _require_cost_before_call(
@@ -576,7 +587,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v22 pipeline, live graph, and fresh P3 projection"
+            " RS-LoCoMo-Full-v25 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1200,7 +1211,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v22")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v25")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1210,7 +1221,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v22")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v25")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1468,7 +1479,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v22: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v25: "
             + ", ".join(mismatches)
         )
 
@@ -1651,7 +1662,7 @@ def _answer_one(
     max_agent_calls: int,
     max_evaluator_cost_usd: Decimal,
     answer_agent_model: AnswerAgentModel = ANSWER_AGENT_MODEL,
-    answer_agent_temperature: float = TEMPERATURE,
+    answer_agent_temperature: float | None = TEMPERATURE,
     answer_agent_reasoning_effort: ReasoningEffort | None = (
         ANSWER_AGENT_REASONING_EFFORT
     ),
@@ -2308,7 +2319,7 @@ def _judge_answer(
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
-    judge_temperature: float = TEMPERATURE,
+    judge_temperature: float | None = TEMPERATURE,
     judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:
@@ -2338,7 +2349,7 @@ def _judge_one(
     max_judge_calls: int,
     max_evaluator_cost_usd: Decimal,
     judge_model: str = JUDGE_MODEL,
-    judge_temperature: float = TEMPERATURE,
+    judge_temperature: float | None = TEMPERATURE,
     judge_reasoning_effort: ReasoningEffort | None = JUDGE_REASONING_EFFORT,
     question_trace: QuestionTrace | None = None,
 ) -> JudgeRecord:

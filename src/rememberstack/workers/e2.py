@@ -168,10 +168,14 @@ TEMPORAL RESOLUTION IS REQUIRED regardless of claim form. This applies equally
 when claim_text preserves a direct quotation or attributed speech:
 a relative expression inside quoted or attributed text is never exempt.
 Whenever the source utterance contains a relative temporal expression
-("yesterday", "last Saturday", "last year", "this morning", "a few weeks ago",
+("yesterday", "last Saturday", "last year", "three hours ago", "a few weeks ago",
 and similar) AND the DOCUMENT HEADER provides an absolute date or timestamp,
 you MUST resolve the expression against that anchor and emit valid_kind,
-valid_from_iso, valid_until_iso, and valid_precision.
+valid_from_iso, valid_until_iso, and valid_precision when the source supports
+an interval representable by the schema. Otherwise keep time unknown; never
+turn an uncertain part of a day into an invented instant. Unrepresentable
+timing alone must not drop an otherwise entailed claim: keep its source-faithful
+text and use null valid_kind/from/until with unknown precision.
 Put the computed absolute time ONLY in those structured valid-time fields. The
 claim_text MUST stay faithful to the source: keep the relative phrase as spoken
 and never replace it with the computed date. When claim_text preserves a direct
@@ -179,18 +183,28 @@ quotation, the quoted text itself stays verbatim; its resolution goes only to
 the valid-time fields.
 
 Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z;
-never emit a datetime without an offset. Calendar-day expressions use
-valid_kind=event_time, valid_precision=day, and the resolved date as both ISO
-ends. Year-only expressions use precision=year with that calendar year's
+never emit a datetime without an offset. Choose the kind by meaning, independently of precision:
+- event_time: an event happened (a visit, win, appointment announcement).
+- effective_period: a state or arrangement applied during a stated span
+  (employment, a contract, or a policy in force).
+- measurement_period: a figure describes a reporting span (FY2023 revenue).
+- proposition_validity: a proposition holds over a span (has been CEO since 2019).
+Use null kind and unknown precision when the source supplies no world-time.
+An ongoing state with a known beginning uses precision=open, from set, until
+null. Never turn an ongoing state into a one-day event or end it at the header.
+Calendar-day expressions use valid_precision=day and the resolved date as both
+ISO ends for a single day; kind still follows the meaning above. Year-only expressions use precision=year with that calendar year's
 [start,end] ISO bounds; months and quarters likewise use their calendar
 bounds. Bounded precisions (day|month|quarter|year) require both ends; open
 requires from only; instant sets both ends equal. Use only the precision the
 expression supports. For a vague expression that the schema cannot encode
 honestly ("a few weeks ago", or "last summer" without source-defined season
-bounds), use a coarser honest year only when the source supports it; otherwise
+bounds, or "this morning" without explicit clock bounds), use a coarser honest
+year only when the source supports it; otherwise
 omit valid-time. If the document has no absolute anchor, leave valid_kind,
-valid_from_iso, and valid_until_iso null and valid_precision unknown. Never
-invent an anchor or a date.
+valid_from_iso, and valid_until_iso null and valid_precision unknown for
+relative expressions. Explicit absolute dates in the source still resolve
+without a header date. Never invent an anchor or a date.
 
 Examples (DOCUMENT HEADER date → structured output):
 - date 2023-05-08;
@@ -207,6 +221,27 @@ Examples (DOCUMENT HEADER date → structured output):
   claim_text="met the organizer last Saturday", valid_kind=event_time,
   valid_from_iso=2023-05-06, valid_until_iso=2023-05-06,
   valid_precision=day.
+
+- date 2023-05-08; "Alice has been CEO since 2019" →
+  valid_kind=proposition_validity, valid_from_iso=2019-01-01,
+  valid_until_iso=null, valid_precision=open.
+- date 2023-05-08; "Alice worked at Acme from 2015 to 2018" →
+  valid_kind=effective_period, valid_from_iso=2015-01-01,
+  valid_until_iso=2018-12-31, valid_precision=year.
+- date 2024-02-01; "FY2023 revenue was $5M" →
+  valid_kind=measurement_period, valid_from_iso=2023-01-01,
+  valid_until_iso=2023-12-31, valid_precision=year (calendar fiscal year
+  only when the source establishes that calendar; otherwise retain uncertainty).
+- date 2023-05-08T19:30:00+00:00; "the final ended three hours ago" →
+  valid_kind=event_time, valid_from_iso=2023-05-08T16:30:00+00:00,
+  valid_until_iso=2023-05-08T16:30:00+00:00, valid_precision=instant.
+- date 2023-05-08T22:00:00+00:00; the same "three hours ago" →
+  valid_kind=event_time, valid_from_iso=2023-05-08T19:00:00+00:00,
+  valid_until_iso=2023-05-08T19:00:00+00:00, valid_precision=instant.
+
+- date 2023-05-08T19:30:00+00:00; "Alice won the final this morning" →
+  keep claim_text="Alice won the final this morning", valid_kind=null,
+  valid_from_iso=null, valid_until_iso=null, valid_precision=unknown.
 
 KEPT PROPOSITIONS:
 {keeps}
@@ -901,7 +936,7 @@ def _header_text(*, source: ChunkSource) -> str:
     modified = source.source_modified_at or source.published_at
     return (
         f"title {source.title or 'untitled'}; source {source.source_kind};"
-        f" date {modified.date().isoformat() if modified else 'unknown'};"
+        f" date {modified.isoformat() if modified else 'unknown'};"
         f" language {source.language or 'unknown'}"
     )
 

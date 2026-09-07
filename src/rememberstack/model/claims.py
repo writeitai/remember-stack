@@ -162,10 +162,30 @@ class CandidateClaim(BaseModel):
     added_context: tuple[AddedContext, ...] = ()
     entailment_self_verdict: bool
     is_attributed: bool = False
-    valid_kind: ClaimValidKind | None = None
-    valid_from_iso: str | None = None
-    valid_until_iso: str | None = None
-    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
+    valid_kind: ClaimValidKind | None = Field(
+        default=None,
+        description=(
+            "Source world-time meaning: event_time for happenings, effective_period "
+            "for states or arrangements, measurement_period for reporting spans, "
+            "proposition_validity for when a proposition holds. Null if undated."
+        ),
+    )
+    valid_from_iso: str | None = Field(
+        default=None,
+        description="Inclusive source-asserted start: ISO date or timestamp with offset; never ingestion time.",
+    )
+    valid_until_iso: str | None = Field(
+        default=None,
+        description="Inclusive source-asserted end; null for open or unknown; equal to start for an instant.",
+    )
+    valid_precision: ClaimValidPrecision = Field(
+        default=ClaimValidPrecision.UNKNOWN,
+        description=(
+            "Granularity of the supported bounds: instant, day, month, quarter, year; "
+            "open for a known start without an end (CEO since 2019); unknown for "
+            "missing or unrepresentable time. Part-of-day uncertainty is not an instant."
+        ),
+    )
 
 
 class ClaimifyResponse(BaseModel):

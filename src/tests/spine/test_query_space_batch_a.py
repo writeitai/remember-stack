@@ -1198,6 +1198,17 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
             " WHERE claim_id = :claim)",
             {"claim": corpus.claim["erased"]},
         ),
+        "claims_canonical.superseded_testimony_present": (
+            f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim AND NOT is_current_testimony"
+            " AND (claim_valid_precision = 'unknown' OR canon_start IS NOT NULL))",
+            {"claim": corpus.claim["old"]},
+        ),
+        "claims_canonical.forgotten_lineage_claim_absent": (
+            f"SELECT NOT EXISTS (SELECT 1 FROM {schema}.claims_canonical"
+            " WHERE claim_id = :claim)",
+            {"claim": corpus.claim["erased"]},
+        ),
         "claims_live.current_testimony_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.claims_live"
             " WHERE claim_id = :claim)",
@@ -2689,7 +2700,7 @@ def test_corrupt_coordinates_leak_no_identifier_through_any_surface(
         public_surfaces = tuple(
             surface for surface in MATRIX_SURFACES if surface.caller_reachable
         )
-        assert len(public_surfaces) == 24
+        assert len(public_surfaces) == len(VIEW_CONTRACTS)
         leaks = {
             surface.name: _reachable_values(
                 connection=connection, relation=surface.name, forbidden=forbidden
@@ -3155,8 +3166,11 @@ def test_no_claim_row_is_ever_accepted_as_a_current_fact(corpus: _Corpus) -> Non
     assert not claim_columns & {"evaluated_at", "support_state", "evidence_count"}
 
 
-def test_claim_evidence_overlap_is_inclusive_at_both_endpoints(corpus: _Corpus) -> None:
-    """An instant claim has equal endpoints a half-open rule would erase."""
+def test_stored_claim_windows_keep_inclusive_instant_endpoints(corpus: _Corpus) -> None:
+    """D41 storage is inclusive: an instant has equal endpoints on the raw columns.
+
+    World-time overlap belongs on claims_canonical, not this predicate.
+    """
     overlap = (
         "SELECT coalesce(array_agg(claim_id ORDER BY claim_id), '{}'::uuid[])"
         " FROM memory_v1.claims_visible_history"
@@ -3175,6 +3189,75 @@ def test_claim_evidence_overlap_is_inclusive_at_both_endpoints(corpus: _Corpus) 
     assert corpus.claim["instant"] in at_instant, "equal endpoints still match"
     assert corpus.claim["a"] in at_instant, "the upper endpoint is inclusive"
     assert corpus.claim["instant"] not in after_instant
+
+
+@pytest.mark.parametrize(
+    ("precision", "start", "end"),
+    [
+        ("day", "2023-05-07T12:00:00+00:00", "2023-05-07T12:00:00+00:00"),
+        ("month", "2023-05-07T12:00:00+00:00", "2023-05-08T12:00:00+00:00"),
+        ("quarter", "2023-05-07T12:00:00+00:00", "2023-05-08T12:00:00+00:00"),
+        ("year", "2022-01-01T00:00:00+00:00", "2022-12-31T00:00:00+00:00"),
+        (
+            "instant",
+            "2023-05-07T12:00:00.000001+00:00",
+            "2023-05-07T12:00:00.000001+00:00",
+        ),
+        ("open", "2019-01-01T16:30:00+00:00", None),
+        ("unknown", None, None),
+    ],
+)
+def test_canonical_view_matches_private_twins_under_query_role(
+    corpus: _Corpus, precision: str, start: str | None, end: str | None
+) -> None:
+    """All published projections preserve source membership and UTC clock arithmetic."""
+    with corpus.engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE claims SET claim_valid_from=CAST(:start AS timestamptz),"
+                " claim_valid_until=CAST(:end AS timestamptz),"
+                " claim_valid_precision=CAST(:precision AS claim_valid_precision),"
+                " claim_valid_kind=CASE WHEN :precision='unknown' THEN NULL"
+                " ELSE 'event_time'::claim_valid_kind END WHERE claim_id=:claim"
+            ),
+            {
+                "start": start,
+                "end": end,
+                "precision": precision,
+                "claim": corpus.claim["a"],
+            },
+        )
+        expected = connection.execute(
+            text(
+                "SELECT claim_canonical_start(claim_valid_from,claim_valid_precision),"
+                " claim_canonical_end(claim_valid_from,claim_valid_until,claim_valid_precision)"
+                " FROM claims WHERE claim_id=:claim"
+            ),
+            {"claim": corpus.claim["a"]},
+        ).one()
+        role = corpus.engine.dialect.identifier_preparer.quote(
+            f"rememberstack_query_{corpus.engine.url.database}"
+        )
+        connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
+        connection.exec_driver_sql("SET LOCAL TIME ZONE 'Pacific/Auckland'")
+        actual = connection.execute(
+            text(
+                "SELECT canon_start,canon_end FROM memory_v1.claims_canonical WHERE claim_id=:claim"
+            ),
+            {"claim": corpus.claim["a"]},
+        ).one()
+        assert tuple(actual) == tuple(expected)
+        differing = connection.execute(
+            text(
+                "SELECT count(*) FROM ("
+                " (SELECT claim_id FROM memory_v1.claims_canonical EXCEPT SELECT claim_id FROM memory_v1.claims_visible_history)"
+                " UNION ALL"
+                " (SELECT claim_id FROM memory_v1.claims_visible_history EXCEPT SELECT claim_id FROM memory_v1.claims_canonical)"
+                ") AS difference"
+            )
+        ).scalar_one()
+        assert differing == 0
+        connection.rollback()
 
 
 # ── §9.4 D54 lifecycle ───────────────────────────────────────────────────

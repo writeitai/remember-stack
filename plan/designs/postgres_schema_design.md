@@ -2744,6 +2744,54 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
     as-of query demand at target scale. Only a subsequent binding design may introduce a finite
     hot horizon and truthful fallback contract; this spike supplies evidence, not a hidden value.
 
+## D110 amendment — temporal writes and lifecycle schema
+
+The complete normative DDL is incorporated from
+[`temporal_write_and_lifecycle_schema.sql`](temporal_write_and_lifecycle_schema.sql).
+It is the single DDL home for this amendment, extending the predecessor schema
+above; implementations must not substitute analysis snippets. The companion
+[design](temporal_write_and_lifecycle_design.md) defines cross-row authority,
+locks, replay, erasure and publication contracts that SQL CHECKs alone cannot
+establish.
+
+The appendix separates committed enum expansion, structural stores, fenced
+in-place conversion and final constraint validation. Drop the old all-kind
+relation exclusion before applying converted uncapped occurrence rows, then
+install the final state exclusion after conversion. D111 restricts that exclusion
+to known-start states; ordinary unknown-start coexistence and guarded start
+acquisition follow `temporal_clocks_design.md` §4.2.1. The basis vocabulary adds
+`erased`; cleared unsupported endpoints carry NULL/erased, affect current-query
+certainty and sit outside certified-state range exclusion. All ordinary writes
+and conversion/replay obey the documented serving-generation gate.
+
+New storage covers complete normalization/assertion receipts, exact-generation
+version units and immutable admission sets; one temporal block sequencer with
+typed operation effects and endpoint owners; autonomous discrepancy targets;
+cache source memberships/certificates and durable event IDs; support attestations
+and sanitized forget checkpoints; and resumable conversion shadows/generation
+verification. Only existing `processing_state` owns leases/retries/scheduling.
+Private internal tables/functions are not granted to the open-query login.
+
+D112 replaces the scalar relation-application target with a normalized complete
+support-target set and parent count/digest certificate. New identities have one
+target; evidence can support multiple compatible dated-state slices without
+merging them. D110 §3.3.1 defines membership, atomic effects, completion/replay,
+boundary authority, consumer disclosure and D74 erasure participation.
+
+D113 additionally incorporates
+[`observation_temporal_application_schema.sql`](observation_temporal_application_schema.sql)
+after that amendment. It preserves D90 work topology while adding observation
+admission/application authority, exact generation-qualified retained memberships,
+legacy evidence baselines and per-assignment linked/erased checkpoint roots.
+[Its design](observation_temporal_application_design.md) defines CAS, support
+relocation, completion, conservative legacy cap refusal and D74 recovery.
+
+Validation evidence and limits live in
+`../analysis/temporal_relation_staging.md` §8. A partial predecessor PostgreSQL15
+execution and SQL parsing do not establish full-head PostgreSQL19 migration,
+conversion, concurrency or application correctness; those are implementation
+acceptance gates in the companion design.
+
 ## References
 
 Designs: `overall_design.md` (§3 data model, §9 index), `registries_design.md` (D15–D24),

@@ -3,12 +3,14 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import psycopg
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -27,6 +29,8 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59000000-0000-0000-0000-000000000001")
@@ -546,6 +550,145 @@ def test_claims_as_of_intersects_open_windows_and_counts_unknown(
     ).is_current_testimony
     assert corpus.claim_ids[2] not in returned
     assert answer.excluded_unstamped == 1
+
+
+def test_claims_canonical_unknown_count_and_overlap_match_engine_as_of(
+    corpus: _Corpus,
+) -> None:
+    """WP-T.0b: the shipped example counts unknown by precision and overlaps canonically.
+
+    Engine ``claims_as_of`` reads ``claims`` plus ``documents.deleted_at``;
+    ``claims_canonical`` additionally requires a surviving version. This corpus
+    is live-lineage, so the claim-id sets match; a tombstoned version would
+    diverge by design.
+    """
+    answer = corpus.query_engine().claims_as_of(
+        deployment_id=_DEPLOYMENT_ID, from_=_WINDOW_FROM, to=_WINDOW_TO, k=50
+    )
+    role = f"rememberstack_query_{corpus.engine.url.database}"
+    quoted_role = corpus.engine.dialect.identifier_preparer.quote(role)
+    with corpus.engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"ALTER ROLE {quoted_role} PASSWORD 'temporal-test-only'"
+        )
+        # A missing schema USAGE grant can hide a leaked function EXECUTE ACL.
+        # Check both permission layers independently before authenticating.
+        assert not connection.execute(
+            text("SELECT has_schema_privilege(:role, 'public', 'USAGE')"),
+            {"role": role},
+        ).scalar_one()
+        for signature in (
+            "public.claim_canonical_start(timestamptz, public.claim_valid_precision)",
+            "public.claim_canonical_end(timestamptz, timestamptz, public.claim_valid_precision)",
+        ):
+            assert not connection.execute(
+                text("SELECT has_function_privilege(:role, :signature, 'EXECUTE')"),
+                {"role": role, "signature": signature},
+            ).scalar_one()
+    query_url = corpus.engine.url.set(
+        drivername="postgresql", username=role, password="temporal-test-only"
+    ).render_as_string(hide_password=False)
+
+    def connect_query_role() -> psycopg.Connection:
+        """Authenticate as the real restricted login, including after DISCARD ALL."""
+        return psycopg.connect(query_url)
+
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT_ID, connect=connect_query_role
+    )
+    result = executor.query_sql(
+        sql=EXAMPLE_QUERIES["claims_as_of"][1],
+        parameters=(_WINDOW_FROM, _WINDOW_TO),
+        max_rows=50,
+    )
+    assert result.error_code is None, result.error_message
+    assert result.rows
+    columns = [column.name for column in result.columns]
+    rows = [dict(zip(columns, row, strict=True)) for row in result.rows]
+    assert all(
+        row["unknown_precision_excluded"] == answer.excluded_unstamped for row in rows
+    )
+    assert answer.excluded_unstamped > 0
+    assert {row["claim_id"] for row in rows} == {
+        claim.claim_id for claim in answer.evidence
+    }
+    point = datetime(2024, 6, 15, 12, tzinfo=UTC)
+    point_result = executor.query_sql(
+        sql=EXAMPLE_QUERIES["claims_as_of"][1], parameters=(point, point), max_rows=50
+    )
+    assert point_result.error_code is None, point_result.error_message
+    point_answer = corpus.query_engine().claims_as_of(
+        deployment_id=_DEPLOYMENT_ID, from_=point, to=point, k=50
+    )
+    assert point_result.rows, "the point-query proof must not pass vacuously"
+    assert {row[columns.index("claim_id")] for row in point_result.rows} == {
+        claim.claim_id for claim in point_answer.evidence
+    }
+    with connect_query_role() as connection:
+        for statement in (
+            "SELECT * FROM public.claims",
+            "SELECT public.claim_canonical_start(NULL, 'unknown')",
+            "SELECT public.claim_canonical_end(NULL, NULL, 'unknown')",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(statement)
+            connection.rollback()
+
+
+def test_claims_canonical_uses_range_index_for_selective_window(
+    corpus: _Corpus,
+) -> None:
+    """The restricted role can use canonical bounds as index conditions at scale."""
+    role = f"rememberstack_query_{corpus.engine.url.database}"
+    quoted_role = corpus.engine.dialect.identifier_preparer.quote(role)
+    # Keep the shared corpus unchanged. Many dated claims in one live chunk make
+    # its chunk index unselective, while the requested window matches four rows.
+    # Planner settings remain at their defaults: this proves a useful access path.
+    with corpus.engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                    " section_id, claim_text, source_span, char_start, char_end,"
+                    " anchor_ok, window_membership_ok, claim_valid_from,"
+                    " claim_valid_until, claim_valid_precision, claim_valid_kind,"
+                    " extractor_version, ingested_at)"
+                    " SELECT gen_random_uuid(), deployment_id, doc_id, chunk_id,"
+                    " section_id, claim_text, source_span, char_start, char_end,"
+                    " anchor_ok, window_membership_ok,"
+                    " TIMESTAMPTZ '2030-01-01 00:00:00+00' + n * INTERVAL '1 day',"
+                    " TIMESTAMPTZ '2030-01-01 00:00:00+00' + n * INTERVAL '1 day',"
+                    " 'day', 'event_time', extractor_version, ingested_at"
+                    " FROM claims CROSS JOIN generate_series(1, 10000) AS n"
+                    " WHERE claim_id = :claim"
+                ),
+                {"claim": corpus.claim_ids[0]},
+            )
+            connection.exec_driver_sql("ANALYZE claims")
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_role}")
+            plan = connection.execute(
+                text(
+                    "EXPLAIN (FORMAT JSON) SELECT claim_id"
+                    " FROM memory_v1.claims_canonical"
+                    " WHERE deployment_id = :deployment AND canon_start < :to"
+                    " AND (canon_end IS NULL OR canon_end > :from_)"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "to": _WINDOW_TO, "from_": _WINDOW_FROM},
+            ).scalar_one()
+            nodes = [plan[0]["Plan"]]
+            canonical_conditions: list[str] = []
+            while nodes:
+                node = nodes.pop()
+                nodes.extend(node.get("Plans", []))
+                if node.get("Index Name") == "ix_claims_canonical_window":
+                    canonical_conditions.append(node.get("Index Cond", ""))
+            assert any(
+                "CASE" in condition and " < " in condition
+                for condition in canonical_conditions
+            ), json.dumps(plan, default=str)
+        finally:
+            transaction.rollback()
 
 
 def test_claims_as_of_excludes_tombstoned_lineages_before_candidate_bound(

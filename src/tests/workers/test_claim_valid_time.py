@@ -8,6 +8,8 @@ from datetime import datetime
 from datetime import UTC
 from uuid import UUID
 
+import pytest
+
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimValidKind
@@ -45,7 +47,7 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
         update={"source_modified_at": datetime(2023, 5, 1, 13, tzinfo=UTC)}
     )
     assert _header_text(source=dated) == (
-        "title Unknown time; source upload; date 2023-05-01; language en"
+        "title Unknown time; source upload; date 2023-05-01T13:00:00+00:00; language en"
     )
 
 
@@ -228,3 +230,104 @@ def test_plus_separator_is_not_a_time() -> None:
     )
     _, _, precision, _ = _parse_claim_valid_time(candidate=candidate)
     assert precision is ClaimValidPrecision.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("kind", "start", "end", "precision"),
+    [
+        (
+            ClaimValidKind.PROPOSITION_VALIDITY,
+            "2019-01-01",
+            None,
+            ClaimValidPrecision.OPEN,
+        ),
+        (
+            ClaimValidKind.EFFECTIVE_PERIOD,
+            "2015-01-01",
+            "2018-12-31",
+            ClaimValidPrecision.YEAR,
+        ),
+        (
+            ClaimValidKind.MEASUREMENT_PERIOD,
+            "2023-01-01",
+            "2023-12-31",
+            ClaimValidPrecision.YEAR,
+        ),
+        (
+            ClaimValidKind.EVENT_TIME,
+            "2023-05-08T16:30:00Z",
+            "2023-05-08T16:30:00Z",
+            ClaimValidPrecision.INSTANT,
+        ),
+    ],
+)
+def test_all_taught_window_kinds_survive_the_deterministic_gate(
+    kind: ClaimValidKind, start: str, end: str | None, precision: ClaimValidPrecision
+) -> None:
+    """The four prompt vocabularies produce valid persisted D41 field combinations."""
+    candidate = CandidateClaim(
+        claim_text="Source assertion.",
+        source_span="Source assertion.",
+        entailment_self_verdict=True,
+        valid_kind=kind,
+        valid_from_iso=start,
+        valid_until_iso=end,
+        valid_precision=precision,
+    )
+    parsed_start, parsed_end, parsed_precision, parsed_kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
+    assert parsed_kind is kind
+    assert parsed_precision is precision
+    assert parsed_start == _parse_iso_timestamp(value=start)[0]
+    assert parsed_end == _parse_iso_timestamp(value=end)[0]
+
+
+def test_two_same_day_sources_keep_distinct_temporal_anchors() -> None:
+    """Header rendering must retain the exact instant used by relative-hour reasoning."""
+    source = ChunkSource(
+        deployment_id=UUID(int=1),
+        doc_id=UUID(int=2),
+        version_id=UUID(int=3),
+        representation_id=UUID(int=4),
+        markdown_uri="source.md",
+        blocks_uri="source.json",
+        title="Chat",
+        source_kind="upload",
+        language="en",
+        structurer_version="test",
+        sections=(),
+        source_modified_at=datetime(2023, 5, 8, 19, 30, tzinfo=UTC),
+        published_at=None,
+    )
+    later = source.model_copy(
+        update={"source_modified_at": datetime(2023, 5, 8, 22, tzinfo=UTC)}
+    )
+    first_prompt = _CLAIMIFY_PROMPT.format(
+        keeps="the final ended three hours ago", bundle=_header_text(source=source)
+    )
+    later_prompt = _CLAIMIFY_PROMPT.format(
+        keeps="the final ended three hours ago", bundle=_header_text(source=later)
+    )
+    assert first_prompt != later_prompt
+    assert first_prompt.endswith("date 2023-05-08T19:30:00+00:00; language en")
+    assert later_prompt.endswith("date 2023-05-08T22:00:00+00:00; language en")
+    fallback = source.model_copy(
+        update={"source_modified_at": None, "published_at": source.source_modified_at}
+    )
+    assert _header_text(source=fallback) == _header_text(source=source)
+
+
+def test_temporal_prompt_and_schema_explain_kinds_and_precision_independently() -> None:
+    """Models receive semantic guidance in both prose and structured field descriptions."""
+    description = CandidateClaim.model_fields["valid_kind"].description
+    assert description is not None
+    for kind in ClaimValidKind:
+        assert kind.value in _CLAIMIFY_PROMPT
+        assert kind.value in description
+    assert "has been CEO since 2019" in _CLAIMIFY_PROMPT
+    assert "valid_until_iso=null, valid_precision=open" in _CLAIMIFY_PROMPT
+    assert '"this morning" without explicit clock bounds' in _CLAIMIFY_PROMPT
+    assert "Explicit absolute dates in the source still resolve" in _CLAIMIFY_PROMPT
+    for name in ("valid_kind", "valid_from_iso", "valid_until_iso", "valid_precision"):
+        assert CandidateClaim.model_fields[name].description

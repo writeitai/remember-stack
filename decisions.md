@@ -5258,3 +5258,165 @@ D32, D43's untyped statement, D98, D100–D105.
 **Design.** `plan/designs/unified_documentation_and_query_space_design.md`.
 
 **Amends.** D66 (broadens in-repo documentation scope to serve as the unified authority for both OSS and Managed Cloud at `remember.dev/docs`). Replaces unsupported status of `open_query_execute` in cloud compatibility matrices. Preserves D61, D62, D91, D92, D98, D107, D108.
+
+
+## D110. Ordered temporal writes, autonomous corrections, and certified cache/forget lifecycle
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D107 separates source, world and belief clocks but leaves four
+implementation gates (#365–#368). D108 subsequently makes autonomous
+adjudication the truth authority, conflicting with D107's human temporal-review
+mechanism. Concurrent relation upsert also collapses events before identity
+judgment; a timer alone cannot certify cached text; forgotten source dates can
+survive in derived windows and replay records.
+
+**Decision.** Publish complete normalization answers and stage each relation
+assertion until ordered identity application. Freeze finite admission sets and
+preserve committed history under one block sequence; guarantee exact recorded
+replay without claiming an immutable seed can anticipate unseen future inputs.
+Use one guarded prepare/infer/revalidate mutation protocol for both fact planes,
+with existing adjudication logs as narrative authority. Autonomous corrections
+select evidence-backed canonical endpoints, preserve uncertainty, and compensate
+only components still owned by the reversed operation. Use complete future
+candidate/routing dependencies and checked text/vector freshness certificates;
+the existing work ledger alone schedules corrections and refresh events.
+
+Extend D74 in the same implementation: preserve independently supported
+endpoints, mark unsupported erased dates NULL/erased in the existing basis
+fields, and establish sanitized closed-block replay roots before scrubbing
+source-bearing history. An erased boundary produces disclosed temporal-membership
+uncertainty, including in counts/absence, rather than a fabricated current fact.
+Conversion preserves fact IDs and explicit legacy uncertainty while blocking
+incomplete generations; remove the legacy exclusion before applying uncapped
+occurrence conversions, then validate the final state-only constraint.
+
+**Alternatives and consequences.** Earliest-evidence reduction would create a
+second validity authority; human approval conflicts with D108; timer-only refresh
+can serve false current summaries; postponing deletion retains forgotten data.
+Dedicated locks across every provider call lose useful concurrency when complete
+revision validation and a durable input frontier suffice. Receipts and routing
+membership add storage; conservative block checkpoints can approach deployment
+size on connected history. Bounded enumeration, existing budget/retry limits,
+source-bearing data inventory and explicit uncertainty are required costs of
+correctness. No second scheduler, arbitrary edit API or public mutation grant is
+introduced.
+
+**Authority.** [Temporal writes and lifecycle design](plan/designs/temporal_write_and_lifecycle_design.md)
+and its [complete DDL](plan/designs/temporal_write_and_lifecycle_schema.sql),
+incorporated by `plan/designs/postgres_schema_design.md`. Analysis:
+[synthesis](plan/analysis/temporal_contract_synthesis.md),
+[relation ordering](plan/analysis/temporal_relation_staging.md),
+[corrections](plan/analysis/temporal_autonomous_corrections.md),
+[cache and forget](plan/analysis/temporal_cache_and_forget.md).
+Amends D107/D108, D88/D90, D55, D67 and D74; preserves the D60/D61 library
+boundary. Build order is `plan/plans/temporal_clocks.md`. This decision resolves
+the design gates; it does not certify T.1 implementation, conversion or release.
+
+## D111. Unknown-start states may coexist without fabricated identity or contradiction
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D107 prohibits mixed dated/undated evidence attachment and requires
+coexistence without a supported succession or contradiction. Its exclusion
+nevertheless treats an ordinary unknown-start state as an infinite interval,
+making some required same-value coexistence impossible in PostgreSQL.
+
+**Decision.** Apply relation interval exclusion only to states with a known
+verdict start, preserving the existing belief, contradiction and erased-boundary
+conditions. Both fully unknown and unknown-start/known-end states can coexist;
+known-start open-ended states retain protection. All writers validate start
+acquisition against eligible neighbors under D110 locks. Refused acquisition
+preserves existing endpoints and records the reason. Current membership remains
+D107 §7.1; consumers disclose unknown starts and unresolved identity overlap,
+and fact-identity counts do not imply distinct dated episodes.
+
+**Alternatives and consequences.** Forced evidence or contradiction invents
+semantics. Exempting only both-NULL endpoints misses a legal ending-occurrence
+cap; exempting unknown ends unnecessarily weakens dated open-ended protection.
+An explicit overlap-permission field adds redundant lifecycle state for this
+class. SQL stops enforcing uniqueness among unknown-start identities; ordered
+identity adjudication and receipts remain mandatory. No new public grant,
+source of validity, schema field or scheduler is introduced. Conversion,
+readiness, replay, erasure and consumers must share the amended contract.
+
+**Authority.** [D107 §4.2.1](plan/designs/temporal_clocks_design.md),
+[D110 companion schema](plan/designs/temporal_write_and_lifecycle_schema.sql).
+[Analysis and independent challenge](plan/analysis/temporal_undated_state_coexistence.md).
+Amends D107/D110's unknown-start exclusion policy; preserves their mixed identity,
+world-time, belief-time and erasure contracts. This resolves the identified
+mixed-state contract conflict; implementation and release remain separate gates.
+
+## D112. A dated state assertion supports every compatible overlapping slice
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** A broad same-value state claim can overlap several existing disjoint
+state slices. D107 requires evidence attachment, but D110's scalar application
+target forces an unsupported exclusive choice or an overlapping new row rejected
+by the state exclusion. Existing claim-to-relation evidence is already many-to-many.
+
+**Decision.** Deterministically attach dated state evidence to the complete set
+of compatible overlapping same-triple known-start state slices. Preserve each
+identity, seed and verdict; no gap becomes true from support alone. A normalized
+receipt-target table with count/digest certification replaces the scalar target.
+All support and semantic effects remain one ordered atomic application. Additional
+caps/contradictions name their exact participants and boundary authority. Model
+budgets cannot truncate deterministic support or undo it by omission. Occurrences
+retain at most one selected identity; mixed or uncertain semantic identity cannot
+use this rule.
+
+**Alternatives and consequences.** Arbitrary target selection loses support;
+merging invents chronology. Completed uncertainty with autonomous reconsideration
+requires new attempt identities, dependency triggers and terminal-application
+guards, unnecessary for proven state support. The chosen design adds one internal
+table and two receipt fields, and requires result, barrier, replay, forget and
+consumer participation. Large target sets require bounded enumeration/write
+batches under the complete D110 lock/revision protocol. No second scheduler or
+public mutation capability is introduced.
+
+**Authority.** [D110 §3.3.1](plan/designs/temporal_write_and_lifecycle_design.md)
+and its [complete schema](plan/designs/temporal_write_and_lifecycle_schema.sql).
+[Analysis](plan/analysis/temporal_state_evidence_targets.md) and
+[unchosen uncertainty-attempt alternative](plan/proposals/temporal_identity_uncertainty_attempts.md).
+Amends D107/D110's state support and receipt-target cardinality. Preserves D111,
+fact identity and verdict authority, single-target occurrence identity, D74 and
+the library boundary. Implementation and release remain separate gates.
+
+## D113. Observation applications retain original results and current assertion support
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D110 requires observation inference outside locks with durable
+prepared answers and exact application. D90's disposable, version-qualified
+staging supplies neither an application receipt nor provenance for moving one
+of several normalized statements from a claim during historical re-split.
+Legacy evidence and sanitized support replay also require explicit treatment.
+
+**Decision.** Preserve D90's entity work/queue topology; add closed observation
+admission and semantic application records with first-output CAS. Qualify version
+membership by normalizer, adjudicator and composed flush generation. Preserve the
+immutable original single-identity result separately from the operation-owned
+current assertion support location. Record re-split support moves in the same
+atomic effect group, and aggregate fact/claim evidence without losing another
+statement from that claim. Preserve legacy evidence baselines; refuse a cap whose
+required original assertion provenance cannot be recovered. Extend existing
+forget checkpoints with independent support-assignment roots and terminal erased
+support dispositions. Receipt retry never restores erased support or reruns identity.
+
+**Alternatives and consequences.** Mutable normalization output, correction rows
+for first insertion and disposable staging cannot provide this authority. A generic
+application framework or copied relation version fan-out adds unnecessary scope.
+The chosen contract adds domain history and checkpoint storage while reusing the
+scheduler, D110 journal and D90 barriers. It keeps observation identity single-target;
+D112's relation support rule is not broadened. Erased support can gain independent
+replacement only through new assertions or a distinct adjudicator-generation
+application; automatic same-application reassociation is an unchosen alternative.
+
+**Authority.** [Design](plan/designs/observation_temporal_application_design.md),
+[incorporated SQL](plan/designs/observation_temporal_application_schema.sql),
+[analysis](plan/analysis/observation_temporal_applications.md) and
+[alternatives](plan/proposals/generic_temporal_application_store.md).
+Amends D90's detailed locking/staging keys, completes D110 observation preparation
+and D74 support replay, and qualifies D107 re-split for unrecoverable legacy
+assertion provenance. Implementation and release remain separate gates.
