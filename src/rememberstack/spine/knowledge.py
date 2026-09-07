@@ -4465,7 +4465,8 @@ _SELECT_SUBTREE_MEMBERS = text(
         WHERE r.deployment_id = :deployment_id
           AND r.predicate = 'part_of'
           AND r.invalidated_at IS NULL
-          AND r.valid_until IS NULL
+          AND r.valid_from <= statement_timestamp()
+          AND (r.valid_precision = 'open' OR r.valid_until > statement_timestamp())
     )
     SELECT entity_id FROM members ORDER BY entity_id
     """
@@ -4578,6 +4579,7 @@ _FACT_COLUMNS_RELATION = """
     r.relation_id AS fact_id,
     r.valid_from,
     r.valid_until,
+    r.valid_precision::text AS valid_precision,
     r.invalidated_at,
     r.evidence_count,
     r.contradict_count,
@@ -4589,6 +4591,7 @@ _FACT_COLUMNS_OBSERVATION = """
     o.observation_id AS fact_id,
     o.valid_from,
     o.valid_until,
+    o.valid_precision::text AS valid_precision,
     o.invalidated_at,
     o.evidence_count,
     o.contradict_count,
@@ -4604,7 +4607,7 @@ _SELECT_FACT_SHEET_RELATIONS = text(
                subject.canonical_name || ' ' || replace(r.predicate, '_', ' ')
                  || ' ' || object.canonical_name
            ) AS label,
-           r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
+           r.valid_from, r.valid_until, r.valid_precision::text, r.ingested_at, r.invalidated_at,
            r.evidence_count, r.contradict_count, r.contradiction_group
     FROM relations r
     JOIN entities subject
@@ -4624,7 +4627,7 @@ _SELECT_FACT_SHEET_OBSERVATIONS = text(
     SELECT 'observation' AS kind,
            o.observation_id AS fact_id,
            COALESCE(NULLIF(btrim(o.obs_label), ''), o.statement) AS label,
-           o.valid_from, o.valid_until, o.ingested_at, o.invalidated_at,
+           o.valid_from, o.valid_until, o.valid_precision::text, o.ingested_at, o.invalidated_at,
            o.evidence_count, o.contradict_count, o.contradiction_group
     FROM observations o
     WHERE o.deployment_id = :deployment_id

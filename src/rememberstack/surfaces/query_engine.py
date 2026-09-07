@@ -82,6 +82,8 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.fact_windows import FactWindow
+from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -90,6 +92,7 @@ from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
@@ -209,6 +212,15 @@ def _with_surface[**P, T](
         @wraps(method)
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
             with open_surface_scope(surface=surface):
+                instance = args[0] if args else None
+                deployment_id = kwargs.get("deployment_id")
+                if isinstance(instance, QueryEngine) and isinstance(
+                    deployment_id, UUID
+                ):
+                    with instance._engine.connect() as connection:
+                        require_fact_windows_ready(
+                            connection=connection, deployment_id=deployment_id
+                        )
                 return method(*args, **kwargs)
 
         return wrapped
@@ -335,6 +347,7 @@ class QueryEngine:
             connection.exec_driver_sql("SELECT 1")
             yield connection
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def resolve(
         self,
         *,
@@ -412,6 +425,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def documents_about(
         self, *, deployment_id: UUID, entity: str, k: int = 20
     ) -> Envelope:
@@ -588,6 +602,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def chunk_neighbors(
         self, *, deployment_id: UUID, chunk_id: UUID, radius: int = 1
     ) -> Envelope:
@@ -1213,6 +1228,7 @@ class QueryEngine:
             }
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def lookup_relations(
         self,
         *,
@@ -1520,6 +1536,7 @@ class QueryEngine:
             embedder_generation=self._embedder_generation,
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents.
 
@@ -1581,6 +1598,7 @@ class QueryEngine:
             freshness=_freshness(),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def transcript(
         self,
         *,
@@ -1651,6 +1669,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def transcript_relation(
         self, *, deployment_id: UUID, relation_id: UUID
     ) -> Envelope:
@@ -1694,6 +1713,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_claims(
         self,
         *,
@@ -1758,6 +1778,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_chunks(
         self,
         *,
@@ -1927,6 +1948,7 @@ class QueryEngine:
         ranked = rerank_by_signal(items=items, signal=signal, ascending=ascending)
         return _envelope(grain=Grain.EVIDENCE, ranking=ranked, freshness=_freshness())
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def delta(
         self,
         *,
@@ -2008,6 +2030,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def pages_about(
         self,
         *,
@@ -2071,6 +2094,7 @@ class QueryEngine:
             ),
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def aggregate(
         self,
         *,
@@ -2155,6 +2179,7 @@ class QueryEngine:
             else None,
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def scan(
         self, *, deployment_id: UUID, kind: str, batch_size: int = DEFAULT_SCAN_BATCH
     ) -> Iterator[ScanRow]:
@@ -3396,12 +3421,20 @@ def _normalize_hybrid_text(*, value: str) -> str:
 def _group_claim_evidence(
     *, evidence: Sequence[EvidenceResult]
 ) -> tuple[EvidenceResult, ...]:
-    """Group confirmed claims in incoming rank order by normalized text."""
-    grouped: dict[str, list[EvidenceResult]] = {}
+    """Group repeated testimony only when text, both clocks and attribution agree."""
+    grouped: dict[tuple[object, ...], list[EvidenceResult]] = {}
     for record in evidence:
-        grouped.setdefault(_normalize_hybrid_text(value=record.claim_text), []).append(
-            record
+        key = (
+            _normalize_hybrid_text(value=record.claim_text),
+            record.asserted_at,
+            record.claim_valid_from,
+            record.claim_valid_until,
+            record.claim_valid_precision,
+            record.claim_valid_kind,
+            record.is_attributed,
+            record.is_current_testimony,
         )
+        grouped.setdefault(key, []).append(record)
     return tuple(
         members[0].model_copy(
             update={
@@ -3501,9 +3534,19 @@ def _fact_result(*, row, kind: str) -> FactResult:  # noqa: ANN001
         evidence_count=row["evidence_count"],
         contradiction_group=mapping.get("contradiction_group"),
         support=FactSupport(mapping.get("support_state", FactSupport.CURRENT.value)),
+        temporal_match=(
+            TemporalMatch.CONFIRMED
+            if FactWindow(
+                valid_from=row["valid_from"],
+                valid_until=row["valid_until"],
+                valid_precision=row["valid_precision"],
+            ).is_complete
+            else TemporalMatch.POSSIBLE
+        ),
         validity=Validity(
             valid_from=row["valid_from"],
             valid_until=row["valid_until"],
+            valid_precision=row["valid_precision"],
             ingested_at=row["ingested_at"],
             invalidated_at=mapping.get("invalidated_at"),
         ),
@@ -3519,6 +3562,7 @@ def _co_member(row: dict[str, object]) -> CoMember:
         validity=Validity(
             valid_from=row["valid_from"],  # type: ignore[arg-type]
             valid_until=row["valid_until"],  # type: ignore[arg-type]
+            valid_precision=row["valid_precision"],  # type: ignore[arg-type]
             ingested_at=row["ingested_at"],  # type: ignore[arg-type]
             invalidated_at=row["invalidated_at"],  # type: ignore[arg-type]
         ),
@@ -3702,7 +3746,7 @@ _LOOKUP_RELATIONS = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
@@ -3721,7 +3765,7 @@ _LOOKUP_RELATIONS = text(
 _LOOKUP_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3781,7 +3825,7 @@ def _confirm_facts_context_statement(
     SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.contradiction_group,
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
@@ -3809,7 +3853,7 @@ _FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.support_state_current AS support_state
     FROM memory_v1.facts_visible_history AS fact
     WHERE fact.deployment_id = :deployment_id
@@ -3880,7 +3924,7 @@ _CURRENT_FACT_EVIDENCE = text(
 _CONFIRM_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3995,7 +4039,7 @@ _HYDRATE_RELATION = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id AND relation_id = :relation_id

@@ -164,3 +164,33 @@ def test_provider_dictionary_timestamp_obeys_canonical_shape() -> None:
         FactWindow.model_validate({**value, "valid_from": "2022-05-10T12:00:00Z"})
     with pytest.raises(ValidationError):
         FactWindow.model_validate({**value, "valid_from": "2022-05-10T00:00:00"})
+
+
+def test_historical_wording_distinguishes_unknown_end_from_open() -> None:
+    """A stable cached sentence never silently promotes missing dates to current."""
+    from rememberstack.core.fact_windows import describe_fact_window
+
+    partial = FactWindow(
+        valid_from=_at("2019-01-01"), valid_precision=ClaimValidPrecision.YEAR
+    )
+    ongoing = FactWindow(
+        valid_from=_at("2019-01-01"), valid_precision=ClaimValidPrecision.OPEN
+    )
+    assert (
+        describe_fact_window(window=partial)
+        == "start 2019; end unknown (year precision)"
+    )
+    assert "no end recorded" in describe_fact_window(window=ongoing)
+    assert describe_fact_window(window=FactWindow()) == "world date unknown"
+
+
+def test_historical_wording_preserves_coarse_inclusive_display() -> None:
+    """The exclusive 2023 boundary is displayed as through 2022 at year precision."""
+    from rememberstack.core.fact_windows import describe_fact_window
+
+    window = FactWindow(
+        valid_from=_at("2019-01-01"),
+        valid_until=_at("2023-01-01"),
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+    assert describe_fact_window(window=window) == "2019 through 2022 (year precision)"

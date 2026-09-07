@@ -37,6 +37,19 @@ resolved findings and the exact design-only acceptance limits.
 These are separately reviewable implementation packages, not alternate designs.
 A package cannot claim readiness until its named behavior and dependencies work.
 
+Implementation checkpoint (2026-09-07): branch
+`feat/mutable-fact-windows-implementation` carries the reviewed application
+contract, typed single-window decisions, guarded relation/observation writer,
+worker staging/barriers, and initial retrieval/profile/K changes. Antigravity and
+Grok approved the concrete contract for implementation in round 2; that is not
+runtime or release approval. The private PostgreSQL writer probe verifies atomic
+correction, stale-source rejection and rollback. The focused pure suite passes
+37 tests; the first broader unit run reports 1510 passed, 18 failed, 6 skipped.
+Remaining work includes supported PostgreSQL migration/concurrency/erasure tests,
+projection recovery, conversion verification, consumer/generation cutover and
+final independent runtime reviews. Serving populated stores remains fenced.
+No conversion, merge or release has been performed.
+
 ### A. Concrete storage and application contract
 
 Before replacement write-path code, publish the exact narrow preparation/receipt

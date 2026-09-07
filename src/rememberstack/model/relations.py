@@ -1,5 +1,6 @@
 """E3 normalization values: LLM candidates, resolution, and fact records (D2-D5, D17-D18, D43)."""
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -38,6 +39,7 @@ class RelationCandidate(BaseModel):
     subject: EntityRef
     predicate: _NonEmpty
     object: EntityRef
+    uses_claim_window: bool = False
 
 
 class ObservationCandidate(BaseModel):
@@ -47,6 +49,7 @@ class ObservationCandidate(BaseModel):
 
     subject: EntityRef
     statement: _NonEmpty
+    uses_claim_window: bool = False
 
 
 class ObservationAssertion(BaseModel):
@@ -80,6 +83,11 @@ class ClaimForNormalization(BaseModel):
     claim_text: str
     is_attributed: bool
     extractor_version: str
+    asserted_at: datetime | None = None
+    claim_valid_from: datetime | None = None
+    claim_valid_until: datetime | None = None
+    claim_valid_precision: str = "unknown"
+    claim_valid_kind: str | None = None
 
 
 class ResolvedEntity(BaseModel):

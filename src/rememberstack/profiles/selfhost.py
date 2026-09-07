@@ -50,6 +50,9 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
+from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -580,7 +583,9 @@ def _query_role_connect_factory(*, engine: Engine):
     port = int(url.port or 5432)
 
     def connect() -> psycopg.Connection:
-        """Open as the deployment query role with keyword connection args."""
+        """Open as the deployment query role after the persistent conversion fence."""
+        with engine.connect() as connection:
+            require_fact_windows_ready(connection=connection)
         return psycopg.connect(
             host=host, port=port, dbname=database, user=role, password=password
         )
@@ -1174,7 +1179,6 @@ class SelfHostProfile:
         from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
-        from rememberstack.spine import ObservationAdjudicator
         from rememberstack.spine import ObservationSettings
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
@@ -1285,10 +1289,10 @@ class SelfHostProfile:
                     small_model=observation_settings.small_model,
                 ),
                 facts=facts,
-                observation_adjudicator=ObservationAdjudicator(
+                observation_adjudicator=FactAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
-                    settings=observation_settings,
+                    settings=FactAdjudicationSettings(),
                 ),
                 profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
@@ -1299,10 +1303,10 @@ class SelfHostProfile:
             observation_settings = ObservationSettings.model_validate({})
             return AdjudicateObservationsHandler(
                 facts=facts,
-                observation_adjudicator=ObservationAdjudicator(
+                observation_adjudicator=FactAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
-                    settings=observation_settings,
+                    settings=FactAdjudicationSettings(),
                 ),
                 profile_refresher=profile_refresher,
                 chunk_catalog=chunks,

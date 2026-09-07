@@ -286,7 +286,7 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.FACTS,
-        version=2,
+        version=3,
     ),
     AssuredOperation(
         name=AssuredOperationName.COMBINED_CONTEXT,

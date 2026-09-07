@@ -1,7 +1,7 @@
 # D114 application contract: normalized assertions, decisions and support
 
-**Status:** implementation contract under D114; independent pre-code review
-pending. Runtime activation remains subject to the delivery gates.
+**Status:** implementation contract under D114; Antigravity and Grok approved
+the application contract after round-2 review on 2026-09-07. Runtime activation remains subject to the delivery gates.
 **Date:** 2026-09-07.
 **Authority:** [one mutable window](mutable_fact_windows_design.md).
 **Analysis:** [storage alternatives and existing mechanisms](../analysis/mutable_fact_application_storage.md).
@@ -265,6 +265,12 @@ pending replies, retries, partial purge failure and restored older manifests.
 ## 7. Existing-store cutover
 
 The migration requires stopped serving and drained old intake/workers/staging.
+A nullable `deployments.fact_window_generation` stores readiness: NULL means
+conversion is incomplete; the D114 generation string means the coordinated
+writers/readers are ready. Existing stores containing claims start NULL; empty
+stores and newly bootstrapped deployments use the D114 default. Serving and intake
+check this column. Conversion workers use the new generation while it is NULL;
+only the conversion verifier can mark a populated converting store ready.
 It first rejects nonempty legacy staging and closes the fact-generation readiness
 gate. The SQL file describes the target storage shape, not a standalone migration.
 Add precision and witness columns nullable with no defaults; clear ungrounded

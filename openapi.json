@@ -378,6 +378,20 @@
         "title": "ChunkEvidenceResult",
         "type": "object"
       },
+      "ClaimValidPrecision": {
+        "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+        "enum": [
+          "unknown",
+          "instant",
+          "day",
+          "month",
+          "quarter",
+          "year",
+          "open"
+        ],
+        "title": "ClaimValidPrecision",
+        "type": "string"
+      },
       "CoMember": {
         "additionalProperties": false,
         "description": "One other side of a contradiction, surfaced with the fact (S23).\n\nA light record \u2014 enough to see the competing claim and hydrate it \u2014 so a\ncontradiction block can carry several sides without recursion.",
@@ -1195,6 +1209,10 @@
             "$ref": "#/components/schemas/FactSupport",
             "default": "current"
           },
+          "temporal_match": {
+            "$ref": "#/components/schemas/TemporalMatch",
+            "default": "possible"
+          },
           "validity": {
             "$ref": "#/components/schemas/Validity"
           }
@@ -1378,6 +1396,10 @@
               }
             ],
             "title": "Valid From"
+          },
+          "valid_precision": {
+            "$ref": "#/components/schemas/ClaimValidPrecision",
+            "default": "unknown"
           },
           "valid_until": {
             "anyOf": [
@@ -2891,6 +2913,15 @@
         "title": "SqlQueryRequest",
         "type": "object"
       },
+      "TemporalMatch": {
+        "description": "How a chosen window matches this query, independently of fact confidence.",
+        "enum": [
+          "confirmed",
+          "possible"
+        ],
+        "title": "TemporalMatch",
+        "type": "string"
+      },
       "ToolDescriptor": {
         "additionalProperties": false,
         "properties": {
@@ -3181,6 +3212,10 @@
               }
             ],
             "title": "Valid From"
+          },
+          "valid_precision": {
+            "$ref": "#/components/schemas/ClaimValidPrecision",
+            "default": "unknown"
           },
           "valid_until": {
             "anyOf": [
