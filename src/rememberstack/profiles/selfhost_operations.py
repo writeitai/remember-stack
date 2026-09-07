@@ -49,16 +49,15 @@ class SelfHostOperations:
         ).inspect(deployment_id=deployment_id)
 
     def resume_no_route(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Release convert work parked for a missing converter (D106).
+        """Release parked conversions covered by validated local routes (D114)."""
+        from rememberstack.adapters.converters import build_conversion_routes
+        from rememberstack.profiles.selfhost import SelfHostSettings
 
-        Run after registering a conversion route: uploads that arrived before
-        the converter existed were stored and parked, never failed, so this
-        converts the backlog without anyone re-uploading.
-        """
-        ForgetCatalog(engine=self._engine).assert_available(deployment_id=deployment_id)
+        settings = SelfHostSettings.model_validate({})
+        routes = build_conversion_routes(route_names=settings.conversion_routes)
         return WorkLedger(
             engine=self._engine, settings=WorkLedgerSettings()
-        ).resume_no_route(deployment_id=deployment_id)
+        ).resume_no_route(deployment_id=deployment_id, routable_mimes=frozenset(routes))
 
     def replay(
         self,

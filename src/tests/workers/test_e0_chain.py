@@ -270,7 +270,7 @@ class _E0Rig:
                 retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
             ),
         )
-        # One table feeds both the D104 admission gate and the router, the
+        # One table feeds both the D114 scheduling table and the router, the
         # way a real deployment's `conversion_routes` does. Duplicating it
         # would let the harness prove a divergence production cannot have.
         routes: dict[str, Converter] = {
@@ -602,12 +602,7 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
 
 
 def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -> None:
-    """D106: the document lands, its convert work parks, the DLQ stays empty.
-
-    The bytes are the point. An unconverted version still reaches the corpus
-    filesystem carrying `raw_uri`, so an agent can mount and read the original
-    — refusing the upload would have deleted that. Only the *work* is held.
-    """
+    """D114: the document lands, its convert work parks, the DLQ stays empty."""
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
@@ -635,45 +630,115 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     assert version["error"] is None
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
 
-
-def test_resuming_after_a_route_is_registered_releases_the_backlog(rig: _E0Rig) -> None:
-    """The recovery the dead-letter path could not offer.
-
-    Adding a converter never rescued a version that had already failed without
-    one. A parked row is not failed, so releasing it puts the backlog back in
-    the queue with no re-upload and no per-row operator replay.
-    """
-    ingested = rig.ingestor.ingest(
+    duplicate = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="late.bin", mime="application/x-late-route", content=b"late"
+            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
         ),
     )
+    assert duplicate.created is False
+    assert duplicate.version_id == ingested.version_id
+    work_count = rig.row(
+        sql="SELECT count(*) AS count FROM processing_state WHERE target_id=:id AND stage='convert'",
+        params={"id": ingested.version_id},
+    )
+    assert work_count["count"] == 1
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
 
-    released = rig.ledger.resume_no_route(deployment_id=_DEPLOYMENT_ID)
-    assert len(released) == 1
 
-    work = rig.row(
-        sql="""
-        SELECT status, defer_reason FROM processing_state
-        WHERE target_id = :version_id AND stage = 'convert'
-        """,
-        params={"version_id": ingested.version_id},
+def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
+    rig: _E0Rig,
+) -> None:
+    """One added route resumes its own backlog and leaves other MIME parked."""
+    parked_ingestor = UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset(),
     )
-    assert work["status"] == "pending"
-    assert work["defer_reason"] is None
+    ingested = parked_ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(filename="late.txt", mime="text/plain", content=b"late"),
+    )
+    other = parked_ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="later.bin", mime="application/x-other", content=b"other"
+        ),
+    )
+    assert (
+        rig.ledger.resume_no_route(
+            deployment_id=_DEPLOYMENT_ID, routable_mimes=frozenset()
+        )
+        == ()
+    )
+    released = rig.ledger.resume_no_route(
+        deployment_id=_DEPLOYMENT_ID, routable_mimes={"text/plain"}
+    )
+    assert len(released) == 1
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
+    version = rig.row(
+        sql="SELECT current_version_id FROM documents WHERE doc_id = :doc_id",
+        params={"doc_id": ingested.doc_id},
+    )
+    assert version["current_version_id"] == ingested.version_id
+    work = rig.row(
+        sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+        params={"id": other.version_id},
+    )
+    assert work["defer_reason"] == "no_route" and work["attempts"] == 0
+    assert (
+        rig.ledger.resume_no_route(
+            deployment_id=_DEPLOYMENT_ID, routable_mimes={"text/plain"}
+        )
+        == ()
+    )
 
 
-def test_a_released_row_whose_route_is_still_missing_dead_letters(rig: _E0Rig) -> None:
-    """The narrow window the worker's own handling still exists for.
+@pytest.mark.parametrize(
+    "first_mime, second_mime, expected",
+    [
+        ("application/x-unknown", "text/plain", "no_route"),
+        ("text/plain", "application/x-unknown", None),
+    ],
+)
+def test_parking_uses_first_write_content_mime(
+    rig: _E0Rig, first_mime: str, second_mime: str, expected: str | None
+) -> None:
+    """A second lineage with identical bytes schedules against stored MIME."""
+    rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="first.bin", mime=first_mime, content=b"same bytes"
+        ),
+    )
+    observed = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="second",
+        upload=DocumentUpload(
+            filename="second.bin", mime=second_mime, content=b"same bytes"
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    work = rig.row(
+        sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+        params={"id": observed.version_id},
+    )
+    assert work["defer_reason"] == expected
+    assert work["attempts"] == 0
+    assert rig.catalog.convert_source(version_id=observed.version_id).mime == first_mime
 
-    Ingest and the convert worker are separately composed, so a route-table
-    change can leave one restarted and the other not — and an operator can
-    resume before the converter is really registered. Constructed by admitting
-    through an ingestor whose table is wider than the worker's router: the
-    convert stage must still fail closed rather than retry forever.
-    """
+
+@pytest.mark.parametrize("prior_attempts", [0, 2])
+def test_a_released_row_whose_route_is_still_missing_reparks(
+    rig: _E0Rig, prior_attempts: int
+) -> None:
+    """A stale worker configuration parks before I/O without using an attempt."""
     admitting_gate = UploadIngestor(
         catalog=rig.catalog,
         raw_store=rig.raw_store,
@@ -686,25 +751,37 @@ def test_a_released_row_whose_route_is_still_missing_dead_letters(rig: _E0Rig) -
             filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
         ),
     )
-    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
+    if prior_attempts:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET attempts=:attempts, last_error='earlier provider failure' WHERE target_id=:id AND stage='convert'"
+                ),
+                {"attempts": prior_attempts, "id": ingested.version_id},
+            )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_ROUTE_PARKED
 
     work = rig.row(
         sql="""
-        SELECT status, attempts, last_error FROM processing_state
+        SELECT status, defer_reason, attempts, last_error FROM processing_state
         WHERE target_id = :version_id AND stage = 'convert'
         """,
         params={"version_id": ingested.version_id},
     )
-    assert work["status"] == "dead_letter"
-    assert work["attempts"] == 1
-    assert "application/x-unknown" in str(work["last_error"])
+    assert work["status"] == "pending"
+    assert work["defer_reason"] == "no_route"
+    assert work["attempts"] == prior_attempts
+    assert work["last_error"] == (
+        "earlier provider failure" if prior_attempts else None
+    )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
 
     version = rig.row(
         sql="SELECT status, error FROM document_versions WHERE version_id = :version_id",
         params={"version_id": ingested.version_id},
     )
-    assert version["status"] == "failed"
-    assert "application/x-unknown" in str(version["error"])
+    assert version["status"] == "converting"
+    assert version["error"] is None
 
 
 def test_retried_convert_replays_the_stored_representation(rig: _E0Rig) -> None:

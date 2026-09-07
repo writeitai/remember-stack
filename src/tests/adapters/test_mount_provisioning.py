@@ -256,3 +256,77 @@ def test_ingest_routes_storage_class_by_mime(tmp_path: Path) -> None:
         )
     assert raw_store.storage_class_of(key=ObjectKey("a/clip.mp4")) == "hot"
     assert raw_store.storage_class_of(key=ObjectKey("b/report.pdf")) == "cold"
+
+
+@pytest.mark.parametrize("view", ["raw", "artifacts"])
+def test_configured_mount_root_must_exist(tmp_path: Path, view: str) -> None:
+    """A missing provider mount fails rather than becoming an empty local store."""
+    missing = tmp_path / "missing-provider-mount"
+    publisher = LocalMountPublisher(
+        root=tmp_path / "published",
+        raw_root=missing if view == "raw" else None,
+        artifacts_root=missing if view == "artifacts" else None,
+        admission=_OpenAdmission(),
+    )
+    with pytest.raises(ValueError, match="existing directory"):
+        publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert not missing.exists()
+    assert not (tmp_path / "published").exists()
+
+
+def test_parked_original_is_readable_from_configured_mount(
+    deployment: Engine, tmp_path: Path
+) -> None:
+    """An unconverted original is discovered in P3 and read from its raw mount."""
+    import json
+
+    from rememberstack.model import DocumentUpload
+    from rememberstack.spine import DocumentCatalog
+    from rememberstack.spine import ForgetCatalog
+    from rememberstack.workers import UploadIngestor
+
+    original = b"\x00unconverted original\xff"
+    raw_root = tmp_path / "provider-raw"
+    raw_store = LocalFSObjectStore(root=raw_root)
+    ingested = UploadIngestor(
+        catalog=DocumentCatalog(engine=deployment),
+        raw_store=raw_store,
+        admission=ForgetCatalog(engine=deployment),
+        routable_mimes={"text/plain"},
+    ).ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="original.bin", mime="application/x-unknown", content=original
+        ),
+    )
+    with deployment.connect() as connection:
+        parked = connection.execute(
+            text(
+                "SELECT defer_reason::text FROM processing_state "
+                "WHERE target_id = :version_id AND stage = 'convert'"
+            ),
+            {"version_id": ingested.version_id},
+        ).scalar_one()
+        assert parked == "no_route"
+    catalog = ProjectionCatalog(engine=deployment)
+    corpus_store = LocalFSObjectStore(root=tmp_path / "corpusfs")
+    CorpusFsBuilder(catalog=catalog, snapshot_store=corpus_store).build(
+        deployment_id=_DEPLOYMENT_ID, version="parked-original"
+    )
+    mounts = LocalMountPublisher(
+        root=tmp_path / "mounts",
+        catalog=catalog,
+        corpusfs_store=corpus_store,
+        raw_root=raw_root,
+        admission=_OpenAdmission(),
+    ).publish(deployment_id=_DEPLOYMENT_ID)
+    stubs = [path.read_text(encoding="utf-8") for path in Path(mounts.p3).rglob("*.md")]
+    pointer_lines = [
+        line
+        for stub in stubs
+        for line in stub.splitlines()
+        if line.startswith("stored_raw_uri: ")
+    ]
+    assert pointer_lines
+    raw_uri = json.loads(pointer_lines[0].split(": ", 1)[1])
+    assert (Path(mounts.raw) / raw_uri).read_bytes() == original

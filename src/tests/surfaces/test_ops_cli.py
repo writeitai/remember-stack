@@ -104,3 +104,37 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
         "ready": True,
     }
     assert engine.disposed is True
+
+
+def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The resume command validates local routes and reports bounded release IDs."""
+    from rememberstack.spine import WorkLedger
+
+    engine = _Engine()
+    calls: list[dict[str, object]] = []
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID", str(_DEPLOYMENT_ID))
+    monkeypatch.setenv(
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/plain":"passthrough"}'
+    )
+    monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
+
+    def resume(
+        _self: WorkLedger, *, deployment_id: UUID, routable_mimes: object
+    ) -> tuple[UUID, ...]:
+        """Record the validated route table without a database dependency."""
+        calls.append({"deployment_id": deployment_id, "routes": routable_mimes})
+        return (_DEPLOYMENT_ID,)
+
+    monkeypatch.setattr(WorkLedger, "resume_no_route", resume)
+    assert (
+        cli_main(["ops", "resume-no-route", "--deployment", str(_DEPLOYMENT_ID)]) == 0
+    )
+    assert calls == [
+        {"deployment_id": _DEPLOYMENT_ID, "routes": frozenset({"text/plain"})}
+    ]
+    assert json.loads(capsys.readouterr().out) == {"released": [str(_DEPLOYMENT_ID)]}
+    assert engine.disposed

@@ -44,7 +44,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.projection import ProjectionCatalog
 
-P3_BUILDER_VERSION: Final = "p3-corpusfs-2026.08"
+P3_BUILDER_VERSION: Final = "p3-corpusfs-2026.09-stored-originals"
 """The builder's component version (D12)."""
 
 INDEX_FILE: Final = "_index.md"
@@ -313,6 +313,12 @@ def _document_stub(
         "artifact_uri": str(document.get("markdown_uri") or ""),
         "raw_uri": str(document.get("raw_uri") or ""),
         "mime": str(document.get("mime") or ""),
+        "stored_version_id": str(document.get("stored_version_id") or ""),
+        "stored_content_hash": str(document.get("stored_content_hash") or ""),
+        "stored_raw_uri": str(document.get("stored_raw_uri") or ""),
+        "stored_mime": str(document.get("stored_mime") or ""),
+        "stored_status": str(document.get("stored_status") or ""),
+        "stored_defer_reason": str(document.get("stored_defer_reason") or ""),
         "source_kind": str(document.get("source_kind") or ""),
         "source_ref": str(document.get("source_ref") or ""),
     }
@@ -330,6 +336,12 @@ def _document_stub(
             "",
         ]
     )
+    if document.get("version_id"):
+        lines.extend([f"## Current processed version: `{document['version_id']}`", ""])
+    else:
+        lines.extend(
+            ["No current processed version; the original is available below.", ""]
+        )
     if summary:
         lines.extend([summary, ""])
     lines.append(f"- Canonical path: `{canonical_path}/`")
@@ -338,6 +350,22 @@ def _document_stub(
         lines.append(
             f"- Original (off the browse path; audited): `{document['raw_uri']}`"
         )
+    if document.get("stored_raw_uri"):
+        lines.extend(
+            [
+                "",
+                "## Latest stored original",
+                "",
+                f"- Version: `{document['stored_version_id']}`",
+                f"- Original (off the browse path; audited): `{document['stored_raw_uri']}`",
+                f"- MIME: `{document.get('stored_mime') or ''}`",
+                f"- Processing status: `{document.get('stored_status') or ''}`",
+            ]
+        )
+        if document.get("stored_defer_reason") == "no_route":
+            lines.append("- Conversion is parked: no configured route (`no_route`).")
+        if document.get("version_id") != document.get("stored_version_id"):
+            lines.append("- This original is not the current processed version.")
     lines.append("")
     return "\n".join(lines)
 
@@ -432,7 +460,7 @@ def _member_table(*, members: Iterable[dict[str, object]], base: str) -> list[st
         "|---|---|---|---|---|",
     ]
     for member in sorted(members, key=_stub_name_of):
-        summary = _one_line(str(member.get("root_summary") or ""))[:160]
+        summary = _member_summary(document=member)
         stamp = member.get("source_modified_at") or member.get("published_at")
         date = stamp.date().isoformat() if isinstance(stamp, datetime) else "—"
         canonical = _document_path(doc_id=UUID(str(member["doc_id"])))
@@ -445,6 +473,24 @@ def _member_table(*, members: Iterable[dict[str, object]], base: str) -> list[st
     if len(rows) == 2:
         rows.append("| — | (empty) | — | — | — |")
     return rows
+
+
+def _member_summary(*, document: dict[str, object]) -> str:
+    """Label summaries as processed evidence, never as newer raw content."""
+    summary = _one_line(str(document.get("root_summary") or ""))[:160]
+    if not document.get("version_id"):
+        reason = document.get("stored_defer_reason")
+        return (
+            "Original stored; conversion parked (no_route)"
+            if reason == "no_route"
+            else "Original stored; no processed summary"
+        )
+    if (
+        document.get("stored_version_id")
+        and document["stored_version_id"] != document["version_id"]
+    ):
+        return f"Current processed version: {summary or 'no summary'}; newer/different original stored"
+    return summary or "—"
 
 
 def _directory_manifest(
@@ -467,7 +513,7 @@ def _directory_manifest(
         lines.extend(["## Files", ""])
         lines.extend(
             f"- [{_stub_name(document=member)}]({_stub_name(document=member)}):"
-            f" {_one_line(str(member.get('root_summary') or ''))[:120] or 'no summary'}"
+            f" {_member_summary(document=member)}"
             for member in sorted(members, key=_stub_name_of)
         )
         lines.append("")

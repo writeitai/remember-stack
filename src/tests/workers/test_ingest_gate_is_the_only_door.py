@@ -1,7 +1,7 @@
-"""D104 holds only while E0 is the single door into a document version.
+"""D114 holds only while E0 is the single door into a document version.
 
-The routability decision lives in `UploadIngestor` precisely because
-every ingress writes through that object. Three things could quietly undo that,
+`UploadIngestor` supplies deployment route configuration to the catalog,
+which decides parking using canonical stored MIME. Three things could quietly undo that,
 and none would fail any behavioural test:
 
 - a new caller reaching `DocumentCatalog.record_upload` directly, creating a
@@ -67,9 +67,8 @@ def test_only_the_gated_e0_methods_create_document_versions() -> None:
 
     Checking the enclosing scope, not just the file, is the point: a second
     call inside `e0.py` but outside `ingest`/`ingest_observed` would skip
-    `_guard_ingest` and restore the accepted-then-dead-letter path D104
-    removed. If this fails, route the new caller through the guard — do not
-    widen this assertion.
+    the D74 admission check and route configuration wiring. If this fails,
+    route the new caller through the ingestor rather than widening this audit.
     """
     assert _record_upload_callers() == Counter(
         {("e0", ("UploadIngestor", method)): 1 for method in _GATED_METHODS}
@@ -101,7 +100,7 @@ def test_only_the_catalog_writes_document_versions() -> None:
 def test_the_route_table_cannot_be_omitted_by_a_composition() -> None:
     """`routable_mimes` has no default, so no composition can skip the gate.
 
-    An earlier draft defaulted it to None. That made D104 as strong as every
+    An earlier draft defaulted it to None. That made D114 as strong as every
     composer remembering to pass it, which is not what an invariant means.
     """
     parameter = inspect.signature(UploadIngestor.__init__).parameters["routable_mimes"]

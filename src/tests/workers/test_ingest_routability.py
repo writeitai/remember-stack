@@ -1,11 +1,8 @@
-"""D106: E0 parks convert work for input it has no converter for.
+"""D114: E0 parks convert work for input it has no converter for.
 
-The document itself is always ingested. An unroutable MIME is not a bad
-upload — the bytes are durable, and the corpus projection emits a stub
-carrying `raw_uri` even with no representation, so an agent can mount and read
-the original. What changes is only the *work*: its convert row is enqueued
-already parked, so no attempt is spent failing a conversion that cannot
-succeed and nothing reaches the dead-letter queue.
+Self-host uploads remain durable when conversion is unavailable. These
+wiring tests cover byte storage and route configuration passed to the catalog;
+projection visibility has its own database proofs.
 
 These proofs assert the decision and its wiring with a recording catalog. The
 durable consequences — the row really lands parked, the claim really skips it,
@@ -13,19 +10,23 @@ resuming really releases it — are proved against PostgreSQL in
 `test_e0_chain.py`.
 """
 
+from collections.abc import Collection
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
+from pydantic import SecretStr
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
 from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
+from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ProcessingLane
 from rememberstack.model import UploadRecord
+from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.e0 import UploadIngestor
 
@@ -48,12 +49,16 @@ class _RecordingCatalog:
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
         metering: object | None = None,
-        convert_defer_reason: DeferReason | None = None,
+        routable_mimes: Collection[str] | None = None,
     ) -> IngestedVersion:
         """Record the scheduling decision and return a fixed receipt."""
         _ = convert_component_version, lane, metering
         self.calls += 1
-        self.defer_reason = convert_defer_reason
+        self.defer_reason = (
+            None
+            if routable_mimes is None or record.mime in routable_mimes
+            else DeferReason.NO_ROUTE
+        )
         return IngestedVersion(
             deployment_id=record.deployment_id,
             doc_id=uuid4(),
@@ -81,14 +86,17 @@ class _CountingStore:
     """Object-store fake proving the bytes are written, not refused."""
 
     def __init__(self) -> None:
+        """Start with no writes."""
         self.writes = 0
 
     def read_bytes(self, *, key: ObjectKey) -> bytes:
+        """Reject reads during ingest."""
         raise AssertionError(f"unexpected read of {key.root}")
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
     ) -> None:
+        """Record one raw write."""
         self.writes += 1
 
 
@@ -151,7 +159,7 @@ def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
     `ConversionRouter.converter_for` is an exact dict lookup. If ingest
     normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
     did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D106 exists to remove. Normalisation belongs in the router,
+    the outcome D114 exists to remove. Normalisation belongs in the router,
     where both callers inherit it.
     """
     catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
@@ -159,7 +167,7 @@ def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:
-    """The equivalence D106 rests on: configured keys are the router's keys.
+    """The equivalence D114 rests on: configured keys are the router's keys.
 
     Ingest tests membership in the configured route-name table while the
     worker tests membership in the built router. That is only safe because
@@ -169,3 +177,28 @@ def test_ingest_and_the_router_read_the_same_key_set() -> None:
     cannot convert.
     """
     assert frozenset(build_conversion_routes(route_names=_ROUTES)) == frozenset(_ROUTES)
+
+
+def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
+    """No-route storage must not bypass managed admission or binary classification."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(),
+        meter_scope=ManagedMeterScope(
+            org_id=uuid4(),
+            project_id=uuid4(),
+            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        ),
+    )
+    with pytest.raises(ManagedTextClassificationError):
+        ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(
+                filename="scan.png", mime="image/png", content=b"\x89PNG\r\n\x1a\nimage"
+            ),
+        )
+    assert store.writes == 0
+    assert catalog.calls == 0

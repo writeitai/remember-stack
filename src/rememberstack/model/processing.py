@@ -202,6 +202,7 @@ class RunResultOutcome(StrEnum):
 
     NO_WORK = "no_work"
     BUDGET_PARKED = "budget_parked"
+    NO_ROUTE_PARKED = "no_route_parked"
     SUCCEEDED = "succeeded"
     RETRY_SCHEDULED = "retry_scheduled"
     DEAD_LETTERED = "dead_lettered"

@@ -5420,90 +5420,37 @@ application; automatic same-application reassociation is an unchosen alternative
 Amends D90's detailed locking/staging keys, completes D110 observation preparation
 and D74 support replay, and qualifies D107 re-split for unrecoverable legacy
 assertion provenance. Implementation and release remain separate gates.
-## D114. Ingest parks convert work it has no route for, and keeps the file
 
-**Decision (2026-09-03).** An upload whose MIME the deployment has no
-conversion route for is **ingested normally** — bytes to the raw store, version
-row, corpus stub — and its convert work is **enqueued already parked** with
-`defer_reason='no_route'`. No attempt is spent, no error is recorded, the
-version is not marked failed, and the row never enters the dead-letter queue.
-Registering the converter and running `remember ops resume-no-route` releases
-the backlog.
+## D114. Store originals, park missing conversion routes, and expose raw availability separately
 
-**Keeping the document is the point.** The corpus projection `LEFT JOIN`s
-representations and selects `content_objects.raw_uri`, and the P3 stub builder
-renders `(not converted)` for a missing `markdown_uri` while still emitting the
-`raw_uri` pointer. An unconverted document is therefore already a designed
-state: it appears in the corpus filesystem, and an agent can follow the pointer
-into the read-only raw mount and read the original. Refusing the upload would
-have deleted that capability to fix a work-queue problem.
+**Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
-**Parking is expressed by the reason, not by a clock.** `no_route` work waits
-on a *configuration* fact — a converter that does not exist yet — and there is
-no instant at which it becomes ready. `_CLAIM_SELECT` therefore excludes
-`defer_reason = 'no_route'` outright rather than parking behind a sentinel
-`not_before`, which would either busy-poll a config change forever or lie about
-when the work is due. Releasing is an explicit act by whoever changed the
-configuration, because no process can observe another process's restart.
+**Context.** Accepting an unsupported format previously stored it and then
+marked processing failed. Refusing upload avoids that failure but prevents agents
+from using originals. A prior claim that raw-only versions already appeared in
+P3 was incorrect: projection required processed current currency.
 
-**The route table is the only authority, and it is a required argument.**
-`conversion_routes` is deployment policy (D61); `build_conversion_routes`
-refuses composition on an unknown adapter, so a process's router key set is
-exactly the key set of the configuration it was composed with, and the
-membership test ingest performs is the membership test the router performs —
-the same exact lookup on the same string. MIME normalization belongs in the
-router where both callers inherit it. `UploadIngestor` requires
-`routable_mimes` rather than defaulting it: every deployment has a route table
-(the settings default is the stock text table), so omission expresses only a
-composition that forgot, and every ingress — HTTP, the local MCP tool,
-connector sync — writes through that one object.
+**Decision.** Keep otherwise admissible originals; represent missing routes as
+pending conversion with `defer_reason=no_route`. Resume only currently routable
+live versions, using stored content MIME; worker configuration skew parks again
+without consuming an attempt allowance. Expose the latest durable, nondeleted
+original separately from the current processed version in P3. Never promote raw
+versions to processed currency. Wire existing provider raw/artifact mount roots
+so a published pointer can reach actual bytes after rebuild and mount publication.
 
-**Why.** The router was previously consulted for the first time inside the
-convert worker, on every ingress. An unroutable upload was accepted, stored,
-and then dead-lettered through `UnroutableMimeError` → `mark_version_failed` →
-`NonRetryableHandlerError`. Nothing was broken; the format was simply not
-supported. The DLQ is for work that failed, and a `failed` version status says
-something went wrong with the document, which was false. Worse, it was a state
-the caller could not leave: identical bytes are the D55 no-op, no API requests
-reprocessing, and adding the route later did not rescue versions that had
-already failed without one — recovery meant an operator replaying rows
-individually.
+**Rationale and alternatives.** Storage and conversion are independent capabilities.
+Rejecting uploads removes agent use; dead-lettering misclassifies a configuration
+limitation; skipping work requires a second backlog mechanism; sentinel timestamps
+cannot express a missing route; promoting incomplete versions changes working
+evidence; a second projection duplicates navigation and deletion responsibilities.
 
-This is not a media decision. The mechanism keys on absence from the table, so
-it fired identically for audio, video, images, office documents and archives.
+**Consequences.** Retained unsupported files occupy storage and one parked work row;
+conversion creates no usage merely by waiting. Projection adds latest-version and
+work-state reads. Managed admission/classification remain authoritative, and
+unaccepted staged bytes are not advertised as raw objects. D51 audited read-only
+mounts, D74 barriers and purge, D55 currency and existing snapshot freshness remain
+binding. This is engine behavior, not evidence of production SeaweedFS provisioning
+or changed cloud billing policy.
 
-**Rejected.** Refuse the upload at ingest with 415 (deletes the mountable-raw
-capability above, and answers a product question the defect did not ask); keep
-dead-lettering in the worker (a queue of things that are not broken, and no
-route-addition recovery); park with a far-future `not_before` (a sentinel
-timestamp lying about when work is due, and lane promotion or a janitor could
-silently release it); park from the handler after a claim (an attempt is
-already spent by then, and the ledger's park applies only to queued rows);
-default `routable_mimes` to "no check" (makes the behaviour as strong as every
-composer remembering to pass it).
-
-**Scope.** The managed-metering path (`record_managed_measurement_on`)
-enqueues convert *after* admission, from a spine module that does not hold the
-deployment's route table, so it does not park and retains the old dead-letter
-behaviour. Closing that needs the route table or the decision to reach that
-path; it is recorded here rather than silently left, and does not affect
-self-host or any deployment ingesting without managed metering.
-
-**Consequences.** `processing_defer_reason` gains `no_route` and the
-status/defer_reason CHECK widens (migration `p9_26_0047`). `EnqueueWork` gains
-`defer_reason` so a row can land deferred. `WorkLedger.resume_no_route` and
-`remember ops resume-no-route` release a deployment's parked backlog.
-`UploadIngestor` requires `routable_mimes` — a breaking change for consumers of
-the exported class. `UnroutableMimeError` remains in the worker and remains
-non-retryable, covering the window where ingest and the convert worker were
-composed with different route tables, or an operator resumes before the
-converter is actually registered.
-
-**Design.** `plan/designs/e0_files_design.md` §3.
-
-**Analysis.** `plan/analysis/unroutable_mime_preflight.md`.
-
-**Amends.** Adds a scheduling decision to the D38 conversion router's contract
-and a defer reason to D67's work ledger. Preserves D55 lineage and
-identical-byte semantics, D61 deployment policy, D65 converter envelope, D40's
-corpus projection, and the worker's D12 non-retryable handling unchanged.
+**Authority:** [E0 §3 and P3 §6](plan/designs/e0_files_design.md).
+**Analysis:** [Stored originals and conversion without a route](plan/analysis/unroutable_mime_parking.md).

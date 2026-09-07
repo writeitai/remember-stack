@@ -125,34 +125,25 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 
 ## Unreleased on `main`
 
-- **A file this deployment cannot convert is kept, and its conversion is
-  parked.** The document is ingested normally — the original lands in the raw
-  bucket and the document appears in the corpus filesystem with a
-  `(not converted)` stub carrying its `raw_uri`, so an agent can still mount
-  and read it. Only its convert work is held: `defer_reason=no_route`, no
-  attempt spent, no error recorded, nothing in the dead-letter queue.
-- **Registering the converter converts the backlog.** Run
-  `remember ops resume-no-route --deployment <uuid>` after adding a route and
-  everything that arrived before it existed converts on the next worker pass.
-  Previously such an upload was dead-lettered, the version marked `failed`,
-  and adding the route later did not rescue it — recovery meant an operator
-  replaying rows one at a time.
-- The decision is made in E0, where all three ingresses (HTTP, the local MCP
-  tool, connector sync) write through one object; a check on the HTTP handler
-  would have left the other two enqueueing doomed work.
-- **Breaking for library consumers**: `rememberstack.workers.UploadIngestor`
-  now takes a required `routable_mimes` argument — the deployment's conversion
-  route table, the same mapping you pass to `ConversionRouter`. Pass
-  `frozenset(conversion_routes)` where you build it. It is required rather
-  than defaulted because a default would let a composition silently skip the
-  check, and every deployment has a route table (the settings default is the
-  stock text table). Deployments configured through
-  `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` need no change.
-- Versions dead-lettered by an unroutable MIME *before* this change remain
-  `failed`; parking does not apply retroactively. Reopen those with
-  `remember ops replay` once the route exists.
-- Not yet covered: the managed-metering ingest path enqueues convert after
-  admission without the route table, so it still dead-letters.
+- **Stored originals remain usable without a converter (D114).** Otherwise
+  admissible uploads retain their raw bytes. Conversion starts parked with
+  `defer_reason=no_route`; missing routing does not mark the version failed.
+  A worker with stale configuration also parks without consuming an attempt allowance.
+- **Raw availability and processed currency are separate.** After P3 rebuild
+  and mount publication, the stub's `stored_raw_uri` points to the latest durable
+  original. A separate processed-version section retains any older working
+  summary and full text. Configure real provider raw/artifact mount roots as
+  described in [Mounts](/docs/mounts); default empty directories do not serve bytes.
+- **Resume only supported backlog.** Run
+  `remember ops resume-no-route --deployment <uuid>` with the new route configuration
+  after restarting workers. Only now-routable live versions are released.
+  Previously dead-lettered versions still require `remember ops replay`.
+- **Breaking for library consumers:** `UploadIngestor` requires
+  `routable_mimes=frozenset(conversion_routes)`. The catalog checks the canonical
+  stored MIME, including when the same bytes return with a different declaration.
+- Managed text admission and classification are unchanged. Unaccepted staged
+  originals are omitted from P3. After approval, a worker missing the route parks
+  conversion; this does not introduce cloud binary admission or storage-only billing.
 
 ## What landed after v0.9.0 (in v0.10.0)
 

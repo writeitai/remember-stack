@@ -2,21 +2,10 @@
 
 revision: p9_28_0049
 
-An upload whose MIME the deployment has no conversion route for used to be
-admitted, stored, and then discovered as unroutable inside the convert worker,
-which marked the version failed and dead-lettered the work row. The document
-still reached the corpus filesystem as a stub carrying its `raw_uri` -- an
-agent could mount and read the original -- so the bytes were never the problem.
-The problem was the *work*: a row in the dead-letter queue for something that
-was never broken, only unsupported, and a version marked `failed` for the same
-reason.
-
-`no_route` makes that state say what it is. The convert row is enqueued
-already parked: pending, no attempt consumed, no error recorded, and therefore
-outside the DLQ. Registering the converter and resuming the parked rows
-converts the backlog, which is exactly the recovery the dead-letter path could
-not offer -- adding a route never rescued a version that had already failed
-without one.
+D114 preserves otherwise admissible originals and parks conversion while the
+configured route is absent. P3 separately exposes stored originals without
+changing processed currency. This migration adds the durable parking reason;
+projection and provider-mount wiring establish raw discoverability and access.
 
 The CHECK is rewritten over `defer_reason::text` rather than the enum literal:
 PostgreSQL refuses to use an enum value added in the same transaction that
@@ -87,8 +76,8 @@ def downgrade() -> None:
     """Restore the narrower pairing rule; the enum value stays (PostgreSQL
     cannot remove one in place). Any row still parked as `no_route` would
     violate the restored CHECK, so they are released to ordinary pending
-    first -- the convert stage then re-parks or converts them on its own
-    terms rather than the downgrade silently stranding them."""
+    first. Older application code can then convert or fail according to its
+    existing routing behavior; downgrade does not preserve D114 parking."""
     op.execute(
         "UPDATE processing_state SET defer_reason = NULL "
         "WHERE defer_reason::text = 'no_route'"

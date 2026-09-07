@@ -174,40 +174,28 @@ gates everything downstream:
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
-- **Routability is a scheduling decision at ingest — D106.** The routing table is consulted in
-  **E0**, when the version is created. Input the table does not cover is **still ingested** —
-  bytes to the raw store, version row, corpus stub — and only its convert work is **enqueued
-  already parked** (`defer_reason='no_route'`): no attempt spent, no error recorded, the version
-  never marked failed, and the row never in the dead-letter queue. Registering the converter and
-  running `remember ops resume-no-route` releases the backlog.
+- **Missing conversion routes park work — D114.** E0 accepts and stores otherwise
+  admissible uploads even when no conversion route exists. It passes the configured
+  route set into the catalog transaction, which checks the effective
+  `content_objects.mime` (first-write-wins per content hash). Convert work starts
+  `pending` with `defer_reason='no_route'`: claims exclude that reason regardless
+  of `not_before`, so waiting spends no attempt or conversion usage and does not
+  mark the version failed. `UploadIngestor.routable_mimes` is required; HTTP,
+  local MCP and connector ingestion inherit the same behavior.
 
-  **Keeping the document is the point.** The corpus projection `LEFT JOIN`s representations and
-  selects `content_objects.raw_uri`, and the P3 stub builder renders `(not converted)` for a
-  missing `markdown_uri` while still emitting the `raw_uri` pointer — so an unconverted document
-  appears in the corpus filesystem and an agent can follow the pointer into the read-only raw
-  mount (§5) and read the original. That is a designed state, not an accident; refusing the
-  upload would delete it to fix a work-queue problem.
+  After configuring a converter, `remember ops resume-no-route --deployment …`
+  releases only parked, live versions whose effective MIME exists in the current
+  configured route table. Adding one route cannot release other unsupported
+  formats. A worker that still lacks the route parks the item again and refunds
+  its just-started attempt; converter content errors remain ordinary failures.
+  This handles configuration skew without a dead-letter loop. Matching follows
+  the router's exact MIME lookup. The admission and managed text-classification
+  contracts remain in force; storage acceptance does not assert processing readiness.
 
-  **The park is expressed by its reason, not a clock.** `no_route` waits on a configuration fact
-  — a converter that does not exist yet — so there is no instant at which it becomes ready. The
-  claim query excludes `defer_reason = 'no_route'` outright rather than hiding the row behind a
-  sentinel `not_before`, which would lie about when the work is due and could be released by
-  anything that recomputes scheduling. Releasing is explicit, because no process can observe
-  another process's restart.
-
-  **The route table is the only authority.** `conversion_routes` is deployment policy (D61);
-  `build_conversion_routes` refuses composition on an unknown adapter, so a process's router keys
-  are exactly the keys of the configuration it was composed with, and ingest performs the router's
-  own exact lookup on the same string. MIME normalization belongs in the router where both
-  callers inherit it. The table is a **required** argument to the E0 ingestor: every deployment
-  has one, so omitting it expresses only a composition that forgot. The guarantee is
-  per-configuration, not global — ingest and the convert worker are separately composed, so a
-  route-table change leaves a window where one has restarted and the other has not.
-
-  This is a *routing* verdict, not a *content* one: an MP3 labelled `text/plain` is scheduled and
-  fails in the converter, correctly. `UnroutableMimeError` therefore remains in the worker and
-  remains non-retryable, covering that window and an operator who resumes before the converter is
-  actually registered.
+  Raw availability is separate from processed currency: §6 defines the latest
+  stored-original fields and §5 the provider mount. A parked file becomes browsable
+  after the next successful P3 rebuild and mount publication, without conversion.
+  Analysis and alternatives: [stored originals and parking](../analysis/unroutable_mime_parking.md).
 
 Output Markdown → artifacts bucket; the source map + manifest + converter metadata → `conversion.json`; the
 blockizer's `blocks.json` beside them; Postgres gets only the URIs + `converter_version` +
@@ -560,6 +548,35 @@ folders list correctly), with stat/list caching tuned for the rebuild cadence. (
 https://cloud.google.com/storage/docs/cloud-storage-fuse/overview.)
 
 ## 6. The corpus filesystem — P3, a projection — D40
+
+### Stored originals and processed currency — D114
+
+P3 exports every live lineage with at least one durable, nondeleted version.
+It selects the latest stored version by descending `version_no`, independently
+of `documents.current_version_id`. It never promotes a version on upload.
+Managed new-version measurements must have accepted admission before their
+original is advertised: a content-object catalog row alone does not prove bytes
+have reached raw storage.
+
+Existing `version_id`, `content_hash`, `raw_uri`, `mime`, `artifact_uri`, summary
+and placement describe the **current processed version**. Separate
+`stored_version_id`, `stored_content_hash`, `stored_raw_uri`, `stored_mime`,
+`stored_status` and `stored_defer_reason` describe the **latest stored original**.
+A raw-only lineage has empty processed fields and an explicit no-processed-version
+message. If ready v1 is followed by parked v2, the stub labels v1's summary and
+full text as processed v1 and v2's raw pointer as the latest stored original.
+Directory summaries carry the same distinction; unsupported bytes get no invented
+summary or inferred topic. Canonical paths remain `documents/<doc_id>/`.
+
+Deleting a stored version selects the newest surviving durable version; deleting
+the lineage excludes it. Existing D74 barriers and P3 snapshot purge cover these
+stubs. P3 rebuild and mount publication remain explicit operations, independent
+of processing completion. Failed builds keep the prior snapshot. Provider raw
+and artifact mounts must exist, enforce read-only access and retain D51 data-access
+auditing; configuring their existing roots must not silently create empty stores.
+This adds projection queries and retained parked work, but no duplicate original
+bytes, new projection plane, LLM work or changes to D55 processed currency.
+
 
 **We build a canonical corpus filesystem.** It is a real, materialized **GCS bucket laid out as a
 directory tree** that organizes the whole corpus for agent navigation. It is a **P-plane projection**

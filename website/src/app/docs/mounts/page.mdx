@@ -40,7 +40,7 @@ Two truth layers never change: **claims** = testimony; **facts** = adjudicated c
 | --- | --- | --- |
 | **P3 corpus tree** | Generated indexes + stable document/entity paths | First navigation |
 | **E0 artifacts** | Converted Markdown, structure, derived media | Readable source representation |
-| **Raw originals** | Uploaded bytes (off nav path; audited) | Only when conversion lost something |
+| **Raw originals** | Uploaded bytes (off nav path; audited) | Read the original, including before a converter is available |
 | **Plane K checkout** | Compiled + authored knowledge pages | Orientation — then verify facts |
 
 Raw sits **outside** normal navigation so Markdown-first browsing stays cheap.
@@ -50,7 +50,7 @@ Raw sits **outside** normal navigation so Markdown-first browsing stays cheap.
 The smoke Compose profile does **not** ship a separate “mount daemon.” Paths come from the self-host **mount publisher**:
 
 - Returns a typed `PublishedMounts` value bound to **one** deployment  
-- Always marked read-only  
+- Marked read-only as a usage contract; provider mounts enforce permissions
 - Consumption-skill renderer **refuses** paths from another deployment  
 
 ```python
@@ -59,6 +59,41 @@ published = mount_publisher.publish(deployment_id=...)
 rendered = skill_surface.render(mounts=published)
 skill_path = skill_surface.publish(directory=harness_skill_directory, rendered=rendered)
 ```
+
+### Connect existing bucket mounts
+
+The self-host publisher builds the P3 directory from published snapshots. It does
+**not** install a bucket filesystem or mount SeaweedFS/S3 for you. Without
+configured raw and artifact roots, those returned paths are empty placeholders;
+they cannot serve uploaded files.
+
+Mount the deployment's raw and artifacts buckets using your storage provider's
+filesystem integration, with read-only access and raw data-access audit logging.
+Then pass the existing bucket-root directories to the publisher:
+
+```bash
+python -m rememberstack.profiles.selfhost project --plane p3
+python -m rememberstack.profiles.selfhost mounts \
+  --root /srv/remember-views \
+  --raw-root /mnt/remember-raw \
+  --artifacts-root /mnt/remember-artifacts
+```
+
+Alternatively set `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` and
+`REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT`. Command-line paths override those
+settings. Configured paths must already be directories; a missing mount path
+fails publication instead of creating an empty substitute. Directory validation
+cannot verify that a provider is mounted or that auditing and read-only access
+are enabled; configure those at the mount/provider layer. The publisher does not
+change filesystem permissions or intercept direct raw reads.
+
+After a P3 rebuild and mount publication, a live document's stub exposes its
+latest durably stored original through `stored_raw_uri`, even if conversion is
+parked with `no_route`. Append that object key to the returned raw root to open
+the bytes. A newer stored original and the current processed version are labeled
+separately; storing new bytes does not replace the processed summary or Markdown.
+Pending managed admission does not advertise an original that has not been
+written. Existing snapshots remain unchanged until rebuilt and republished.
 
 ## Filesystem first; query when files cannot
 

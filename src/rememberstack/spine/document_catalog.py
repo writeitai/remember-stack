@@ -7,6 +7,7 @@ atomically; `record_representation` lands one immutable conversion output
 skeleton checks append independently under D52.
 """
 
+from collections.abc import Collection
 from collections.abc import Sequence
 from decimal import Decimal
 import json
@@ -60,7 +61,7 @@ class DocumentCatalog:
         convert_component_version: str,
         lane: ProcessingLane = ProcessingLane.STEADY,
         metering: ManagedTextMeasurementDraft | None = None,
-        convert_defer_reason: DeferReason | None = None,
+        routable_mimes: Collection[str] | None = None,
     ) -> IngestedVersion:
         """Land one upload's rows and enqueue its convert work in one transaction.
 
@@ -86,6 +87,20 @@ class DocumentCatalog:
                     "byte_size": record.byte_size,
                     "raw_uri": record.raw_uri,
                 },
+            )
+            # Content identity is first-write-wins. A later declaration must
+            # not schedule against a different MIME than convert_source uses.
+            effective_mime = connection.execute(
+                _SELECT_CONTENT_MIME,
+                {
+                    "deployment_id": record.deployment_id,
+                    "content_hash": record.content_hash,
+                },
+            ).scalar_one()
+            convert_defer_reason = (
+                DeferReason.NO_ROUTE
+                if routable_mimes is not None and effective_mime not in routable_mimes
+                else None
             )
             latest = (
                 connection.execute(
@@ -621,6 +636,13 @@ _INSERT_CONTENT_OBJECT = text(
         :deployment_id, :content_hash, :mime, :byte_size, :raw_uri
     )
     ON CONFLICT (deployment_id, content_hash) DO NOTHING
+    """
+)
+
+_SELECT_CONTENT_MIME = text(
+    """
+    SELECT mime FROM content_objects
+    WHERE deployment_id = :deployment_id AND content_hash = :content_hash
     """
 )
 

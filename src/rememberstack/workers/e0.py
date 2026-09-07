@@ -56,7 +56,6 @@ from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
-from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -91,6 +90,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.base import NoRouteHandlerError
 from rememberstack.workers.e0_summary import SectionSummarizer
 from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
@@ -171,17 +171,9 @@ class UploadIngestor:
     ) -> None:
         """Bind the connector to the catalog and the deployment's raw bucket.
 
-        ``routable_mimes`` is the deployment's conversion route table (D104),
-        and it is **required**: every deployment has a route table (the
-        settings default is the stock text table), so there is no real state
-        this could be omitted to express — only a composition that forgot. A
-        default would let a composition silently skip the check, and every
-        ingress writes through this object, so this is the one placement that
-        covers HTTP, the local MCP tool and connector sync alike.
-
-        The table decides *scheduling*, not admission. Input it does not cover
-        is still stored and still reaches the corpus filesystem with its
-        ``raw_uri``; only its convert work is parked.
+        ``routable_mimes`` is required deployment configuration (D114).
+        The catalog uses it with the canonical stored MIME to schedule or
+        park conversion. Admission and managed metering retain their gates.
         """
         self._catalog = catalog
         self._raw_store = raw_store
@@ -209,7 +201,6 @@ class UploadIngestor:
             source_kind=UPLOAD_SOURCE_KIND,
             source_ref=content_hash,
             content_hash=content_hash,
-            mime=upload.mime,
         )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
@@ -245,7 +236,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
-            convert_defer_reason=self._convert_defer_reason(mime=upload.mime),
+            routable_mimes=self._routable,
         )
 
     def ingest_observed(
@@ -275,7 +266,6 @@ class UploadIngestor:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
-            mime=upload.mime,
         )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
@@ -316,7 +306,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
-            convert_defer_reason=self._convert_defer_reason(mime=upload.mime),
+            routable_mimes=self._routable,
         )
 
     def _prepare_managed_text(
@@ -353,7 +343,6 @@ class UploadIngestor:
         source_kind: str,
         source_ref: str,
         content_hash: str,
-        mime: str,
     ) -> None:
         """Check D74 before writing forgotten bytes back into the raw store."""
         self._admission.guard_ingest(
@@ -362,19 +351,6 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
-
-    def _convert_defer_reason(self, *, mime: str) -> DeferReason | None:
-        """Decide whether this input's convert work starts parked (D104).
-
-        The lookup is exactly the router's own — an exact match on the same
-        string — so the two never disagree about what is routable. An input
-        outside the table is still ingested: its bytes are durable, and the
-        corpus projection emits a stub carrying ``raw_uri`` even with no
-        representation, so an agent can mount and read the original. Only the
-        convert row is parked, because running it would spend an attempt to
-        discover something the route table already knew.
-        """
-        return None if mime in self._routable else DeferReason.NO_ROUTE
 
 
 class ConvertHandler:
@@ -412,12 +388,10 @@ class ConvertHandler:
         try:
             converter = self._router.converter_for(mime=source.mime)
         except UnroutableMimeError as err:
-            # deterministic for this input — retrying cannot help (D12); the
-            # version's own status must not keep claiming in-flight work:
-            self._catalog.mark_version_failed(
-                version_id=source.version_id, error=str(err)
-            )
-            raise NonRetryableHandlerError(str(err)) from err
+            # Configuration can differ from the ingestor or resume command.
+            # This runs before reading bytes or making a provider call, so the
+            # runner may park and return the unused attempt (D114).
+            raise NoRouteHandlerError(str(err)) from err
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,

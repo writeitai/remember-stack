@@ -50,7 +50,13 @@ docker compose exec postgres psql -U rememberstack -d rememberstack -c \
 
 ### 1. Unroutable MIME
 
-Smoke profile routes **Markdown** and **plain text**. A file whose MIME type has no registered converter is **still ingested** — the original stays in the raw bucket and the document appears in the corpus filesystem with a `(not converted)` stub carrying its `raw_uri`, so an agent can still mount and read it. Only its conversion is **parked**: `processing_state` shows `status=pending`, `defer_reason=no_route`, `attempts=0`, and nothing reaches the dead-letter queue.
+Smoke profile routes **Markdown** and **plain text**. An otherwise admissible
+file without a configured converter is stored and its conversion is parked:
+`processing_state` shows `status=pending`, `defer_reason=no_route`. A newly parked
+upload has `attempts=0`; configuration skew at a worker refunds the unused claim
+instead of failing the version. After P3 rebuild and mount publication, its stub
+carries `stored_raw_uri` for use through a configured raw provider mount. See
+[Mounts](/docs/mounts) for the required roots and snapshot refresh commands.
 
 **Fix:** register the converter for that MIME type in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`, then release the backlog:
 
@@ -58,7 +64,9 @@ Smoke profile routes **Markdown** and **plain text**. A file whose MIME type has
 remember ops resume-no-route --deployment <uuid>
 ```
 
-Parked work converts on the next worker pass; nothing needs re-uploading.
+Restart workers with the same route configuration before resuming. Only parked
+versions whose stored MIME now has a route are released; other formats remain
+parked. Released work can convert on the next worker pass without re-uploading.
 
 Versions dead-lettered by an unroutable MIME *before* parking existed are still `failed`, and adding a route does not convert them retroactively — reopen those with `remember ops replay`.
 

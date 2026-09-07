@@ -42,6 +42,10 @@ from rememberstack.spine.work_ledger import WorkLedger
 _logger = logging.getLogger(__name__)
 
 
+class NoRouteHandlerError(Exception):
+    """Convert found no configured route before any I/O or provider work (D114)."""
+
+
 class ExtractChunkBarrier(BaseModel):
     """D84: after a chunk extract succeeds, complete+barrier in one ledger txn."""
 
@@ -281,6 +285,25 @@ class Worker:
         )
         try:
             outcome = handler.handle(work=claimed, meter=meter)
+        except NoRouteHandlerError:
+            self._ledger.park_no_route(
+                processing_id=claimed.processing_id, attempt=claimed.attempt
+            )
+            self._export_event(
+                event=_worker_event(
+                    deployment_id=claimed.deployment_id,
+                    processing_id=claimed.processing_id,
+                    stage=claimed.stage,
+                    lane=claimed.lane,
+                    attempt=None,
+                    outcome=RunResultOutcome.NO_ROUTE_PARKED,
+                    started_ns=started_ns,
+                )
+            )
+            return RunResult(
+                processing_id=claimed.processing_id,
+                outcome=RunResultOutcome.NO_ROUTE_PARKED,
+            )
         except (NonRetryableHandlerError, ProviderAccountingError) as exception:
             _logger.exception(
                 "non-retryable failure in stage %s for %s",

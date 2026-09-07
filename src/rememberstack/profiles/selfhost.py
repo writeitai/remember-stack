@@ -154,6 +154,11 @@ class SelfHostSettings(BaseSettings):
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
+    raw_mount_root: Path | None = None
+    artifacts_mount_root: Path | None = None
+    """Existing provider-mounted bucket roots; enforce read-only access and raw
+    data-access audit logging outside the process. Unset roots are placeholders.
+    Paths are bucket roots, so object keys from P3 append directly to them."""
     projection_work_root: Path = Path("/var/lib/rememberstack/projection-work")
     forget_manifest_root: Path = Path("/var/lib/rememberstack/forget-manifests")
     migration_config: Path = Path("alembic.ini")
@@ -1123,7 +1128,13 @@ class SelfHostProfile:
             raise ValueError(f"unknown projection plane {plane!r}")
         return reports
 
-    def publish_mounts(self, *, root: Path) -> PublishedMounts:
+    def publish_mounts(
+        self,
+        *,
+        root: Path,
+        raw_root: Path | None = None,
+        artifacts_root: Path | None = None,
+    ) -> PublishedMounts:
         """Materialize the latest P3 snapshot under one local mount root."""
         from rememberstack.adapters.selfhost import LocalMountPublisher
         from rememberstack.spine import ForgetCatalog
@@ -1131,6 +1142,14 @@ class SelfHostProfile:
 
         return LocalMountPublisher(
             root=root,
+            raw_root=raw_root
+            if raw_root is not None
+            else self._settings.raw_mount_root,
+            artifacts_root=(
+                artifacts_root
+                if artifacts_root is not None
+                else self._settings.artifacts_mount_root
+            ),
             catalog=ProjectionCatalog(engine=self._engine),
             corpusfs_store=self._corpusfs_store,
             admission=ForgetCatalog(engine=self._engine),
@@ -1401,6 +1420,14 @@ def main(argv: list[str] | None = None) -> int:
         "mounts", help="publish the latest P3 snapshot under a local root"
     )
     mounts.add_argument("--root", type=Path, required=True)
+    mounts.add_argument(
+        "--raw-root",
+        type=Path,
+        help="existing read-only raw bucket mount with provider audit logging",
+    )
+    mounts.add_argument(
+        "--artifacts-root", type=Path, help="existing read-only artifacts bucket mount"
+    )
     args = parser.parse_args(argv)
     settings = SelfHostSettings.model_validate({})
     if args.command == "api":
@@ -1425,7 +1452,13 @@ def main(argv: list[str] | None = None) -> int:
             print(profile.run_projection(plane=args.plane))
             return 0
         if args.command == "mounts":
-            print(profile.publish_mounts(root=args.root).model_dump_json())
+            print(
+                profile.publish_mounts(
+                    root=args.root,
+                    raw_root=args.raw_root,
+                    artifacts_root=args.artifacts_root,
+                ).model_dump_json()
+            )
             return 0
         if args.command == "meter-receipts":
             profile.run_meter_receipts(once=args.once, limit=args.limit)

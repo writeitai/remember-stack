@@ -185,3 +185,20 @@ remember connectors list
 In accordance with Decision D108:
 - **`remember review`**: Retired. In early versions, review queues held human triage tasks. In modern Remember, contradiction adjudication is fully autonomous (D3/D43/D107) and runs live in the bitemporal spine. Running `remember review` prints a helpful migration notice.
 - **`remember budget`**: Retired from the primary data-plane surface. Cloud spend and credit balances are managed via `remember balance`. Self-hosted engine spending is configured via `.env` provider rate limits.
+
+
+## Resume conversion after adding a route
+
+With engine extras installed and local database access, run:
+
+```bash
+remember ops resume-no-route --deployment <uuid>
+```
+
+The command reads `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`, validates its
+adapter names, and releases only live convert rows parked with `no_route` whose
+stored MIME now has a converter. Restart workers with the same configuration
+first. Output is JSON with the released processing IDs; an empty list means
+nothing matched. Other MIME types stay parked. No original needs re-uploading.
+A worker still missing a route parks it again without using its attempt allowance.
+Existing dead-letter rows require the separate `remember ops replay` operation.
