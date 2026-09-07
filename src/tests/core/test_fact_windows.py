@@ -146,3 +146,21 @@ def test_replacement_requires_evidence_even_when_clearing_dates() -> None:
     """Explicitly clearing an incorrect date is still a grounded adjudication."""
     with pytest.raises(ValidationError):
         GroundedFactWindow(window=FactWindow(), supporting_claim_ids=())
+
+
+def test_provider_dictionary_timestamp_obeys_canonical_shape() -> None:
+    """JSON-decoding providers and JSON-string providers have the same boundary."""
+    value = {
+        "valid_from": "2022-05-10T00:00:00Z",
+        "valid_until": "2022-05-11T00:00:00Z",
+        "valid_precision": "day",
+    }
+    window = FactWindow.model_validate(value)
+    assert (
+        fact_match_at(window=window, at=datetime(2022, 5, 10, 12))
+        is TemporalMatch.CONFIRMED
+    )
+    with pytest.raises(ValidationError, match="align"):
+        FactWindow.model_validate({**value, "valid_from": "2022-05-10T12:00:00Z"})
+    with pytest.raises(ValidationError):
+        FactWindow.model_validate({**value, "valid_from": "2022-05-10T00:00:00"})

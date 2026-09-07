@@ -1,4 +1,6 @@
--- D114 application storage contract; review target, not an automatic converter.
+-- D114 target storage shape; NOT a standalone migration or automatic converter.
+-- Expansion/conversion/defaults/checks must follow contract section 7 atomically
+-- with respect to serving. Nullable expansion columns below are finalized there.
 -- Apply only with serving/intake/workers stopped and legacy staging drained.
 -- The implementation migration must also close its fact-generation readiness gate.
 
@@ -79,6 +81,7 @@ CREATE INDEX ix_fact_applications_observation_support
 
 -- No pending legacy rows are permitted at this maintenance boundary.
 ALTER TABLE public.normalize_observation_staging
+  ALTER COLUMN statement DROP NOT NULL,
   ADD COLUMN application_id uuid NOT NULL,
   DROP CONSTRAINT normalize_observation_staging_pkey,
   ADD PRIMARY KEY (deployment_id, version_id, application_id),
@@ -86,18 +89,18 @@ ALTER TABLE public.normalize_observation_staging
     REFERENCES public.fact_applications (deployment_id, application_id)
     ON DELETE CASCADE;
 ALTER TABLE public.relation_evidence
-  ADD COLUMN legacy_support boolean NOT NULL DEFAULT true;
+  ADD COLUMN legacy_stance public.evidence_stance;
 ALTER TABLE public.observation_evidence
-  ADD COLUMN legacy_support boolean NOT NULL DEFAULT true;
--- New links explicitly set legacy_support=false; the default preserves old callers
--- until their participation is removed at the guarded generation cutover.
+  ADD COLUMN legacy_stance public.evidence_stance;
+-- Conversion sets legacy_stance=stance on old links. New inserts leave it NULL;
+-- application recount includes but never overwrites the retained legacy stance.
 
 ALTER TABLE public.relations
-  ADD COLUMN valid_precision public.claim_valid_precision NOT NULL DEFAULT 'unknown',
-  ADD COLUMN window_claim_ids uuid[] NOT NULL DEFAULT '{}';
+  ADD COLUMN valid_precision public.claim_valid_precision,
+  ADD COLUMN window_claim_ids uuid[];
 ALTER TABLE public.observations
-  ADD COLUMN valid_precision public.claim_valid_precision NOT NULL DEFAULT 'unknown',
-  ADD COLUMN window_claim_ids uuid[] NOT NULL DEFAULT '{}';
+  ADD COLUMN valid_precision public.claim_valid_precision,
+  ADD COLUMN window_claim_ids uuid[];
 CREATE INDEX ix_relations_window_claims ON public.relations USING gin (window_claim_ids);
 CREATE INDEX ix_observations_window_claims ON public.observations USING gin (window_claim_ids);
 
@@ -117,6 +120,15 @@ CREATE INDEX ix_observations_window_claims ON public.observations USING gin (win
 --      AND cardinality(window_claim_ids) > 0)
 -- );
 -- Never expose the expand/convert interval through an open readiness gate.
+
+ALTER TABLE public.relation_adjudications
+  ADD COLUMN consumed_claim_ids uuid[] NOT NULL DEFAULT '{}';
+ALTER TABLE public.observation_adjudications
+  ADD COLUMN consumed_claim_ids uuid[] NOT NULL DEFAULT '{}';
+CREATE INDEX ix_relation_adjudications_inputs
+  ON public.relation_adjudications USING gin (consumed_claim_ids);
+CREATE INDEX ix_observation_adjudications_inputs
+  ON public.observation_adjudications USING gin (consumed_claim_ids);
 
 -- Generic mutable-fact update, not a dedicated temporal operation category.
 ALTER TYPE public.adjudication_outcome ADD VALUE IF NOT EXISTS 'update';
