@@ -1,7 +1,8 @@
 # Entity identity and retrieval — design (binding)
 
-> **Binding D110 amendment (2026-09-07).** D110 §5 requires generation/revision/deadline checks before generated profile text or its vector participates in T3/T4 identity or retrieval. Future activation/expiry invalidates the certificate even with no new ingestion; stale profile evidence is omitted.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D114 amendment (2026-09-07; effective when merged).** Profiles are date-qualified historical summaries with mutation-driven repair (§6). D110 temporal deadline/certificate requirements are withdrawn; stale mutation-derived inputs still require existing revalidation.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only across
 > the registry, but gains one narrow verdict: after a D102-contract T4

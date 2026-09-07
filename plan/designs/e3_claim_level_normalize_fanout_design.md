@@ -1,7 +1,8 @@
 # Design: claim-level E3 normalize fan-out
 
-> **Binding D110 amendment (2026-09-07).** D110 §§2–3 replace direct relation upsert in claim normalization with complete normalization receipts, assertion staging, closed admission and guarded ordered application. Observation flush precedes relation block units; fact-dependent follow-ups wait for their barrier. Claim-level concurrency remains.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D114 amendment (2026-09-07; effective when merged).** Stage relations before identity and use ordinary atomic application with safe retry (§§3–4). D110 storage/barrier specifications are withdrawn; replacement concrete storage is gated by the delivery plan.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 **Status:** revised after Codex design review — binding once review findings
 absorbed and PR lands on `main`  

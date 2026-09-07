@@ -1708,6 +1708,8 @@ CREATE TABLE relations (
   CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from),
   CHECK (invalidated_at IS NULL OR invalidated_at >= ingested_at),  -- can't un-learn before learning
   CHECK (num_nonnulls(embedding, embedding_model, embedding_input_policy_version, embedding_text_hash) IN (0, 4) AND (embedding IS NULL OR fact_label IS NOT NULL)),
+  -- SUPERSEDED BY D114: do not copy this EXCLUDE into the replacement schema.
+  -- Distinct adjudicated identities may overlap; uniqueness belongs to application receipts.
   -- At most one BELIEVED, non-contradictory relation per (s,p,o) with overlapping world-time:
   EXCLUDE USING gist (
     deployment_id WITH =, subject_entity_id WITH =, predicate WITH =, object_entity_id WITH =,
@@ -2744,53 +2746,23 @@ Per CLAUDE.md, numbers are starting points. Items that may move the schema or a 
     as-of query demand at target scale. Only a subsequent binding design may introduce a finite
     hot horizon and truthful fallback contract; this spike supplies evidence, not a hidden value.
 
-## D110 amendment — temporal writes and lifecycle schema
+## D114 amendment — one mutable fact window
 
-The complete normative DDL is incorporated from
-[`temporal_write_and_lifecycle_schema.sql`](temporal_write_and_lifecycle_schema.sql).
-It is the single DDL home for this amendment, extending the predecessor schema
-above; implementations must not substitute analysis snippets. The companion
-[design](temporal_write_and_lifecycle_design.md) defines cross-row authority,
-locks, replay, erasure and publication contracts that SQL CHECKs alone cannot
-establish.
+[Mutable fact windows](mutable_fact_windows_design.md) replaces the former
+D110/D113 schema incorporation. Their SQL appendices are retained as withdrawn
+historical artifacts; they are not normative DDL and must not be applied.
 
-The appendix separates committed enum expansion, structural stores, fenced
-in-place conversion and final constraint validation. Drop the old all-kind
-relation exclusion before applying converted uncapped occurrence rows, then
-install the final state exclusion after conversion. D111 restricts that exclusion
-to known-start states; ordinary unknown-start coexistence and guarded start
-acquisition follow `temporal_clocks_design.md` §4.2.1. The basis vocabulary adds
-`erased`; cleared unsupported endpoints carry NULL/erased, affect current-query
-certainty and sit outside certified-state range exclusion. All ordinary writes
-and conversion/replay obey the documented serving-generation gate.
+The revised schema contract keeps one fact world window with precision, existing
+system timestamps and ordinary adjudication history. It removes mandatory fact
+kinds, occurrence columns, seed/endpoint ownership, temporal correction and cache
+framework stores. The universal same-triple overlap exclusion in the older §9
+DDL is superseded: adjudicated distinct identities may overlap. Retain interval
+shape, foreign-key and application-idempotency constraints and nonunique indexes.
 
-New storage covers complete normalization/assertion receipts, exact-generation
-version units and immutable admission sets; one temporal block sequencer with
-typed operation effects and endpoint owners; autonomous discrepancy targets;
-cache source memberships/certificates and durable event IDs; support attestations
-and sanitized forget checkpoints; and resumable conversion shadows/generation
-verification. Only existing `processing_state` owns leases/retries/scheduling.
-Private internal tables/functions are not granted to the open-query login.
-
-D112 replaces the scalar relation-application target with a normalized complete
-support-target set and parent count/digest certificate. New identities have one
-target; evidence can support multiple compatible dated-state slices without
-merging them. D110 §3.3.1 defines membership, atomic effects, completion/replay,
-boundary authority, consumer disclosure and D74 erasure participation.
-
-D113 additionally incorporates
-[`observation_temporal_application_schema.sql`](observation_temporal_application_schema.sql)
-after that amendment. It preserves D90 work topology while adding observation
-admission/application authority, exact generation-qualified retained memberships,
-legacy evidence baselines and per-assignment linked/erased checkpoint roots.
-[Its design](observation_temporal_application_design.md) defines CAS, support
-relocation, completion, conservative legacy cap refusal and D74 recovery.
-
-Validation evidence and limits live in
-`../analysis/temporal_relation_staging.md` §8. A partial predecessor PostgreSQL15
-execution and SQL parsing do not establish full-head PostgreSQL19 migration,
-conversion, concurrency or application correctness; those are implementation
-acceptance gates in the companion design.
+The concrete replacement migration, narrow application preparation/receipt keys,
+lock protocol and forget inventory must pass the storage-contract gate in the
+[delivery plan](../plans/temporal_clocks.md) before write-path implementation.
+This design amendment does not change the released schema or certify an upgrade.
 
 ## References
 

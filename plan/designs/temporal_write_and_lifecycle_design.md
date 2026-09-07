@@ -1,6 +1,11 @@
 # Temporal fact writes, autonomous corrections, and cache lifecycle
 
-**Status:** D110 amendment, binding when this change lands on main.
+> **D114 supersession (2026-09-07; effective when merged).** D110–D112 framework requirements and incorporated SQL are withdrawn. Safe application, provenance and erasure remain requirements under D114; the old stores, endpoint authority and cache framework are not mandatory.
+> The [mutable fact window design](mutable_fact_windows_design.md) is the current
+> authority. The text
+> below is historical rationale, including any old “binding” or “required” labels.
+
+**Historical status:** D110 framework, superseded by D114.
 **Date:** 2026-09-07 (analysis and local probes began 2026-09-06).
 **Scope:** the four D107 implementation gates #365–#368; amends D107, D108,
 D88/D90, D55, D67 and D74. D107 continues to define the three clocks,

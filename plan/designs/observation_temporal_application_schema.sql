@@ -1,3 +1,8 @@
+-- WITHDRAWN BY D114: historical design appendix, not normative or executable upgrade guidance.
+-- Replacement authority: mutable_fact_windows_design.md, especially sections 4, 7, 8 and 10.
+-- This appendix is no longer incorporated by postgres_schema_design.md.
+-- Original DDL follows only to preserve the reasoning behind the superseded design.
+
 -- D113 normative amendment after the D110 temporal schema and existing D90 tables.
 -- Applies during the stopped/drained temporal conversion. Legacy metadata is
 -- explicitly unpinned; current writers never borrow these default markers.

@@ -1,24 +1,8 @@
 # Retrieval Design — the Query Machine
 
-> **Binding D114 amendment (2026-09-07).** The assured retrieval names are
-> `claims_and_sources_context`, `facts_context`, and `combined_context`.
-> `ContextBundle/v2` exposes `claims_and_sources` and `facts`; no former-name
-> aliases ship. The authority boundaries and algorithms below are unchanged.
-
-> **Binding D110 amendment (2026-09-07).** D110 §§5–6 require checked cache text/vector freshness and explicit temporal-membership uncertainty when an endpoint basis is erased. Current aggregates and absence cannot turn omitted uncertain facts into complete counts or confident negatives; D107 source/occurrence clocks remain.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
-
-> **Binding D107 amendment (2026-09-03).** Testimony grouping keys on the full
-> D41 tuple (or `asserted_at` when unknown) and `EvidenceResult` lists every
-> grouped member's times; the fact-grain `Validity`, `GraphEdge`, the
-> `memory_v1` fact views and the open-query confirmation rows gain
-> per-endpoint bases, temporal kind and the occurrence window (additive), and
-> because the envelope schema is shared, `resolve_entity@2`,
-> `claims_and_sources_context@2`, `facts_context@3` and `combined_context@4` roll; P1
-> accepts is-about claim filters and an `occurs` fact mode;
-> `aggregate(form="timeline")` buckets by occurrence with an explicit
-> `undated` bucket; "current" is the single evaluated-at predicate of §7.1.
-> Contract: `temporal_clocks_design.md` §7.
+> **D114 amendment (2026-09-07; effective when merged).** Use one chosen fact window, existing time modes, precision and explicit possible matches for unknown dates (§5). Dual windows, fact kinds, erased-basis states and temporal cache certificates are superseded.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
 > PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
