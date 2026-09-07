@@ -5382,3 +5382,41 @@ and its [complete schema](plan/designs/temporal_write_and_lifecycle_schema.sql).
 Amends D107/D110's state support and receipt-target cardinality. Preserves D111,
 fact identity and verdict authority, single-target occurrence identity, D74 and
 the library boundary. Implementation and release remain separate gates.
+
+## D113. Observation applications retain original results and current assertion support
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D110 requires observation inference outside locks with durable
+prepared answers and exact application. D90's disposable, version-qualified
+staging supplies neither an application receipt nor provenance for moving one
+of several normalized statements from a claim during historical re-split.
+Legacy evidence and sanitized support replay also require explicit treatment.
+
+**Decision.** Preserve D90's entity work/queue topology; add closed observation
+admission and semantic application records with first-output CAS. Qualify version
+membership by normalizer, adjudicator and composed flush generation. Preserve the
+immutable original single-identity result separately from the operation-owned
+current assertion support location. Record re-split support moves in the same
+atomic effect group, and aggregate fact/claim evidence without losing another
+statement from that claim. Preserve legacy evidence baselines; refuse a cap whose
+required original assertion provenance cannot be recovered. Extend existing
+forget checkpoints with independent support-assignment roots and terminal erased
+support dispositions. Receipt retry never restores erased support or reruns identity.
+
+**Alternatives and consequences.** Mutable normalization output, correction rows
+for first insertion and disposable staging cannot provide this authority. A generic
+application framework or copied relation version fan-out adds unnecessary scope.
+The chosen contract adds domain history and checkpoint storage while reusing the
+scheduler, D110 journal and D90 barriers. It keeps observation identity single-target;
+D112's relation support rule is not broadened. Erased support can gain independent
+replacement only through new assertions or a distinct adjudicator-generation
+application; automatic same-application reassociation is an unchosen alternative.
+
+**Authority.** [Design](plan/designs/observation_temporal_application_design.md),
+[incorporated SQL](plan/designs/observation_temporal_application_schema.sql),
+[analysis](plan/analysis/observation_temporal_applications.md) and
+[alternatives](plan/proposals/generic_temporal_application_store.md).
+Amends D90's detailed locking/staging keys, completes D110 observation preparation
+and D74 support replay, and qualifies D107 re-split for unrecoverable legacy
+assertion provenance. Implementation and release remain separate gates.
