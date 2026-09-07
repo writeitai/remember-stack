@@ -33,6 +33,7 @@ src/tests/core/test_conversion.py
 src/tests/core/test_core_manifest.py
 src/tests/core/test_d80_recovery_and_hydration.py
 src/tests/core/test_embedding_input_policy.py
+src/tests/core/test_fact_windows.py
 src/tests/core/test_forget_identity.py
 src/tests/core/test_knowledge_authored.py
 src/tests/core/test_knowledge_compile.py
