@@ -199,3 +199,22 @@ schema verifier and pure neighbor guard, with the scoped evidence recorded in
 the progress report. Antigravity round seven separately reviews ordered writer
 commit `ada8d28b` (rebased equivalent `77a248c1`); its review was requested before
 the D111 implementation and must not be cited as approval of those later changes.
+
+## Round seven and current-head CI
+
+Antigravity completed its `ada8d28b` review with changes requested for a claimed
+41-error fixture-import lint failure. Its output is
+`/tmp/rs-t1-application-antigravity-r7.log`. The machine's unpinned system Ruff
+is 0.11.2; this repository and CI use locked Ruff 0.15.20. The actual
+`uv run ruff check src/ benchmarks/` passes, including the explicit fixture
+re-exports. Removing those imports as suggested would remove pytest fixture
+registration. The review's nonexistent helper names and inconsistent test
+counts are not adopted as implementation evidence or full acceptance.
+
+Current-head [CI34076741576](https://github.com/writeitai/remember-stack/actions/runs/34076741576)
+instead reports a formatting error in `spine/supersession.py`'s long generation
+declaration. The checked job log confirms that exact failure. The declaration
+is now formatted using locked Ruff; repository-wide lint and format checks pass
+(486 files). The remaining supported PostgreSQL jobs must still be assessed.
+Round eight must verify the review disposition and D111 implementation; round
+seven's conditional verdict is not represented as approval.
