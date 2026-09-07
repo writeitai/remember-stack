@@ -542,3 +542,79 @@ Antigravity R12 independently approved the prior membership/admission scope
 with no blockers: 22 membership/admission and 38 journal/conversion PostgreSQL
 15 proofs plus the migration probe and static checks. That approval did not
 cover the observation planner/applier, worker handoff, full T.1, or release.
+
+## D113 observation preparation and identity planning
+
+The observation store now prepares the admitted canonical head using actual
+source receipts, complete fact-window/current-support metadata, bounded
+testimony text, block revisions and pinned policy inputs. Helpers from distinct
+D56 units reuse the same attempt UUID and proposed fact UUID. Completed dependent
+plans publish with first-answer compare-and-swap; replaced, removed, non-head or
+retired-batch attempts cannot publish. Preparing and publishing do not create
+facts, complete applications or retire source memberships. PostgreSQL JSON
+snapshots use JSON-mode validation so strict UTC fields round-trip correctly.
+
+The separate identity ladder takes no database connection. Unique identical
+compatible states use the deterministic shortcut; identical events and ambiguous
+state identity require one grounded semantic target. The bounded small/frontier
+ladder discloses omitted candidates/testimony, rejects unshown or duplicate
+targets and incompatible evidence, applies the explicit supersession margin,
+and distinguishes completed uncertainty from operational failure. Source and
+world clocks are shown separately. Full evidence-window inventories stay in
+preparation/planning, outside the bounded model prompt.
+
+Pure dependent re-split selection preserves original normalized statements,
+source windows and semantic generations. It enumerates every qualifying state
+application by canonical world-time start, refuses incomplete evidence
+attribution, and identifies legacy evidence that must refuse the cap rather
+than receive guessed reentry. Moving one assertion cannot remove another
+generation's or legacy support for the same claim. A planning proof covers
+A@2019 plus A@2024 followed by B@2022: the later A reenters the actual identity
+ladder, which can select B for a cap at 2024. This is not yet an atomic database
+application proof.
+
+### Stale-attempt review disposition
+
+Antigravity R13 identified that retaining stale completed plans in a history
+array inside the next `prepared_snapshot` did not satisfy D110's ordinary
+operation-log disposition requirement. R14 correctly noted that existing
+operation rows have no full rejected-payload JSON column, but its suggestion
+to omit first-mention audit was not adopted. The actual operation schema
+explicitly allows historical logical fact targets without a live-fact FK.
+
+The implemented disposition uses the retired preparation UUID as operation UUID,
+the exact old input digest, `result=stale`, unchanged expected/resulting state,
+source witnesses and a non-mutating block footprint. It records the completed
+slot's retirement, without retaining the rejected input/output payload as a
+replayable answer. No new live fact or fact-plane narrative is fabricated.
+Only committed effects authorize mutation replay; stale witnesses describe
+retired attempts. Source-presence checks refuse archiving an inconsistent
+prepared survivor after forget. Ordinary seed application rejects stale seeds,
+and the diagnostic entry point rejects every applied or state-changing effect.
+Antigravity R15 is reviewing this revised implementation and its contract scope.
+
+### Validation and remaining integration
+
+- 79 focused unit tests pass: 23 observation identity/encoding/re-split cases
+  plus the 56 fact-rule/correction cases.
+- Eight PostgreSQL 15 preparation proofs pass using real normalization receipts,
+  materialized work units and actual temporal DDL/final constraints: concurrent
+  helpers and first-answer publication, stale replacement from a real journaled
+  write, removed source, retired batch, corrupt snapshot, and both diagnostic
+  bypass guards.
+- All 38 existing PostgreSQL 15 journal/conversion proofs pass after the shared
+  journal change. These harnesses stop their private clusters in `finally`;
+  they are not the complete supported PostgreSQL 19 migration/runtime graph.
+- Locked Ruff, full-library Pyright, import boundaries and test inventory pass
+  (101 unit modules, 61 integration modules, 162 discovered).
+- CI `34085364301` at the preceding teardown-only commit `4befabd3` passes
+  contract smoke, quality, unit, adapters and PR gate. Workers, surfaces and
+  Compose fail; full pipeline acceptance remains open. That CI predates this
+  preparation/identity increment.
+
+The full dependent plan builder, atomic observation applier/support relocation,
+current-support receipt verification, membership retirement, E3/barrier/readiness
+handoffs, composition registration and observation generation rolls remain next.
+Other T.1 writer/lifecycle/cache/forget work, T.2/T.3/T.5, full acceptance and
+release remain required. This increment does not narrow the program or justify
+merging the draft.

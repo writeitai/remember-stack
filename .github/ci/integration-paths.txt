@@ -18,6 +18,7 @@ src/tests/spine/test_managed_metering_sql.py
 src/tests/spine/test_migrations.py
 src/tests/spine/test_normalization_publication.py
 src/tests/spine/test_observation_membership.py
+src/tests/spine/test_observation_preparation.py
 src/tests/spine/test_observation_adjudication.py
 src/tests/spine/test_operations.py
 src/tests/spine/test_ordered_relation_application.py

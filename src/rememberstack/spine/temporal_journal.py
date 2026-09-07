@@ -500,6 +500,13 @@ class TemporalWriteSession:
             raise TemporalWriteConflict("written block was not locked")
         if effect.result is TemporalResult.APPLIED and not written_blocks:
             raise TemporalWriteConflict("a mutation requires its affected block")
+        if (
+            effect.kind is TemporalOperationKind.SEED
+            and effect.result is not TemporalResult.APPLIED
+        ):
+            raise TemporalWriteConflict(
+                "a non-applied seed uses the diagnostic preparation path"
+            )
         if effect.result is not TemporalResult.APPLIED and written_blocks:
             raise TemporalWriteConflict(
                 "a non-applied witness cannot advance block truth"
@@ -569,6 +576,46 @@ class TemporalWriteSession:
             raise TemporalWriteConflict(
                 "new fact insertion lacks its atomic seed receipt"
             )
+
+    def record_stale_preparation(self, *, effect: TemporalEffect) -> None:
+        """Record an exact retired attempt as a diagnostic, never an application or fake fact.
+
+        The operation UUID is the retired preparation UUID. Its input digest
+        identifies the completed attempt's input/output slot. A proposed first
+        fact is a historical logical target; no live fact or adjudication is
+        created. Stale answers cannot authorize a replay mutation. The caller
+        owns the preparation row and the complete current block lock footprint.
+        """
+        try:
+            if not self._open or self._failed or not self._heads:
+                raise TemporalWriteConflict(
+                    "stale preparation requires an open guarded block"
+                )
+            if (
+                effect.result is not TemporalResult.STALE
+                or effect.before != effect.after
+                or effect.kind
+                not in (TemporalOperationKind.SEED, TemporalOperationKind.EVIDENCE)
+                or effect.semantic_predecessors
+            ):
+                raise TemporalWriteConflict(
+                    "a stale preparation is a non-mutating identity diagnostic"
+                )
+            # Historical currency may differ: that is one reason an attempt
+            # becomes stale. Missing source rows must not be reintroduced by
+            # archiving a late answer after forget.
+            for evidence in effect.evidence:
+                _load_claim_input(
+                    connection=self.connection,
+                    deployment_id=self.deployment_id,
+                    claim_id=evidence.claim_id,
+                )
+            self._insert_effect(effect=effect)
+            self._record_footprint(effect=effect, written_blocks=frozenset())
+            self._record_support(effect=effect, evidence_stream=None)
+        except Exception:
+            self._failed = True
+            raise
 
     def _check_evidence(self, *, effect: TemporalEffect) -> None:
         """Ensure retained prepared claim fingerprints and currency still agree."""

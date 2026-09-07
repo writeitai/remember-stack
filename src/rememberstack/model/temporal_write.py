@@ -204,7 +204,10 @@ class TemporalEffect(BaseModel):
             and self.before.kind != self.after.kind
         ):
             raise ValueError("ordinary verdicts cannot change fact kind")
-        if self.kind is TemporalOperationKind.SEED:
+        if (
+            self.kind is TemporalOperationKind.SEED
+            and self.result is not TemporalResult.STALE
+        ):
             if (
                 self.fact.plane is FactPlane.RELATION
                 and self.decision.triggering_assertion_id is None
