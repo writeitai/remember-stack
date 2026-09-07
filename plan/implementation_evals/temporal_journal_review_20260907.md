@@ -350,3 +350,19 @@ brings local execution proofs to 21. This follow-up does not alter the accepted
 design. Full worker/lifecycle/cache/forget integration and supported acceptance
 remain required. The user's explicit merge/release approval remains a separate
 final gate.
+
+## R21: ending-occurrence cap and rebase follow-up
+
+Antigravity approved the narrow follow-up at `e61eb0fe`, with no blocking
+findings. It checked cap execution against the planner and identity contract:
+incoming testimony supplies its world-time instant (including a dated ending
+occurrence), while a historical incoming state uses its existing successor's
+locked start. The source's current identity must participate in the cap.
+
+The reviewer also checked that the rebase onto main `c0f5c010` preserved #382's
+Codex subscription adapter and provider-specific model/effort/temperature pins
+under the Full-v25 temporal roll. It independently passed 63 adapter/protocol
+tests plus static/import/inventory checks, and inspected the 21 execution and
+152 benchmark proof results. R20's strict-UTC JSON parsing and canonical-lock
+dispositions were confirmed. This review does not approve the still-unfinished
+worker/lifecycle/cache/forget program or authorize merge/release.

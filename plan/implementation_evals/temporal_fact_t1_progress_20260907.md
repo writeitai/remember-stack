@@ -784,3 +784,14 @@ All 152 protocol/runner/store-backup tests pass after the rebase. Locked Ruff an
 format checks pass; the newly merged adapter adds one unit module, bringing the
 inventory to 103 unit / 61 integration / 164 total. This verifies the conflict
 resolution, not full temporal pipeline acceptance.
+
+R21 approved the ending-occurrence and rebase follow-up at `e61eb0fe`, including
+the R20 nonblocking dispositions. Supported CI34101383592 at that commit passes
+unit, quality, contract smoke, adapters and PR gate. Compose quickstart failed;
+worker/surface jobs were still running when recorded. Full runtime acceptance
+remains open. The completed Compose job log identifies the existing
+`work_ledger.py` observation handoff: its `obs_flush_version_state` insert still
+uses `ON CONFLICT (deployment_id, version_id, normalizer_version)`, which no
+longer matches D113's generation-pinned unique key. This is the unfinished
+worker/barrier cutover, not a reason to restore the obsolete key. Review details
+are in `temporal_journal_review_20260907.md`.
