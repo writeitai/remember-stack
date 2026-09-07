@@ -192,7 +192,7 @@ leave all of them unset and do not start the Compose `managed` profile.
 
 | Variable | Purpose |
 | --- | --- |
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); a MIME type without a route dead-letters on convert, and an unknown adapter name refuses startup |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); an otherwise admissible MIME type without a route is stored with conversion **parked**. After P3 rebuild/publication, `stored_raw_uri` reaches the original through a configured provider raw mount (see [Mounts](/docs/mounts)). Register the converter, restart workers, and run `remember ops resume-no-route` to release only matching backlog. An unknown adapter name refuses startup |
 
 The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
 
@@ -307,7 +307,7 @@ What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/comp
 | Piece | Config posture |
 | --- | --- |
 | Markdown smoke | Default Compose conversion route |
-| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (the smoke profile does not auto-route beyond text) |
+| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (stock routes are `text/markdown` and `text/plain`; anything else is stored and parked until you register a converter) |
 | Watched directory | Connector extra + connector management API/CLI; credentials stay deployment-side |
 | Lineage identity | `source_kind` + `source_ref` together on ingest; `versioning_mode=snapshot|living` |
 

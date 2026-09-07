@@ -12,6 +12,7 @@ trees, assigns title-only roles, and appends immutable generations. A document
 still never fails structuring.
 """
 
+from collections.abc import Collection
 from collections.abc import Iterable
 from datetime import datetime
 from datetime import timezone
@@ -89,6 +90,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.base import NoRouteHandlerError
 from rememberstack.workers.e0_summary import SectionSummarizer
 from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
@@ -165,12 +167,19 @@ class UploadIngestor:
         raw_store: ObjectStorePort,
         admission: IngestAdmission,
         meter_scope: ManagedMeterScope | None = None,
+        routable_mimes: Collection[str],
     ) -> None:
-        """Bind the connector to the catalog and the deployment's raw bucket."""
+        """Bind the connector to the catalog and the deployment's raw bucket.
+
+        ``routable_mimes`` is required deployment configuration (D117).
+        The catalog uses it with the canonical stored MIME to schedule or
+        park conversion. Admission and managed metering retain their gates.
+        """
         self._catalog = catalog
         self._raw_store = raw_store
         self._admission = admission
         self._meter_scope = meter_scope
+        self._routable = frozenset(routable_mimes)
 
     def ingest(
         self,
@@ -227,6 +236,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
+            routable_mimes=self._routable,
         )
 
     def ingest_observed(
@@ -296,6 +306,7 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
+            routable_mimes=self._routable,
         )
 
     def _prepare_managed_text(
@@ -377,12 +388,10 @@ class ConvertHandler:
         try:
             converter = self._router.converter_for(mime=source.mime)
         except UnroutableMimeError as err:
-            # deterministic for this input — retrying cannot help (D12); the
-            # version's own status must not keep claiming in-flight work:
-            self._catalog.mark_version_failed(
-                version_id=source.version_id, error=str(err)
-            )
-            raise NonRetryableHandlerError(str(err)) from err
+            # Configuration can differ from the ingestor or resume command.
+            # This runs before reading bytes or making a provider call, so the
+            # runner may park and return the unused attempt (D117).
+            raise NoRouteHandlerError(str(err)) from err
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,

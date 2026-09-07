@@ -340,3 +340,16 @@ def test_blank_routes_env_falls_back_to_the_stock_table(
     assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
         "text/html": "markitdown"
     }
+
+
+def test_external_mount_roots_load_from_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The deployed profile accepts existing provider bucket roots as settings."""
+    raw = tmp_path / "raw"
+    artifacts = tmp_path / "artifacts"
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT", str(raw))
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT", str(artifacts))
+    settings = SelfHostSettings(deployment_id=uuid4())
+    assert settings.raw_mount_root == raw
+    assert settings.artifacts_mount_root == artifacts

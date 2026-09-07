@@ -48,6 +48,17 @@ class SelfHostOperations:
             engine=self._engine, settings=OperationalSettings()
         ).inspect(deployment_id=deployment_id)
 
+    def resume_no_route(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """Release parked conversions covered by validated local routes (D117)."""
+        from rememberstack.adapters.converters import build_conversion_routes
+        from rememberstack.profiles.selfhost import SelfHostSettings
+
+        settings = SelfHostSettings.model_validate({})
+        routes = build_conversion_routes(route_names=settings.conversion_routes)
+        return WorkLedger(
+            engine=self._engine, settings=WorkLedgerSettings()
+        ).resume_no_route(deployment_id=deployment_id, routable_mimes=frozenset(routes))
+
     def replay(
         self,
         *,

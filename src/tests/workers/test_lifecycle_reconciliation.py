@@ -247,6 +247,7 @@ class _LifecycleRig:
             catalog=document_catalog,
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset({"text/markdown"}),
         )
         self.p1 = PostgresP1Index(
             engine=engine, embedding_model=P1Settings().embedding_model
@@ -1058,3 +1059,56 @@ def test_restore_support_plants_a_canary_the_pack_rechecks(rig: _LifecycleRig) -
 
     flag_rates = flag_rate_by_extractor(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
     assert flag_rates[E2_EXTRACTOR_VERSION]["flags_raised"] == 1.0
+
+
+@pytest.mark.parametrize("deletion", ["version", "lineage"])
+def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
+    rig: _LifecycleRig, deletion: str
+) -> None:
+    """Missing conversion is incomplete testimony, while deleted input is excluded."""
+    first_cycle = rig.sync.open_cycle(
+        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
+    )
+    rig.observe(
+        source_ref="gone.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=first_cycle
+    )
+    rig.sync.complete_cycle(cycle_id=first_cycle, observed=1, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (first_cycle,)
+    cycle = rig.sync.open_cycle(
+        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
+    )
+    rig.observe(
+        source_ref="gone.md", content=f"{_FILLER_SENTENCE}\n", sync_cycle_id=cycle
+    )
+    parked = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="maybe-moved.bin",
+        upload=DocumentUpload(
+            filename="maybe-moved.bin",
+            mime="application/x-unknown",
+            content=b"unconverted testimony",
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=cycle,
+    )
+    rig.sync.complete_cycle(cycle_id=cycle, observed=2, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()
+    assert rig.relation()["valid_until"] is None
+    assert (
+        rig.scalar(
+            "SELECT finalized_at FROM connector_sync_cycles WHERE cycle_id=:id",
+            id=cycle,
+        )
+        is None
+    )
+    if deletion == "version":
+        rig.lifecycle.delete_version(version_id=parked.version_id)
+    else:
+        rig.lifecycle.delete_lineage(doc_id=parked.doc_id)
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
+    assert rig.relation()["valid_until"] is not None

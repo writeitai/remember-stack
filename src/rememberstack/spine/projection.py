@@ -285,17 +285,58 @@ _SELECT_CORPUS_DOCUMENTS = text(
     SELECT d.doc_id, d.title, d.source_kind, d.source_ref, d.source_uri,
            v.version_id, v.content_hash, v.source_modified_at, v.published_at,
            r.markdown_uri, c.raw_uri, c.mime, s.summary AS root_summary,
-           s.placement_path
+           s.placement_path,
+           stored.version_id AS stored_version_id,
+           stored.content_hash AS stored_content_hash,
+           stored.raw_uri AS stored_raw_uri, stored.mime AS stored_mime,
+           stored.status::text AS stored_status,
+           stored.source_modified_at AS stored_source_modified_at,
+           stored.ingested_at AS stored_ingested_at,
+           work.defer_reason::text AS stored_defer_reason
     FROM documents d
-    JOIN document_versions v ON v.version_id = d.current_version_id
+    -- Raw availability is independent of processed currency (D117). Managed
+    -- metadata can predate the raw write, so only accepted originals qualify.
+    JOIN LATERAL (
+        SELECT dv.version_id, dv.content_hash, dv.status,
+               dv.source_modified_at, dv.ingested_at, co.raw_uri, co.mime
+        FROM document_versions dv
+        JOIN content_objects co
+          ON co.deployment_id = dv.deployment_id
+         AND co.content_hash = dv.content_hash AND co.purged_at IS NULL
+        WHERE dv.deployment_id = d.deployment_id AND dv.doc_id = d.doc_id
+          AND dv.deleted_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM managed_ingest_measurements m
+              WHERE m.deployment_id = dv.deployment_id
+                AND m.version_id = dv.version_id
+                AND m.document_version_disposition = 'new_version'
+                AND m.accepted_at IS NULL
+          )
+        ORDER BY dv.version_no DESC
+        LIMIT 1
+    ) stored ON TRUE
+    LEFT JOIN document_versions v
+      ON v.version_id = d.current_version_id
+     AND v.deployment_id = d.deployment_id AND v.deleted_at IS NULL
     LEFT JOIN document_representations r
            ON r.representation_id = v.current_representation_id
     LEFT JOIN content_objects c
            ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+          AND c.purged_at IS NULL
     LEFT JOIN document_sections s
            ON s.representation_id = r.representation_id
           AND s.structure_generation_id = r.current_structure_generation_id
           AND s.node_path = '0'
+    LEFT JOIN LATERAL (
+        SELECT p.defer_reason
+        FROM processing_state p
+        WHERE p.deployment_id = d.deployment_id
+          AND p.target_kind = 'document_version'
+          AND p.target_id = stored.version_id AND p.stage = 'convert'
+          AND p.status IN ('pending', 'running', 'failed')
+        ORDER BY p.enqueued_at DESC, p.processing_id DESC
+        LIMIT 1
+    ) work ON TRUE
     WHERE d.deployment_id = :deployment_id AND d.deleted_at IS NULL
     ORDER BY d.doc_id
     """

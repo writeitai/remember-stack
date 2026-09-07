@@ -353,7 +353,12 @@ class ConversionError(Exception):
 
 
 class UnroutableMimeError(Exception):
-    """No configured conversion route accepts the input's MIME type (D38)."""
+    """No configured conversion route accepts the input's MIME type (D38).
+
+    The router raises this on an exact MIME lookup miss. Convert handles it
+    as configuration parking (D117), before reading raw bytes or calling a
+    provider.
+    """
 
 
 class UnknownConverterError(Exception):

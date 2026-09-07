@@ -3,20 +3,22 @@
 Agents read the memory on their filesystem: the **corpus filesystem** they
 browse first, the **artifacts** they drill into from a stub, the **raw**
 originals — deliberately *off the navigation path* — and the Plane-K
-checkout. Every view is read-only; writes always go through the pipeline
-and Postgres stays the authority.
+checkout. Views are intended for read-only use; external bucket mounts must enforce
+read-only access and provider audit logging. This publisher does not enforce
+filesystem permissions. Writes go through the pipeline; Postgres is authority.
 
 The self-host tier materializes what the cloud tier gets from a bucket
-mount, and implements D51's three guardrails here rather than assuming
-them of infrastructure:
+mount. D51 has three guardrails, with external mount enforcement owned by
+the operator:
 
 1. **Raw is off-path.** Nothing in the corpus tree links into it; reaching
    an original means following an explicit `raw_uri` from a stub or from
    `document.md` frontmatter — a deliberate act, never a browse default.
 2. **Data-access audit logging is mandatory.** The audit property came
    from logging, not from keeping raw unmounted (a mount read is still a
-   read), so originals are readable only through `AuditedRawReader`, which
-   refuses an unattributed request rather than logging a blank.
+   read). External raw mounts require provider audit logging. Programmatic
+   local reads can use `AuditedRawReader`, which refuses an unattributed
+   request rather than logging a blank; it does not intercept filesystem reads.
 3. **Storage class routes by mime.** Media a multimodal harness actually
    reads stays hot; text/office originals kept only for audit and
    re-conversion go cold — this kills the grep-the-archive cost bug at the
@@ -80,8 +82,11 @@ class LocalMountPublisher:
         """Bind the publisher to its mount root, the P3 source, and the stores.
 
         The artifact/raw/knowledge views point at the REAL store roots when
-        given (Codex review: an empty directory is not a usable mount);
-        without them the publisher provisions empty view roots — the
+        given; configured roots must already exist (an empty directory is not a
+        usable mount). External mounts must enforce read-only access and audit
+        raw reads; ``PublishedMounts.read_only`` declares the usage contract,
+        not filesystem permission enforcement.
+        Without them the publisher provisions empty view roots — the
         Phase-0 shape, still useful before any store exists.
         """
         self._root = root.resolve()
@@ -95,6 +100,11 @@ class LocalMountPublisher:
     def publish(self, *, deployment_id: UUID) -> PublishedMounts:
         """Publish and return the exact four read-only deployment views."""
         self._admission.assert_available(deployment_id=deployment_id)
+        for store_root in (self._artifacts_root, self._raw_root, self._knowledge_root):
+            if store_root is not None and not store_root.is_dir():
+                raise ValueError(
+                    f"configured mount root is not an existing directory: {store_root}"
+                )
         base = self._root / str(deployment_id)
         base.mkdir(parents=True, exist_ok=True)
         corpus = base / "p3"
@@ -106,8 +116,8 @@ class LocalMountPublisher:
                 self._view(base=base, name="artifacts", real=self._artifacts_root)
             ),
             # off the navigation path (D51): the tree never promotes raw —
-            # stubs carry an explicit pointer, and reads go through
-            # AuditedRawReader, which is the only audited path on this tier
+            # stubs carry an explicit pointer. Provider mounts must audit
+            # reads; AuditedRawReader audits programmatic local access.
             raw=str(self._view(base=base, name="raw", real=self._raw_root)),
             knowledge=str(
                 self._view(base=base, name="knowledge", real=self._knowledge_root)
@@ -118,7 +128,10 @@ class LocalMountPublisher:
     def _view(self, *, base: Path, name: str, real: Path | None) -> Path:
         """One view locator: the real store root when known, else an empty dir."""
         if real is not None:
-            real.mkdir(parents=True, exist_ok=True)
+            if not real.is_dir():
+                raise ValueError(
+                    f"configured mount root is not an existing directory: {real}"
+                )
             return real.resolve()
         placeholder = base / name
         placeholder.mkdir(parents=True, exist_ok=True)

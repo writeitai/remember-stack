@@ -46,7 +46,7 @@ All stages are **idempotent** with respect to their versioned inputs. Workers us
 
 **Job:** produce an immutable **representation**: clean Markdown + source map (+ media sidecars when composed).
 
-**Shipped smoke profile:** registers `text/markdown` → Markdown passthrough. Unregistered MIME types fail as non-retryable unroutable input.
+**Shipped smoke profile:** registers `text/markdown` and `text/plain` → Markdown passthrough. Unregistered MIME types are ingested and kept, but their conversion is parked rather than attempted, so nothing dead-letters — see [Troubleshooting](/docs/troubleshooting).
 
 **Designed / composable routes** (register on the deployment; do not assume the Compose smoke stack has them):
 

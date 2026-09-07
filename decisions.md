@@ -5646,3 +5646,42 @@ For a mounted agent this removes the need for `source_open` (D115) entirely: it 
 managed deployment, and remains the locator-scoped path for large media where an agent wants
 ten seconds of a recording rather than the file. Any managed-offering claim about how originals
 are accessed is a D5 claim-governance matter in the cloud repository, not settled here.
+
+## D117. Store originals, park missing conversion routes, and expose raw availability separately
+
+**Status:** accepted (2026-09-07), per the user's store-and-park decision.
+
+**Context.** Accepting an unsupported format previously stored it and then
+marked processing failed. Refusing upload avoids that failure but prevents agents
+from using originals. A prior claim that raw-only versions already appeared in
+P3 was incorrect: projection required processed current currency.
+
+**Decision.** Keep otherwise admissible originals; represent missing routes as
+pending conversion with `defer_reason=no_route`. Resume only currently routable
+live versions, using stored content MIME; worker configuration skew parks again
+without consuming an attempt allowance. Expose the latest durable, nondeleted
+original separately from the current processed version in P3. Never promote raw
+versions to processed currency. Wire existing provider raw/artifact mount roots
+so a published pointer can reach actual bytes after rebuild and mount publication.
+
+**Rationale and alternatives.** Storage and conversion are independent capabilities.
+Rejecting uploads removes agent use; dead-lettering misclassifies a configuration
+limitation; skipping work requires a second backlog mechanism; sentinel timestamps
+cannot express a missing route; promoting incomplete versions changes working
+evidence; a second projection duplicates navigation and deletion responsibilities.
+
+**Consequences.** Retained unsupported files occupy storage and one parked work row;
+conversion creates no usage merely by waiting. Projection adds latest-version and
+work-state reads. Managed admission/classification remain authoritative, and
+unaccepted staged bytes are not advertised as raw objects. D51/D116 read-only mounts and backend audit semantics, D74 barriers and purge, D55 currency and existing snapshot freshness remain
+binding. This is engine behavior, not evidence of production SeaweedFS provisioning
+or changed cloud billing policy.
+
+Live parked connector observations keep cycle finalization pending: missing
+conversion is not evidence of source absence. Resuming processing or explicitly
+deleting the parked observation resolves that barrier; source-deletion cascades
+remain independent. This conservative completeness rule can delay a cycle's
+absence-based closures indefinitely.
+
+**Authority:** [E0 §3 and P3 §6](plan/designs/e0_files_design.md).
+**Analysis:** [Stored originals and conversion without a route](plan/analysis/unroutable_mime_parking.md).

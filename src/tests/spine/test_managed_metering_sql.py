@@ -231,6 +231,7 @@ def test_managed_ingest_waits_for_two_holds_and_replays_terminal_outcomes(
         catalog=DocumentCatalog(engine=database_engine),
         raw_store=raw_store,
         admission=AllowIngest(),
+        routable_mimes=frozenset({"text/markdown", "text/plain"}),
         meter_scope=ManagedMeterScope(
             org_id=_ORG_ID,
             project_id=_PROJECT_ID,
@@ -495,3 +496,91 @@ def test_due_measurement_scan_never_loads_staged_source_bytes() -> None:
     statement = str(managed_metering_module._DUE_MEASUREMENTS)
     assert "SELECT *" not in statement
     assert "staged_content" not in statement
+
+
+def test_missing_managed_text_route_parks_only_after_meter_approval(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """Managed storage stays behind holds; a missing route never creates failure."""
+    from rememberstack.core import ConversionRouter
+    from rememberstack.model import PipelineStage
+    from rememberstack.model import ProcessingLane
+    from rememberstack.model import RunResultOutcome
+    from rememberstack.spine import WorkLedger
+    from rememberstack.spine import WorkLedgerSettings
+    from rememberstack.workers import ConvertHandler
+    from rememberstack.workers import HandlerRegistry
+    from rememberstack.workers import Worker
+
+    receipts = ControlledReceipts()
+    raw_store = LocalFSObjectStore(root=tmp_path / "raw")
+    catalog = DocumentCatalog(engine=database_engine)
+    meter = ManagedMeterCatalog(
+        engine=database_engine,
+        receipts=receipts,
+        readiness=cast(PipelineReadinessCatalog, ControlledReadiness()),
+        raw_store=raw_store,
+    )
+    ingestor = UploadIngestor(
+        catalog=catalog,
+        raw_store=raw_store,
+        admission=AllowIngest(),
+        routable_mimes=frozenset(),
+        meter_scope=ManagedMeterScope(
+            org_id=_ORG_ID,
+            project_id=_PROJECT_ID,
+            identity_key=SecretStr("umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        ),
+    )
+    version = ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="stored.txt", mime="text/plain", content=b"stored text"
+        ),
+    )
+    assert version.processing_admission == "pending"
+    assert _work_count(engine=database_engine, version_id=version.version_id) == 0
+    assert meter.drain_once().measurements_accepted == 1
+    assert receipts.holds
+    source = catalog.convert_source(version_id=version.version_id)
+    assert raw_store.read_bytes(key=ObjectKey(source.raw_uri)) == b"stored text"
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=catalog,
+            raw_store=raw_store,
+            artifact_store=LocalFSObjectStore(root=tmp_path / "artifacts"),
+            router=ConversionRouter(routes={}),
+        ),
+    )
+    worker = Worker(
+        ledger=WorkLedger(engine=database_engine, settings=WorkLedgerSettings()),
+        registry=registry,
+    )
+    assert (
+        worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.CONVERT,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.NO_ROUTE_PARKED
+    )
+    with database_engine.connect() as connection:
+        parked = (
+            connection.execute(
+                text(
+                    "SELECT defer_reason::text, attempts, last_error FROM processing_state WHERE target_id=:id"
+                ),
+                {"id": version.version_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert parked["defer_reason"] == "no_route"
+    assert parked["attempts"] == 0 and parked["last_error"] is None
+    assert (
+        _version_status(engine=database_engine, version_id=version.version_id)
+        == "converting"
+    )
+    assert receipts.outcomes == []

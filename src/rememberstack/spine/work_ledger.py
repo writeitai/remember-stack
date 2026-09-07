@@ -8,6 +8,7 @@ status='dead_letter' rows; billed calls copy their attribution from the locked
 running row and callers can never supply it.
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -694,6 +695,51 @@ class WorkLedger:
                     "work can be budget-parked"
                 )
 
+    def park_no_route(self, *, processing_id: UUID, attempt: int) -> None:
+        """Return a convert claim that found no route before doing work (D117).
+
+        Only the matching running convert attempt can transition. The unused
+        claim is refunded, historical errors remain, and no retry is scheduled.
+        """
+        with self._engine.begin() as connection:
+            updated = connection.execute(
+                _PARK_NO_ROUTE, {"processing_id": processing_id, "attempt": attempt}
+            ).rowcount
+            if updated != 1:
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not the running convert attempt"
+                )
+
+    def resume_no_route(
+        self, *, deployment_id: UUID, routable_mimes: Collection[str]
+    ) -> tuple[UUID, ...]:
+        """Release only parked conversions whose stored MIME is now routable.
+
+        Configuration is the caller's validated route table. The worker checks
+        again before doing any conversion, covering separately restarted workers.
+        """
+        with self._engine.begin() as connection:
+            active_forget = active_forget_id_on(
+                connection=connection, deployment_id=deployment_id
+            )
+            if active_forget is not None:
+                raise ForgetInProgressError(
+                    f"deployment {deployment_id} is honoring forget_id {active_forget}"
+                )
+            released = tuple(
+                row["processing_id"]
+                for row in connection.execute(
+                    _RESUME_NO_ROUTE,
+                    {
+                        "deployment_id": deployment_id,
+                        "routable_mimes": list(routable_mimes),
+                    },
+                ).mappings()
+            )
+        for processing_id in released:
+            self.wake(processing_id=processing_id)
+        return released
+
     def wake(self, *, processing_id: UUID) -> None:
         """Announce an existing committed row on the self-host wake channel.
 
@@ -1282,6 +1328,7 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
                 "lane": work.lane,
                 "payload": work.payload,
                 "not_before": work.not_before,
+                "defer_reason": work.defer_reason,
             },
         )
         .mappings()
@@ -1350,11 +1397,11 @@ _INSERT_WORK = text(
     """
     INSERT INTO processing_state (
         processing_id, deployment_id, target_kind, target_id, stage,
-        component_version, content_hash, lane, payload, not_before
+        component_version, content_hash, lane, payload, not_before, defer_reason
     ) VALUES (
         :processing_id, :deployment_id, :target_kind, :target_id, :stage,
         :component_version, :content_hash, :lane,
-        :payload, COALESCE(:not_before, now())
+        :payload, COALESCE(:not_before, now()), :defer_reason
     )
     ON CONFLICT (deployment_id, target_kind, target_id, stage, component_version)
     DO NOTHING
@@ -1388,6 +1435,35 @@ _PROMOTE_TO_STEADY = text(
     """
 )
 
+_PARK_NO_ROUTE = text(
+    """
+    UPDATE processing_state
+    SET status = 'pending', defer_reason = 'no_route',
+        attempts = attempts - 1, started_at = NULL, not_before = now()
+    WHERE processing_id = :processing_id AND status = 'running'
+      AND stage = 'convert' AND attempts = :attempt AND attempts > 0
+    """
+)
+
+_RESUME_NO_ROUTE = text(
+    """
+    UPDATE processing_state p
+    SET defer_reason = NULL, not_before = now()
+    FROM document_versions v, content_objects c, documents d
+    WHERE p.deployment_id = :deployment_id
+      AND p.status = 'pending' AND p.stage = 'convert'
+      AND p.target_kind = 'document_version'
+      AND p.defer_reason::text = 'no_route'
+      AND v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+      AND d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
+      AND d.deleted_at IS NULL AND v.deleted_at IS NULL
+      AND c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+      AND c.purged_at IS NULL
+      AND c.mime = ANY(CAST(:routable_mimes AS text[]))
+    RETURNING p.processing_id
+    """
+)
+
 _CLAIM_SELECT = text(
     """
     SELECT processing_id
@@ -1398,6 +1474,11 @@ _CLAIM_SELECT = text(
       AND status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
+      -- D117: no_route work is parked on a CONFIGURATION fact, not a clock.
+      -- There is no instant at which it becomes ready, so it is excluded by
+      -- its reason rather than by a sentinel timestamp; registering the
+      -- converter and resuming is what releases it.
+      AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
     ORDER BY not_before, enqueued_at, processing_id
     LIMIT 1
     FOR UPDATE SKIP LOCKED

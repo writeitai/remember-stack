@@ -123,6 +123,28 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 - Graph planner settings are deployment-local and transaction-contained, with
   migrations and readiness checks for the PostgreSQL 19 execution plans.
 
+## Unreleased on `main`
+
+- **Stored originals remain usable without a converter (D117).** Otherwise
+  admissible uploads retain their raw bytes. Conversion starts parked with
+  `defer_reason=no_route`; missing routing does not mark the version failed.
+  A worker with stale configuration also parks without consuming an attempt allowance.
+- **Raw availability and processed currency are separate.** After P3 rebuild
+  and mount publication, the stub's `stored_raw_uri` points to the latest durable
+  original. A separate processed-version section retains any older working
+  summary and full text. Configure real provider raw/artifact mount roots as
+  described in [Mounts](/docs/mounts); default empty directories do not serve bytes.
+- **Resume only supported backlog.** Run
+  `remember ops resume-no-route --deployment <uuid>` with the new route configuration
+  after restarting workers. Only now-routable live versions are released.
+  Previously dead-lettered versions still require `remember ops replay`.
+- **Breaking for library consumers:** `UploadIngestor` requires
+  `routable_mimes=frozenset(conversion_routes)`. The catalog checks the canonical
+  stored MIME, including when the same bytes return with a different declaration.
+- Managed text admission and classification are unchanged. Unaccepted staged
+  originals are omitted from P3. After approval, a worker missing the route parks
+  conversion; this does not introduce cloud binary admission or storage-only billing.
+
 ## What landed after v0.9.0 (in v0.10.0)
 
 - **A shared name no longer costs a candidate anything.** The

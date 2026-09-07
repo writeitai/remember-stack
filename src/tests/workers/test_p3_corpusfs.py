@@ -544,3 +544,124 @@ def test_non_current_generations_never_leak_into_the_tree(
         content = after.read(path)
         assert "POISON" not in content
         assert after.read(path) == before.read(path)
+
+
+def _store_unprocessed_version(*, corpus: _Corpus, doc_id: UUID) -> UUID:
+    """Add a durable newer original without changing processed currency."""
+    version_id = uuid4()
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime, byte_size, raw_uri) VALUES (:d, :h, 'audio/example', 9, :uri)"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "h": str(version_id),
+                "uri": f"{doc_id}/{version_id}/original.bin",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id, content_hash, version_no, status) VALUES (:v, :d, :doc, :h, 2, 'converting')"
+            ),
+            {"v": version_id, "d": _DEPLOYMENT_ID, "doc": doc_id, "h": str(version_id)},
+        )
+    return version_id
+
+
+def test_new_raw_version_does_not_replace_processed_evidence(
+    corpus: _Corpus, tmp_path: Path
+) -> None:
+    """P3 keeps v1's evidence distinct from stored v2 and falls back on deletion."""
+    doc_id = corpus.docs["Annual Report"]
+    version_id = _store_unprocessed_version(corpus=corpus, doc_id=doc_id)
+    catalog = ProjectionCatalog(engine=corpus.engine)
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        document = next(row for row in export.documents() if row["doc_id"] == doc_id)
+    assert document["stored_version_id"] == version_id
+    assert document["version_id"] != version_id
+    assert document["root_summary"] == "Acme's 2023 results."
+    assert document["raw_uri"] != document["stored_raw_uri"]
+    tree, _ = _build(corpus=corpus, tmp_path=tmp_path)
+    stub = tree.read(f"documents/{doc_id}/_index.md")
+    assert f"Current processed version: `{document['version_id']}`" in stub
+    assert "Latest stored original" in stub
+    assert str(document["stored_raw_uri"]) in stub
+    assert "This original is not the current processed version" in stub
+    assert "newer/different original stored" in tree.read("documents/_index.md")
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = now() WHERE version_id = :v"
+            ),
+            {"v": version_id},
+        )
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        surviving = next(row for row in export.documents() if row["doc_id"] == doc_id)
+    assert surviving["stored_version_id"] == document["version_id"]
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET deleted_at = now() WHERE doc_id = :d"),
+            {"d": doc_id},
+        )
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        assert doc_id not in {row["doc_id"] for row in export.documents()}
+
+
+def test_purged_and_unaccepted_originals_are_not_advertised(corpus: _Corpus) -> None:
+    """Catalog metadata for purged or unadmitted bytes cannot create raw links."""
+    doc_id = corpus.docs["Annual Report"]
+    version_id = _store_unprocessed_version(corpus=corpus, doc_id=doc_id)
+    catalog = ProjectionCatalog(engine=corpus.engine)
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE content_objects SET purged_at = now() WHERE deployment_id = :d AND content_hash = :h"
+            ),
+            {"d": _DEPLOYMENT_ID, "h": str(version_id)},
+        )
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
+        assert row["stored_version_id"] != version_id
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE content_objects SET purged_at = NULL WHERE deployment_id = :d AND content_hash = :h"
+            ),
+            {"d": _DEPLOYMENT_ID, "h": str(version_id)},
+        )
+        connection.execute(
+            text("""INSERT INTO managed_ingest_measurements (
+              measurement_id, deployment_id, doc_id, version_id, ingest_attempt_id,
+              org_id, project_id, opaque_lineage_id, opaque_source_version_id,
+              normalized_character_count, canonical_source_bytes,
+              document_version_disposition, classifier_version,
+              measurement_algorithm_version, processing_profile_id, measured_at,
+              convert_component_version, lane, staged_content
+            ) VALUES (:m, :d, :doc, :v, 'test', :org, :project, 'lineage', 'version',
+              9, 9, 'new_version', 'test', 'test', 'test', now(), 'test', 'steady', :bytes)"""),
+            {
+                "m": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "v": version_id,
+                "org": uuid4(),
+                "project": uuid4(),
+                "bytes": b"staged",
+            },
+        )
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
+        assert row["stored_version_id"] != version_id
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE managed_ingest_measurements SET delivery_state = 'accepted', accepted_at = now(), staged_content = NULL WHERE version_id = :v"
+            ),
+            {"v": version_id},
+        )
+    with catalog.corpus_export(deployment_id=_DEPLOYMENT_ID) as export:
+        row = next(row for row in export.documents() if row["doc_id"] == doc_id)
+        assert row["stored_version_id"] == version_id
+    with catalog.corpus_export(deployment_id=uuid4()) as export:
+        assert export.documents() == ()

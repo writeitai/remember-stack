@@ -220,6 +220,7 @@ class _E3Rig:
             catalog=document_catalog,
             raw_store=raw_store,
             admission=ForgetCatalog(engine=engine),
+            routable_mimes=frozenset({"text/markdown"}),
         )
         self.p1 = PostgresP1Index(
             engine=engine, embedding_model=P1Settings().embedding_model
