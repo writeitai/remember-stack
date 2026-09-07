@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest.mock import patch
 from uuid import UUID
 from uuid import uuid4
 
@@ -9,7 +10,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core.fact_temporal import seed_fact
+from rememberstack.model import CurrencyTransition
 from rememberstack.model.fact_temporal import FactTemporalKind
 from rememberstack.model.fact_temporal import FactTemporalState
 from rememberstack.model.fact_temporal import TemporalResult
@@ -26,6 +30,7 @@ from rememberstack.model.temporal_write import TemporalDecision
 from rememberstack.model.temporal_write import TemporalEffect
 from rememberstack.model.temporal_write import TemporalFactRef
 from rememberstack.model.temporal_write import TemporalOperationKind
+from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.observation_application import ObservationApplicationStore
 from rememberstack.spine.temporal_journal import temporal_write
@@ -414,3 +419,78 @@ def test_stale_diagnostic_path_rejects_an_applied_mutation(
             ).scalar_one()
             == 0
         )
+
+
+def test_actual_plan_inference_publishes_once_and_reuses_without_replanning(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The real prepare/build/publish handoff stores one complete first-mention plan and reuses it on retry."""
+    store, _coordinates_value, prepared = _prepare(
+        database_engine=database_engine, inputs=inputs
+    )
+    plan = store.infer_and_publish(
+        prepared=prepared, model_provider=FakeModelProvider(), meter=NoopCostMeter()
+    )
+    assert plan.original_observation_id == prepared.new_observation_id
+    assert (
+        plan.steps[0].effect.after.verdict.start
+        == prepared.inputs.assertion.testimony.window.valid_from
+    )
+    assert store.recorded_plan(prepared=prepared) == plan
+    with patch(
+        "rememberstack.spine.observation_application.ObservationPlanBuilder.build",
+        side_effect=AssertionError("completed plan was inferred again"),
+    ):
+        assert (
+            store.infer_and_publish(
+                prepared=prepared,
+                model_provider=FakeModelProvider(),
+                meter=NoopCostMeter(),
+            )
+            == plan
+        )
+
+
+def test_real_currency_transition_is_prepared_with_its_recorded_cause_and_time(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """An actual D54 transition changes preparation and requests a flag, without D55 belief closure."""
+    store, coordinates, original = _prepare(
+        database_engine=database_engine, inputs=inputs
+    )
+    assert (
+        LifecycleCatalog(engine=database_engine).apply_transitions(
+            deployment_id=inputs.deployment_id,
+            reconciliation_id=uuid4(),
+            transitions=(
+                CurrencyTransition(
+                    claim_id=inputs.claim_id,
+                    doc_id=original.inputs.assertion.testimony.doc_id,
+                    became_current=False,
+                    reason="reextracted",
+                    from_extractor_version="source-proof",
+                ),
+            ),
+        )
+        == 1
+    )
+    current = store.prepare(
+        deployment_id=inputs.deployment_id,
+        unit_id=_unit(database_engine=database_engine, coordinates=coordinates),
+    )
+    assert current.preparation_id != original.preparation_id
+    with database_engine.connect() as connection:
+        occurred = connection.execute(
+            text(
+                "SELECT occurred_at FROM testimony_currency_events WHERE deployment_id=:dep AND claim_id=:claim"
+            ),
+            {"dep": inputs.deployment_id, "claim": inputs.claim_id},
+        ).scalar_one()
+    assert current.inputs.assertion.testimony.withdrawn_at == occurred
+    assert current.inputs.assertion.testimony.withdrawal_reason == "reextracted"
+    plan = store.infer_and_publish(
+        prepared=current, model_provider=FakeModelProvider(), meter=NoopCostMeter()
+    )
+    assert plan.steps[-1].flag_support_withdrawn is True
+    assert plan.steps[-1].effect.after.invalidated_at is None
+    assert plan.steps[-1].effect.after.verdict == plan.steps[0].effect.after.verdict

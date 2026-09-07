@@ -623,3 +623,77 @@ handoffs, composition registration and observation generation rolls remain next.
 Other T.1 writer/lifecycle/cache/forget work, T.2/T.3/T.5, full acceptance and
 release remain required. This increment does not narrow the program or justify
 merging the draft.
+
+## D113 complete dependent observation planning
+
+The observation planner now produces a complete typed effect sequence outside
+database transactions. It creates/supports one original identity, applies
+world-time cap guards to the virtual block, reenters every displaced original
+assertion through the actual identity ladder, and records destination support
+ownership plus previous-link removal. Original receipt identity remains separate
+from current support. Contradiction groups merge over their full participating
+fact set. All generations' attribution survives until its own support move;
+the old fact/claim link is removed only after no other current application or
+legacy baseline requires it.
+
+The configured `dependent_assertion_limit` bounds reentry work. Exhaustion after
+a dependent answer discards the entire speculative cap/move group, reuses the
+completed primary identity answer, and records explicit refused caps with
+`dependent_assertion_budget_exhausted`. It never returns half an A→B→A plan.
+This policy joins the prepared settings fingerprint; the observation generation
+roll and runtime registration still belong to the unfinished worker cutover.
+
+Candidate preparation now retains complete evidence fingerprints as well as
+window metadata, outside the bounded model prompt. Planned operations consume
+that complete source footprint even when testimony text is sampled. Typed plan
+validation rejects mismatched support payload/action/owner/cap authority,
+undeclared or missing seeds, future operation dependencies and broken per-fact
+revision chains. The source semantic generation is preserved independently
+in operation features for the upcoming guarded support-move application.
+
+`ObservationApplicationStore.infer_and_publish` verifies prepared input and
+policy digests, reuses a completed plan, and otherwise runs the planner after
+its read transaction ends before first-answer CAS publication. This connects
+real preparation to complete durable planning; it does not apply or retire work.
+
+### Currency distinction and R16 findings
+
+R16 found a type-narrowing error and that the first planner draft had conflated
+D54 re-extraction with D55 source removal. These findings are fixed. Preparation
+loads the last recorded currency transition's instant and reason, refusing an
+inconsistent cache/ledger survivor. New identities with only noncurrent support
+request D54's existing support-withdrawn marker when the terminal cause is
+re-extraction; their belief and world windows remain unchanged. Source removal
+uses D55's recorded withdrawal instant to close belief, with no database-clock
+fallback and no world-time cap. Simultaneous mixed causes retain an explicit
+uncertainty marker rather than inventing a removal-only cause. The marker is a
+typed action in the complete plan and must be applied atomically by the upcoming
+applier; it does not introduce a public human review workflow.
+
+### Evidence and scope
+
+- 18 planner unit cases pass, including complete A→B→A effects, partial-work
+  budget exhaustion, multi-generation moves, disjoint occurrence contradiction,
+  chronological cap refusal, D54 vs D55, full source footprint with bounded
+  prompt text, and corrupted saved-plan rejection.
+- Combined planner/identity/core temporal/correction validation: 97 passed.
+- Ten private PostgreSQL 15 preparation proofs pass over actual relevant
+  temporal DDL and finalized constraints. New cases exercise the real
+  prepare/build/publish/reuse path and a real `LifecycleCatalog.apply_transitions`
+  event whose cause/time are included in the new prepared answer. This is not
+  a claim that the legacy lifecycle writer already participates in every T.1 lock.
+- Locked Ruff, full-library Pyright, import boundaries and inventory pass
+  (102 unit modules, 61 integration modules, 163 discovered).
+- Antigravity R17 is reviewing the revised planner, currency handling, source
+  inventory, typed validation and build/publication handoff.
+- The preceding `fe8d4ace` CI run `34086376209` passes contract smoke, quality,
+  unit, adapters and PR gate. Worker/surface/Compose runtime integration still
+  fails on the unfinished legacy observation handoff. That CI predates this
+  planner increment and does not validate it.
+
+Next remains the atomic observation applier: reacquire/revalidate complete
+authority, execute all effects and support moves, verify current-support
+receipts/checkpoints, commit application and membership retirement with every
+cache/correction/support-marker intent, then replace the E3 worker/barriers and
+roll/register their generations. Full T.1 writer/lifecycle/cache/forget/readiness
+work, T.2/T.3/T.5, supported acceptance, final reviews and release remain in scope.

@@ -138,7 +138,11 @@ class ObservationIdentityLadder:
                     "candidates": [
                         item.model_dump(
                             mode="json",
-                            exclude={"evidence_windows", "legacy_claim_ids"},
+                            exclude={
+                                "evidence_windows",
+                                "legacy_claim_ids",
+                                "evidence",
+                            },
                         )
                         for item in sampled
                     ],

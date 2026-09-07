@@ -31,10 +31,14 @@ from rememberstack.model.temporal_write import TemporalBlock
 from rememberstack.model.temporal_write import TemporalDecision
 from rememberstack.model.temporal_write import TemporalEffect
 from rememberstack.model.temporal_write import TemporalFactRef
+from rememberstack.ports.cost_meter import CostMeterPort
+from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.spine.normalization import _receipt_on
 from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.observation_admission import _FAMILY
 from rememberstack.spine.observation_admission import admit_observation_head_on
+from rememberstack.spine.observation_identity import ObservationIdentityLadder
+from rememberstack.spine.observation_planning import ObservationPlanBuilder
 from rememberstack.spine.temporal_journal import _canonical_subject
 from rememberstack.spine.temporal_journal import _evidence_ref
 from rememberstack.spine.temporal_journal import _load_claim_input
@@ -158,6 +162,7 @@ class ObservationApplicationStore:
                 .mappings()
                 .one_or_none()
             )
+
             if row is None:
                 raise TemporalWriteConflict(
                     "observation preparation was replaced, applied, or removed"
@@ -169,6 +174,46 @@ class ObservationApplicationStore:
                 if row["prepared_output"] is not None
                 else None
             )
+
+    def infer_and_publish(
+        self,
+        *,
+        prepared: ObservationApplicationPreparation,
+        model_provider: ModelProviderPort,
+        meter: CostMeterPort,
+    ) -> ObservationApplicationPlan:
+        """Reuse a completed answer or build and CAS-publish the entire dependent plan outside SQL locks."""
+        if (
+            observation_input_fingerprint(inputs=prepared.inputs)
+            != prepared.input_fingerprint
+        ):
+            raise TemporalWriteConflict(
+                "observation inference input no longer matches its prepared digest"
+            )
+        if prepared.inputs.policy_fingerprint != self._policy_fingerprint():
+            raise TemporalWriteConflict(
+                "observation inference policy differs from the prepared policy"
+            )
+        recorded = self.recorded_plan(prepared=prepared)
+        if recorded is not None:
+            return recorded
+        plan = ObservationPlanBuilder(
+            ladder=ObservationIdentityLadder(
+                model_provider=model_provider, settings=self._settings
+            ),
+            settings=self._settings,
+        ).build(prepared=prepared, meter=meter)
+        return self.publish_plan(prepared=prepared, plan=plan)
+
+    def _policy_fingerprint(self) -> str:
+        """Bind identity and dependent planning policy to the same prepared semantic generation."""
+        return temporal_fingerprint(
+            value={
+                "generation": self._adjudicator_version,
+                "settings": self._settings.model_dump(mode="json"),
+                "testimony_limit": _TESTIMONY_LIMIT,
+            }
+        )
 
     def publish_plan(
         self,
@@ -255,6 +300,7 @@ class ObservationApplicationStore:
                         "observation candidate disappeared before preparation"
                     )
                 windows: list[ClaimTemporalWindow] = []
+                evidence = []
                 legacy: list[UUID] = []
                 sample: list[ObservationTestimony] = []
                 cursor = connection.execute(
@@ -265,6 +311,9 @@ class ObservationApplicationStore:
                     for partition in cursor.mappings().partitions(_READ_BATCH):
                         for witness in partition:
                             windows.append(_window(row=witness))
+                            evidence.append(
+                                _evidence_ref(row=witness, role="historical")
+                            )
                             if witness["legacy_support"]:
                                 legacy.append(witness["claim_id"])
                             if len(sample) < _TESTIMONY_LIMIT:
@@ -296,6 +345,7 @@ class ObservationApplicationStore:
                         omitted_testimony=max(0, len(windows) - len(sample)),
                         evidence_windows=tuple(windows),
                         legacy_claim_ids=tuple(sorted(legacy)),
+                        evidence=tuple(evidence),
                     )
                 )
             support: list[ObservationCurrentSupport] = []
@@ -340,13 +390,7 @@ class ObservationApplicationStore:
                     candidates=tuple(candidates),
                     current_support=tuple(support),
                     blocks=session.block_states,
-                    policy_fingerprint=temporal_fingerprint(
-                        value={
-                            "generation": self._adjudicator_version,
-                            "settings": self._settings.model_dump(mode="json"),
-                            "testimony_limit": _TESTIMONY_LIMIT,
-                        }
-                    ),
+                    policy_fingerprint=self._policy_fingerprint(),
                 ),
                 session,
             )
@@ -408,6 +452,33 @@ def observation_assertion_on(
     witness = _load_claim_input(
         connection=connection, deployment_id=deployment_id, claim_id=receipt.claim_id
     )
+    testimony = _testimony(row=witness, role="support")
+    if not testimony.evidence.was_current:
+        transition = (
+            connection.execute(
+                text("""SELECT became_current,occurred_at,reason::text
+            FROM testimony_currency_events WHERE deployment_id=:dep AND claim_id=:claim
+            ORDER BY occurred_at DESC,event_id DESC LIMIT 1"""),
+                {"dep": deployment_id, "claim": receipt.claim_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            transition is None
+            or transition["became_current"]
+            or transition["reason"]
+            not in ("reextracted", "version_deleted", "version_superseded")
+        ):
+            raise TemporalWriteConflict(
+                "withdrawn observation source lacks its recorded currency transition"
+            )
+        testimony = testimony.model_copy(
+            update={
+                "withdrawn_at": _utc_timestamp(value=transition["occurred_at"]),
+                "withdrawal_reason": transition["reason"],
+            }
+        )
     return StagedObservation(
         assertion_id=assertion_id,
         receipt_id=receipt.receipt_id,
@@ -420,7 +491,7 @@ def observation_assertion_on(
         ),
         statement=observation.statement,
         shape_kind=observation.shape_kind,
-        testimony=_testimony(row=witness, role="support"),
+        testimony=testimony,
     )
 
 
