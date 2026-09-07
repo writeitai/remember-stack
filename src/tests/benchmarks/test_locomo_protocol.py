@@ -253,10 +253,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v24_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v25_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v24"
-    assert DEFAULT_PROTOCOL_KEY == "full-v24"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v25"
+    assert DEFAULT_PROTOCOL_KEY == "full-v25"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -274,7 +274,6 @@ def test_protocol_is_v24_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "Open query" in prompt
     assert "P3 mount" in prompt
     assert "content-bearing" in prompt
-    assert 'answering "Unknown"' in prompt
     assert "hypothetical or counterfactual questions" in normalized_prompt
     assert "caused, enabled, or motivated the outcome" in normalized_prompt
     assert 'answer "Likely no"' in normalized_prompt
@@ -285,17 +284,26 @@ def test_protocol_is_v24_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     )
     assert "Do not stop after the first or highest-ranked match" in normalized_prompt
     assert "merely related facts" in normalized_prompt
+    assert (
+        "General knowledge may help interpret retrieved evidence" in normalized_prompt
+    )
+    assert "Never use outside knowledge" not in normalized_prompt
+    assert "Never seek or inspect benchmark reference solutions" in normalized_prompt
+    assert "person, organization, place, or other entity" in normalized_prompt
+    assert "may issue those two requests in parallel" in normalized_prompt
+    assert "Use returned entity IDs" in normalized_prompt
+    assert "Before any final answer" in normalized_prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
-        "full-v24",
-        "full-v24-gemma-vertex",
-        "full-v24-codex-subscription",
+        "full-v25",
+        "full-v25-gemma-vertex",
+        "full-v25-codex-subscription",
     )
-    protocol = PROTOCOL_REGISTRY["full-v24"]
+    protocol = PROTOCOL_REGISTRY["full-v25"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v24"
+    assert protocol.name == "RS-LoCoMo-Full-v25"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -333,7 +341,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v24"]
+    assert selected == ["full-v25"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -471,12 +479,12 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v24 pins, so its scores are
+    """The variant is a provider swap over identical v25 pins, so its scores are
     an answer-agent comparison rather than a new benchmark identity."""
-    base = PROTOCOL_REGISTRY["full-v24"]
-    variant = PROTOCOL_REGISTRY["full-v24-gemma-vertex"]
+    base = PROTOCOL_REGISTRY["full-v25"]
+    variant = PROTOCOL_REGISTRY["full-v25-gemma-vertex"]
 
-    assert variant.name == "RS-LoCoMo-Full-v24-GemmaVertex"
+    assert variant.name == "RS-LoCoMo-Full-v25-GemmaVertex"
     assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
     assert variant.answer_agent_provider == "vertex"
     assert variant.answer_agent_reasoning_effort == "none"
@@ -514,7 +522,7 @@ def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
         base.judge_repetitions,
         base.answer_word_cap,
     )
-    assert DEFAULT_PROTOCOL_KEY == "full-v24"
+    assert DEFAULT_PROTOCOL_KEY == "full-v25"
 
 
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
@@ -555,7 +563,7 @@ def test_cli_composes_only_the_vertex_answer_seat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v24-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
     built: list[VertexSettings] = []
@@ -592,12 +600,12 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v24")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v25")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
     def refuse(**_values: object) -> object:  # pragma: no cover
-        raise AssertionError("Vertex must not be composed for full-v24")
+        raise AssertionError("Vertex must not be composed for full-v25")
 
     monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
@@ -612,7 +620,7 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A missing project id is caught before any stage work or paid call."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v24-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
@@ -622,16 +630,16 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
 
 def test_codex_subscription_variant_pins_both_generation_seats() -> None:
     """The experimental variant changes provider controls, not LoCoMo logic."""
-    base = PROTOCOL_REGISTRY["full-v24"]
-    variant = PROTOCOL_REGISTRY["full-v24-codex-subscription"]
+    base = PROTOCOL_REGISTRY["full-v25"]
+    variant = PROTOCOL_REGISTRY["full-v25-codex-subscription"]
 
-    assert variant.name == "RS-LoCoMo-Full-v24-CodexSubscription"
+    assert variant.name == "RS-LoCoMo-Full-v25-CodexSubscription"
     assert variant.answer_agent_model == "gpt-5.6-luna"
     assert variant.judge_model == "gpt-5.6-luna"
     assert variant.answer_agent_provider == "codex_subscription"
     assert variant.judge_provider == "codex_subscription"
-    assert variant.answer_agent_reasoning_effort == "low"
-    assert variant.judge_reasoning_effort == "low"
+    assert variant.answer_agent_reasoning_effort == "high"
+    assert variant.judge_reasoning_effort == "high"
     assert variant.answer_agent_temperature is None
     assert variant.judge_temperature is None
     assert variant.answer_schema is base.answer_schema
@@ -646,15 +654,17 @@ def test_cli_codex_answer_and_judge_need_no_openrouter_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An already-ingested run can evaluate solely through local Codex auth."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v24-codex-subscription")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v25-codex-subscription")
     monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
 
-    assert isinstance(
-        cli._provider(run_dir=tmp_path, stage="answer"), CodexSubscriptionModelProvider
-    )
-    assert isinstance(
-        cli._provider(run_dir=tmp_path, stage="judge"), CodexSubscriptionModelProvider
-    )
+    answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
+    judge_provider = cli._provider(run_dir=tmp_path, stage="judge")
+    assert isinstance(answer_provider, CodexSubscriptionModelProvider)
+    assert isinstance(judge_provider, CodexSubscriptionModelProvider)
+    assert answer_provider._audit_path == tmp_path / "codex-runtime-answer.jsonl"
+    assert answer_provider._audit_stage == "answer"
+    assert judge_provider._audit_path == tmp_path / "codex-runtime-judge.jsonl"
+    assert judge_provider._audit_stage == "judge"
     with pytest.raises(ValidationError, match="api_key"):
         cli._provider(run_dir=tmp_path, stage="ingest")
 
