@@ -35,6 +35,7 @@ from rememberstack.spine.document_bindings import DocumentBindingRebuilder
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate as _match_first_router
 from tests.t4_test_doubles import t4_candidates as _t4_candidates
 from tests.workers.e3_test_doubles import _handler
@@ -96,7 +97,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -1923,16 +1924,10 @@ def _normalize_through_shipped_resolver(
     handler: NormalizeRelationsHandler = _handler(
         provider=provider, resolver=resolver, facts=facts
     )
-    created: list[str] = []
     handler._normalize_claim(
-        created_relations=created,
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
+        version_ids=(uuid4(),),
         deployment_id=_DEPLOYMENT_ID,
         claim=_claim(claim_text=claim_text),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
         meter=NoopCostMeter(),
     )
     return resolver

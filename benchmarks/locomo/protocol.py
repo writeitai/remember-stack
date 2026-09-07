@@ -76,17 +76,17 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
-            "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:"
-            "no-types-1:binary-t4-1:document-t0-1"
+            "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
+            "no-types-1:binary-t4-1:document-t0-1:mutable-window-1"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush-2026.09b:canonical-bounds-1:temporal-gate-1:claim-fanout-1:entity-fanout-1"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:relation-adjudicator-2026.09c:mutable-window-1:obs-adjudicator-2026.09c:mutable-window-1"
         ),
-        "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
+        "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
         "label_relation": (
-            "p1-fact-label-2026.08:deterministic-s4+qwen/qwen3-embedding-8b"
+            "p1-fact-label-2026.09:chosen-window+qwen/qwen3-embedding-8b"
         ),
     }
 )
@@ -145,6 +145,13 @@ normal memory agent and choose the cheapest suitable path:
 1. Assured operations: claims_and_sources_context for what sources said,
    facts_context for current or historical adjudicated truth, combined_context
    when both authorities are useful, and resolve_entity for exact names.
+   Explicitly choose time.mode=history for biography, achievements, and "has ever"
+   questions so completed facts remain visible. Choose current/at for what holds
+   at one instant, and overlap for a requested period. A history result need not
+   hold now. Fact dates are the chosen world window; asserted_at is source time.
+   temporal_match=possible identifies missing date information, not a disputed
+   fact. Keep possible matches separate from confirmed dated counts, and never
+   call a top-k or truncated result an exhaustive total.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
 3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live

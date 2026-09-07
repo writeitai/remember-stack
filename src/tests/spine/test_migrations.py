@@ -16,6 +16,7 @@ from rememberstack.spine.catalog_contract import SchemaContractError
 from rememberstack.spine.catalog_contract import verify_schema
 from rememberstack.spine.catalog_contract import verify_schema_absent
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).parents[3]
 _VERSIONS = _ROOT / "src/rememberstack/spine/migrations/versions"
@@ -369,7 +370,7 @@ def test_claim_citation_coordinate_migration_deduplicates_real_rows() -> None:
     """Two extraction generations collapse to one stable citation and downgrade cleanly."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p6_04_0013")
     deployment_id = uuid4()
     doc_id = uuid4()
@@ -475,7 +476,7 @@ def test_claim_citation_coordinate_migration_deduplicates_real_rows() -> None:
         assert restored_claim_id in claim_ids
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
+        reset_database(config=config)
         command.upgrade(config=config, revision="head")
 
 
@@ -483,7 +484,7 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
     """Existing first-write section rows gain one immutable legacy wrapper/current pointer."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p1_03_0018")
     deployment_id = uuid4()
     doc_id = uuid4()
@@ -625,7 +626,7 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
         assert {section["normalized_title"] for section in sections} == {""}
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
+        reset_database(config=config)
         command.upgrade(config=config, revision="head")
 
 
@@ -634,7 +635,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
 
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     _verify_absent(database_url=database_url)
 
     command.upgrade(config=config, revision="head")
@@ -645,7 +646,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 70
+    assert len(fresh_inventory.tables) == 72
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -658,7 +659,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     finally:
         engine.dispose()
 
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     _verify_absent(database_url=database_url)
     command.upgrade(config=config, revision="head")
     restored_inventory = _inventory(database_url=database_url)
@@ -824,7 +825,7 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
     """I.3 keeps the global band, drops type strata, and downgrades explicitly."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p9_14_0035")
     deployment_id = uuid4()
     pair_id = uuid4()
@@ -994,7 +995,7 @@ def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
         }
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
+        reset_database(config=config)
         command.upgrade(config=config, revision="head")
 
 
@@ -1002,7 +1003,7 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
     """I.4 cuts cached names, changes policy, and keeps downgrade fail-safe."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p9_15_0036")
     deployment_id = uuid4()
     entity_id = uuid4()
@@ -1092,7 +1093,7 @@ def test_entity_profile_migration_vacates_name_only_vectors() -> None:
         assert dropped_indexes == (None, None, None)
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
+        reset_database(config=config)
         command.upgrade(config=config, revision="head")
 
 
@@ -1100,7 +1101,7 @@ def test_resolution_uncertainty_migration_classifies_legacy_exclusions() -> None
     """D99 retires old automatic negatives while preserving human authority."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p9_19_0040")
     deployment_id = uuid4()
     entity_ids = tuple(sorted((uuid4() for _ in range(4)), key=str))
@@ -1191,7 +1192,7 @@ def test_resolution_uncertainty_migration_classifies_legacy_exclusions() -> None
         assert actors == ("auto", "human")
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
+        reset_database(config=config)
         command.upgrade(config=config, revision="head")
 
 
@@ -1231,7 +1232,7 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
         finally:
             engine.dispose()
 
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p9_03_0024")
     expected = metadata()
     assert set(expected) == {
@@ -1241,8 +1242,18 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
     }
 
     try:
-        command.upgrade(config=config, revision="head")
+        command.upgrade(config=config, revision="p9_27_0048")
         command.downgrade(config=config, revision="p9_03_0024")
         assert metadata() == expected
     finally:
         command.upgrade(config=config, revision="head")
+
+
+def test_d114_refuses_lossy_downgrade() -> None:
+    """A downgrade cannot erase application receipts or restore false date semantics."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    command.upgrade(config=config, revision="head")
+    with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
+        command.downgrade(config=config, revision="p9_27_0048")
+    assert _head_revision(database_url=database_url) == "p9_28_0049"

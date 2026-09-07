@@ -56,9 +56,21 @@ populated, and `temporal_scope` states the exact selection applied:
 | --- | --- |
 | `fact_id`, `kind`, `label` | Relation or observation identity |
 | `evidence_count` | Distinct current-testimony lineages |
-| `validity` | `{valid_from, valid_until, ingested_at, invalidated_at}` |
+| `validity` | `{valid_from, valid_until, valid_precision, ingested_at, invalidated_at}` |
 | `contradiction` / `contradiction_group` | Live co-members package |
 | `support` | `current` \| `withdrawn` |
+| `temporal_match` | `confirmed` or `possible` for the requested time scope |
+
+`valid_from` and `valid_until` describe one chosen world interval: its start is
+included and its end excluded. `valid_precision` distinguishes calendar units,
+instants, explicitly open intervals and unknown dates. A missing boundary is not
+permission to assume the fact held at every date. `ingested_at` and
+`invalidated_at` describe when the engine believed it, not when it happened.
+
+A `possible` match means incomplete dates have not ruled it out. It is not a
+stored dispute flag. For example: "Three wins are dated to 2022; one additional
+win has no accepted date." Context results are bounded candidates, so their
+length never proves an exhaustive count.
 
 There is **no** `confidence` field on the shipped fact record.
 

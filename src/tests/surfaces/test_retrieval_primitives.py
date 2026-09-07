@@ -37,6 +37,7 @@ from rememberstack.model import RankedItem
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("51000000-0000-0000-0000-000000000001")
@@ -95,7 +96,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real primitive proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -114,11 +115,12 @@ class _Corpus:
         self.rel: dict[str, UUID] = {}
         self.obs: dict[str, UUID] = {}
         self.art: dict[str, UUID] = {}
+        self.claim_ids: dict[str, UUID] = {}
         with engine.begin() as connection:
             self._entities(connection)
+            self._claims(connection)
             self._relations(connection)
             self._observations(connection)
-            self._claims(connection)
             self._decisions(connection)
             self._knowledge(connection)
 
@@ -176,9 +178,9 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, valid_from,"
-                " valid_until, ingested_at, invalidated_at)"
+                " valid_until, valid_precision, window_claim_ids, ingested_at, invalidated_at)"
                 " VALUES (:r, :d, :s, :p, :o, 'toy', :label, :ec, :vf, :vu,"
-                " :ing, :inv)"
+                " :precision, CAST(:witnesses AS uuid[]), :ing, :inv)"
             ),
             {
                 "r": relation_id,
@@ -190,6 +192,8 @@ class _Corpus:
                 "ec": evidence,
                 "vf": _OLD,
                 "vu": valid_until,
+                "precision": "open" if valid_until is None else "instant",
+                "witnesses": [self.claim_ids["old_claim"]],
                 "ing": ingested_at,
                 "inv": invalidated_at,
             },
@@ -300,6 +304,7 @@ class _Corpus:
         self, connection: object, key: str, text_value: str, ingested_at: datetime
     ) -> None:
         claim_id = uuid4()
+        self.claim_ids[key] = claim_id
         connection.execute(  # type: ignore[attr-defined]
             text(
                 "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
@@ -895,14 +900,14 @@ def test_aggregate_count_and_group_forms(corpus: _Corpus) -> None:
         deployment_id=_DEPLOYMENT_ID, form="count", subject_entity_id=alice
     )
     assert count.aggregate is not None
-    assert count.aggregate.total == 3  # works_for Acme, works_on Beacon, Contoso
+    assert count.aggregate.total == 2  # current: Acme and Beacon; Contoso is history
 
     by_predicate = engine.aggregate(
         deployment_id=_DEPLOYMENT_ID, form="group_by_predicate", subject_entity_id=alice
     )
     assert by_predicate.aggregate is not None
     buckets = {b.key: b.count for b in by_predicate.aggregate.buckets}
-    assert buckets == {"works_for": 2, "works_on": 1}
+    assert buckets == {"works_for": 1, "works_on": 1}
 
     by_object = engine.aggregate(
         deployment_id=_DEPLOYMENT_ID,
@@ -912,7 +917,7 @@ def test_aggregate_count_and_group_forms(corpus: _Corpus) -> None:
     )
     assert by_object.aggregate is not None
     objects = {b.key for b in by_object.aggregate.buckets}
-    assert objects == {"Acme", "Contoso"}
+    assert objects == {"Acme"}
     assert all(b.entity_id is not None for b in by_object.aggregate.buckets)
 
 

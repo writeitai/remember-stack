@@ -143,6 +143,11 @@ class ReviewQueue:
         events: tuple[UUID, ...] = ()
         affected_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
+            with application_fence(connection=connection, deployment_id=deployment_id):
+                connection.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                    {"key": f"{deployment_id}:identity-epoch"},
+                )
             item = self._claim_item(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -249,7 +254,7 @@ class ReviewQueue:
         fact_kind: str
         fact_id: UUID
         with self._engine.begin() as connection:
-            _lock_support_review(
+            relation_ids, observation_ids = _lock_support_review(
                 connection=connection, deployment_id=deployment_id, review_id=review_id
             )
             item = self._claim_item(
@@ -289,6 +294,17 @@ class ReviewQueue:
                         claim_id=claim_id,
                         review_id=review_id,
                     )
+                    for affected_kind, ids in (
+                        ("relation", relation_ids),
+                        ("observation", observation_ids),
+                    ):
+                        for affected_id in ids:
+                            if (affected_kind, affected_id) != (fact_kind, fact_id):
+                                self._recount(
+                                    connection=connection,
+                                    fact_kind=affected_kind,
+                                    fact_id=affected_id,
+                                )
                 elif verdict == "invalidate_fact":
                     self._invalidate_fact(
                         connection=connection,
@@ -311,8 +327,8 @@ class ReviewQueue:
             try:
                 refresher.refresh_for_facts(
                     deployment_id=deployment_id,
-                    relation_ids=(fact_id,) if fact_kind == "relation" else (),
-                    observation_ids=(fact_id,) if fact_kind == "observation" else (),
+                    relation_ids=relation_ids,
+                    observation_ids=observation_ids,
                     meter=self._meter,
                     call_key=f"profile:review:{review_id}",
                 )
@@ -556,7 +572,7 @@ class ReviewQueue:
 
 def _lock_support_review(
     *, connection: Connection, deployment_id: UUID, review_id: UUID
-) -> None:
+) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
     """Take ordinary fact locks before the review row, preserving retry ordering."""
     with application_fence(connection=connection, deployment_id=deployment_id):
         connection.execute(
@@ -605,12 +621,25 @@ def _lock_support_review(
                 is None
             ):
                 raise ReviewDecisionError("support review source no longer exists")
-            connection.execute(
-                text(
-                    f"SELECT {kind}_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact FOR UPDATE"
-                ),
-                params,
-            ).scalar_one()
+            affected: dict[str, tuple[UUID, ...]] = {}
+            for plane, fact_table in (
+                ("relation", "relations"),
+                ("observation", "observations"),
+            ):
+                affected[plane] = tuple(
+                    connection.execute(
+                        text(f"""
+                    SELECT f.{plane}_id FROM {fact_table} f
+                    WHERE f.deployment_id=:dep AND (
+                        (:kind=:plane AND f.{plane}_id=:fact) OR EXISTS (
+                            SELECT 1 FROM {plane}_evidence e
+                            WHERE e.deployment_id=:dep AND e.{plane}_id=f.{plane}_id
+                              AND e.claim_id=:claim))
+                    ORDER BY f.{plane}_id FOR UPDATE OF f
+                """),
+                        {**params, "kind": kind, "plane": plane},
+                    ).scalars()
+                )
             locked = (
                 connection.execute(
                     _SELECT_ITEM_LOCKED,
@@ -623,6 +652,8 @@ def _lock_support_review(
                 raise ReviewDecisionError(
                     "support review changed; retry with fresh inputs"
                 )
+
+    return affected["relation"], affected["observation"]
 
 
 _SELECT_PENDING = text(

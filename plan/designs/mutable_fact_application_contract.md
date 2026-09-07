@@ -218,7 +218,9 @@ outcomes retain add/noop/supersede/contradict; both fact planes gain the generic
 `update` transcript value when existing fact values change. This is a readable
 audit label, not a new worker, correction workflow or temporal operation store. On success, NULL `prepared`, `decision`, `attempt_id` and `input_hash`;
 retain `input_claim_ids`, structural original result and current support pointers.
-`result` is closed to `fact_id`, `created_fact_ids`, and `application_id` only;
+`result` is closed to `fact_id`, `created_fact_ids`, `changed_fact_ids`, and `application_id`;
+`changed_fact_ids` retains the full affected set for durable projection repair, including
+predecessors and support-move sources that cannot be reconstructed from the target alone;
 no rationale, text, dates or foreign payload is copied there.
 
 ## 5. Retrieval and derived data
@@ -257,7 +259,14 @@ set endpoints NULL, precision unknown and witness array empty, and invalidate al
 labels/vectors/profile/K inputs derived from it. This conservative action does not
 claim the surviving evidence is false. Retain shared fact identity and independent
 support according to D74; erase source-derived statement text through its existing
-purge/reconstruction contract as well. Evidence aggregates must agree with remaining
+purge/reconstruction contract as well. Positive current support from a surviving
+lineage is required to retain a shared source-derived assertion; a contradiction
+alone cannot preserve the forgotten wording. Reconstruct a shared observation
+from a surviving supporting original normalization output, falling back to its
+independent legacy supporting claim text. Never adopt counterevidence as the
+fact's replacement statement. Recompute exclusivity for older portable manifests
+without changing their bytes. Existing NULL profile input hashes permit bounded
+repair discovery on retry. Evidence aggregates must agree with remaining
 application pointers and legacy support. No prepared fingerprint, cited UUID array,
 cache or restored backup may reintroduce erased content. Verification includes
 pending replies, retries, partial purge failure and restored older manifests.
@@ -295,3 +304,14 @@ are verified. The current consumer cutover is a strict gate. Experimental archiv
 D110 schema heads fail with an explicit recovery requirement, never an automatic
 downgrade. Conversion costs model calls on retained claims and must expose those
 through existing metering; tests do not authorize running it against production.
+
+The maintenance surface is `remember ops fact-windows seed|verify --deployment ID`.
+`seed` enumerates a bounded batch of retained claims without a current-source or
+extractor filter and enqueues ordinary steady-lane normalization. Repeat until
+`enumeration_complete`; the usual workers meter and complete the work. While the
+store is fenced, each version barrier spans all retained source generations in
+that version, rather than one historical extractor/representation pin. Missing
+source occurrences fail explicitly. `verify` reports incomplete inventories and
+keeps readiness NULL until they are empty. A partial run, failure or restart does
+not reopen serving. No command implicitly performs paid source conversion during
+schema setup.

@@ -163,3 +163,77 @@ permitted on main. Historical conversion needs to preserve evidence on those IDs
 The conversion acceptance test must prove system closure is preserved; ordinary
 new work continues to nominate only currently believed facts. Do not equate an
 evidence-count change with reopening belief or add a date/type identity rule.
+
+
+## Consumer recovery review (2026-09-07)
+
+Grok's focused runtime audit found that the existing version-level label work
+cannot be re-fired after it succeeds, scans only facts evidenced by that source,
+and loses predecessor/object targets because drain returns only the selected
+fact. Existing profile and K refresh stages in the enum have no production
+handlers; inventing work on those stages would strand repairs. The correction
+must retain the applied changed-fact IDs and use the real label/profile/K paths,
+with a per-application work identity on the existing ledger. This is recovery
+of disposable projections, not a new fact correction store.
+
+Antigravity independently audited deletion. A legacy shared observation retained
+its original source text, and the old exclusivity test treated a surviving
+contradiction as support for retaining that assertion. The accepted correction
+is to retain a shared identity only with independently surviving current positive
+support, reconstruct its prose from a surviving original normalized assertion
+(or surviving legacy positive claim text), and delete the unsupported assertion.
+No model inference is needed during purge; counterevidence never becomes the
+replacement statement. Recompute exclusivity when honoring older portable
+manifests, clear a whole window whose witness is erased, and scrub all consumed
+transcript/preparation payloads. Existing null profile hashes identify caches
+requiring repair after a crash. The original manifest bytes remain immutable.
+
+The application contract already permits source cascades. Antigravity's claim
+that every cascade is forbidden is too broad; explicit source-owned deletes are
+nevertheless small and make this inventory easy to audit. Both reviews are
+focused findings, not final runtime approval.
+
+## Retained-claim replay and runtime review, 2026-09-07
+
+Grok's conversion review found that generic version backfill enumerates old work,
+not retained claims, and inserts into a lane the stock worker does not consume.
+The maintenance seeder therefore enumerates the claims table directly, retains
+historical extractor outputs, selects a real surviving chunk occurrence, and uses
+ordinary claim-normalization work on the existing steady lane while intake is
+fenced. The ledger's unique generation key is its resume cursor. There is no
+conversion queue or re-extraction. A claim without source coordinates blocks
+conversion rather than disappearing from coverage.
+
+A further audit found that version barriers pin one extractor and representation.
+That is right during ingestion but insufficient for a retained-store conversion:
+several historical extractor outputs may belong to one version. While the existing
+NULL readiness fence holds, completion counts every retained claim occurrence in
+the version and frozen application membership spans those same occurrences. It
+does not wait for retired extractor jobs. The ordinary pinned behavior resumes
+when the verifier opens the generation. Verification checks source receipts,
+accepted output ordinals, version completion, evidence accounting, pending work,
+and durable projection repairs before the single readiness update.
+
+Antigravity's writer review identified two avoidable costs: one stale vector
+aborted other already-paid vectors in its batch, and evidence-only changes cleared
+unchanged fact embeddings. Both are removed. Changed dates reject the stale vector;
+the newer application's ordinary repair work owns rebuilding it. Fact text/date
+changes clear fact embeddings; evidence-only changes still repair entity profiles.
+
+Other findings require distinguishing the contracts. Original application results
+remain stable after an explicit later support move; the mutable support pointer
+is checked separately on retry. Rewriting that receipt would violate replay
+semantics. Hard-forget must also remove consumed claim IDs from applied receipts:
+retention of an audit reference is not an exception to erasure. The scrub now takes
+the existing exclusive deployment fence directly as well as relying on the durable
+forget marker established by preparation. The claimed entity-profile deadlock was
+not established: writers update all affected entity rows in UUID order; the profile
+refresher takes all advisory locks before its single entity row lock and does not
+then wait for a fact lock. Removing synchronous invalidation would instead permit
+a stale cached profile to appear current until queued repair runs.
+
+`changed_fact_ids` is retained in the structural receipt because an original target
+and created IDs cannot recover an updated predecessor or the source of a support
+move. This is the same receipt feeding the existing work ledger, not another
+payload store. The contract's earlier closed-field sentence has been corrected to
+include this already-reviewed repair inventory.

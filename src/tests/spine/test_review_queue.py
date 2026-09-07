@@ -22,11 +22,11 @@ from rememberstack.model import ReviewDecisionError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
-from rememberstack.spine import FactCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import cli_main
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a1000000-0000-0000-0000-000000000001")
@@ -77,7 +77,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -157,7 +157,6 @@ def _queued_merge(*, engine: Engine, survivor: UUID, absorbed: UUID) -> UUID:
 
 def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
     """A relation whose sole claim lost currency (the triage precondition)."""
-    facts = FactCatalog(engine=engine)
     alice = _entity(engine=engine, name="Alice")
     acme = _entity(engine=engine, name="Acme")
     claim_id = uuid4()
@@ -172,15 +171,19 @@ def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
             ),
             {"c": claim_id, "d": _DEPLOYMENT_ID, "doc": uuid4(), "ch": uuid4()},
         )
-    relation = facts.upsert_relation(
-        deployment_id=_DEPLOYMENT_ID,
-        subject_entity_id=alice,
-        predicate="works_for",
-        object_entity_id=acme,
-        claim_id=claim_id,
-        doc_id=uuid4(),
-        normalizer_version="test",
-    ).relation_id
+    relation = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text("""INSERT INTO relations(relation_id,deployment_id,subject_entity_id,
+            predicate,object_entity_id,normalizer_version) VALUES(:id,:dep,:subject,'works_for',:object,'test')"""),
+            {"id": relation, "dep": _DEPLOYMENT_ID, "subject": alice, "object": acme},
+        )
+        connection.execute(
+            text("""INSERT INTO relation_evidence(deployment_id,relation_id,claim_id,doc_id,
+            stance,legacy_stance,normalizer_version) SELECT :dep,:id,claim_id,doc_id,'supports','supports','test'
+            FROM claims WHERE claim_id=:claim"""),
+            {"dep": _DEPLOYMENT_ID, "id": relation, "claim": claim_id},
+        )
     return relation, claim_id
 
 
@@ -388,10 +391,14 @@ def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
     original_summary = profiles[survivor][1]
     assert isinstance(original_summary, str)
     assert set(original_summary.split("; ")) == {
-        "R. Klein works at Acme",
-        "Robert lives in Prague",
+        "R. Klein works at Acme [world time: world date unknown]",
+        "Robert lives in Prague [world time: world date unknown]",
     }
-    assert profiles[absorbed] == ("merged", "R. Klein works at Acme", 5)
+    assert profiles[absorbed] == (
+        "merged",
+        "R. Klein works at Acme [world time: world date unknown]",
+        5,
+    )
 
     # A lost response after the database verdict but before profile refresh is
     # repairable by the identical retry without minting another merge event.
@@ -487,7 +494,7 @@ def test_merge_resolves_a_stale_survivor_to_its_live_terminal_root(
     assert roots[queued_survivor] == live_root
     assert roots[absorbed] == live_root
     assert roots[live_root] == live_root
-    assert summary == "Target evidence"
+    assert summary == "Target evidence [world time: world date unknown]"
 
 
 def test_merge_rejects_a_target_absorbed_by_another_cluster(
@@ -807,7 +814,7 @@ def test_terminal_review_verdicts_rebuild_then_clear_published_profiles(
                 {"deployment": _DEPLOYMENT_ID},
             ).scalars()
         )
-    assert restored == ("Alice works for Acme", "Alice works for Acme")
+    assert restored == ("Alice works for Acme [world time: world date unknown]",) * 2
 
     invalidate_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,

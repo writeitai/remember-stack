@@ -33,6 +33,7 @@ from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import ConsumptionSkillSurface
 from rememberstack.surfaces import QueryEngine
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -89,7 +90,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

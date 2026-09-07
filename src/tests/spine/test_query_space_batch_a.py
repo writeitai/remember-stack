@@ -57,6 +57,7 @@ from rememberstack.spine.query_space.source_definitions import (
     AUTHORIZATION_HELPER_VIEWS,
 )
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-0000000000a1")
@@ -82,7 +83,7 @@ def database_engine(database_url: str) -> Iterator[Engine]:
     """Apply the real structural head so the query space is the shipped one."""
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

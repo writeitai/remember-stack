@@ -20,7 +20,7 @@ from rememberstack.model import KnowledgePageCompileRequest
 from rememberstack.model import UTCDateTime
 from rememberstack.spine.knowledge import KnowledgeControlPlane
 
-KNOWLEDGE_FACT_SHEET_VERSION: Final = "k-fact-sheet-2026.07"
+KNOWLEDGE_FACT_SHEET_VERSION: Final = "k-fact-sheet-2026.09:dated-history"
 """Hash-visible deterministic renderer version."""
 
 _UTC_ADAPTER = TypeAdapter(UTCDateTime)

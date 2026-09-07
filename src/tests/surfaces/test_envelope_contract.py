@@ -56,6 +56,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_engine import believed_at_boundary
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -110,7 +111,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real envelope proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

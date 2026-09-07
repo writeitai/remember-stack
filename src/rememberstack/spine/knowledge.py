@@ -106,6 +106,7 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import PredicateBeatRuleParams
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ScopeInterestsRuleParams
+from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.work_ledger import enqueue_on
 
 _RULE_ADAPTER = TypeAdapter(KnowledgeRuleParams)
@@ -534,18 +535,33 @@ class KnowledgeControlPlane:
     ) -> None:
         """Refresh subtree and scope expansions after their inputs move."""
         with self._engine.begin() as connection:
-            rows = connection.execute(
-                _SELECT_DERIVED_RULES, {"deployment_id": deployment_id}
-            ).mappings()
-            for row in rows:
-                if KnowledgeRuleKind(str(row["rule_kind"])) not in kinds:
-                    continue
-                self._replace_rule_keys(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    rule_id=row["rule_id"],
-                    params=_parse_rule(row=row),
-                )
+            self.rematerialize_derived_rule_keys_on(
+                connection=connection, deployment_id=deployment_id, kinds=kinds
+            )
+
+    def rematerialize_derived_rule_keys_on(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        kinds: tuple[KnowledgeRuleKind, ...] = (
+            KnowledgeRuleKind.ENTITY_SUBTREE,
+            KnowledgeRuleKind.SCOPE_INTERESTS,
+        ),
+    ) -> None:
+        """Refresh existing derived keys within a caller's atomic cutover transaction."""
+        rows = connection.execute(
+            _SELECT_DERIVED_RULES, {"deployment_id": deployment_id}
+        ).mappings()
+        for row in rows:
+            if KnowledgeRuleKind(str(row["rule_kind"])) not in kinds:
+                continue
+            self._replace_rule_keys(
+                connection=connection,
+                deployment_id=deployment_id,
+                rule_id=row["rule_id"],
+                params=_parse_rule(row=row),
+            )
 
     def input_snapshot(
         self, *, artifact_id: UUID, context: KnowledgeCompileContext
@@ -1464,6 +1480,9 @@ class KnowledgeControlPlane:
         if len(compilation_ids) != len(compilations):
             raise KnowledgeCompilationError("pending cycle repeats a compilation ID")
         with self._engine.begin() as connection:
+            require_fact_windows_ready(
+                connection=connection, deployment_id=compilations[0].deployment_id
+            )
             for compilation in compilations:
                 citations = _unique_citations(citations=compilation.citations)
                 self._validate_citations(
@@ -1528,6 +1547,9 @@ class KnowledgeControlPlane:
         if len({item.deployment_id for item in compilations}) != 1:
             raise KnowledgeCompilationError("commit cycle crosses deployments")
         with self._engine.begin() as connection:
+            require_fact_windows_ready(
+                connection=connection, deployment_id=compilations[0].deployment_id
+            )
             to_finalize: list[
                 tuple[KnowledgeCompilationWrite, tuple[KnowledgeCitation, ...]]
             ] = []
@@ -2617,6 +2639,11 @@ class KnowledgeControlPlane:
         child_summary_hashes: tuple[str, ...] | None = None,
     ) -> KnowledgeInputSnapshot:
         """Assemble a manifest on an existing connection."""
+        deployment_id = connection.execute(
+            text("SELECT deployment_id FROM knowledge_artifacts WHERE artifact_id=:id"),
+            {"id": artifact_id},
+        ).scalar_one()
+        require_fact_windows_ready(connection=connection, deployment_id=deployment_id)
         rule_rows = tuple(
             connection.execute(
                 _SELECT_ARTIFACT_RULES, {"artifact_id": artifact_id}

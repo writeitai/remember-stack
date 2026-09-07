@@ -129,6 +129,8 @@ EXPECTED_TABLES: Final = (
     "eval_runs",
     "extension_packs",
     "forget_manifests",
+    "fact_applications",
+    "normalization_outputs",
     "golden_claim_labels",
     "golden_pairs",
     "grounding_audits",
@@ -337,12 +339,11 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 75,
-    "f": 123,
-    "n": 538,
-    "p": 70,
-    "u": 35,
-    "x": 1,
+    "c": 89,
+    "f": 130,
+    "n": 561,
+    "p": 72,
+    "u": 38,
 }
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
@@ -591,7 +592,7 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         )
     )
     required_constraint_fragments = (
-        "exclude using gist",
+        "unique (deployment_id, claim_id, normalizer_version, output_kind, output_ordinal, adjudicator_version)",
         "num_nonnulls(claim_lineage_id, relation_id, doc_id) = 1",
         "(claim_lineage_id is null) = (claim_chunk_content_hash is null)",
         "num_nonnulls(artifact_id, subscription_id) = 1",

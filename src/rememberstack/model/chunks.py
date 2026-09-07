@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.queue import UTCDateTime
 
 _NonEmpty = Annotated[str, Field(min_length=1)]
@@ -249,6 +250,7 @@ class P1FactRow(BaseModel):
     status: Annotated[str, Field(min_length=1)]  # active | invalidated
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
     vector: Annotated[tuple[float, ...], Field(min_length=1)]

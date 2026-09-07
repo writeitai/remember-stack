@@ -51,8 +51,8 @@ edges AS MATERIALIZED (
         AND anchor.survivor_entity_id = b.anchor_id
         AND c.ingested_at <= statement_timestamp()
         AND c.invalidated_at IS NULL
-        AND (c.valid_from IS NULL OR c.valid_from <= statement_timestamp())
-        AND (c.valid_until IS NULL OR c.valid_until > statement_timestamp())
+        AND c.valid_from <= statement_timestamp()
+        AND (c.valid_precision='open' OR c.valid_until > statement_timestamp())
         AND (CAST(:predicates AS text[]) IS NULL
              OR c.predicate = ANY(CAST(:predicates AS text[])))
       UNION ALL
@@ -66,8 +66,8 @@ edges AS MATERIALIZED (
         AND c.subject_entity_id <> anchor.entity_id
         AND c.ingested_at <= statement_timestamp()
         AND c.invalidated_at IS NULL
-        AND (c.valid_from IS NULL OR c.valid_from <= statement_timestamp())
-        AND (c.valid_until IS NULL OR c.valid_until > statement_timestamp())
+        AND c.valid_from <= statement_timestamp()
+        AND (c.valid_precision='open' OR c.valid_until > statement_timestamp())
         AND (CAST(:predicates AS text[]) IS NULL
              OR c.predicate = ANY(CAST(:predicates AS text[])))
     ) AS candidate
@@ -107,14 +107,14 @@ def _history_statement(*, statement: str) -> str:
         old=(
             "AND c.ingested_at <= statement_timestamp()\n"
             "        AND c.invalidated_at IS NULL\n"
-            "        AND (c.valid_from IS NULL OR c.valid_from <= statement_timestamp())\n"
-            "        AND (c.valid_until IS NULL OR c.valid_until > statement_timestamp())"
+            "        AND c.valid_from <= statement_timestamp()\n"
+            "        AND (c.valid_precision='open' OR c.valid_until > statement_timestamp())"
         ),
         new=(
             "AND (c.ingested_at IS NULL OR c.ingested_at <= CAST(:believed_at AS timestamptz))\n"
             "        AND (c.invalidated_at IS NULL OR c.invalidated_at > CAST(:believed_at AS timestamptz))\n"
-            "        AND (c.valid_from IS NULL OR c.valid_from <= CAST(:valid_at AS timestamptz))\n"
-            "        AND (c.valid_until IS NULL OR c.valid_until > CAST(:valid_at AS timestamptz))"
+            "        AND c.valid_from <= CAST(:valid_at AS timestamptz)\n"
+            "        AND (c.valid_precision='open' OR c.valid_until > CAST(:valid_at AS timestamptz))"
         ),
         count=2,
     )
@@ -160,8 +160,8 @@ HISTORY_NEIGHBORHOOD_PGQ: Final = _replace_exact(
     new=(
         "AND (r.ingested_at IS NULL OR r.ingested_at <= CAST(:believed_at AS timestamptz))\n"
         "         AND (r.invalidated_at IS NULL OR r.invalidated_at > CAST(:believed_at AS timestamptz))\n"
-        "         AND (r.valid_from IS NULL OR r.valid_from <= CAST(:valid_at AS timestamptz))\n"
-        "         AND (r.valid_until IS NULL OR r.valid_until > CAST(:valid_at AS timestamptz))\n"
+        "         AND r.valid_from <= CAST(:valid_at AS timestamptz)\n"
+        "         AND (r.valid_precision='open' OR r.valid_until > CAST(:valid_at AS timestamptz))\n"
         "         AND (CAST(:predicates AS text[]) IS NULL\n"
         "              OR r.predicate"
     ),

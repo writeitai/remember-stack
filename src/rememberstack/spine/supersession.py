@@ -30,7 +30,7 @@ from rememberstack.model import SupersessionVerdict
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 
-ADJUDICATOR_VERSION: Final = "adjudicator-2026.07b:temp0-1"
+ADJUDICATOR_VERSION: Final = "fact-followup-2026.09:mutable-window-1"
 """The supersession adjudicator generation (D12; replayed on rebuild, D7).
 07b pins temperature=0.0 — generation parameters are part of provenance."""
 
