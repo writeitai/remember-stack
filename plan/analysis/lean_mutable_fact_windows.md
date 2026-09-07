@@ -57,7 +57,7 @@ Exact local sources inspected:
   deterministic joined salient facts; finite ends are excluded while future
   starts are not checked. The SQL explains its no-timer assumption.
 - `core/knowledge_fact_sheet.py`: historical facts can be labelled "ended",
-  conflating a completed world interval with disbelief.
+  referring to world time but risking confusion with disbelief in user-facing prose.
 - `plan/designs/temporal_clocks_design.md` (D107),
   `temporal_write_and_lifecycle_design.md` (D110),
   `observation_temporal_application_design.md` (D113), and their SQL appendices.

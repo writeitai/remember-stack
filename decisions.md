@@ -5015,6 +5015,9 @@ retrieval, D100/D102 identity, and D104/D105 answer-prompt contracts.
 
 > **D114 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D114’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
 
+**Status:** partially superseded by D114 when that amendment merges. Canonical
+arithmetic, published SQL and extraction remain in force.
+
 **Decision (2026-09-03).** Every stage that reasons about *when* a fact held
 reads the claim's resolved D41 window (what the statement **is about**) and
 treats the source's own date (when it was **said**) as provenance shown

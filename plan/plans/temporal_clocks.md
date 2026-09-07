@@ -29,6 +29,9 @@ D114 runtime behavior. Explicit user approval is required before merge/release.
    fix findings, and record their actual conclusions. Keep the PR draft and
    unmerged for the user's explanation and approval.
 
+The PR change plan above is complete. [Review and validation record](../implementation_evals/temporal_simplification_review_20260907.md) records both independent verdicts,
+resolved findings and the exact design-only acceptance limits.
+
 ## Replacement implementation sequence
 
 These are separately reviewable implementation packages, not alternate designs.

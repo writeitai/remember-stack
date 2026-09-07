@@ -65,6 +65,10 @@ onto facts: those constraints reject the two partial shapes. Do not run claim
 precision that helper substitutes the start when the end is missing; a partial
 fact must preserve the unknown end. Do not canonicalize known fact endpoints a
 second time. The concrete fact constraints must implement this table.
+When constructing a partial window from raw dates, normalize only its known
+endpoint using the existing UTC truncate/advance rules (day start; exclusive
+next-year end for a year), leave the missing side NULL, and store that result
+without passing the partial window to `canonical_bounds()`.
 
 Unknown and open mean different things:
 
@@ -255,8 +259,10 @@ Profiles select date-qualified salient facts without a moving current-only
 filter. "CEO of Acme, 2019–2022" remains useful history after 2022. An accepted
 future appointment is labelled with its date, not phrased as already current.
 Known ongoing periods are rendered "since 2019; no end recorded", not certified
-as true today merely because the text is cached. Undated assertions are labelled
-as undated. Selection/ranking cannot depend on changing wall-clock recency unless
+as true today merely because the text is cached. Use that wording only for
+`open`; a partial window with an unknown end says "start known; end unknown",
+without implying it is ongoing. Undated assertions are labelled as undated.
+Selection/ranking cannot depend on changing wall-clock recency unless
 that dependency participates in refresh; use stable fact/source ordering here.
 
 Fact, evidence, date, identity, withdrawal and forget changes use the existing
