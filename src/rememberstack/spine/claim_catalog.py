@@ -6,6 +6,7 @@ their `chunk_claims` occurrence links (D56/F4), and the append-only decision
 transcript (D33). Replay reads what is stored and never re-calls the model.
 """
 
+from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy import bindparam
@@ -17,6 +18,8 @@ from rememberstack.model import ClaimForEmbedding
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
+from rememberstack.model.occurrence_provenance import OccurrenceProvenance
+from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
 
 
@@ -77,33 +80,68 @@ class ClaimCatalog:
                 },
             ).scalar_one_or_none()
 
+    def claims_for_occurrence_reuse(
+        self, *, chunk_id: UUID
+    ) -> tuple[ReusedClaimAnchor, ...]:
+        """Prior occurrence identities and verbatim spans for target re-anchoring.
+
+        ``source_span`` is the immutable claim text slice; prior char offsets
+        belong to the prior document.md and are deliberately not returned.
+        """
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_CLAIMS_FOR_OCCURRENCE_REUSE, {"chunk_id": chunk_id}
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(ReusedClaimAnchor.model_validate(dict(row)) for row in rows)
+
     def attach_reused_claims(
-        self, *, deployment_id: UUID, chunk_id: UUID, prior_chunk_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        chunk_id: UUID,
+        prior_chunk_id: UUID,
+        occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
     ) -> int:
         """Re-attach a prior chunk's claims to a new version's chunk (D56/F4).
 
         Copies the claim ids; the occurrence-grain fields (derivation kind,
         evidence mode, locators) are stamped for THIS occurrence exactly as
         a fresh extraction would stamp them — they describe the target
-        representation, never the source's (D65). Idempotent: an
-        already-attached claim is skipped. Returns how many claims the PRIOR
-        chunk carries — zero means the prior extraction was a terminal
-        no-info, regardless of whether this call inserted anything (a
-        retried attempt inserts nothing but the prior was not empty).
+        representation, never the source's (D65). Callers that resolved
+        target provenance pass ``occurrences`` keyed by claim id; omitted
+        entries stay unknown (null), never a fabricated passthrough.
+        Idempotent: an already-attached claim is skipped. Returns how many
+        claims the PRIOR chunk carries — zero means the prior extraction was
+        a terminal no-info, regardless of whether this call inserted
+        anything (a retried attempt inserts nothing but the prior was not
+        empty).
         """
         with self._engine.begin() as connection:
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
             if prior_links:
-                connection.execute(
-                    _COPY_CHUNK_CLAIMS,
-                    {
-                        "deployment_id": deployment_id,
-                        "chunk_id": chunk_id,
-                        "prior_chunk_id": prior_chunk_id,
-                    },
-                )
+                claim_ids = connection.execute(
+                    _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}
+                ).scalars()
+                for claim_id in claim_ids:
+                    claim_uuid = UUID(str(claim_id))
+                    provenance = (
+                        None if occurrences is None else occurrences.get(claim_uuid)
+                    )
+                    connection.execute(
+                        _INSERT_CHUNK_CLAIM,
+                        _chunk_claim_params(
+                            deployment_id=deployment_id,
+                            chunk_id=chunk_id,
+                            claim_id=claim_uuid,
+                            provenance=provenance,
+                        ),
+                    )
         return prior_links
 
     def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
@@ -205,9 +243,19 @@ class ClaimCatalog:
         return tuple(ClaimForEmbedding.model_validate(dict(row)) for row in rows)
 
     def record_extraction(
-        self, *, claims: tuple[ClaimRecord, ...], decisions: tuple[DecisionRecord, ...]
+        self,
+        *,
+        claims: tuple[ClaimRecord, ...],
+        decisions: tuple[DecisionRecord, ...],
+        occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
     ) -> None:
-        """Land one chunk's claims, occurrence links, and decisions atomically."""
+        """Land one chunk's claims, occurrence links, and decisions atomically.
+
+        Occurrence provenance is written onto ``chunk_claims`` in the same
+        transaction. Omitted ``occurrences`` (or a missing claim id) leave
+        derivation columns null — unknown, not passthrough — so fixtures
+        that do not supply a manifest stay compatible.
+        """
         if not claims and not decisions:
             return
         with self._engine.begin() as connection:
@@ -217,13 +265,17 @@ class ClaimCatalog:
                     context.model_dump(mode="json") for context in claim.added_context
                 ]
                 connection.execute(_INSERT_CLAIM, payload)
+                provenance = (
+                    None if occurrences is None else occurrences.get(claim.claim_id)
+                )
                 connection.execute(
                     _INSERT_CHUNK_CLAIM,
-                    {
-                        "deployment_id": claim.deployment_id,
-                        "chunk_id": claim.chunk_id,
-                        "claim_id": claim.claim_id,
-                    },
+                    _chunk_claim_params(
+                        deployment_id=claim.deployment_id,
+                        chunk_id=claim.chunk_id,
+                        claim_id=claim.claim_id,
+                        provenance=provenance,
+                    ),
                 )
             for decision in decisions:
                 connection.execute(_INSERT_DECISION, decision.model_dump(mode="json"))
@@ -271,15 +323,22 @@ _COUNT_CHUNK_CLAIMS = text(
     """
 )
 
-_COPY_CHUNK_CLAIMS = text(
+_SELECT_DISTINCT_CHUNK_CLAIM_IDS = text(
     """
-    INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, derivation_kind)
-    SELECT :deployment_id, :chunk_id, prior.claim_id, 'passthrough'
-    FROM chunk_claims prior
-    WHERE prior.chunk_id = :prior_chunk_id
-      AND NOT EXISTS (SELECT 1 FROM chunk_claims existing
-                      WHERE existing.chunk_id = :chunk_id
-                        AND existing.claim_id = prior.claim_id)
+    SELECT DISTINCT claim_id
+    FROM chunk_claims
+    WHERE chunk_id = :chunk_id
+    ORDER BY claim_id
+    """
+)
+
+_SELECT_CLAIMS_FOR_OCCURRENCE_REUSE = text(
+    """
+    SELECT DISTINCT cl.claim_id, cl.source_span
+    FROM claims cl
+    JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
+    WHERE cc.chunk_id = :chunk_id
+    ORDER BY cl.claim_id
     """
 )
 
@@ -305,10 +364,19 @@ _INSERT_CLAIM = text(
 
 _INSERT_CHUNK_CLAIM = text(
     """
-    INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, derivation_kind)
-    VALUES (:deployment_id, :chunk_id, :claim_id, 'passthrough')
+    INSERT INTO chunk_claims (
+        deployment_id, chunk_id, claim_id,
+        derivation_kind, evidence_mode, source_locators
+    )
+    SELECT :deployment_id, :chunk_id, :claim_id,
+           :derivation_kind, :evidence_mode, :source_locators
+    WHERE NOT EXISTS (
+        SELECT 1 FROM chunk_claims existing
+        WHERE existing.chunk_id = :chunk_id
+          AND existing.claim_id = :claim_id
+    )
     """
-)
+).bindparams(bindparam("source_locators", type_=JSON(none_as_null=True)))
 
 _INSERT_DECISION = text(
     """
@@ -399,3 +467,26 @@ _SELECT_CLAIMS_FOR_EMBEDDING = text(
     ORDER BY ingested_at, claim_id
     """
 )
+
+
+def _chunk_claim_params(
+    *,
+    deployment_id: UUID,
+    chunk_id: UUID,
+    claim_id: UUID,
+    provenance: OccurrenceProvenance | None,
+) -> dict[str, object]:
+    """Bind occurrence columns; absent provenance stays SQL NULL, not passthrough."""
+    locators: list[dict[str, object]] | None = None
+    if provenance is not None and provenance.source_locators is not None:
+        locators = [
+            locator.model_dump(mode="json") for locator in provenance.source_locators
+        ]
+    return {
+        "deployment_id": deployment_id,
+        "chunk_id": chunk_id,
+        "claim_id": claim_id,
+        "derivation_kind": None if provenance is None else provenance.derivation_kind,
+        "evidence_mode": None if provenance is None else provenance.evidence_mode,
+        "source_locators": locators,
+    }

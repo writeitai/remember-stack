@@ -42,6 +42,13 @@ class ChunkSource(BaseModel):
     representation_id: UUID
     markdown_uri: str
     blocks_uri: str
+    conversion_uri: _NonEmpty | None = None
+    """URI of conversion.json when the representation recorded one.
+
+    Absent (None) only for legacy rows that never stored a manifest; those
+    occurrences stay unlabeled. A present URI must be loaded — missing or
+    corrupt bytes are a failure, never silent passthrough.
+    """
     title: str | None
     source_kind: str
     source_modified_at: UTCDateTime | None

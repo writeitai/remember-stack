@@ -202,7 +202,7 @@ def _normalize_chunk_embed_row(row: dict) -> dict:
 _SELECT_CHUNK_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.markdown_uri, r.blocks_uri, d.title, d.source_kind,
+           r.markdown_uri, r.blocks_uri, r.conversion_uri, d.title, d.source_kind,
            v.source_modified_at, v.published_at, v.language,
            r.structurer_version,
            coalesce(v.source_shape, 'document') AS source_shape,

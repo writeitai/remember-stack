@@ -58,6 +58,8 @@ instead of failing the version. After P3 rebuild and mount publication, its stub
 carries `stored_raw_uri` for use through a configured raw provider mount. See
 [Mounts](/docs/mounts) for the required roots and snapshot refresh commands.
 
+Static JPEG/PNG images need `image_ocr_description` bound for `image/png` and `image/jpeg`, plus both `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`. The description model must accept OpenRouter image inputs.
+
 **Fix:** register the converter for that MIME type in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`, then release the backlog:
 
 ```bash

@@ -36,7 +36,10 @@ from rememberstack.core import blockize
 from rememberstack.core import BLOCKIZER_VERSION
 from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import ConversionRouter
+from rememberstack.core import Converter
 from rememberstack.core import deterministic_section_role
+from rememberstack.core import LaneCheckpointConverter
+from rememberstack.core import LaneUsageRecorder
 from rememberstack.core import LONG_TITLE
 from rememberstack.core import MAX_FALLBACK_DEPTH
 from rememberstack.core import MIN_CHECK_SECTIONS
@@ -56,6 +59,8 @@ from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterLaneError
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -403,17 +408,40 @@ class ConvertHandler:
                 work=work, version_id=source.version_id, representation_id=existing
             )
         content = self._raw_store.read_bytes(key=ObjectKey(source.raw_uri))
+        lane_meter = _ConvertLaneMeter(meter=meter, converter_name=converter.name)
+        uses_lane_checkpoints = isinstance(converter, LaneCheckpointConverter)
         try:
-            result = converter.convert(content=content, mime=source.mime)
-            for event in result.usage_events:
-                # billed before coherence: the spend is real even if the
-                # envelope is later rejected, so it enters the ledger first
-                meter.record(
-                    call_key=f"convert:{event.call_key}",
-                    tier=converter.name,
-                    usage=event.usage,
-                )
+            result = _convert_with_lane_checkpoints(
+                converter=converter,
+                content=content,
+                mime=source.mime,
+                checkpoint_store=self._artifact_store,
+                checkpoint_prefix=(
+                    f"{source.doc_id}/{source.content_hash}/conversion-checkpoints"
+                ),
+                record_usage=lane_meter,
+            )
+            if not uses_lane_checkpoints:
+                for event in result.usage_events:
+                    # billed before coherence: the spend is real even if the
+                    # envelope is later rejected, so it enters the ledger first
+                    meter.record(
+                        call_key=f"convert:{event.call_key}",
+                        tier=converter.name,
+                        usage=event.usage,
+                    )
             _require_coherent_envelope(result=result)
+        except ConverterLaneError as err:
+            if not uses_lane_checkpoints:
+                _record_lane_usage(
+                    meter=meter, converter_name=converter.name, error=err
+                )
+            if err.retryable:
+                raise
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=str(err)
+            )
+            raise NonRetryableHandlerError(str(err)) from err
         except ValidationError as err:
             # a converter that cannot build its own envelope models is a
             # deterministic converter bug, exactly like an incoherent envelope
@@ -1614,6 +1642,62 @@ def _require_resolvable_tracks(
             raise ConversionError(
                 f"locator references undefined timeline track {track!r}"
             )
+
+
+class _ConvertLaneMeter:
+    """Adapt the convert worker's per-attempt meter to the lane-callback contract."""
+
+    def __init__(self, *, meter: CostMeterPort, converter_name: str) -> None:
+        """Bind one processing attempt and the route name used as the cascade tier."""
+        self._meter = meter
+        self._converter_name = converter_name
+
+    def record(self, *, event: ConverterUsageEvent, outcome: str = "ok") -> None:
+        """Persist one billed lane call under ``convert:<lane>``."""
+        self._meter.record(
+            call_key=f"convert:{event.call_key}",
+            tier=self._converter_name,
+            usage=event.usage,
+            outcome=outcome,
+        )
+
+
+def _convert_with_lane_checkpoints(
+    *,
+    converter: Converter,
+    content: bytes,
+    mime: str,
+    checkpoint_store: ObjectStorePort,
+    checkpoint_prefix: str,
+    record_usage: LaneUsageRecorder,
+) -> ConversionResult:
+    """Call convert, supplying private lane checkpoints when the route uses them."""
+    if isinstance(converter, LaneCheckpointConverter):
+        from rememberstack.workers.lane_checkpoints import ObjectStoreLaneCheckpoints
+
+        return converter.convert(
+            content=content,
+            mime=mime,
+            checkpoints=ObjectStoreLaneCheckpoints(
+                object_store=checkpoint_store, prefix=checkpoint_prefix
+            ),
+            record_usage=record_usage,
+        )
+    return converter.convert(content=content, mime=mime)
+
+
+def _record_lane_usage(
+    *, meter: CostMeterPort, converter_name: str, error: ConverterLaneError
+) -> None:
+    """Meter every billed lane attempt from a dual-lane failure, including rejects."""
+    failed = set(error.failed_call_keys)
+    for event in error.usage_events:
+        meter.record(
+            call_key=f"convert:{event.call_key}",
+            tier=converter_name,
+            usage=event.usage,
+            outcome="provider_error" if event.call_key in failed else "ok",
+        )
 
 
 def _require_coherent_envelope(*, result: ConversionResult) -> None:

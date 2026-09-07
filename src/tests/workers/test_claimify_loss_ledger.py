@@ -393,10 +393,15 @@ class _RecordingCatalog:
         self.decisions: tuple[DecisionRecord, ...] = ()
 
     def record_extraction(
-        self, *, claims: tuple[ClaimRecord, ...], decisions: tuple[DecisionRecord, ...]
+        self,
+        *,
+        claims: tuple[ClaimRecord, ...],
+        decisions: tuple[DecisionRecord, ...],
+        occurrences: object = None,
     ) -> None:
         self.claims = claims
         self.decisions = decisions
+        self.occurrences = occurrences
 
 
 _SELECTION_BOTH_KEEPS: dict[str, object] = {

@@ -71,7 +71,8 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 | Area | Status in default Compose smoke |
 | --- | --- |
 | Markdown ingest | Supported |
-| PDF / HTML / media conversion | Engine-capable; register routes — not auto-wired in the smoke profile |
+| PDF / HTML conversion | Engine-capable (`mistral_ocr`, `markitdown`); register routes — not auto-wired in the smoke profile |
+| Static image conversion | Engine-capable dual-lane route `image_ocr_description` (dedicated OCR + independent vision-LLM description for static `image/png` and `image/jpeg`); register routes and both provider keys — not auto-wired in the smoke profile. Video/audio conversion is not shipped |
 | Query-time entity resolve | Exact-name match; richer matching runs at write time |
 | Competitive benchmark scores | Operator-run protocols; not a continuous public scoreboard |
 

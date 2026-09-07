@@ -312,9 +312,16 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
             .mappings()
             .all()
         )
-        links = connection.execute(
-            text("SELECT count(*) FROM chunk_claims")
-        ).scalar_one()
+        links = (
+            connection.execute(
+                text(
+                    "SELECT derivation_kind, evidence_mode, source_locators"
+                    " FROM chunk_claims"
+                )
+            )
+            .mappings()
+            .all()
+        )
         metered_calls = (
             connection.execute(
                 text(
@@ -397,7 +404,13 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     # both keeps produced accepted claims — no claimify_omitted rows:
     assert "claimify_omitted" not in by_kind
 
-    assert links == len(claims)
+    assert len(links) == len(claims)
+    # Passthrough converter's emitted range determines passthrough — not a
+    # hardcoded insert. Evidence mode is source_expression; no source map.
+    for occurrence in links:
+        assert occurrence["derivation_kind"] == "passthrough"
+        assert occurrence["evidence_mode"] == "source_expression"
+        assert occurrence["source_locators"] is None
     assert [call["call_key"].split(":", 1)[0] for call in metered_calls] == [
         "decontextualize",
         "selection",

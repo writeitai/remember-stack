@@ -89,6 +89,7 @@ from rememberstack.model.consumption import S58Answer
 from rememberstack.model.conversion import ConversionCoverage
 from rememberstack.model.conversion import ConversionError
 from rememberstack.model.conversion import ConversionResult
+from rememberstack.model.conversion import ConverterLaneError
 from rememberstack.model.conversion import ConverterManifest
 from rememberstack.model.conversion import ConverterUsageEvent
 from rememberstack.model.conversion import DerivationRange
@@ -421,6 +422,7 @@ __all__ = (
     "ConversionCoverage",
     "ConversionError",
     "ConversionResult",
+    "ConverterLaneError",
     "ConverterManifest",
     "ConverterUsageEvent",
     "DerivationRange",

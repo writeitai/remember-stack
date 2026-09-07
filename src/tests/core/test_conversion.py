@@ -158,6 +158,15 @@ def test_build_conversion_routes_refuses_an_unknown_adapter_name() -> None:
         build_conversion_routes(route_names={"application/pdf": "not-shipped"})
 
 
+def test_build_conversion_routes_names_the_image_dual_lane_adapter() -> None:
+    """The image route is a registered adapter name, distinct from OCR-only."""
+    import rememberstack.adapters.converters as converters
+
+    builders = converters.__dict__["_CONVERTER_BUILDERS"]
+    assert "image_ocr_description" in builders
+    assert "mistral_ocr" in builders
+
+
 def test_derivation_confidence_is_bounded_to_the_unit_interval() -> None:
     """A reported confidence is a probability-like score, never past [0, 1]."""
     with pytest.raises(ValidationError):

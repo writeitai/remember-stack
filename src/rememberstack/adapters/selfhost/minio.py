@@ -145,9 +145,16 @@ class MinIOObjectStore:
 
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         """Read all bytes stored at one validated object key."""
-        response = self._client.get_object(
-            Bucket=self._bucket, Key=_validated_key(key=key)
-        )
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket, Key=_validated_key(key=key)
+            )
+        except ClientError as error:
+            if _error_code(error=error) in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(
+                    f"object key {key.root!r} does not exist"
+                ) from error
+            raise
         body = response["Body"]
         try:
             return body.read()

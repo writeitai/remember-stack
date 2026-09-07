@@ -192,7 +192,7 @@ leave all of them unset and do not start the Compose `managed` profile.
 
 | Variable | Purpose |
 | --- | --- |
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`. Setting the variable replaces the whole table (defaults are the stock text table); an otherwise admissible MIME type without a route is stored with conversion **parked**. After P3 rebuild/publication, `stored_raw_uri` reaches the original through a configured provider raw mount (see [Mounts](/docs/mounts)). Register the converter, restart workers, and run `remember ops resume-no-route` to release only matching backlog. An unknown adapter name refuses startup |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | JSON object mapping input MIME type to a converter adapter name, e.g. `{"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}`. Shipped adapter names: `passthrough`, `markitdown`, `mistral_ocr`, `image_ocr_description`. Setting the variable replaces the whole table (defaults are the stock text table); an otherwise admissible MIME type without a route is stored with conversion **parked**. After P3 rebuild/publication, `stored_raw_uri` reaches the original through a configured provider raw mount (see [Mounts](/docs/mounts)). Register the converter, restart workers, and run `remember ops resume-no-route` to release only matching backlog. An unknown adapter name refuses startup |
 
 The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
 
@@ -206,6 +206,27 @@ The `mistral_ocr` route is BYO-key (provider-backed; off unless routed):
 | `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | Metered price per 1000 processed pages recorded in the cost ledger (default `1`) |
 
 Every output-affecting `mistral_ocr` option is folded into the converter version, so changing the model or an option re-converts affected documents as new representations instead of replaying old ones.
+
+The `image_ocr_description` route runs **both** dedicated OCR (the Mistral OCR adapter) and one independent vision-LLM description call for every supported static image. There is no classifier. OCR-only routing of images via `mistral_ocr` remains available if you bind it explicitly; the dual-lane adapter is the image route this engine ships for pictures. Supported input MIME types are static `image/png` and `image/jpeg` (the documented overlap of Mistral OCR `image_url` types and OpenRouter image-input types). WebP, GIF, HEIC, TIFF, AVIF, SVG, and animated PNG/JPEG are not in the shipped set. Before either provider call, Pillow inspects the original bytes (header/structure, detected MIME, animation, dimensions, and pixel count) and the tighter of the OCR and image byte ceilings is enforced. The original bytes stay unmodified in raw storage.
+
+Both provider keys are required when any route names `image_ocr_description`; composition refuses to start without them:
+
+| Variable | Purpose |
+| --- | --- |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | OpenRouter API key for the vision-LLM lane (`SecretStr`). Required when the dual-lane image route is bound |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | OpenRouter model slug that **must accept image inputs**. Default `google/gemini-2.5-flash`, which is explicitly multimodal. Do not point this at a text-only seat such as the extraction model — those completions reject `image_url` parts |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | OpenRouter endpoint (default `https://openrouter.ai/api/v1`). Changing it invalidates description checkpoints and representations |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | Deterministic input byte ceiling before either provider call (default `10000000`); the route uses the minimum of this and `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | Pillow pixel-count ceiling (`width × height`, default `40000000`; starting point) |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | Maximum accepted pixel width (default `16000`; starting point) |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | Maximum accepted pixel height (default `16000`; starting point) |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | Disclosed output ceiling for **combined** observations and interpretations (default `16000`); overflow is truncated with a coverage gap |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | Provider completion budget for the description call (default `4096`) |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | Concurrent OCR + description calls per image (`1` or `2`, default `2`) |
+
+The description lane uses OpenRouter's chat-completions image input (`content` parts with `type: image_url` and a `data:<mime>;base64,…` URL). Description accounting reuses the OpenRouter adapter's fail-closed path: inline usage, then GET generation metadata for the existing generation id — never a second paid generation, never invented zero cost. The representation manifest records the provider-echoed model, including when a description checkpoint is reused. Successful empty OCR (no visible text) is success; a provider failure is not treated as empty. Both lanes must succeed before a representation is published. Successful lane output is checkpointed privately under the source identity (endpoint, MIME, prompt/normalizer versions, model, and acceptance/output bounds) so a retry or worker restart does not repeat an already completed call. A crash between the provider response and durable persistence can still repeat a call. A corrupt occupied checkpoint is a terminal conversion error, not another paid recall.
+
+Every output-affecting description option is folded into the converter version. Changing only one lane's model, endpoint, or options invalidates that lane's checkpoint and produces a new representation.
 
 ### Live-graph resources
 
@@ -307,7 +328,7 @@ What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/comp
 | Piece | Config posture |
 | --- | --- |
 | Markdown smoke | Default Compose conversion route |
-| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (stock routes are `text/markdown` and `text/plain`; anything else is stored and parked until you register a converter) |
+| HTML/PDF/media | Bind converter routes per MIME type via `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` (stock routes are `text/markdown` and `text/plain`; anything else is stored and parked until you register a converter). Static JPEG/PNG images use `image_ocr_description` (OCR + vision description); PDFs use `mistral_ocr` |
 | Watched directory | Connector extra + connector management API/CLI; credentials stay deployment-side |
 | Lineage identity | `source_kind` + `source_ref` together on ingest; `versioning_mode=snapshot|living` |
 
