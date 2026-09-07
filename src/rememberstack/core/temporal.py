@@ -103,6 +103,23 @@ def inclusive_request(*, from_: datetime, to: datetime) -> CanonicalBounds:
     return CanonicalBounds(start=_utc(from_), end=_utc(to) + _MICROSECOND)
 
 
+def canonical_endpoint(*, value: datetime, precision: str, is_end: bool) -> datetime:
+    """Normalize one supplied raw boundary without inventing a missing sibling.
+
+    This supports D114 partial fact windows. Use only when constructing new
+    endpoints; persisted half-open fact endpoints must not be normalized again.
+    """
+    value = _utc(value)
+    if precision == "instant":
+        return value + _MICROSECOND if is_end else value
+    if precision == "open" and not is_end:
+        return value
+    if precision in _BOUNDED_PRECISIONS:
+        start = _truncate(value, precision)
+        return _advance(start, precision) if is_end else start
+    raise ValueError(f"no known {precision!r} endpoint")
+
+
 def _utc(value: datetime) -> datetime:
     """Normalise to an aware UTC datetime."""
     if value.tzinfo is None:
