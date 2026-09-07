@@ -28,16 +28,16 @@ from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
-from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
-from rememberstack.model import ContextBundleV1
+from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25"
-DEFAULT_PROTOCOL_KEY: Final = "full-v25"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-entity-followup-v25"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26"
+DEFAULT_PROTOCOL_KEY: Final = "full-v26"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-context-names-v26"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -46,7 +46,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "c7a7c0e5bfc9126ba1d7ed7bedcf2489a8537393801b4288742fdbd29079539e"
+    "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -119,12 +119,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v25-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v26-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v25 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v26 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -132,8 +132,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v25-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v25-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v26-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -142,8 +142,8 @@ ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinar
 RememberStack deployment. You may call any read tool listed below. Work as a
 normal memory agent and choose the cheapest suitable path:
 
-1. Assured operations: testimony_context for what sources said,
-   fact_context for current or historical adjudicated truth, answer_context
+1. Assured operations: claims_and_sources_context for what sources said,
+   facts_context for current or historical adjudicated truth, combined_context
    when both authorities are useful, and resolve_entity for exact names.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
@@ -250,7 +250,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v25",
+    key="full-v26",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -435,11 +435,11 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
         response: object = record.response.model_dump(
             mode="json", exclude_none=True, exclude={"ranking"}
         )
-    elif isinstance(record.response, (ContextBundleV1, RememberContextBundleV1)):
+    elif isinstance(record.response, (ContextBundleV2, RememberContextBundleV2)):
         response = record.response.model_dump(
             mode="json",
             exclude_none=True,
-            exclude={"testimony": {"ranking"}, "facts": {"ranking"}},
+            exclude={"claims_and_sources": {"ranking"}, "facts": {"ranking"}},
         )
     else:
         response = record.response

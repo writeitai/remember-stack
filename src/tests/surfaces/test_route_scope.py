@@ -84,7 +84,7 @@ def test_operations_defers_to_the_route_and_nothing_else_does() -> None:
     tiny and deliberate. Pinning it here means adding a second one is a visible
     decision rather than a quiet loosening.
     """
-    assert required_scope(method="POST", path="/operations/answer_context") is None
+    assert required_scope(method="POST", path="/operations/combined_context") is None
     assert routes_that_decide_for_themselves() == (("POST", r"^/operations/[^/]+$"),)
     # The listing route is an ordinary read; only running one defers.
     assert required_scope(method="GET", path="/operations") is PerimeterScope.READ

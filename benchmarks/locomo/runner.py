@@ -93,11 +93,11 @@ from benchmarks.locomo.retrieval import query_result_failure
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
-from remember.models import ContextBundleV1 as RememberContextBundleV1
+from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.vertex import VertexAccessError
-from rememberstack.model import ContextBundleV1 as RememberstackContextBundleV1
+from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import ModelRequest
@@ -424,7 +424,7 @@ def ingest_sample(
         _require_current_ingest_bindings(model_bindings=build.model_bindings)
         if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
             raise ExecutionGuardError(
-                "deployment document binding generation differs from RS-LoCoMo-Full-v25"
+                "deployment document binding generation differs from RS-LoCoMo-Full-v26"
             )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
@@ -587,7 +587,7 @@ def answer_sample(
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v25 pipeline, live graph, and fresh P3 projection"
+            " RS-LoCoMo-Full-v26 pipeline, live graph, and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1211,7 +1211,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v25")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v26")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1221,7 +1221,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v25")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v26")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1479,7 +1479,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v25: "
+            "deployment ingest model bindings differ from RS-LoCoMo-Full-v26: "
             + ", ".join(mismatches)
         )
 
@@ -2568,9 +2568,9 @@ def _is_unknown(*, answer: str) -> bool:
 def _has_content_bearing_attempt(*, trace: list[ToolCallRecord]) -> bool:
     """Whether the trace contains one successful v17 content-bearing read."""
     direct = {
-        "answer_context",
-        "fact_context",
-        "testimony_context",
+        "combined_context",
+        "facts_context",
+        "claims_and_sources_context",
         "lookup_relations",
         "transcript_relation",
         "lookup_observations",
@@ -2659,16 +2659,16 @@ def _response_envelopes(
     response: (
         RememberEnvelope
         | RememberstackEnvelope
-        | RememberContextBundleV1
-        | RememberstackContextBundleV1
+        | RememberContextBundleV2
+        | RememberstackContextBundleV2
         | JsonValue
     ),
 ) -> tuple[RememberEnvelope | RememberstackEnvelope, ...]:
     """Expose typed envelope children without blending their authorities."""
     if isinstance(response, (RememberEnvelope, RememberstackEnvelope)):
         return (response,)
-    if isinstance(response, (RememberContextBundleV1, RememberstackContextBundleV1)):
-        return (response.testimony, response.facts)
+    if isinstance(response, (RememberContextBundleV2, RememberstackContextBundleV2)):
+        return (response.claims_and_sources, response.facts)
     return ()
 
 

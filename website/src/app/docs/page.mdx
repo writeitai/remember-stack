@@ -70,9 +70,9 @@ Exactly **four** top-level assured operations:
 | Operation | Use for |
 | --- | --- |
 | `resolve_entity` | Turn a name/string into ranked entity candidates |
-| `testimony_context` | High-recall **evidence** context (claims + chunks) for a question |
-| `fact_context` | **Current or historical fact** context with live testimony under budget |
-| `answer_context` | Both complete authority views in `ContextBundle/v1` |
+| `claims_and_sources_context` | High-recall **evidence** context (claims + chunks) for a question |
+| `facts_context` | **Current or historical fact** context with live testimony under budget |
+| `combined_context` | Both complete authority views in `ContextBundle/v2` |
 
 Plus open query: sandboxed SQL, typed live-graph helpers, saved `examples.*`
 queries, and schema discovery. The helpers read PostgreSQL live; there is no

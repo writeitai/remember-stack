@@ -517,7 +517,7 @@ def test_assured_dispatch_omits_an_empty_optional_entity_scope() -> None:
         result = dispatch_answer_tool(
             client=MemoryClient(client=raw),
             p3=None,
-            name="fact_context",
+            name="facts_context",
             arguments={"query": "launch timing", "entity_ids": []},
         )
     finally:

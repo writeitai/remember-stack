@@ -1136,11 +1136,11 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
     try:
         if command == "text":
             query_text = args.query_text
-            if getattr(args, "answer", False):
-                ans = client.answer_context(query=query_text)
+            if getattr(args, "combined", False):
+                ans = client.combined_context(query=query_text)
                 print(ans.model_dump_json(indent=2))
             else:
-                fact = client.fact_context(query=query_text)
+                fact = client.facts_context(query=query_text)
                 print(fact.model_dump_json(indent=2))
             return 0
         if command == "sql":
@@ -2284,10 +2284,10 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     text_p.add_argument("query_text", help="query text")
     text_p.add_argument(
-        "--answer",
+        "--combined",
         action="store_true",
         default=False,
-        help="run answer_context instead of fact_context",
+        help="run combined_context instead of facts_context",
     )
     sql = query_commands.add_parser(
         "sql", parents=[client_flags], help="run one sandboxed SQL statement"

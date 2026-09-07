@@ -24,23 +24,23 @@ class AssuredOperationName(StrEnum):
     """The complete platform-owned assured-operation namespace."""
 
     RESOLVE_ENTITY = "resolve_entity"
-    TESTIMONY_CONTEXT = "testimony_context"
-    FACT_CONTEXT = "fact_context"
-    ANSWER_CONTEXT = "answer_context"
+    CLAIMS_AND_SOURCES_CONTEXT = "claims_and_sources_context"
+    FACTS_CONTEXT = "facts_context"
+    COMBINED_CONTEXT = "combined_context"
 
 
 class AssuredResultContract(StrEnum):
     """The closed wire contracts an assured operation may return."""
 
     ENVELOPE = "envelope"
-    CONTEXT_BUNDLE_V1 = "context_bundle_v1"
+    CONTEXT_BUNDLE_V2 = "context_bundle_v2"
 
 
 class AssuredAnswerIntent(StrEnum):
     """The authority an operation is intended to answer from."""
 
     IDENTITY = "identity"
-    TESTIMONY = "testimony"
+    CLAIMS_AND_SOURCES = "claims_and_sources"
     FACTS = "facts"
     COMBINED_CONTEXT = "combined_context"
 
@@ -51,7 +51,10 @@ class OperationStep(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     op: Literal[
-        "resolve_entity", "testimony_context", "graph_neighborhood", "fact_context"
+        "resolve_entity",
+        "claims_and_sources_context",
+        "graph_neighborhood",
+        "facts_context",
     ]
 
 
@@ -65,14 +68,14 @@ class PrimitiveChainPlan(BaseModel):
 
 
 class OperationBundlePlan(BaseModel):
-    """The exact pure-composition plan used only by ``answer_context``."""
+    """The exact pure-composition plan used only by ``combined_context``."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Literal["operation_bundle"] = "operation_bundle"
-    children: tuple[Literal["testimony_context"], Literal["fact_context"]] = (
-        "testimony_context",
-        "fact_context",
+    children: tuple[Literal["claims_and_sources_context"], Literal["facts_context"]] = (
+        "claims_and_sources_context",
+        "facts_context",
     )
 
 

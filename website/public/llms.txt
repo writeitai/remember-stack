@@ -13,7 +13,7 @@
 - [Python SDK Reference](https://remember.dev/docs/reference/sdk): Official `remember` Python package documentation (`RememberClient`).
 - [Platform CLI Reference](https://remember.dev/docs/reference/cli): Comprehensive manual for `remember setup`, `doctor`, `whoami`, `balance`, `projects`, `ingest`, and `query`.
 - [Model Context Protocol (MCP)](https://remember.dev/docs/reference/mcp): MCP tool specifications and agent integration contracts.
-- [Assured Retrieval](https://remember.dev/docs/retrieval): The four assured retrieval operations (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`).
+- [Assured Retrieval](https://remember.dev/docs/retrieval): The four assured retrieval operations (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`).
 - [Response Envelope](https://remember.dev/docs/retrieval/envelope): Envelope structure, freshness timestamps, typed negatives, and evidence bridges.
 - [Open Query Space](https://remember.dev/docs/retrieval/open-query): AST-sandboxed SQL and graph traversal over the `memory_v1` public schema.
 - [Docker Compose Quickstart](https://remember.dev/docs/deployment): Self-hosting the full engine, PostgreSQL 19 with SQL/PGQ, and MinIO storage.

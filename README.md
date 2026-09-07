@@ -120,9 +120,9 @@ Exactly **four** top-level assured operations (API / CLI / MCP):
 | Operation | Use for |
 | --- | --- |
 | `resolve_entity` | Name → ranked entity candidates |
-| `testimony_context` | High-recall **evidence** for a question |
-| `fact_context` | **Current or historical fact** context with live testimony |
-| `answer_context` | Both complete authority views in `ContextBundle/v1` |
+| `claims_and_sources_context` | High-recall **claims and source chunks** for a question |
+| `facts_context` | **Current or historical fact** context with live testimony |
+| `combined_context` | Both complete authority views in `ContextBundle/v2` |
 
 Plus open SQL, typed live-graph helpers, saved examples, and schema discovery.
 

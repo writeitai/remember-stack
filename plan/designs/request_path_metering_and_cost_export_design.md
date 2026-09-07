@@ -173,7 +173,7 @@ consumers is `(deployment_id, source, cost_id)`.
 `cost_id` remains the consumer identity (UUID). The composite PK exists
 only because PostgreSQL requires the partition key in the primary key.
 
-`call_site` is a closed token (`search_claims`, `fact_context`, …). It is
+`call_site` is a closed token (`search_claims`, `facts_context`, …). It is
 never interpolated from query text. The CHECK is a defense; the writer
 uses an enum.
 
@@ -306,7 +306,7 @@ opens the scope before the sync endpoint runs in the threadpool, and
 resets the token in `finally`. FastAPI copies context into worker
 threads from the async task; a scope set in a sync dependency is
 invisible to the endpoint. A test must prove two embeds in one
-`answer_context` HTTP call share `request_id`.
+`combined_context` HTTP call share `request_id`.
 
 **Assured operations / QueryEngine public methods:** if a scope is
 already set, reuse it (nested). If not, the public method opens
@@ -330,9 +330,9 @@ scope.
 | --- | --- | --- |
 | `GET /search/claims`, `GET /search/chunks` (semantic) | `search` | 1 |
 | same, `channel=bm25` | `search` | 0 |
-| `POST /operations/{name}` `testimony_context` | `operation` | 2 on the unscoped path; **N+M** when entity-scoped coverage loops re-embed the same query per tier (`_coverage_ordered_nominations`). Ordinal absorbs N. |
-| `POST /operations/{name}` `fact_context` | `operation` | 1 unscoped; **P** with eligibility coverage loop |
-| `POST /operations/{name}` `answer_context` | `operation` | testimony + fact (not a fixed 3 when scoped) |
+| `POST /operations/{name}` `claims_and_sources_context` | `operation` | 2 on the unscoped path; **N+M** when entity-scoped coverage loops re-embed the same query per tier (`_coverage_ordered_nominations`). Ordinal absorbs N. |
+| `POST /operations/{name}` `facts_context` | `operation` | 1 unscoped; **P** with eligibility coverage loop |
+| `POST /operations/{name}` `combined_context` | `operation` | testimony + fact (not a fixed 3 when scoped) |
 | `GET /lookup/observations?property_query=` | `lookup` | 1 |
 | `POST /query/sql` (execute) | `open_query` | 0..n |
 | `POST /query/sql/explain`, Cypher, Cypher explain | — | 0 |
@@ -359,16 +359,16 @@ sequential and **are** in the current call graph. They share
 Initial enum members:
 
 `search_claims`, `search_chunks`, `lookup_observations`,
-`testimony_claims`, `testimony_chunks`, `fact_context`,
+`claims_and_sources_claims`, `claims_and_sources_chunks`, `facts_context`,
 `claims_about`, `claims_as_of`, `nominate_claims`, `nominate_chunks`,
 `open_query_sql`.
 
 Export `call_key` is `f"{call_site.value}:{ordinal}"`. Adding a member
 is a catalog/code change, not a stringly new site.
 
-Unscoped `testimony_context` calls the public `nominate_claims` /
+Unscoped `claims_and_sources_context` calls the public `nominate_claims` /
 `nominate_chunks` helpers and therefore records those `call_site`
-values. The `testimony_*` members are the **coverage-loop** sites
+values. The `claims_and_sources_*` members are the **coverage-loop** sites
 only. `_nominate_claim_ids`, `_nominate_chunk_ids`, and
 `_rank_bounded_claims` are plumbing: they take `call_site` from the
 public caller and must not hardcode one.
@@ -837,7 +837,7 @@ read if the platform reports a world-readable mode.
 ## 8. Tests required
 
 - Semantic search writes one surface row; BM25 writes zero.
-- HTTP unscoped `answer_context` writes three rows, **same**
+- HTTP unscoped `combined_context` writes three rows, **same**
   `request_id`; scoped coverage loops write **N+M+P** rows, still one
   `request_id`.
 - Force insert **and** `persist_failures` upsert to fail → query
@@ -944,7 +944,7 @@ Docs describe what the tree runs.
 | token_host derive | both | Required explicit host |
 | SDK file pickup | Claude | CLI only |
 | Scope / ContextVar | both | Async middleware; explicit `call_site`; immutable scope |
-| Wrong embed inventory | both | Cypher/EXPLAIN 0; answer_context 3; resolve removed |
+| Wrong embed inventory | both | Cypher/EXPLAIN 0; combined_context 3; resolve removed |
 | Catalog list | both | Full amend table |
 | CostMeterPort reuse | Codex | Corrected: protocol can be reused; distinct type for bound identity |
 | Union view | both | `v_cost_receipts` |

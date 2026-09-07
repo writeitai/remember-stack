@@ -203,10 +203,10 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     operations = core["operations"]
     assert isinstance(operations, list)
     assert [operation["name"] for operation in operations] == [  # type: ignore[index]
-        "answer_context",
-        "fact_context",
+        "claims_and_sources_context",
+        "combined_context",
+        "facts_context",
         "resolve_entity",
-        "testimony_context",
     ]
     public = {
         descriptor.name: descriptor
@@ -223,7 +223,8 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     question = next(
         operation
         for operation in operations
-        if isinstance(operation, dict) and operation["name"] == "testimony_context"
+        if isinstance(operation, dict)
+        and operation["name"] == "claims_and_sources_context"
     )
     assert question["version"] == 1
     schema = question["input_schema"]

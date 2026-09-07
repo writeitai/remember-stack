@@ -101,12 +101,12 @@ print("Document is ready for recall!")
 Now open your configured coding agent (Cursor, Claude, Codex, or Antigravity) and ask naturally:
 > *"Check Remember memory: who is the CFO of Acme?"*
 
-Your agent will call the `fact_context` MCP tool, inspect the adjudicated facts and source testimony, and return an honest answer backed by verified evidence.
+Your agent will call the `facts_context` MCP tool, inspect the adjudicated facts and source testimony, and return an honest answer backed by verified evidence.
 
 ### B. Via Platform CLI
 ```bash
 # Get current fact context with live evidence
-remember operations run fact_context --arg query="Who is the CFO of Acme?"
+remember operations run facts_context --arg query="Who is the CFO of Acme?"
 
 # Run open SQL against the memory_v1 view
 remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10;"
@@ -115,7 +115,7 @@ remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current LIM
 ### C. Via Python SDK
 ```python
 # Query current facts
-envelope = client.fact_context("Who is the CFO of Acme?")
+envelope = client.facts_context("Who is the CFO of Acme?")
 for fact in envelope.facts:
     print(f"- {fact.label} (evidence count: {fact.evidence_count})")
 

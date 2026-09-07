@@ -46,9 +46,9 @@ RETRIEVAL_CHOICES: Final[tuple[str, ...]] = (
     "SQL gives live PostgreSQL state and direct evidence composition.",
     "Bounded graph helpers give live neighborhood, shortest-tier entity-path,"
     " and directed citation-path traversal over the same PostgreSQL snapshot.",
-    "The four assured operations (resolve_entity, testimony_context,"
-    " fact_context, answer_context) give one-call typed answers with explicit"
-    " Envelope or ContextBundle/v1 guarantees.",
+    "The four assured operations (resolve_entity, claims_and_sources_context,"
+    " facts_context, combined_context) give one-call typed answers with explicit"
+    " Envelope or ContextBundle/v2 guarantees.",
 )
 
 #: Bound wrong current-truth query: claim windows are testimony, not verdict.

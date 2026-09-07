@@ -62,8 +62,8 @@ Every assured response is labeled with the **grain** of what it contains:
 | **`compiled`** | K pages with `compiled_at` / staleness | Orientation; verify before acting |
 | **`composite`** | One operation's cohesive mixed typed result | Independent complete responses |
 
-When an agent needs both testimony and facts, `answer_context` returns
-`ContextBundle/v1` with complete `testimony` and `facts` envelopes. It is not a
+When an agent needs both testimony and facts, `combined_context` returns
+`ContextBundle/v2` with complete `claims_and_sources` and `facts` envelopes. It is not a
 composite envelope and does not blend or re-rank the two authorities.
 
 **Contract:** current-fact answers may be assembled only from validity-filtered facts. Claim asserted-validity intervals are **testimony**, never verdict. The registry linter rejects operations that would smuggle claims into `current_facts` intent.
@@ -151,7 +151,7 @@ neighborhood for bounded convergence. Automatic merging remains off until its
 profile-space threshold is calibrated; equivalent open review proposals are
 deduplicated, and every accepted merge remains a reversible redirect.
 
-Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`testimony_context`) rather than assuming fuzzy resolve. There is no deployment-wide exact-name auto-accept switch in the shipped cascade.
+Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`claims_and_sources_context`) rather than assuming fuzzy resolve. There is no deployment-wide exact-name auto-accept switch in the shipped cascade.
 
 ## Document identity (write path)
 

@@ -7,8 +7,8 @@ export const metadata = {
 # API Reference
 
 > **Query contract.** RememberStack exposes exactly four top-level assured
-> operations: `resolve_entity`, `testimony_context`, `fact_context`, and
-> `answer_context`. The
+> operations: `resolve_entity`, `claims_and_sources_context`, `facts_context`, and
+> `combined_context`. The
 > 18 former stock query patterns are discoverable `examples.*` saved queries
 > only. There is no legacy compatibility layer or deprecation window.
 
@@ -29,8 +29,8 @@ why the system believes or believed the fact.
 
 The HTTP API is a thin, typed veneer over one deployment. Open SQL returns
 **`QueryResult/v1`**. The first three assured operations return a
-typed **response envelope**; `answer_context` returns `ContextBundle/v1` with
-the complete testimony and fact envelopes kept separate. No query endpoint
+typed **response envelope**; `combined_context` returns `ContextBundle/v2` with
+the complete claims-and-sources and fact envelopes kept separate. No query endpoint
 calls an LLM completion, and
 reads never trigger writes. An explicitly composed ingest capability is the
 sole client write path and always enters E0.
@@ -39,7 +39,7 @@ Four things are true of every deployment's API:
 
 - **The shipping query surface is deliberate.** Seven open-query entry points
   mount under `/query/…`; `/operations` and `/operations/{name}` expose exactly
-  `resolve_entity`, `testimony_context`, `fact_context`, and `answer_context`.
+  `resolve_entity`, `claims_and_sources_context`, `facts_context`, and `combined_context`.
 - **The operation endpoints render from the registry.** `GET /operations` _is_ the
   deployment's active operation rows; the CLI and MCP surfaces render the same
   set, so the three surfaces are always in lockstep.
@@ -146,8 +146,8 @@ page with `remember ops cost-export`. See [Deployment](/docs/deployment).
 ## Open query space
 
 Choose among live/evidence-composable SQL, typed live graph methods, and the
-four assured operations (`resolve_entity`, `testimony_context`,
-`fact_context`, `answer_context`).
+four assured operations (`resolve_entity`, `claims_and_sources_context`,
+`facts_context`, `combined_context`).
 
 | Method | Path | Contract |
 | --- | --- | --- |
@@ -274,8 +274,8 @@ MCP client discovers:
 ```
 
 `result_schema`, `result_contract`, `output_grain`, and `answer_intent` travel
-with each descriptor. `output_grain` is null only for `answer_context`, whose
-contract is the explicitly two-grain `ContextBundle/v1`.
+with each descriptor. `output_grain` is null only for `combined_context`, whose
+contract is the explicitly two-grain `ContextBundle/v2`.
 
 ### `POST /operations/{name}`
 
@@ -304,9 +304,9 @@ The complete operation catalog is:
 | Operation | Arguments | What it returns |
 | --- | --- | --- |
 | `resolve_entity` | `name` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
-| `testimony_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
-| `fact_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
-| `answer_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `time` | `ContextBundle/v1`: complete `testimony_context` and neighborhood-aware `fact_context` child envelopes, never a blended result list |
+| `claims_and_sources_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
+| `facts_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
+| `combined_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `time` | `ContextBundle/v2`: complete `claims_and_sources_context` and neighborhood-aware `facts_context` child envelopes, never a blended result list |
 
 `entity_ids` is optional. Omit it for deployment-wide semantic retrieval; pass
 confirmed survivor IDs when identity materially narrows the question. Supplying
@@ -487,7 +487,7 @@ from remember import MemoryClient, ReadinessRequirements
 with MemoryClient.from_settings() as memory:
     tools = memory.list_operations()
     answer = memory.run_operation(
-        name="testimony_context",
+        name="claims_and_sources_context",
         arguments={"query": "What did Alice say about the launch?"},
     )
     landed = memory.ingest(
@@ -553,7 +553,7 @@ verdict. Chunk results disclose an optional deterministic `context_prefix`
 (location header under the embedding-input policy) separately from body-only
 `chunk_text` and carry the current document, version,
 representation, offsets, and source timestamps confirmed by the live spine.
-`fact_context` is a flat fact-grain envelope: `facts[]` contains the selected
+`facts_context` is a flat fact-grain envelope: `facts[]` contains the selected
 verdicts, `evidence[]` contains the backing testimony, `fact_evidence[]`
 explicitly maps each fact to each claim and stance, and `evidence_totals[]`
 reports exact returned/total counts for both stances. Both association arrays
@@ -565,8 +565,8 @@ observations remain only in `facts[]`. A fact with no current
 evidence returns only when D54 identifies historically backed support as
 withdrawn; a fact with no qualifying provenance is never returned.
 
-Choose the authority explicitly: `testimony_context` for what sources said,
-`fact_context` for what the system holds or held true, and `answer_context` when
+Choose the authority explicitly: `claims_and_sources_context` for what sources said,
+`facts_context` for what the system holds or held true, and `combined_context` when
 the answer-producing agent needs both complete views. ID-scoped current and
 point-in-time fact operations add a bounded live-graph neighborhood by default.
 Use the typed graph HTTP/SDK operations or live SQL graph helpers when you need
@@ -587,9 +587,9 @@ patterns expose either half when a caller needs only one evidence type; they
 run through `/query/saved/examples/{name}/run` and are not assured operations.
 The four operation descriptors expose their integer `version`, so clients can
 pin the behavior that produced an answer. The current catalog is
-`resolve_entity@1`, `testimony_context@1`, `fact_context@2`, and
-`answer_context@2`; the two fact-bearing operations advanced for D97's default
-neighborhood semantics.
+`resolve_entity@1`, `claims_and_sources_context@1`, `facts_context@2`, and
+`combined_context@3`; the composite advanced again for its
+`ContextBundle/v2` field names after D97's default neighborhood change.
 
 `resolve` always returns every exact-name candidate. Supplying focal entities only
 reorders those candidates: a candidate related to more of the supplied entities
