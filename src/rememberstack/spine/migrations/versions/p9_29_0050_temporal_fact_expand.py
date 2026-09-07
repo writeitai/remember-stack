@@ -858,6 +858,7 @@ COMMENT ON TABLE public.relation_flush_inputs IS 'Exact claim assertion membersh
 COMMENT ON TABLE public.relation_apply_batches IS 'Closed admitted relation assertion sets; at most one active batch per canonical block across generations (D110).';
 COMMENT ON TABLE public.relation_apply_batch_inputs IS 'Deterministic admitted ordinals and immutable preparation attempt snapshots for ordered relation application (D110).';
 COMMENT ON TABLE public.relation_application_receipts IS 'Exactly-once relation identity outcomes for assertions; logical historical fact targets cannot block hard forget (D110).';
+COMMENT ON TABLE public.relation_application_targets IS 'Complete D112 support-target set certified by the parent receipt; historical handles have a reverse fact index and cascade with source receipt deletion.';
 COMMENT ON TABLE public.relation_application_adjudications IS 'Links one atomic assertion application to all of its existing narrative adjudications (D110).';
 COMMENT ON TABLE public.temporal_blocks IS 'Canonical logical block lock, revision, and committed temporal effect sequence shared by every fact writer (D110).';
 COMMENT ON TABLE public.temporal_discrepancies IS 'Evidence-fingerprinted autonomous correction work targets and prepared snapshots; the existing processing ledger owns retries (D110).';

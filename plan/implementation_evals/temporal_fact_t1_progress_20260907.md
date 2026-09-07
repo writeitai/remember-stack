@@ -424,3 +424,11 @@ Remaining program scope is unchanged: complete observation and other authority
 writers, autonomous correction execution, cache certificates/events and serving
 checks, hard-forget inventory/sanitized replay, complete consumers T.2/T.3/T.5,
 full acceptance and release. PR #384 remains a draft.
+
+The first D112 supported run, CI34079123485, found two catalog-contract omissions:
+the expected explicit index still named the replaced scalar-target index, and
+the new target table lacked the table comment required for every public table.
+Its actual constraint counts agree with the updated 99-table inventory. The
+follow-up pins `ix_rel_application_target_fact` and adds the target-table comment;
+it does not remove or relax the catalog checks. The run's quality, unit and
+Compose jobs passed; the fixed catalog still requires supported CI verification.

@@ -208,7 +208,7 @@ EXPECTED_TABLES: Final = (
 )
 EXPECTED_INDEXES: Final = (
     "ix_normalize_receipt_doc",
-    "ix_rel_apply_receipt_fact",
+    "ix_rel_application_target_fact",
     "ix_rel_assertion_block",
     "ix_rel_flush_input_assertion",
     "ix_rel_flush_unapplied",
