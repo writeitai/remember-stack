@@ -261,3 +261,37 @@ checks passed. One host MIME mapping failure in its extra full unit run was
 outside the correction scope; all jobs of supported CI34081321723 passed.
 The correction worker, atomic preparation/application, compensation and
 read/explain integration remain unimplemented; this is not full-program approval.
+
+## D113 observation preparation and inference — R12 through R15
+
+R12 approved the earlier source-membership/admission scope, independently
+rerunning 22 PostgreSQL 15 membership/admission cases, 38 journal/conversion
+cases, the actual expansion probe and static checks.
+
+R13 found that retaining old completed plans inside the next prepared input
+snapshot did not meet the ordinary operation-log disposition contract. Its
+first suggested resolution did not explain full-payload storage. R14 clarified
+that the existing operation table has no rejected-model JSON column; its
+suggestion to skip first-mention audit was rejected because D110 still
+requires a stale disposition and the schema permits historical logical targets.
+
+The revised implementation uses the exact retired preparation UUID as operation
+UUID and retains its input digest, stale result, unchanged historical state,
+source witnesses and non-mutating block footprint. It creates neither a fake
+fact nor a fact-plane adjudication referencing a missing row. Rejected model
+JSON is not needed for replay of an unapplied answer and is not retained in
+the next input snapshot. Ordinary seed application rejects stale seeds; the
+separate diagnostic entry point rejects state changes and applied results.
+
+R15 independently checked that implementation against D110 §2 and D113 §3,
+confirmed that no stronger rejected-payload retention obligation appears in
+the accepted contract, and reported no blockers in the revised increment
+(code committed as `575f04cb`). Its validation: 20 spine identity/re-split
+unit tests, three core identity tests, eight real-receipt PostgreSQL 15
+preparation/CAS/diagnostic proofs, 38 journal/conversion proofs, locked Ruff
+and full Pyright. Local combined fact/correction/observation unit validation
+also passed all 79 cases.
+
+The full dependent effect planner, atomic observation applier/support moves,
+worker handoffs, source/cache/forget lifecycle and consumer packages remain
+unfinished. These scoped review results do not approve #384 for merge or release.

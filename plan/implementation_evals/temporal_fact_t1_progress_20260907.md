@@ -591,7 +591,12 @@ Only committed effects authorize mutation replay; stale witnesses describe
 retired attempts. Source-presence checks refuse archiving an inconsistent
 prepared survivor after forget. Ordinary seed application rejects stale seeds,
 and the diagnostic entry point rejects every applied or state-changing effect.
-Antigravity R15 is reviewing this revised implementation and its contract scope.
+Antigravity R15 reviewed the revised implementation at the code subsequently
+committed as `575f04cb`, found no scoped blockers, and confirmed that the
+attempt UUID, input digest and non-mutating disposition satisfy D110/D113
+without retaining rejected speculative JSON. It independently reran all
+eight preparation proofs, 38 journal/conversion proofs, 23 focused observation
+tests, locked Ruff and Pyright. No full PR or release approval was given.
 
 ### Validation and remaining integration
 
