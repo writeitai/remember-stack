@@ -251,7 +251,10 @@ forced into a state. The single unknown-bounds-state shortcut applies only
 to a state-shaped claim. `unknown` is the uncertain shape; `undated` is never
 a fourth temporal enum. Relations' exclusion remains partial on state kind,
 non-invalidated belief and no contradiction group, preserving the existing
-contradiction exception. Overlapping occurrences remain legal.
+contradiction exception. D111 (`temporal_clocks_design.md` §4.2.1) additionally
+requires a known verdict start for exclusion eligibility; ordinary unknown-start
+coexistence and start acquisition follow that contract. Overlapping occurrences
+remain legal.
 
 ## 4. Autonomous corrections and compensation (#366)
 

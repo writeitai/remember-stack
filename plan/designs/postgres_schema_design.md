@@ -2757,7 +2757,9 @@ establish.
 The appendix separates committed enum expansion, structural stores, fenced
 in-place conversion and final constraint validation. Drop the old all-kind
 relation exclusion before applying converted uncapped occurrence rows, then
-install the final state exclusion after conversion. The basis vocabulary adds
+install the final state exclusion after conversion. D111 restricts that exclusion
+to known-start states; ordinary unknown-start coexistence and guarded start
+acquisition follow `temporal_clocks_design.md` §4.2.1. The basis vocabulary adds
 `erased`; cleared unsupported endpoints carry NULL/erased, affect current-query
 certainty and sit outside certified-state range exclusion. All ordinary writes
 and conversion/replay obey the documented serving-generation gate.
