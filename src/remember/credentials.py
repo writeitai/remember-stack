@@ -161,7 +161,7 @@ class CredentialFile(BaseModel):
     token_type: Literal["Bearer"] = "Bearer"
     token_id: UUID = Field(default_factory=uuid4)
     org_id: UUID = Field(default_factory=uuid4)
-    deployment_id: UUID = Field(default_factory=uuid4)
+    deployment_id: UUID | None = None
     label: str = "default"
     token_prefix: str = "umc_dp"
     expires_at: datetime | None = None

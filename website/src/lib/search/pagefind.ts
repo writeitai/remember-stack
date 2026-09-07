@@ -23,7 +23,17 @@ type PagefindDocument = {
   excerpt: string;
 };
 
+export function sanitizeDocUrl(rawUrl: string): string {
+  let url = (rawUrl || "").trim();
+  // Strip duplicate /docs/docs/ prefix if Pagefind baseUrl combined with an already prefixed route
+  while (url.startsWith("/docs/docs/")) {
+    url = url.slice(5);
+  }
+  return url;
+}
+
 type PagefindApi = {
+  options?: (opts: { baseUrl?: string }) => Promise<void>;
   init?: () => Promise<void>;
   search: (query: string) => Promise<{
     results: Array<{ id: string; data: () => Promise<PagefindDocument> }>;
@@ -48,6 +58,9 @@ function importPagefind(): Promise<PagefindApi | null> {
       return dynamicImport(rootUrl);
     })
     .then(async (mod) => {
+      if (mod.options) {
+        await mod.options({ baseUrl: "/" });
+      }
       if (mod.init) await mod.init();
       return mod;
     })
@@ -79,7 +92,7 @@ export async function searchDocs(query: string): Promise<SearchOutcome> {
     const top = search.results.slice(0, 8);
     const docs = await Promise.all(top.map((r) => r.data()));
     const results = docs.map((d) => ({
-      url: d.url,
+      url: sanitizeDocUrl(d.url),
       title: d.meta?.title ?? d.url,
       excerpt: d.excerpt,
     }));
