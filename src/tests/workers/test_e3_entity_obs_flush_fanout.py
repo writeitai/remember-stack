@@ -66,10 +66,11 @@ def test_entity_handler_applies_global_stream_and_row_clear() -> None:
 
 def test_legacy_retry_paths_recover_stable_fact_coordinates() -> None:
     """Cutover retries derive affected facts after idempotent writes disappear."""
+    normalize = inspect.getsource(e3.NormalizeRelationsHandler._handle_version_serial)
     flush = inspect.getsource(
         e3.AdjudicateObservationsHandler._handle_version_serial_legacy
     )
-    for source in (flush,):
+    for source in (normalize, flush):
         assert "relation_ids_for_origin_claims" in source
         assert "observation_ids_for_origin_claims" in source
         assert "refresh_for_facts" in source

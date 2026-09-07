@@ -1923,7 +1923,12 @@ def _normalize_through_shipped_resolver(
     handler: NormalizeRelationsHandler = _handler(
         provider=provider, resolver=resolver, facts=facts
     )
-    handler._resolve_claim_output(
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=_DEPLOYMENT_ID,
         claim=_claim(claim_text=claim_text),
         predicates={"related_to": None},

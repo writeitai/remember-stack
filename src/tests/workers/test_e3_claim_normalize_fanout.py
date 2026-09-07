@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import PipelineStage
@@ -15,7 +16,6 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
-from tests.workers.e3_test_doubles import RecordingNormalizations
 
 
 def test_e3_version_includes_claim_fanout_suffix() -> None:
@@ -77,7 +77,6 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
 
     claim_id = uuid4()
     handler = NormalizeRelationsHandler(
-        normalizations=None,  # type: ignore[arg-type]
         claim_catalog=type(
             "C",
             (),
@@ -98,8 +97,15 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
         chunk_catalog=type(
             "K", (), {"chunks_for_embedding": staticmethod(lambda **kwargs: ())}
         )(),  # type: ignore[arg-type]
+        registry=type(
+            "R",
+            (),
+            {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())},
+        )(),  # type: ignore[arg-type]
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=FakeModelProvider(generate_payload={}),
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",
@@ -292,11 +298,17 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
             return (_Chunk(),)
 
     handler = NormalizeRelationsHandler(
-        normalizations=None,  # type: ignore[arg-type]
         claim_catalog=_Claims(),  # type: ignore[arg-type]
         chunk_catalog=_Chunks(),  # type: ignore[arg-type]
+        registry=type(
+            "R",
+            (),
+            {"normalized_claim_ids": staticmethod(lambda **kwargs: frozenset())},
+        )(),  # type: ignore[arg-type]
         resolver=None,  # type: ignore[arg-type]
         facts=None,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=FakeModelProvider(generate_payload={}),
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",
@@ -361,7 +373,7 @@ def test_claim_handler_rejects_coordinate_mismatches() -> None:
 
 
 def test_handle_claim_grain_returns_barrier() -> None:
-    """Claim work publishes once, reuses on retry, and never writes a fact or staging row."""
+    """Claim-target work stages observations and returns claim barrier."""
     claim_id = uuid4()
     version_id = uuid4()
     representation_id = uuid4()
@@ -458,13 +470,14 @@ def test_handle_claim_grain_returns_barrier() -> None:
     }
     provider = FakeModelProvider(generate_payload=legal)
     facts = _Facts()
-    normalizations = RecordingNormalizations(claim=claim)
     handler = NormalizeRelationsHandler(
-        normalizations=normalizations,  # type: ignore[arg-type]
         claim_catalog=_Claims(),  # type: ignore[arg-type]
         chunk_catalog=_Chunks(),  # type: ignore[arg-type]
+        registry=_Registry(),  # type: ignore[arg-type]
         resolver=_Resolver(),  # type: ignore[arg-type]
         facts=facts,  # type: ignore[arg-type]
+        observation_adjudicator=None,  # type: ignore[arg-type]
+        profile_refresher=RecordingProfileRefresher(),
         model_provider=provider,
         settings=E3Settings(normalize_model="test"),
         chunker_version="test-chunker",
@@ -495,13 +508,5 @@ def test_handle_claim_grain_returns_barrier() -> None:
         E3_NORMALIZER_VERSION
     )
     assert outcome.claim_normalize_barrier.extractor_version == "e2-test-extractor"
-    assert facts.staged == []
-    assert normalizations.published is not None
-    assert len(normalizations.published.output.observations) == 1
-    assert normalizations.publications == 1
-    # A completed receipt avoids another provider call and another publication.
-    call_count = len(provider.generated_requests)
-    assert handler.handle(work=work, meter=NoopCostMeter()) == outcome
-    assert len(provider.generated_requests) == call_count
-    assert normalizations.publications == 1
+    assert facts.staged
     assert outcome.follow_up == ()

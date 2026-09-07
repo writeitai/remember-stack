@@ -1,6 +1,11 @@
 # Temporal fact writes, autonomous corrections, and cache lifecycle
 
-**Status:** D110 amendment, binding when this change lands on main.
+> **D114 supersession (2026-09-07; effective when merged).** D110–D112 framework requirements and incorporated SQL are withdrawn. Safe application, provenance and erasure remain requirements under D114; the old stores, endpoint authority and cache framework are not mandatory.
+> The [mutable fact window design](mutable_fact_windows_design.md) is the current
+> authority. The text
+> below is historical rationale, including any old “binding” or “required” labels.
+
+**Historical status:** D110 framework, superseded by D114.
 **Date:** 2026-09-07 (analysis and local probes began 2026-09-06).
 **Scope:** the four D107 implementation gates #365–#368; amends D107, D108,
 D88/D90, D55, D67 and D74. D107 continues to define the three clocks,
@@ -423,12 +428,8 @@ compensation follows the same ownership and evidence checks; it is not a toggle.
 This is the narrow recorded exception to ordinary monotonic endpoint moves,
 explicitly replacing D107's human-over-human reversal rule.
 
-D55 remains separate: ordinary existing-fact source withdrawal closes belief
-time at the persisted reconciliation instant. New historical identities use
-the empty-interval creation qualification in
-[D107 §4.4](temporal_clocks_design.md#44-closing-temporal-succession-separate-from-processing-order): they retain
-the original withdrawal event while never claiming a live belief before their
-recorded creation. A valid world-time cap may shorten a state under the
+D55 remains separate: source withdrawal closes belief time at the persisted
+reconciliation instant. A valid world-time cap may shorten a state under the
 chronological guard. If that guard refuses it, preserve the existing window,
 including any finite end; do not replace it with NULL. Occurrences remain
 uncapped and keep historical occurrence metadata. No source-removed bound is

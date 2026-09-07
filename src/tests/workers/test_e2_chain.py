@@ -154,14 +154,9 @@ def test_selection_drop_reasons_match_postgres(database_engine: Engine) -> None:
 def bootstrapped_deployment(database_engine: Engine) -> None:
     """Give every proof a fresh deployment and empty partitioned tables."""
     with database_engine.begin() as connection:
-        # Reset the whole proof dataset together, including D110 claim receipts.
-        # PostgreSQL checks incoming FKs even when the referencing tables are empty.
-        connection.execute(
-            statement=text(
-                "TRUNCATE TABLE deployments, chunks, chunk_claims, claims, "
-                "claim_extraction_decisions CASCADE"
-            )
-        )
+        connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
+        for table in ("chunks", "chunk_claims", "claims", "claim_extraction_decisions"):
+            connection.execute(statement=text(f"TRUNCATE TABLE {table}"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,

@@ -1,6 +1,11 @@
 # Observation application receipts and support provenance (D113)
 
-Status: binding when this amendment lands on main. This completes D110 §2's
+> **D114 supersession (2026-09-07; effective when merged).** D113 storage, proof graph and incorporated SQL are withdrawn. D114 retains the requirements for assertion provenance, atomic support changes and stable retry results.
+> The [mutable fact window design](mutable_fact_windows_design.md) is the current
+> authority. The text
+> below is historical rationale, including any old “binding” or “required” labels.
+
+Historical status: superseded by D114. This formerly completed D110 §2's
 observation prepare/apply storage contract and amends D90's detailed locking and
 staging rules. It does not establish implementation or release readiness.
 [Analysis](../analysis/observation_temporal_applications.md) explains the gap and
@@ -123,13 +128,6 @@ complete sorted fact/source locks and revalidation cover every participant.
 The revision-zero insertion never escapes the transaction; seed, evidence,
 creator and revision-one authority commit together. Evidence attachment changes
 occurrence metadata and support counters but never verdict endpoints or seed.
-
-A newly materialized historical observation, including a re-split destination,
-whose entire support was already withdrawn for D55 reasons applies the
-[D107 §4.4 historical-creation rule](temporal_clocks_design.md#44-closing-temporal-succession-separate-from-processing-order):
-seed and an empty belief interval at recorded creation commit together. Preserve
-the earlier withdrawal time/cause in provenance. D54 re-extraction uncertainty
-still requests the existing support flag rather than closing belief.
 
 Completed original fields—outcome, original observation ID, admitted coordinates,
 input digest and completion time—are immutable. Retry consumes them and the

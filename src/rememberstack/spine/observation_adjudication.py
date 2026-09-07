@@ -116,7 +116,6 @@ class ObservationSettings(BaseSettings):
     supersede_margin: float = Field(default=0.8, ge=0.0, le=1.0)
     novelty_floor: float = Field(default=0.3, ge=-1.0, le=1.0)
     hub_top_k: int = Field(default=5, ge=1)
-    dependent_assertion_limit: int = Field(default=64, ge=0)
 
 
 class ObservationAdjudicator:

@@ -33,9 +33,6 @@ src/tests/core/test_conversion.py
 src/tests/core/test_core_manifest.py
 src/tests/core/test_d80_recovery_and_hydration.py
 src/tests/core/test_embedding_input_policy.py
-src/tests/core/test_fact_temporal.py
-src/tests/core/test_observation_temporal.py
-src/tests/core/test_temporal_correction.py
 src/tests/core/test_forget_identity.py
 src/tests/core/test_knowledge_authored.py
 src/tests/core/test_knowledge_compile.py
@@ -46,7 +43,6 @@ src/tests/core/test_knowledge_writer.py
 src/tests/core/test_section_snap.py
 src/tests/core/test_structure_skeleton.py
 src/tests/core/test_temporal.py
-src/tests/core/test_temporal_conversion.py
 src/tests/core/test_text_metering.py
 src/tests/eval/test_s55_hard_forget.py
 src/tests/eval/test_s55_selfhost_restore.py
@@ -59,8 +55,6 @@ src/tests/packaging/test_release_contract.py
 src/tests/spine/test_catalog_lanes.py
 src/tests/spine/test_clustering_lock_policy.py
 src/tests/spine/test_entity_eligibility.py
-src/tests/spine/test_observation_identity.py
-src/tests/spine/test_observation_planning.py
 src/tests/spine/test_profile_convergence.py
 src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py

@@ -305,16 +305,6 @@ examined, and the failure looks like the deployment being down.
 - The current `RS-LoCoMo-Full-v24` pins D107 WP-T.4: all four claim temporal
   kinds, open-ended state windows, and full source timestamp headers. The
   extractor generation rolls; the fact schema and query-space contract do not.
-- D107/D110 fact temporal authority remains in development in
-  [draft PR #384](https://github.com/writeitai/remember-stack/pull/384). The
-  branch includes the guarded journal, resumable conversion, maintenance startup,
-  complete normalization receipts and ordered relation application. Its
-  `RS-LoCoMo-Full-v25` candidate pins those changed ingestion generations;
-  a v24 run/store is not a v25 run. D111's unknown-start coexistence is implemented
-  there, with exact relation-unit readiness checks. Complete participation by live writers, autonomous correction
-  execution, cache freshness, hard forget/replay, serving gates and the
-  T.2/T.3/T.5 consumer changes remain required. Conversion tests and scoped
-  reviews do not establish release readiness or benchmark improvement.
 - Historical `RS-LoCoMo-Full-v23` pins the query-space publication of those
   bounds (D107 WP-T.0b): `memory_v1.canonical_bounds`, `claims_canonical`, and
   the rewritten `examples.claims_as_of`. Ingestion and the library
@@ -331,6 +321,19 @@ examined, and the failure looks like the deployment being down.
   same-shaped events (seven tournament wins months apart) now survive as
   distinct facts. It changes ingestion provenance only; retrieval, prompts,
   budgets, and scoring are those of v20.
+
+## Temporal fact redesign (not shipped)
+
+[Draft PR #384](https://github.com/writeitai/remember-stack/pull/384) is being
+simplified around immutable source claims and one mutable world-time window per
+fact. It withdraws the earlier incomplete implementation and records the revised
+design and implementation gates. It does not change the running adjudicators,
+fact schema or current Full-v24 benchmark protocols.
+
+The replacement will let ordinary adjudication revise dates and identify events
+from context, with explicit historical retrieval and date-qualified summaries.
+Those behaviors require separately reviewed implementation and acceptance.
+Published canonical SQL and the merged extraction vocabulary remain available.
 
 ## What landed after v0.6.0 (in v0.7.0; historical resolver generation)
 

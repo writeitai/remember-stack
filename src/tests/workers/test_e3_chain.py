@@ -34,6 +34,7 @@ from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import EntityProfileRefresher
+from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
@@ -45,8 +46,6 @@ from rememberstack.spine import SupersessionAdjudicator
 from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
-from rememberstack.spine.normalization import NormalizationCatalog
-from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -111,7 +110,6 @@ _NORMALIZATION_PAYLOAD: dict[str, object] = {
         {
             "subject": {"name": "Alice Novak"},
             "predicate": "works_for",
-            "shape_kind": "state",
             "object": {"name": "Acme"},
         },
         {
@@ -199,11 +197,6 @@ class _E3Rig:
             "NormalizationResponse": _NORMALIZATION_PAYLOAD,
             "FactLabelResponse": {"label": "Alice Novak works for Acme."},
             "SupersessionVerdict": {"outcome": "coexist", "confidence": 0.9},
-            "RelationIdentityVerdict": {
-                "decisions": [],
-                "confidence": 0.9,
-                "rationale": "No incompatible existing state.",
-            },
             "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
         }
 
@@ -237,9 +230,9 @@ class _E3Rig:
             embedding_model=P1Settings().embedding_model,
         )
         self.normalize_handler = NormalizeRelationsHandler(
-            normalizations=NormalizationCatalog(engine=engine),
             claim_catalog=claim_catalog,
             chunk_catalog=chunk_catalog,
+            registry=EntityRegistry(engine=engine),
             resolver=CascadeResolver(
                 engine=engine,
                 model_provider=self.provider,
@@ -248,6 +241,12 @@ class _E3Rig:
                 small_model="openai/gpt-5.6-luna",
             ),
             facts=FactCatalog(engine=engine),
+            observation_adjudicator=ObservationAdjudicator(
+                engine=engine,
+                model_provider=self.provider,
+                settings=ObservationSettings(),
+            ),
+            profile_refresher=profile_refresher,
             model_provider=self.provider,
             settings=E3Settings(),
             chunker_version=chunker_version(params=_PARAMS),
@@ -319,11 +318,6 @@ class _E3Rig:
         registry.register(
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
-                ordered_applier=OrderedRelationApplier(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=SupersessionSettings(),
-                ),
                 adjudicator=SupersessionAdjudicator(
                     engine=engine,
                     model_provider=self.provider,
@@ -532,7 +526,6 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             # D90: empty path is durable empty_complete — no document_version
             # adjudicate_observations work row at the entity-fanout generation.
             PipelineStage.ADJUDICATE_OBSERVATIONS,
-            PipelineStage.ADJUDICATE_SUPERSESSION,
         ):
             assert outcome is RunResultOutcome.NO_WORK, stage
         else:
@@ -568,7 +561,8 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
 
     assert chunk_count == 0
     assert empty_complete == "empty_complete"
-    # D110 also completes empty relations by a durable barrier, without a synthetic job.
+    # D84/D88/D90: zero-chunk hop → durable empty_complete (no version-grain
+    # extract, claim normalize, or adjudicate_observations processing row).
     assert {stage for stage, _status in rows} == {
         stage.value
         for stage in (
@@ -576,12 +570,13 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
+            PipelineStage.ADJUDICATE_SUPERSESSION,
             PipelineStage.EMBED_CLAIM,
             PipelineStage.RECONCILE,
             PipelineStage.LABEL_RELATION,
         )
     }
-    assert len(rows) == 7
+    assert len(rows) == 8
     assert {status for _stage, status in rows} == {"succeeded"}
     assert rig.provider.generated_prompts == []
 

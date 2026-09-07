@@ -15,8 +15,7 @@ implemented continuous document routes: conversion, structure, chunking, chunk
 embedding, claim extraction, normalization, supersession, claim embedding,
 reconciliation, and fact labeling. P1 search writes occur in those workers'
 ordinary PostgreSQL transactions; there is no separate search-store or index
-maintenance process. The one-shot `setup` service applies migrations and their
-required data conversion,
+maintenance process. The one-shot `setup` service applies every migration,
 provisions object buckets, bootstraps the deployment, and seeds
 the four canonical assured operations plus the `examples.*` saved queries.
 The RememberStack, `rememberstack`, and `remember` names used here are final. Do
@@ -67,33 +66,6 @@ every secret before using the stack outside an isolated development machine.
 It also contains an OpenRouter placeholder. Replace it before processing a
 corpus: the complete pipeline makes extraction and embedding calls. Pin explicit
 model IDs for reproducible work; do not use a rotating free-model router.
-
-## Existing-store temporal upgrade
-
-The temporal fact upgrade is a maintenance operation on the same supported
-PostgreSQL version. It does not replace the PostgreSQL prerelease volume policy
-above. Stop intake, let the old workers finish outstanding work and accepted
-forgets, then stop the old API, connector, worker and projection processes before
-running the new checkout's `setup` service. The upgrade checks for unfinished
-work and refuses to change the legacy schema while that work remains.
-
-`setup` commits the expansion schema, converts facts in resumable batches, then
-validates the final schema and records the fact generation. It preserves fact
-IDs and records the evidence and decisions used for conversion. Empty
-deployments receive an explicit zero-row conversion record. A second setup run
-preserves an existing completed certificate.
-
-If conversion is interrupted, keep the old processes stopped and rerun `setup`.
-It resumes from persisted progress. Do not substitute `alembic upgrade head`,
-manually stamp a revision, or create a generation certificate: finalization
-rejects incomplete conversion and changed fact or migration records. New empty
-deployments created after schema finalization are certified in their creation
-transaction only after the temporal constraints have been checked.
-
-The upgrade lock serializes setup callers. It cannot stop an older binary that
-does not participate in the new runtime protocol; stopping those processes is
-an operational prerequisite. See [Project Status](/docs/project-status) for the
-remaining temporal runtime work in the development branch.
 
 ## Optional observability
 
@@ -169,14 +141,6 @@ docker compose --profile operations run --rm projections
 The API reads the same MinIO P3 snapshot store. `POST /readiness` can verify a
 bounded list of document version IDs plus requested pipeline, P1, live-graph,
 and P3 capabilities. P3 must begin after the latest requested terminal stage.
-Relation-stage readiness checks the version's complete assertion membership,
-the exact block-worker generation and its committed application receipts. Each
-receipt certifies its complete set of supported facts; a missing or substituted
-target prevents completion. One broad state claim can support several historical
-periods while preserving their separate dates and the gaps between them. An
-empty version needs its explicit completion record; it does not run an empty
-adjudication job. Missing membership or receipts cannot be hidden by a completed
-coordinator job.
 The response also records the API process's current non-secret model bindings for
 configuration review; these are not processing-time provenance.
 

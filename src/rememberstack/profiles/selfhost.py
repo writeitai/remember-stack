@@ -14,6 +14,7 @@ from typing import Self
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from alembic import command
 from alembic.config import Config
 import psycopg
 from psycopg import sql as pg_sql
@@ -47,16 +48,14 @@ from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
+from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
-from rememberstack.spine.normalization import NormalizationCatalog
-from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
-from rememberstack.spine.temporal_upgrade import upgrade_temporal_store
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -742,12 +741,15 @@ class SelfHostProfile:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
         migration.set_main_option(
-            "sqlalchemy.url",
-            load_database_settings().sqlalchemy_url().replace("%", "%%"),
+            "sqlalchemy.url", load_database_settings().sqlalchemy_url()
         )
-        upgrade_temporal_store(
-            engine=self._engine,
-            config=migration,
+        command.upgrade(config=migration, revision="head")
+        self._raw_store.ensure_bucket()
+        self._artifact_store.ensure_bucket()
+        self._corpusfs_store.ensure_bucket()
+        self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
+        self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
+        DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
             deployment_input=DeploymentBootstrapInput(
                 deployment_id=self._settings.deployment_id,
                 slug=self._settings.deployment_slug,
@@ -756,13 +758,8 @@ class SelfHostProfile:
                 raw_bucket=f"s3://{self._settings.raw_bucket_name}",
                 artifacts_bucket=f"s3://{self._settings.artifacts_bucket_name}",
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
-            ),
+            )
         )
-        self._raw_store.ensure_bucket()
-        self._artifact_store.ensure_bucket()
-        self._corpusfs_store.ensure_bucket()
-        self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
-        self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
         )
@@ -1150,6 +1147,7 @@ class SelfHostProfile:
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import EntityClusterer
         from rememberstack.spine import EntityProfileRefresher
+        from rememberstack.spine import EntityRegistry
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
         from rememberstack.spine import ObservationAdjudicator
@@ -1252,9 +1250,9 @@ class SelfHostProfile:
         if stage is PipelineStage.NORMALIZE_RELATIONS:
             observation_settings = ObservationSettings.model_validate({})
             return NormalizeRelationsHandler(
-                normalizations=NormalizationCatalog(engine=self._engine),
                 claim_catalog=claims,
                 chunk_catalog=chunks,
+                registry=EntityRegistry(engine=self._engine),
                 resolver=CascadeResolver(
                     engine=self._engine,
                     model_provider=self._model_provider,
@@ -1263,6 +1261,12 @@ class SelfHostProfile:
                     small_model=observation_settings.small_model,
                 ),
                 facts=facts,
+                observation_adjudicator=ObservationAdjudicator(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    settings=observation_settings,
+                ),
+                profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
                 settings=E3Settings.model_validate({}),
                 chunker_version=chunk_generation,
@@ -1283,11 +1287,6 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
-                ordered_applier=OrderedRelationApplier(
-                    engine=self._engine,
-                    model_provider=self._model_provider,
-                    settings=SupersessionSettings(),
-                ),
                 adjudicator=SupersessionAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,

@@ -157,7 +157,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.locomo",
         description=(
-            "RS-LoCoMo-Full-v25: prepare is local; ingest/answer/judge require "
+            "RS-LoCoMo-Full-v24: prepare is local; ingest/answer/judge require "
             "explicit execution acknowledgements"
         ),
     )

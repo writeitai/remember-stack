@@ -1,6 +1,11 @@
 # Temporal Clocks — world-time flows from the claim's window (Design)
 
-**Status:** binding under D107, amended by D110
+> **D114 supersession (2026-09-07; effective when merged).** D107 fact kinds, dual windows, seed/matching/correction and consumer rules are superseded. Canonical arithmetic (§5), extraction vocabulary (§6) and the already published query-space contract remain in force.
+> The [mutable fact window design](mutable_fact_windows_design.md) is the current
+> authority. Except for the explicitly retained D107 portions above, the text
+> below is historical rationale, including any old “binding” or “required” labels.
+
+**Historical status:** D107, formerly amended by D110; see D114 precedence above.
 
 > **D110 amendment (2026-09-07).**
 > [Temporal write and lifecycle design](temporal_write_and_lifecycle_design.md)
@@ -334,21 +339,6 @@ recorded as a disputed world-time endpoint for autonomous consideration. A withd
 the same way. This is the per-shape judgement D55 asks for and
 `close_observations` could not make while shape was semantic;
 `temporal_kind` makes it mechanical.
-
-**New historical identities.** When a new fact is materialized whose entire
-support was already withdrawn for a D55 reason (including a new identity
-created by a late observation re-split), it was never a current system belief.
-For that creation path, set `invalidated_at` to the later of its recorded
-`ingested_at` and the persisted withdrawal instant: earlier withdrawal yields
-an empty belief interval at creation. Retain the original withdrawal time and
-cause in the existing prepared/journal provenance. Seed and closure commit
-atomically, without a visible live intermediate fact. Do not backdate ingestion,
-weaken the nonnegative belief-interval check, or consult the execution clock.
-This qualification does not clamp ordinary existing-fact lifecycle history or
-revise an existing invalidation. D54 re-extraction still follows its support
-flag rule. World-time endpoints and occurrence metadata do not change because
-of this belief-time qualification. Rationale and alternatives:
-[historical fact creation analysis](../analysis/historical_fact_belief_creation.md).
 
 **Residual, measured rather than assumed:** undated, differently worded
 restatements of a changing state coexist as unknown-bounds rows instead of

@@ -46,14 +46,17 @@ def test_normalize_drops_game_relation_without_resolve() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    output = handler._resolve_claim_output(
+    handler._normalize_claim(
+        created_relations=[],
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={"related_to": None},
         prompt_lines="related_to",
         meter=NoopCostMeter(),
     )
-    assert output.outcome == "empty"
     assert resolver.calls == []
     assert facts.upserts == []
 
@@ -73,7 +76,12 @@ def test_normalize_resolves_fifa_23() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    output = handler._resolve_claim_output(
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="James played FIFA 23 after dinner."),
         predicates={"related_to": None},
@@ -81,8 +89,7 @@ def test_normalize_resolves_fifa_23() -> None:
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["James", "FIFA 23"]
-    assert len(output.relations) == 1
-    assert facts.upserts == []
+    assert len(facts.upserts) == 1
 
 
 def test_normalize_drops_game_observation_without_resolve() -> None:
@@ -94,14 +101,17 @@ def test_normalize_drops_game_observation_without_resolve() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    output = handler._resolve_claim_output(
+    handler._normalize_claim(
+        created_relations=[],
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim(),
         predicates={"related_to": None},
         prompt_lines="related_to",
         meter=NoopCostMeter(),
     )
-    assert output.outcome == "empty"
     assert resolver.calls == []
 
 
@@ -120,7 +130,12 @@ def test_works_for_between_people_is_not_dropped() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"works_for": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    output = handler._resolve_claim_output(
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="Alice works for me."),
         predicates={"works_for": None},
@@ -128,8 +143,7 @@ def test_works_for_between_people_is_not_dropped() -> None:
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["Alice", "Me"]
-    assert output.relations[0].predicate == "works_for"
-    assert facts.upserts == []
+    assert facts.upserts[0]["predicate"] == "works_for"
 
 
 def test_normalize_passes_source_surface_to_resolve() -> None:
@@ -147,7 +161,12 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    output = handler._resolve_claim_output(
+    created: list[str] = []
+    handler._normalize_claim(
+        created_relations=created,
+        observations_by_entity={},
+        staged_observations=None,
+        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="James opened the App after dinner."),
         predicates={"related_to": None},
@@ -157,5 +176,4 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
     assert resolver.calls[1].name == "Application"
     assert resolver.calls[1].surface == "App"
     assert resolver.calls[1].mention_surface() == "App"
-    assert len(output.relations) == 1
-    assert facts.upserts == []
+    assert len(facts.upserts) == 1

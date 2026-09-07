@@ -127,9 +127,6 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_25_0046",
         "p9_26_0047",
         "p9_27_0048",
-        "p9_28_0049",
-        "p9_29_0050",
-        "p9_30_0051",
     )
     assert len(script.get_heads()) == 1
 
@@ -142,8 +139,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # the required legacy-generation backfill, D102's is a derived-projection
     # trigger, and p9_23_0044's DOWNGRADE rebuilds a derived cache from the
     # aliases already present (D103). All derive from existing rows; none
-    # seeds a deployment. D110 finalization certifies existing completed
-    # conversion receipts; it cannot create a deployment or bypass conversion.
+    # seeds a deployment.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
@@ -153,7 +149,6 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p1_04_0019_d79_structure_generations.py": 1,
         "p9_22_0043_document_entity_bindings.py": 1,
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
-        "p9_30_0051_temporal_fact_finalize.py": 1,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -579,9 +574,7 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
                 },
             )
 
-        from rememberstack.spine.temporal_upgrade import upgrade_temporal_store
-
-        upgrade_temporal_store(engine=engine, config=config)
+        command.upgrade(config=config, revision="head")
         with engine.connect() as connection:
             row = (
                 connection.execute(
@@ -650,27 +643,12 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 103
+    assert len(fresh_inventory.tables) == 70
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
-            # Schema-only D113 fixture: two valid generation keys share the
-            # D90 coordinates. Whole-schema teardown must remove them without
-            # first attempting to restore the narrower historical primary key.
-            # These rows do not claim normalized source or runtime completion.
-            for generation in ("d113-teardown-one", "d113-teardown-two"):
-                connection.execute(
-                    text("""INSERT INTO obs_flush_version_state
-                    (deployment_id,version_id,normalizer_version,adjudicator_version,flush_version,
-                     representation_id,chunker_version,extractor_version,content_hash,lane,expected_units,fanout_status)
-                    VALUES ('00000000-0000-0000-0000-000000000001',
-                     '00000000-0000-0000-0000-000000000002','schema-teardown',:generation,:generation,
-                     '00000000-0000-0000-0000-000000000003','schema-teardown','schema-teardown',
-                     'schema-teardown','steady',0,'materialized')"""),
-                    {"generation": generation},
-                )
             connection.execute(statement=text("DROP TABLE relation_evidence_p63"))
         with engine.connect() as connection:
             with pytest.raises(SchemaContractError, match="relation_evidence_p63"):
@@ -687,7 +665,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_30_0051"
+    assert head_before_noop == head_after_noop == "p9_27_0048"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
