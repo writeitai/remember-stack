@@ -346,9 +346,7 @@ def _document_stub(
     lines.append(f"- Canonical path: `{canonical_path}/`")
     lines.append(f"- Full text: `{document.get('markdown_uri') or '(not converted)'}`")
     if document.get("raw_uri"):
-        lines.append(
-            f"- Original: `{document['raw_uri']}`"
-        )
+        lines.append(f"- Original: `{document['raw_uri']}`")
     if document.get("stored_raw_uri"):
         lines.extend(
             [
