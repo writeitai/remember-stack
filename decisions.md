@@ -5312,3 +5312,37 @@ incorporated by `plan/designs/postgres_schema_design.md`. Analysis:
 Amends D107/D108, D88/D90, D55, D67 and D74; preserves the D60/D61 library
 boundary. Build order is `plan/plans/temporal_clocks.md`. This decision resolves
 the design gates; it does not certify T.1 implementation, conversion or release.
+
+## D111. Unknown-start states may coexist without fabricated identity or contradiction
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** D107 prohibits mixed dated/undated evidence attachment and requires
+coexistence without a supported succession or contradiction. Its exclusion
+nevertheless treats an ordinary unknown-start state as an infinite interval,
+making some required same-value coexistence impossible in PostgreSQL.
+
+**Decision.** Apply relation interval exclusion only to states with a known
+verdict start, preserving the existing belief, contradiction and erased-boundary
+conditions. Both fully unknown and unknown-start/known-end states can coexist;
+known-start open-ended states retain protection. All writers validate start
+acquisition against eligible neighbors under D110 locks. Refused acquisition
+preserves existing endpoints and records the reason. Current membership remains
+D107 §7.1; consumers disclose unknown starts and unresolved identity overlap,
+and fact-identity counts do not imply distinct dated episodes.
+
+**Alternatives and consequences.** Forced evidence or contradiction invents
+semantics. Exempting only both-NULL endpoints misses a legal ending-occurrence
+cap; exempting unknown ends unnecessarily weakens dated open-ended protection.
+An explicit overlap-permission field adds redundant lifecycle state for this
+class. SQL stops enforcing uniqueness among unknown-start identities; ordered
+identity adjudication and receipts remain mandatory. No new public grant,
+source of validity, schema field or scheduler is introduced. Conversion,
+readiness, replay, erasure and consumers must share the amended contract.
+
+**Authority.** [D107 §4.2.1](plan/designs/temporal_clocks_design.md),
+[D110 companion schema](plan/designs/temporal_write_and_lifecycle_schema.sql).
+[Analysis and independent challenge](plan/analysis/temporal_undated_state_coexistence.md).
+Amends D107/D110's unknown-start exclusion policy; preserves their mixed identity,
+world-time, belief-time and erasure contracts. This resolves the identified
+mixed-state contract conflict; implementation and release remain separate gates.

@@ -215,12 +215,60 @@ no-op" short-circuit applies only to compatible state-shaped assertions; missing
 make an occurrence a state. D110 §3 defines the complete staging/receipt path.
 
 **Relations schema.** The existing GiST `EXCLUDE` on `(subject, predicate,
-object) && tstzrange(valid_from, valid_until)` becomes partial on
-`temporal_kind = 'state'`, retaining the existing non-invalidated and
-no-contradiction predicates. D110 further excludes intervals with an `erased`
-endpoint basis and requires explicit uncertain-membership disclosure. Ordinary
-unknown-bounds states remain unbounded ranges under it. Occurrences have no
-interval exclusion.
+object) && tstzrange(valid_from, valid_until)` protects states with a known
+verdict start, retaining the non-invalidated and no-contradiction predicates.
+D110 further excludes intervals with an `erased` endpoint basis and requires
+explicit uncertain-membership disclosure. D111 §4.2.1 below defines ordinary
+unknown-start coexistence. Occurrences have no interval exclusion.
+
+### 4.2.1 Unknown-start state coexistence (D111)
+
+A missing start is insufficient evidence that a state occupied every earlier
+instant. For example, “Alex is CEO” without dates and “Alex was CEO during
+2019” cannot establish one identity under the mixed-pair rule above, but need
+not contradict each other. Treating the first row as an infinite interval for
+uniqueness would prohibit the required `new`/coexist outcome. The exclusion
+therefore applies only when `valid_from IS NOT NULL`, alongside the existing
+state, non-invalidated, no-contradiction and no-erased-endpoint predicates.
+
+Both `(NULL, NULL)` and `(NULL, finite_end)` states may coexist with dated
+same-triple states. The latter arises when an ending occurrence lawfully caps
+an unknown-start state. A known-start open-ended state remains protected.
+Preserve temporal kind, immutable seed, endpoint bases and existing dates;
+do not invent a contradiction, an erased endpoint, or an identity attachment
+to make a row fit the constraint. Mixed `new` is an ordinary durable completed
+identity outcome, not an endlessly retried input. D110's ordered admission,
+block locks and application receipts still prevent duplicate application.
+
+Every writer that acquires a known start, including autonomous correction and
+compensation, checks the complete resulting interval against all eligible
+same-triple state neighbors under D110's locks and revisions. An overlapping
+proposal is refused with a recorded reason and unchanged previous endpoints;
+the database constraint remains the final defense. Capping an unknown-start
+state without acquiring a start preserves its exemption. Conversion and replay
+use the same predicate, and readiness verifies its exact definition. Erasure
+retains D110 §6's separate basis, deletion and replay requirements.
+
+Membership stays as defined in §7.1: ordinary missing start supplies no lower
+bound, and a known end still expires the fact. Reads expose that missing start
+and any unresolved identity overlap; they do not turn ordinary unknown timing
+into an erased-boundary result. Aggregates count eligible fact identities,
+which can include both coexisting rows. Such counts must not be described as
+proof of distinct dated spells or real-world episodes. Profiles and K pages
+preserve this uncertainty instead of constructing an unsupported chronology.
+
+This changes no public grants or mutation authority and adds no new state
+field. It removes SQL uniqueness among unknown-start identities, making
+identity adjudication and receipts responsible for that class. Forced evidence
+would collapse unresolved identities; a both-NULL exception misses the legal
+known-end case; exempting unknown ends would also lose protection of dated
+open-ended states. Explicit overlap permission would add redundant lifecycle
+state for this class. See the
+[analysis and independent challenge](../analysis/temporal_undated_state_coexistence.md).
+
+Acceptance requires both ingestion orders, unknown-start finite-end states,
+multiple dated historical slices, retained known-start exclusion, accepted and
+refused start acquisition, receipt replay, and source-removal/erasure coverage.
 
 ### 4.3 Revising a verdict: autonomous recorded correction (D110/D108)
 

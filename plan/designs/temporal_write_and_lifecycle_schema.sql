@@ -846,7 +846,7 @@ ALTER TABLE public.relations
     predicate WITH =,
     object_entity_id WITH =,
     tstzrange(valid_from, valid_until, '[)') WITH &&
-  ) WHERE (temporal_kind = 'state'
+  ) WHERE (temporal_kind = 'state' AND valid_from IS NOT NULL
            AND valid_from_basis <> 'erased' AND valid_until_basis <> 'erased'
            AND invalidated_at IS NULL AND contradiction_group IS NULL);
 
