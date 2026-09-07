@@ -299,10 +299,9 @@ def _document_stub(
     `grep -r` over stubs is content-ish lookup with zero API calls, so the
     title, summary, and pointers are IN the file — and every view stub
     names its Tier-1 canonical path, so a reorganized view never loses the
-    document. The stub also carries the explicit `raw_uri` (D51): raw is
-    off the browse path, never unreachable — following this pointer is how
-    a multimodal harness or a re-OCR session opens the original, and that
-    read is audited.
+    document. Explicit original pointers let a harness open the source.
+    D116 governs original navigation; read auditing depends on the storage
+    backend and cannot be asserted by this generated stub.
     """
     summary = _one_line(str(document.get("root_summary") or ""))
     frontmatter: dict[str, str] = {
@@ -348,7 +347,7 @@ def _document_stub(
     lines.append(f"- Full text: `{document.get('markdown_uri') or '(not converted)'}`")
     if document.get("raw_uri"):
         lines.append(
-            f"- Original (off the browse path; audited): `{document['raw_uri']}`"
+            f"- Original: `{document['raw_uri']}`"
         )
     if document.get("stored_raw_uri"):
         lines.extend(
@@ -357,7 +356,7 @@ def _document_stub(
                 "## Latest stored original",
                 "",
                 f"- Version: `{document['stored_version_id']}`",
-                f"- Original (off the browse path; audited): `{document['stored_raw_uri']}`",
+                f"- Original: `{document['stored_raw_uri']}`",
                 f"- MIME: `{document.get('stored_mime') or ''}`",
                 f"- Processing status: `{document.get('stored_status') or ''}`",
             ]
