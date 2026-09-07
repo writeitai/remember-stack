@@ -1,11 +1,8 @@
 # Registries Design — Entity Resolution, Ontology, Governance
 
-> **Binding D107 amendment (2026-09-03).** The T4 candidate snapshot carries
-> each salient fact's occurrence window and bases, ranked by evidence then
-> occurrence recency (never `updated_at`); the relation supersession prompt
-> and its evidence laterals show both clocks (`said on` / `is about`) as
-> `temporal_clocks_design.md` §7.2 requires; matching, verdict revision and
-> temporal succession follow §4.2–§4.4.
+> **D114 amendment (2026-09-07; effective when merged).** Salient fact inputs use one chosen world window and source timestamps. Date-qualified profiles use stable selection; occurrence unions/bases and wall-clock recency are superseded (§§5–6).
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only globally.
 > One current `T4_small` match may establish a derived exact-name binding inside

@@ -29,15 +29,15 @@
 > and fingerprints change; earlier protocol scores are directional comparisons.
 > Binding extraction semantics: `temporal_clocks_design.md` §6.
 
-> **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
-> two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
-> about), and the fact-grain `validity` fields with their bases and occurrence
-> window. Each D107 work package that changes ingestion provenance or the
-> assured surface rolls this protocol; the sequencing is
-> `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
+> **D114 amendment (2026-09-07; effective when merged).** Future fact-time
+> inputs use one chosen window, precision and source timestamps, with explicit
+> current/history selection and unknown-date disclosure. Full-v24 and all current
+> evaluator variants remain unchanged by this design-only amendment. Roll the
+> protocol when replacement semantics ship; see
+> [D114](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
 
-> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
-> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
+> `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,
 > tools, budgets, prompts, scoring, and ingest component versions. The query
 > space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
 > `examples.claims_as_of` overlaps the half-open canonical window and counts
