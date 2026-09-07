@@ -455,7 +455,7 @@ def rig(database_engine: Engine, tmp_path: Path) -> _LifecycleRig:
 def test_worked_example_edit_retracts_solely_supported_fact(rig: _LifecycleRig) -> None:
     """Lifecycle §5's worked example, end to end: the living edit removes the
     fact's sole support → currency flips, count hits zero, the relation
-    closes per shape with a recorded retraction, and the fact-level
+    closes system belief with a recorded retraction, and the fact-level
     `evidence_changed` delta is emitted. A replayed run re-emits as no-ops."""
     rig.observe(
         source_ref="a.md",
@@ -476,9 +476,8 @@ def test_worked_example_edit_retracts_solely_supported_fact(rig: _LifecycleRig) 
 
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # capped at the withdrawing edit
-    assert str(fact["valid_until"]).startswith("2026-02-01")
-    assert fact["invalidated_at"] is None  # retraction is not "learned wrong"
+    assert fact["valid_until"] is None  # withdrawal does not invent a world end
+    assert fact["invalidated_at"] is not None  # no supporting testimony remains
     event = rig.scalar(
         "SELECT count(*) FROM testimony_currency_events"
         " WHERE reason = 'version_superseded' AND became_current = false"
@@ -684,7 +683,8 @@ def test_cycle_finalization_closes_a_genuinely_removed_fact(rig: _LifecycleRig) 
     rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # closed at the barrier
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # belief closes at the barrier
     assert (
         rig.scalar(
             "SELECT count(*) FROM relation_adjudications"
@@ -791,7 +791,8 @@ def test_a_no_claims_replacement_still_supersedes(rig: _LifecycleRig) -> None:
     rig.drain()
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # closed: the source acted
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # support was withdrawn
     assert (
         rig.scalar("SELECT count(*) FROM entities WHERE profile_summary IS NOT NULL")
         == 0
@@ -852,7 +853,8 @@ def test_interrupted_reconcile_completes_on_retry(rig: _LifecycleRig) -> None:
     assert outcome is RunResultOutcome.SUCCEEDED
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # the retry finished the close
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # retry finishes belief withdrawal
     assert (
         rig.scalar(
             "SELECT count(*) FROM knowledge_refresh_queue"
@@ -1118,4 +1120,5 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
     else:
         rig.lifecycle.delete_lineage(doc_id=parked.doc_id)
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
-    assert rig.relation()["valid_until"] is not None
+    assert rig.relation()["valid_until"] is None
+    assert rig.relation()["invalidated_at"] is not None

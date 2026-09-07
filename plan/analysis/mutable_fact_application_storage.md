@@ -274,3 +274,23 @@ without automatically undoing dates. Tests cover ordinary retry, evidence attach
 recursive merged members and same-identity edits. Unreachable old mutation bodies
 are removed; rejected compatibility entrypoints and the historical read-only pair
 diagnostic remain. That diagnostic is not evidence of replacement-writer quality.
+
+### Final review follow-through: Git erasure and end-to-end proofs
+
+Grok's final review of `73a3df32` found no runtime blocker in its inspected scope,
+but correctly identified stale shipped documentation and two missing composition
+proofs. The project-status page and ingestion withdrawal description now describe
+the replacement runtime. A retained-store conversion test also covers an empty
+normalizer response: the ordinary document-label job must refresh both entity
+profiles despite creating no fact applications.
+
+The real-Git composition proof found a recovery bug hidden by the earlier fake
+remote. After deleting a compiled body and rewriting its history, the purger
+called `git add` with the now-absent path and failed. It now stages only surviving
+current bytes; history rewriting already removed the deleted paths from the
+index. The test runs deletion, publication, history purge and verification twice,
+checks that the source marker has no reachable history, and preserves unrelated
+current pages. The same proof includes a tombstoned compiled artifact, which is
+included explicitly in the erasure path inventory. Ordinary checkout classification
+continues to exclude tombstoned artifacts. No new erasure store or scheduler is
+introduced.

@@ -918,12 +918,16 @@ class KnowledgeControlPlane:
             )
 
     def artifact_path_states(
-        self, *, deployment_id: UUID
+        self, *, deployment_id: UUID, include_tombstoned: bool = False
     ) -> tuple[KnowledgeArtifactPathState, ...]:
-        """Return body and curation paths used to classify checkout Markdown files."""
+        """Classify checkout paths; erasure also inventories retired artifacts."""
         with self._engine.connect() as connection:
             rows = connection.execute(
-                _SELECT_ARTIFACT_PATH_STATES, {"deployment_id": deployment_id}
+                _SELECT_ARTIFACT_PATH_STATES,
+                {
+                    "deployment_id": deployment_id,
+                    "include_tombstoned": include_tombstoned,
+                },
             ).mappings()
             return tuple(
                 KnowledgeArtifactPathState.model_validate(dict(row)) for row in rows
@@ -4049,7 +4053,8 @@ _SELECT_ARTIFACT_PATH_STATES = text(
     """
     SELECT artifact_id, git_path, page_kind::text AS page_kind, curation_path
     FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id AND status <> 'tombstoned'
+    WHERE deployment_id = :deployment_id
+      AND (:include_tombstoned OR status <> 'tombstoned')
     ORDER BY git_path
     """
 )

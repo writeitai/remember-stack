@@ -239,12 +239,13 @@ Many-to-many `fact_claim_evidence` with stance **supports** | **contradicts**. C
 - Contradictions group live disagreements; both sides remain.
 - Every adjudication is a logged, replayable decision.
 
-### Observation shapes (retract semantics)
+### Withdrawal and world dates
 
-| Shape | Example | Retract behavior |
-| --- | --- | --- |
-| Effective state | Headcount, employment | Cap world validity at withdrawal time |
-| Fixed-period measurement | FY2023 revenue | Do not cap world period; mark system invalidation |
+Withdrawing testimony changes its evidence currency. If no supporting testimony
+remains, the engine closes system belief in the fact. Withdrawal does not choose
+an end date for the real-world event or relationship. A world-time end changes
+only through a grounded adjudication, such as evidence that employment ended in
+June—even if the source was withdrawn in September.
 
 ---
 

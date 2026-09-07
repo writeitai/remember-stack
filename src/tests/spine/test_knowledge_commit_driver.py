@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.core import knowledge_content_hash
 from rememberstack.core import KnowledgeAuthoredDeclarationError
 from rememberstack.core import KnowledgePageValidationError
@@ -35,6 +36,7 @@ from rememberstack.model import KnowledgePlanRunWrite
 from rememberstack.model import KnowledgePlanTrigger
 from rememberstack.model import KRevision
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import KnowledgeCommitBusyError
 from rememberstack.spine import KnowledgeCompilationError
 from rememberstack.spine import KnowledgeControlPlane
@@ -42,6 +44,9 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import KnowledgeAuthoredSynchronizer
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCommitSettings
+from tests.adapters.test_selfhost_git import _commit
+from tests.adapters.test_selfhost_git import _git
+from tests.adapters.test_selfhost_git import _output
 from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -917,3 +922,77 @@ def test_forget_removes_current_compiled_bytes_while_conversion_is_closed(
     assert remote.publish_calls == 1
     with pytest.raises(RuntimeError, match="conversion is incomplete"):
         driver.run_cycle(deployment_id=_DEPLOYMENT_ID, exclusions_by_artifact={})
+
+
+@pytest.mark.parametrize("artifact_status", ["stale", "tombstoned"])
+def test_conversion_forget_deletes_compiled_bytes_before_real_git_purge(
+    graph: _CompileGraph, tmp_path: Path, artifact_status: str
+) -> None:
+    """History erasure must not restore generated bodies, including retired pages."""
+    repository = tmp_path / "truth"
+    _git("init", "--quiet", "-b", "main", str(repository))
+    _git("-C", str(repository), "config", "user.name", "Fixture")
+    _git("-C", str(repository), "config", "user.email", "fixture@example.test")
+    for path, content in graph.old_files.items():
+        target = repository / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    affected = repository / graph.paths_by_id[graph.child]
+    affected.write_text("UNIQUE_CONVERSION_FORGET_TOKEN\n", encoding="utf-8")
+    _commit(repository=repository, message="generated page with retained source")
+    with graph.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "UPDATE knowledge_artifacts SET content_hash=NULL, inputs_hash=NULL, status=CAST(:status AS knowledge_artifact_status) WHERE artifact_id=:id"
+            ),
+            {"id": graph.child, "status": artifact_status},
+        )
+    remote = LocalGitRepository(
+        repository=repository,
+        path_catalog=ForgetCatalog(engine=graph.engine),
+        author_name="Fixture",
+        author_email="fixture@example.test",
+    )
+    driver = KnowledgeCommitDriver(
+        control_plane=graph.control,
+        git_remote=remote,
+        compiler=_Compiler(),
+        settings=KnowledgeCommitSettings(max_parallel_pages=1),
+    )
+    forget_id = uuid4()
+    for _ in range(2):
+        driver.recompile_after_forget(
+            deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
+        )
+        remote.purge_artifacts(
+            deployment_id=_DEPLOYMENT_ID,
+            forget_id=forget_id,
+            artifact_ids=(graph.child,),
+        )
+        remote.verify_artifacts_purged(
+            deployment_id=_DEPLOYMENT_ID,
+            forget_id=forget_id,
+            artifact_ids=(graph.child,),
+        )
+        assert not affected.exists()
+        assert (
+            _output(
+                "-C",
+                str(repository),
+                "log",
+                "--all",
+                "-S",
+                "UNIQUE_CONVERSION_FORGET_TOKEN",
+                "--format=%H",
+            )
+            == ""
+        )
+        assert (repository / graph.paths_by_id[graph.parent]).read_text(
+            encoding="utf-8"
+        ) == graph.old_files[graph.paths_by_id[graph.parent]]
