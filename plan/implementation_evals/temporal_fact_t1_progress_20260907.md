@@ -458,3 +458,65 @@ is not yet invoked by a worker: discrepancy creation, bounded prompts and
 escalation, atomic preparation/application, compensation orchestration and
 read/explain envelopes remain required. It does not claim runtime correction
 behavior or supported database acceptance for that behavior.
+
+## D113 observation storage, membership and admission work in progress
+
+Correction foundation `e40f838a` passed every job in
+[CI34081321723](https://github.com/writeitai/remember-stack/actions/runs/34081321723),
+including supported PostgreSQL19 integration and Compose fresh/upgrade.
+Antigravity round eleven granted scoped approval with no blockers. Its extra
+local full-unit run had 1,564 passes and one host-specific Markdown MIME failure
+in the client SDK; the supported CI unit run passed. This is not an approval of
+the full unfinished T.1 program.
+
+Accepted D113 (#387, main `b776b3e5`) is now frozen into the temporal expansion
+migration. Four application/support-checkpoint tables, exact generation keys,
+retained memberships, observation assertion adjudication provenance and the
+preserved legacy evidence baseline are implemented in the schema. The catalog
+inventory includes the new tables and indexes; a scoped database measurement
+gives deltas c+21/f+13/n+33/p+4/u+5, hence the supported expected inventory is
+c206/f209/n786/p103/u63/x1. The normative 34-statement SQL was executed over
+populated actual D90/D110 predecessor tables. Legacy rows keep explicit unpinned
+markers, no applications are fabricated, nullable inconsistent support and
+orphan output are refused, and source cascade/empty structural downgrade work.
+This does not replace supported full migration-graph acceptance.
+
+The new observation membership writer validates complete normalization receipts
+and exact UTF-8 assertion identities, resolves the registered flush-to-semantic
+generation mapping, retains every version membership, and enqueues entity units
+in the same transaction. Re-extraction version reuse shares semantic applications;
+a flush-only roll can reuse those identities, whereas another adjudicator gets
+separate application rows. It validates existing materializations and refuses
+missing/changed sources, application tuples, memberships, unit/work coordinates
+or expected counts rather than silently reconstructing successful work. Reads
+stream in bounded batches. This writer creates neither facts nor evidence and
+leaves membership retirement to the verified application-result reader.
+
+Canonical observation admission validates source memberships, freezes a finite
+set in one SQL snapshot, records immutable ordinals in the prescribed source
+order, and lets concurrent helpers reuse the same head. New arrivals remain
+outside the active batch; another semantic generation cannot overtake it.
+Dead-lettered units are not admitted. Missing/reordered batch inventory is
+refused. The ordinary journal now resolves observation assertion handles against
+their exact original normalized tuple, claim and policy generation, validates
+seed subject/statement/kind authority, and records the observation assertion ID
+in the narrative. Relation assertion IDs cannot authorize observation writes.
+
+Validation: 22 scoped PostgreSQL15 membership/admission/journal-integration cases
+pass, including real receipt publication, version reuse, independent generation
+keys, concurrency, lost inputs, late arrivals, stopped work, exact head order,
+and total rollback after enqueue failure. Three pure identity/encoding cases
+and the existing 38 scoped journal/converter database cases pass. Locked Ruff,
+full-library Pyright, import boundaries and inventory checks pass.
+
+**Integration is incomplete.** The new membership/admission functions are not
+yet connected to the E3 observation worker. Its legacy disposable-staging path
+is incompatible with the new schema; full pipeline checks cannot be called
+accepted until it is replaced. Durable observation preparation/output CAS,
+bounded semantic inference, atomic complete application and dependent support
+re-splits, current-support receipt reuse, worker/barrier/readiness integration,
+composition registration and generation rolls remain required next. Existing
+relation and downstream observation barrier lookups also need the new pins.
+This is a work-in-progress checkpoint on the draft implementation branch, not a
+mergeable schema-only release or runtime observation completion claim. The rest
+of T.1 and T.2/T.3/T.5 remains in scope as previously listed.

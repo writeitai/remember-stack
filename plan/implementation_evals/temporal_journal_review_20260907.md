@@ -249,3 +249,15 @@ output `/tmp/rs-t1-d112-antigravity-r1.log`. PR #386 passed its design checks an
 merged as `a7d304be`. Implementation is rebased onto that main. Neither approval
 certifies the subsequent complete-target implementation or full T.1 program;
 that increment needs its own review and supported CI.
+
+## Round eleven: ordinary correction foundation
+
+Antigravity reviewed `e40f838a` after its rebase onto main `b776b3e5` and granted
+scoped approval, with no blocking findings. It checked canonical endpoint
+authority, current linked support, distinct source lineages, candidate-only
+output, context completeness, confidence thresholds and the existing monotonic
+window/neighbour guards. Its focused tests, locked lint/Pyright and inventory
+checks passed. One host MIME mapping failure in its extra full unit run was
+outside the correction scope; all jobs of supported CI34081321723 passed.
+The correction worker, atomic preparation/application, compensation and
+read/explain integration remain unimplemented; this is not full-program approval.

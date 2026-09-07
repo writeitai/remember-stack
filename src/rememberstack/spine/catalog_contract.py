@@ -106,6 +106,10 @@ EXPECTED_ENUMS: Final = (
     "versioning_mode",
 )
 EXPECTED_TABLES: Final = (
+    "observation_apply_batches",
+    "observation_applications",
+    "observation_application_adjudications",
+    "temporal_checkpoint_observation_support",
     "fact_expiry_schedule",
     "normalize_claim_receipts",
     "normalize_relation_assertions",
@@ -207,6 +211,14 @@ EXPECTED_TABLES: Final = (
     "testimony_currency_events",
 )
 EXPECTED_INDEXES: Final = (
+    "uq_obs_active_apply_batch",
+    "ix_obs_application_original_fact",
+    "ix_obs_application_current_fact",
+    "ix_obs_application_support_owner",
+    "ix_obs_application_unapplied",
+    "ix_obs_staging_application",
+    "ix_obs_staging_unapplied",
+    "ix_temporal_checkpoint_obs_support",
     "ix_normalize_receipt_doc",
     "ix_rel_application_target_fact",
     "ix_rel_assertion_block",
@@ -401,11 +413,11 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 185,
-    "f": 196,
-    "n": 753,
-    "p": 99,
-    "u": 58,
+    "c": 206,
+    "f": 209,
+    "n": 786,
+    "p": 103,
+    "u": 63,
     "x": 1,
 }
 DECISION_OBJECTS: Final = {

@@ -175,13 +175,6 @@ class TemporalEffect(BaseModel):
     @model_validator(mode="after")
     def require_effect_coherence(self) -> Self:
         """Reject incomplete receipts, unowned endpoint changes and clock rewriting."""
-        if (
-            self.fact.plane is FactPlane.OBSERVATION
-            and self.decision.triggering_assertion_id is not None
-        ):
-            raise ValueError(
-                "observation adjudications cannot carry relation assertion IDs"
-            )
         if self.before.ingested_at != self.after.ingested_at:
             raise ValueError("an existing fact keeps its belief ingestion instant")
         if self.result is not TemporalResult.APPLIED:

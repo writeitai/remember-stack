@@ -661,9 +661,12 @@ class TemporalWriteSession:
     def _check_triggering_assertion(
         self, *, effect: TemporalEffect, actual: RowMapping
     ) -> None:
-        """Validate logical assertion provenance before a relation seed becomes authority."""
+        """Validate exact plane-specific normalized provenance before assertion effects commit."""
         assertion_id = effect.decision.triggering_assertion_id
         if assertion_id is None:
+            return
+        if effect.fact.plane is FactPlane.OBSERVATION:
+            self._check_observation_assertion(effect=effect, actual=actual)
             return
         assertion = (
             self.connection.execute(
@@ -704,6 +707,107 @@ class TemporalWriteSession:
                 raise TemporalWriteConflict(
                     "seed assertion disagrees with canonical fact identities"
                 )
+
+    def _check_observation_assertion(
+        self, *, effect: TemporalEffect, actual: RowMapping
+    ) -> None:
+        """Resolve D113's immutable source tuple; relation handles and altered application rows cannot authorize observations."""
+        from rememberstack.core.fact_temporal import fact_kind
+        from rememberstack.core.observation_temporal import observation_assertion_id
+        from rememberstack.model.claims import ClaimValidKind
+        from rememberstack.model.normalization import NormalizedObservation
+        from rememberstack.spine.normalization import _receipt_on
+
+        assertion = (
+            self.connection.execute(
+                text("""
+            SELECT a.*, r.claim_id FROM observation_applications a
+            JOIN normalize_claim_receipts r ON r.deployment_id=a.deployment_id
+              AND r.receipt_id=a.receipt_id AND r.normalizer_version=a.normalizer_version
+            WHERE a.deployment_id=:dep AND a.assertion_id=:assertion AND a.adjudicator_version=:generation
+        """),
+                {
+                    "dep": self.deployment_id,
+                    "assertion": effect.decision.triggering_assertion_id,
+                    "generation": effect.policy_generation,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            assertion is None
+            or assertion["claim_id"] != effect.decision.triggering_claim_id
+        ):
+            raise TemporalWriteConflict(
+                "triggering observation assertion does not belong to this claim and generation"
+            )
+        receipt = _receipt_on(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            claim_id=assertion["claim_id"],
+            normalizer_version=assertion["normalizer_version"],
+        )
+        observation = NormalizedObservation(
+            subject_entity_id=assertion["normalized_subject_entity_id"],
+            statement=assertion["statement"],
+            shape_kind=assertion["shape_kind"],
+        )
+        if (
+            receipt is None
+            or receipt.receipt_id != assertion["receipt_id"]
+            or observation not in receipt.output.observations
+        ):
+            raise TemporalWriteConflict(
+                "observation assertion differs from its complete normalization receipt"
+            )
+        expected = observation_assertion_id(
+            deployment_id=self.deployment_id,
+            receipt_id=receipt.receipt_id,
+            normalized_subject_entity_id=observation.subject_entity_id,
+            statement=observation.statement,
+        )
+        if expected != assertion["assertion_id"]:
+            raise TemporalWriteConflict(
+                "observation assertion UUID differs from the binding original tuple"
+            )
+        if effect.kind is not TemporalOperationKind.SEED:
+            return
+        if (
+            actual["normalizer_version"] != receipt.normalizer_version
+            or actual["statement"] != observation.statement
+        ):
+            raise TemporalWriteConflict(
+                "observation seed changed the normalized statement or generation"
+            )
+        source = _canonical_subject(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            entity_id=observation.subject_entity_id,
+        )
+        target = _canonical_subject(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            entity_id=actual["subject_entity_id"],
+        )
+        if source != target:
+            raise TemporalWriteConflict(
+                "observation seed disagrees with the canonical source subject"
+            )
+        claim = _load_claim_input(
+            connection=self.connection,
+            deployment_id=self.deployment_id,
+            claim_id=receipt.claim_id,
+        )
+        raw_kind = claim["claim_valid_kind"]
+        kind = fact_kind(
+            claim_kind=ClaimValidKind(raw_kind) if raw_kind else None,
+            shape=observation.shape_kind,
+        )
+        if effect.after.kind is not kind:
+            raise TemporalWriteConflict(
+                "observation seed kind disagrees with D41/normalized source authority"
+            )
 
     def _check_compensation(self, *, effect: TemporalEffect) -> None:
         """Prove reversal target identity and endpoint ownership against durable history."""
@@ -817,11 +921,8 @@ class TemporalWriteSession:
         """Keep the complete semantic record in the existing fact-plane adjudication."""
         plane = effect.fact.plane.value
         decision = effect.decision
-        columns = ""
-        values = ""
-        if effect.fact.plane is FactPlane.RELATION:
-            columns = ", triggering_assertion_id"
-            values = ", :triggering_assertion_id"
+        columns = ", triggering_assertion_id"
+        values = ", :triggering_assertion_id"
         statement = text(f"""
             INSERT INTO {plane}_adjudications (
               adjudication_id, deployment_id, {plane}_id, related_{plane}_id,
@@ -1172,7 +1273,8 @@ def _load_fact(
           invalidated_at, temporal_revision, from_operation_id, until_operation_id,
           contradiction_group, subject_entity_id, normalizer_version,
           {"object_entity_id" if fact.plane is FactPlane.RELATION else "NULL::uuid"} AS object_entity_id,
-          {"predicate" if fact.plane is FactPlane.RELATION else "NULL::text"} AS predicate
+          {"predicate" if fact.plane is FactPlane.RELATION else "NULL::text"} AS predicate,
+          {"statement" if fact.plane is FactPlane.OBSERVATION else "NULL::text"} AS statement
         FROM {plane}s WHERE deployment_id = :deployment_id AND {plane}_id = :fact_id
         FOR UPDATE
     """),

@@ -1063,8 +1063,18 @@ def test_observation_effect_rejects_relation_assertion_metadata(
         )
     fields = effect.model_dump()
     fields["decision"]["triggering_assertion_id"] = inputs.assertion_id
-    with pytest.raises(ValidationError, match="cannot carry relation assertion IDs"):
-        TemporalEffect.model_validate(fields)
+    wrong_plane = TemporalEffect.model_validate(fields)
+    with pytest.raises(TemporalWriteConflict, match="observation assertion"):
+        with (
+            database_engine.begin() as connection,
+            temporal_write(
+                connection=connection,
+                deployment_id=inputs.deployment_id,
+                blocks=(inputs.block(plane=FactPlane.OBSERVATION),),
+                facts=(fact,),
+            ) as session,
+        ):
+            session.apply(effect=wrong_plane, written_blocks=frozenset())
 
 
 def _exercise_conversion_stream(
