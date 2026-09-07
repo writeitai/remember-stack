@@ -105,3 +105,37 @@ CI34065359766 subsequently completed: quality, unit, surfaces and adapters passe
 contract smoke, workers and Compose failed. The successful surfaces/adapters runs
 provide additional evidence for the complete-schema teardown fix. Populated
 conversion/startup remains an explicit implementation gap; no guard was weakened.
+
+## Durable conversion catalog
+
+The catalog now captures a pinned campaign only at the committed C revision
+with no unfinished legacy work. It prepares immutable per-fact shadows, applies
+each through the guarded journal in an owned transaction, and verifies exact
+state, identity, selected legacy history, evidence, narrative and support before
+recording campaign completion. Batches bound the fact frontier; claim witnesses
+stream in bounded batches even for highly redundant facts. Completion does not
+publish a serving generation; the final migration retains that responsibility.
+
+Conversion preserves historical and retired-subject facts and never invents a
+creator from the earliest attached claim. A converted successor's original
+before-image remains available to predecessor conversion, so either recorded
+application order produces the same policy input. The predecessor operation
+records the consumed successor seed witness as well as its own attached claims.
+Ambiguous creator ties fail to establish authority even when the first two
+physical rows agree and a third disagrees. Later observation withdrawal does
+not replace its earlier recorded supersession cap.
+
+Local validation: 69 pure tests, 38 PostgreSQL15 catalog/journal cases, Ruff,
+targeted Pyright, import boundaries and test inventory pass. A stream failure
+after a completed evidence batch rolls back all operation, narrative and support
+rows and preserves the original fact revision. The supported PostgreSQL19
+evidence for the preceding commit and Antigravity's scoped second approval are
+recorded in `temporal_journal_review_20260907.md`. The new catalog still needs
+its supported-runtime CI and review.
+
+Startup orchestration and enforced intake/serving fences are not wired. The
+converter requires a quiescent old runtime; its shared lock does not retroactively
+make legacy writers participate. The existing unconditional self-host upgrade
+therefore remains a known failure. All remaining live writers, complete staging,
+correction execution, cache consumers, hard forget/replay, readiness and
+T.2/T.3/T.5 remain required. No release or merge is justified by these proofs.

@@ -8,6 +8,7 @@ conversion fence. Evidence dates alone cannot establish verdict authority.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from rememberstack.core.fact_temporal import cap_allowed
@@ -34,6 +35,7 @@ def convert_legacy_fact(
     legacy: FactTemporalState,
     evidence: Iterable[ClaimTemporalWindow],
     recorded_seed: ClaimTemporalWindow | None,
+    legacy_cap_cause: Literal["supersession", "source_removal", "unknown"],
     successor_world_start: datetime | None,
     recorded_withdrawal_at: datetime | None,
     operation_id: UUID,
@@ -43,7 +45,8 @@ def convert_legacy_fact(
     Consume all attached non-forgotten evidence, including withdrawn testimony.
     The caller supplies only a recorded creator and a proven successor's
     canonical world start; neither minimum evidence dates nor source clocks
-    qualify. The returned state preserves the fact's belief ingestion instant
+    qualify. Legacy cap cause is independent of later belief withdrawal.
+    The returned state preserves the fact's belief ingestion instant
     and existing invalidation. Replaying the campaign uses its original shadow,
     rather than converting an already-converted state a second time.
     """
@@ -102,9 +105,9 @@ def convert_legacy_fact(
         verdict = VerdictWindow(start=verdict.start, start_basis=verdict.start_basis)
         if kind is FactTemporalKind.OCCURRENCE:
             diagnostics.append("legacy_occurrence_cap_removed")
-        elif recorded_withdrawal_at is not None:
+        elif legacy_cap_cause == "source_removal":
             diagnostics.append("legacy_withdrawal_boundary_removed")
-        elif successor_world_start is not None:
+        elif legacy_cap_cause == "supersession" and successor_world_start is not None:
             uncapped = FactTemporalState(
                 kind=kind, verdict=seed_window, ingested_at=legacy.ingested_at
             )

@@ -1,6 +1,8 @@
 """Real PostgreSQL proofs for D110 atomic authority and complete lock footprints."""
 
+from collections.abc import Generator
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -34,6 +36,7 @@ from rememberstack.model.temporal_write import FactPlane
 from rememberstack.model.temporal_write import TemporalBlock
 from rememberstack.model.temporal_write import TemporalDecision
 from rememberstack.model.temporal_write import TemporalEffect
+from rememberstack.model.temporal_write import TemporalEvidenceRef
 from rememberstack.model.temporal_write import TemporalFactRef
 from rememberstack.model.temporal_write import TemporalOperationKind
 from rememberstack.model.temporal_write import TemporalSourceKind
@@ -1062,3 +1065,228 @@ def test_observation_effect_rejects_relation_assertion_metadata(
     fields["decision"]["triggering_assertion_id"] = inputs.assertion_id
     with pytest.raises(ValidationError, match="cannot carry relation assertion IDs"):
         TemporalEffect.model_validate(fields)
+
+
+def _exercise_conversion_stream(
+    *, database_engine: Engine, inputs: Inputs, fail_after_batch: bool
+) -> None:
+    """A high-redundancy fact converts with all receipts, using a single-use evidence generator."""
+    from rememberstack.core.temporal_conversion import convert_legacy_fact
+    from rememberstack.model.fact_temporal import VerdictWindow
+    from rememberstack.spine.temporal_journal import temporal_fingerprint
+
+    fact = TemporalFactRef(plane=FactPlane.OBSERVATION, fact_id=uuid4())
+    legacy = FactTemporalState(
+        kind=FactTemporalKind.UNKNOWN,
+        verdict=VerdictWindow(start=_START),
+        ingested_at=_NOW,
+    )
+    operation_id = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM temporal_fact_generations WHERE deployment_id = :dep"),
+            {"dep": inputs.deployment_id},
+        )
+        conversion_id = connection.execute(
+            text("""
+            UPDATE temporal_conversion_runs SET state = 'converting', completed_at = NULL
+            WHERE deployment_id = :dep RETURNING conversion_id
+        """),
+            {"dep": inputs.deployment_id},
+        ).scalar_one()
+        connection.execute(
+            text("""
+            INSERT INTO observations (deployment_id, observation_id, subject_entity_id, statement,
+                normalizer_version, valid_from, ingested_at)
+            VALUES (:dep, :fact, :subject, 'Legacy CEO state', 'legacy', :start, :now)
+        """),
+            {
+                "dep": inputs.deployment_id,
+                "fact": fact.fact_id,
+                "subject": inputs.subject_id,
+                "start": _START,
+                "now": _NOW,
+            },
+        )
+        connection.execute(
+            text("""
+            INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id, claim_text, source_span,
+                char_start, char_end, anchor_ok, window_membership_ok, extractor_version,
+                claim_valid_from, claim_valid_precision, claim_valid_kind)
+            SELECT gen_random_uuid(), :dep, :doc, :chunk, 'CEO since 2020', 'CEO since 2020',
+                0, 14, true, true, 'legacy', :start, 'open', 'effective_period'
+            FROM generate_series(1, 1024)
+        """),
+            {
+                "dep": inputs.deployment_id,
+                "doc": inputs.doc_id,
+                "chunk": uuid4(),
+                "start": _START,
+            },
+        )
+        claim_ids = tuple(
+            connection.execute(
+                text(
+                    "SELECT claim_id FROM claims WHERE deployment_id = :dep ORDER BY claim_id"
+                ),
+                {"dep": inputs.deployment_id},
+            ).scalars()
+        )
+        connection.execute(
+            text("""
+            INSERT INTO observation_evidence (deployment_id, observation_id, claim_id, doc_id, stance, normalizer_version)
+            SELECT deployment_id, :fact, claim_id, doc_id, 'supports', 'legacy' FROM claims WHERE deployment_id = :dep
+        """),
+            {"dep": inputs.deployment_id, "fact": fact.fact_id},
+        )
+        converted = convert_legacy_fact(
+            legacy=legacy,
+            recorded_seed=None,
+            legacy_cap_cause="unknown",
+            successor_world_start=None,
+            recorded_withdrawal_at=None,
+            operation_id=operation_id,
+            evidence=(
+                ClaimTemporalWindow(
+                    claim_id=claim_id,
+                    kind=ClaimValidKind.EFFECTIVE_PERIOD,
+                    valid_from=_START,
+                    precision=ClaimValidPrecision.OPEN,
+                )
+                for claim_id in claim_ids
+            ),
+        ).state
+        witnesses = []
+        closed = []
+
+        def evidence_stream() -> Generator[TemporalEvidenceRef, None, None]:
+            """Expose each witness exactly once and prove the journal closes the cursor owner."""
+            try:
+                for index, claim_id in enumerate(claim_ids):
+                    if fail_after_batch and index == 700:
+                        raise RuntimeError("interrupted evidence cursor")
+                    witness = load_temporal_evidence(
+                        connection=connection,
+                        deployment_id=inputs.deployment_id,
+                        claim_id=claim_id,
+                        role="support",
+                    )
+                    witnesses.append(witness.model_dump(mode="json"))
+                    yield witness
+            finally:
+                closed.append(True)
+
+        block = inputs.block(plane=fact.plane)
+        key = temporal_block_key(deployment_id=inputs.deployment_id, block=block)
+        with (
+            (
+                pytest.raises(RuntimeError, match="interrupted evidence cursor")
+                if fail_after_batch
+                else nullcontext()
+            ),
+            temporal_write(
+                connection=connection,
+                deployment_id=inputs.deployment_id,
+                blocks=(block,),
+                facts=(fact,),
+                maintenance="conversion",
+                authority_id=conversion_id,
+            ) as session,
+        ):
+            effect = TemporalEffect(
+                operation_id=operation_id,
+                fact=fact,
+                kind=TemporalOperationKind.MIGRATION,
+                result=TemporalResult.APPLIED,
+                before=legacy,
+                after=converted,
+                decision=TemporalDecision(
+                    adjudication_id=uuid4(), outcome="migrate", method="migration"
+                ),
+                evidence=(),
+                input_fingerprint="1" * 64,
+                identity_generation="legacy",
+                policy_generation="test-conversion",
+                reason="conversion_stream_proof",
+                recorded_at=_NOW,
+            )
+            session.apply(
+                effect=effect,
+                written_blocks=frozenset((key,)),
+                evidence_stream=evidence_stream(),
+            )
+        assert closed == [True]
+        if fail_after_batch:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT temporal_revision FROM observations WHERE observation_id = :id"
+                    ),
+                    {"id": fact.fact_id},
+                ).scalar_one()
+                == 0
+            )
+            for table in (
+                "temporal_operations",
+                "temporal_operation_evidence",
+                "temporal_operation_support",
+                "temporal_operation_blocks",
+            ):
+                assert (
+                    connection.execute(
+                        text(f"SELECT count(*) FROM {table} WHERE operation_id = :id"),
+                        {"id": operation_id},
+                    ).scalar_one()
+                    == 0
+                )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM observation_adjudications WHERE temporal_operation_id = :id"
+                    ),
+                    {"id": operation_id},
+                ).scalar_one()
+                == 0
+            )
+            return
+        support = connection.execute(
+            text("""
+            SELECT expected_claim_count, support_fingerprint FROM temporal_operation_support WHERE operation_id = :id
+        """),
+            {"id": operation_id},
+        ).one()
+        assert support.expected_claim_count == 1025
+        assert support.support_fingerprint == temporal_fingerprint(
+            value={
+                "claims": witnesses,
+                "block_keys": [key],
+                "semantic_predecessors": [],
+            }
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM temporal_operation_evidence WHERE operation_id = :id"
+                ),
+                {"id": operation_id},
+            ).scalar_one()
+            == 1025
+        )
+
+
+def test_conversion_stream_records_complete_support_across_batches(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """A streamed conversion keeps every witness and its canonical support digest."""
+    _exercise_conversion_stream(
+        database_engine=database_engine, inputs=inputs, fail_after_batch=False
+    )
+
+
+def test_interrupted_conversion_stream_rolls_back_earlier_evidence_batches(
+    database_engine: Engine, inputs: Inputs
+) -> None:
+    """Failure after an inserted batch preserves fact state and removes every partial receipt."""
+    _exercise_conversion_stream(
+        database_engine=database_engine, inputs=inputs, fail_after_batch=True
+    )

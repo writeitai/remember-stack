@@ -6,11 +6,13 @@ remote inference runs inside this context. Existing plane adjudications remain
 the narrative authority and are inserted atomically with each journal effect.
 """
 
+from collections.abc import Generator
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 import hashlib
+from itertools import islice
 import json
 from typing import Literal
 from uuid import UUID
@@ -49,14 +51,18 @@ class TemporalNotReadyError(RuntimeError):
 
 def temporal_fingerprint(*, value: object) -> str:
     """Hash canonical structured inputs, preserving UUIDs and explicit UTC instants."""
-    encoded = json.dumps(
+    return hashlib.sha256(_canonical_json(value=value).encode("utf-8")).hexdigest()
+
+
+def _canonical_json(*, value: object) -> str:
+    """Use one exact serialization for prepared inputs and streamed support receipts."""
+    return json.dumps(
         value,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
         default=_json_scalar,
     )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def temporal_block_key(*, deployment_id: UUID, block: TemporalBlock) -> str:
@@ -159,11 +165,20 @@ def _lock_sources(
 
 
 def _canonical_subject(
-    *, connection: Connection, deployment_id: UUID, entity_id: UUID
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    entity_id: UUID,
+    allow_retired: bool = False,
 ) -> UUID:
     """Follow deployment-local redirects under the identity epoch, rejecting broken chains."""
     root = connection.execute(
-        _CANONICAL_SUBJECT, {"deployment_id": deployment_id, "entity_id": entity_id}
+        _CANONICAL_SUBJECT,
+        {
+            "deployment_id": deployment_id,
+            "entity_id": entity_id,
+            "allow_retired": allow_retired,
+        },
     ).scalar_one_or_none()
     if root is None:
         raise TemporalWriteConflict("fact subject has no active canonical survivor")
@@ -177,12 +192,14 @@ def _require_fact_block(
     fact: TemporalFactRef,
     row: RowMapping,
     keys: set[str],
+    allow_retired: bool = False,
 ) -> None:
     """Prove that the actual target belongs to a declared canonical subject block."""
     root = _canonical_subject(
         connection=connection,
         deployment_id=deployment_id,
         entity_id=row["subject_entity_id"],
+        allow_retired=allow_retired,
     )
     block = TemporalBlock(
         plane=fact.plane, subject_entity_id=root, predicate=row["predicate"]
@@ -242,6 +259,7 @@ def _temporal_write_locked(
             connection=connection,
             deployment_id=deployment_id,
             entity_id=block.subject_entity_id,
+            allow_retired=maintenance is not None,
         )
         if root != block.subject_entity_id:
             raise TemporalWriteConflict(
@@ -288,6 +306,7 @@ def _temporal_write_locked(
                 fact=fact,
                 row=row,
                 keys=set(keys),
+                allow_retired=maintenance is not None,
             )
         states[fact] = _state(row=row) if row is not None else None
     # Routing keys and fact leaves share ONE globally sorted source phase.
@@ -386,25 +405,55 @@ class TemporalWriteSession:
             )
         return self._source_states[source]
 
-    def apply(self, *, effect: TemporalEffect, written_blocks: frozenset[str]) -> None:
+    def apply(
+        self,
+        *,
+        effect: TemporalEffect,
+        written_blocks: frozenset[str],
+        evidence_stream: Generator[TemporalEvidenceRef, None, None] | None = None,
+    ) -> None:
         """Apply one effect; a caught application error still prevents group commit."""
-        if not self._open or self._failed:
-            raise TemporalWriteConflict(
-                "temporal session is closed or has a failed effect"
-            )
         try:
-            self._apply(effect=effect, written_blocks=written_blocks)
+            if not self._open or self._failed:
+                raise TemporalWriteConflict(
+                    "temporal session is closed or has a failed effect"
+                )
+            self._apply(
+                effect=effect,
+                written_blocks=written_blocks,
+                evidence_stream=evidence_stream,
+            )
         except Exception:
             self._failed = True
             raise
+        finally:
+            if evidence_stream is not None:
+                evidence_stream.close()
 
-    def _apply(self, *, effect: TemporalEffect, written_blocks: frozenset[str]) -> None:
+    def _apply(
+        self,
+        *,
+        effect: TemporalEffect,
+        written_blocks: frozenset[str],
+        evidence_stream: Generator[TemporalEvidenceRef, None, None] | None,
+    ) -> None:
         """Revalidate and atomically write state, narrative, support and complete footprint.
 
         The caller writes evidence membership in the same outer transaction.
         All live candidate blocks, including empty read-only blocks, must be in
         this session; only declared mutated blocks advance their revisions.
         """
+        if evidence_stream is not None and (
+            effect.evidence
+            or effect.kind
+            not in (
+                TemporalOperationKind.MIGRATION,
+                TemporalOperationKind.FORGET_RECOMPUTE,
+            )
+        ):
+            raise TemporalWriteConflict(
+                "streamed support is exclusive to fenced maintenance effects"
+            )
         if not written_blocks.issubset(self._heads):
             raise TemporalWriteConflict("written block was not locked")
         if effect.result is TemporalResult.APPLIED and not written_blocks:
@@ -453,15 +502,17 @@ class TemporalWriteSession:
             keys=set(written_blocks)
             if effect.result is TemporalResult.APPLIED
             else set(self._heads),
+            allow_retired=self._maintenance is not None,
         )
         self._check_triggering_assertion(effect=effect, actual=actual)
-        self._check_evidence(effect=effect)
+        if evidence_stream is None:
+            self._check_evidence(effect=effect)
         if effect.kind is TemporalOperationKind.COMPENSATION:
             self._check_compensation(effect=effect)
         self._insert_effect(effect=effect)
         self._insert_decision(effect=effect)
         self._record_footprint(effect=effect, written_blocks=written_blocks)
-        self._record_support(effect=effect)
+        self._record_support(effect=effect, evidence_stream=evidence_stream)
         if effect.result is TemporalResult.APPLIED:
             self._write_state(effect=effect)
         self._states[effect.fact] = effect.after
@@ -481,12 +532,28 @@ class TemporalWriteSession:
         """Ensure retained prepared claim fingerprints and currency still agree."""
         candidate_starts: set[datetime | None] = set()
         candidate_ends: set[datetime | None] = set()
+        claims = (
+            {
+                row["claim_id"]: row
+                for row in self.connection.execute(
+                    _CLAIM_INPUT_MANY,
+                    {
+                        "deployment_id": self.deployment_id,
+                        "claim_ids": sorted(
+                            {item.claim_id for item in effect.evidence}
+                        ),
+                    },
+                ).mappings()
+            }
+            if effect.evidence
+            else {}
+        )
         for evidence in effect.evidence:
-            claim = _load_claim_input(
-                connection=self.connection,
-                deployment_id=self.deployment_id,
-                claim_id=evidence.claim_id,
-            )
+            claim = claims.get(evidence.claim_id)
+            if claim is None:
+                raise TemporalWriteConflict(
+                    "consumed claim is missing or belongs to another deployment"
+                )
             current = _evidence_ref(row=claim, role=evidence.role)
             if current != evidence:
                 raise TemporalWriteConflict(
@@ -801,20 +868,70 @@ class TemporalWriteSession:
                 },
             )
 
-    def _record_support(self, *, effect: TemporalEffect) -> None:
-        """Attest the complete consumed set; never silently shrink proof after erasure."""
-        for evidence in effect.evidence:
-            self.connection.execute(
-                _INSERT_EVIDENCE,
-                {
-                    "deployment_id": self.deployment_id,
-                    "operation_id": effect.operation_id,
-                    "claim_id": evidence.claim_id,
-                    "role": evidence.role,
-                    "was_current": evidence.was_current,
-                    "fingerprint": evidence.fingerprint,
-                },
-            )
+    def _record_support(
+        self,
+        *,
+        effect: TemporalEffect,
+        evidence_stream: Generator[TemporalEvidenceRef, None, None] | None,
+    ) -> None:
+        """Record complete support in bounded batches without changing canonical digests.
+
+        Conversion can consume millions of repeated testimonies for one fact.
+        Its database generator must emit ascending (claim UUID, role) pairs;
+        each batch is revalidated before insertion. Ordinary inference retains
+        its bounded prepared tuple and has already been checked as a whole.
+        """
+        evidence = (
+            iter(sorted(effect.evidence, key=lambda item: (item.claim_id, item.role)))
+            if evidence_stream is None
+            else evidence_stream
+        )
+        digest = hashlib.sha256()
+        digest.update(b'{"block_keys":')
+        digest.update(_canonical_json(value=sorted(self._heads)).encode("utf-8"))
+        digest.update(b',"claims":[')
+        last_key: tuple[UUID, str] | None = None
+        claim_count = 0
+        first = True
+        while batch := tuple(islice(evidence, 512)):
+            if evidence_stream is not None:
+                self._check_evidence(
+                    effect=effect.model_copy(update={"evidence": batch})
+                )
+            parameters: list[dict[str, object]] = []
+            for item in batch:
+                key = (item.claim_id, item.role)
+                if last_key is not None and key <= last_key:
+                    raise TemporalWriteConflict(
+                        "streamed evidence must have unique ascending claim/role keys"
+                    )
+                if last_key is None or item.claim_id != last_key[0]:
+                    claim_count += 1
+                last_key = key
+                if not first:
+                    digest.update(b",")
+                first = False
+                digest.update(
+                    _canonical_json(value=item.model_dump(mode="json")).encode("utf-8")
+                )
+                parameters.append(
+                    {
+                        "deployment_id": self.deployment_id,
+                        "operation_id": effect.operation_id,
+                        "claim_id": item.claim_id,
+                        "role": item.role,
+                        "was_current": item.was_current,
+                        "fingerprint": item.fingerprint,
+                    }
+                )
+            self.connection.execute(_INSERT_EVIDENCE, parameters)
+        digest.update(b'],"semantic_predecessors":')
+        digest.update(
+            _canonical_json(
+                value=sorted(map(str, set(effect.semantic_predecessors)))
+            ).encode("utf-8")
+        )
+        digest.update(b"}")
         self.connection.execute(
             _INSERT_SUPPORT,
             {
@@ -823,23 +940,9 @@ class TemporalWriteSession:
                 "state": effect.support_state,
                 "footprint_complete": effect.footprint_complete,
                 "blocks": len(self._heads),
-                "claims": len({item.claim_id for item in effect.evidence}),
+                "claims": claim_count,
                 "semantic_dependencies": len(set(effect.semantic_predecessors)),
-                "fingerprint": temporal_fingerprint(
-                    value={
-                        "claims": [
-                            item.model_dump(mode="json")
-                            for item in sorted(
-                                effect.evidence,
-                                key=lambda item: (item.claim_id, item.role),
-                            )
-                        ],
-                        "semantic_predecessors": sorted(
-                            map(str, set(effect.semantic_predecessors))
-                        ),
-                        "block_keys": sorted(self._heads),
-                    }
-                ),
+                "fingerprint": digest.hexdigest(),
             },
         )
 
@@ -1122,6 +1225,9 @@ _CLAIM_INPUT = text("""
       claim_valid_precision::text, claim_valid_kind::text, is_current_testimony
     FROM claims WHERE deployment_id = :deployment_id AND claim_id = :claim_id
 """)
+_CLAIM_INPUT_MANY = text(
+    _CLAIM_INPUT.text.replace("claim_id = :claim_id", "claim_id IN :claim_ids")
+).bindparams(bindparam("claim_ids", expanding=True))
 _ASSERTION_INPUT = text("""
     SELECT a.subject_entity_id, a.predicate, a.object_entity_id, a.normalizer_version, r.claim_id
     FROM normalize_relation_assertions a JOIN normalize_claim_receipts r
@@ -1185,7 +1291,7 @@ _CANONICAL_SUBJECT = text("""
       FROM up JOIN entities parent ON parent.deployment_id = :deployment_id
         AND parent.entity_id = up.merged_into
       WHERE up.status = 'merged' AND NOT parent.entity_id = ANY(up.path)
-    ) SELECT entity_id FROM up WHERE status = 'active'
+    ) SELECT entity_id FROM up WHERE status = 'active' OR (:allow_retired AND status = 'retired')
 """)
 
 _COMPENSATION_TARGET = text("""

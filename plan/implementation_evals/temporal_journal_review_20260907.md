@@ -59,3 +59,31 @@ legacy-conversion policy cases and 49 existing temporal cases pass together
 (65 total). Updated full PostgreSQL19 CI and round-two review are still required.
 The durable converter, complete runtime writer participation, cache routing,
 forget/replay, T.2/T.3/T.5 and final release remain unfinished.
+
+## Round two and durable-converter review boundary
+
+Antigravity reviewed `26461a9a0039043160bd93963ce6fc377b62c032` and
+**approved the scoped journal and pure conversion policy**, explicitly without
+approving full PR #384. Output: `/tmp/rs-t1-journal-antigravity-r2.log`.
+It withdrew the generation primary-key finding and accepted the provenance,
+support-order and timezone fixes. It independently ran the 65 then-current
+pure tests. Its remaining clarification is now explicit: the cause of a legacy
+world-time cap is separate from a later belief withdrawal. Four additional
+policy cases cover that distinction and uncertain/undated boundaries (69 pure
+tests total).
+
+[CI34067544140](https://github.com/writeitai/remember-stack/actions/runs/34067544140)
+ran the corrected fixtures on PostgreSQL19: workers reported 600 passed and
+one failure, the known populated-upgrade path that still bypasses conversion.
+All 21 committed journal cases passed. Quality, unit, surfaces and adapters
+passed; contract smoke, workers and Compose remained failed. This is scoped
+evidence, not a passing PR.
+
+The subsequent durable catalog and streaming journal changes require a new
+review. Local PostgreSQL15 now passes 38 database cases, including 15 converter
+cases, all original journal cases, a 1025-witness conversion and rollback after
+a cursor fails beyond the first inserted evidence batch. The probe uses actual
+legacy constraints, the D96 entity column removal, and temporal expansion DDL;
+it does not exercise the full supported PostgreSQL19 Alembic graph. The
+converter's predecessor-cap test also verifies that the consumed successor seed
+claim is in the operation's deletion/support inventory.

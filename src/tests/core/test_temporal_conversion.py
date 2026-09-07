@@ -50,6 +50,7 @@ def test_unrecorded_creator_is_not_replaced_by_earliest_evidence() -> None:
     claims = (_claim(year=2015), _claim(year=2020))
     legacy = _legacy()
     result = convert_legacy_fact(
+        legacy_cap_cause="unknown",
         legacy=legacy,
         evidence=iter(claims),
         recorded_seed=None,
@@ -71,6 +72,7 @@ def test_recorded_seed_alone_supplies_initial_verdict_and_other_evidence_supplie
     """An exact add adjudication can recover a seed; a broad evidence union is a separate clock."""
     seed, other = _claim(year=2020), _claim(year=2015)
     result = convert_legacy_fact(
+        legacy_cap_cause="unknown",
         legacy=_legacy(),
         evidence=(other, seed),
         recorded_seed=seed,
@@ -92,6 +94,7 @@ def test_missing_or_disagreeing_shape_remains_unknown(
 ) -> None:
     """Conversion never invents a state/occurrence majority over missing or mixed evidence."""
     result = convert_legacy_fact(
+        legacy_cap_cause="unknown",
         legacy=_legacy(),
         evidence=(_claim(kind=kind) for kind in kinds),
         recorded_seed=None,
@@ -110,6 +113,7 @@ def test_missing_or_chronologically_invalid_successor_erases_legacy_cap(
     """A legacy source-clock cap cannot survive as world-time by default."""
     seed = _claim()
     result = convert_legacy_fact(
+        legacy_cap_cause="supersession",
         legacy=_legacy(end=2025),
         evidence=(seed,),
         recorded_seed=seed,
@@ -127,6 +131,7 @@ def test_recorded_successor_replaces_old_source_clock_cap() -> None:
     seed = _claim()
     operation_id = uuid4()
     result = convert_legacy_fact(
+        legacy_cap_cause="supersession",
         legacy=_legacy(end=2025),
         evidence=(seed,),
         recorded_seed=seed,
@@ -149,6 +154,7 @@ def test_occurrence_loses_legacy_cap_and_preserves_belief_withdrawal(
     seed = _claim(kind=kind)
     legacy = _legacy(end=2025, invalidated=2026)
     result = convert_legacy_fact(
+        legacy_cap_cause="supersession",
         legacy=legacy,
         evidence=(seed,),
         recorded_seed=seed,
@@ -167,6 +173,7 @@ def test_d55_source_cap_becomes_recorded_belief_closure() -> None:
     """The persisted reconciliation instant closes belief; the old source-clock cap is removed."""
     claim = _claim()
     result = convert_legacy_fact(
+        legacy_cap_cause="source_removal",
         legacy=_legacy(end=2025),
         evidence=(claim,),
         recorded_seed=None,
@@ -183,6 +190,7 @@ def test_scrubbed_seed_cannot_be_reintroduced_from_old_snapshot() -> None:
     """A creator that is absent from retained attached evidence is not conversion authority."""
     with pytest.raises(ValueError, match="not retained attached evidence"):
         convert_legacy_fact(
+            legacy_cap_cause="unknown",
             legacy=_legacy(),
             evidence=(_claim(),),
             recorded_seed=_claim(),
@@ -196,6 +204,7 @@ def test_converted_state_is_not_silently_converted_again() -> None:
     """Resume must consume the campaign's original shadow, not redefine it from converted data."""
     claim = _claim()
     first = convert_legacy_fact(
+        legacy_cap_cause="unknown",
         legacy=_legacy(),
         evidence=(claim,),
         recorded_seed=None,
@@ -205,6 +214,7 @@ def test_converted_state_is_not_silently_converted_again() -> None:
     )
     with pytest.raises(ValueError, match="original unconverted tuple"):
         convert_legacy_fact(
+            legacy_cap_cause="unknown",
             legacy=first.state,
             evidence=(claim,),
             recorded_seed=None,
@@ -227,6 +237,7 @@ def test_conversion_never_extends_a_bounded_seed_to_later_successor(
         precision=ClaimValidPrecision.YEAR,
     )
     result = convert_legacy_fact(
+        legacy_cap_cause="supersession",
         legacy=_legacy(end=legacy_end),
         evidence=(seed,),
         recorded_seed=seed,
@@ -240,3 +251,57 @@ def test_conversion_never_extends_a_bounded_seed_to_later_successor(
     else:
         assert result.state.verdict.end is None
         assert "legacy_unknown_boundary" in result.diagnostics
+
+
+def test_independent_supersession_cap_survives_later_recorded_withdrawal() -> None:
+    """World cap provenance and belief withdrawal are independent conversion inputs."""
+    seed = _claim()
+    result = convert_legacy_fact(
+        legacy=_legacy(end=2025),
+        evidence=(seed,),
+        recorded_seed=seed,
+        legacy_cap_cause="supersession",
+        successor_world_start=_at(year=2024),
+        recorded_withdrawal_at=_at(year=2026),
+        operation_id=uuid4(),
+    )
+    assert result.state.verdict.end == _at(year=2024)
+    assert result.state.invalidated_at == _at(year=2026)
+
+
+@pytest.mark.parametrize("has_successor", [False, True])
+def test_undated_legacy_state_keeps_unknown_start_and_can_receive_a_known_end(
+    has_successor: bool,
+) -> None:
+    """A missing creator/start does not prevent a recorded dated successor ending a state."""
+    legacy = FactTemporalState(
+        kind=FactTemporalKind.UNKNOWN,
+        verdict=VerdictWindow(end=_at(year=2025)),
+        ingested_at=_at(year=2022),
+    )
+    result = convert_legacy_fact(
+        legacy=legacy,
+        evidence=(_claim(),),
+        recorded_seed=None,
+        legacy_cap_cause="supersession" if has_successor else "unknown",
+        successor_world_start=_at(year=2024) if has_successor else None,
+        recorded_withdrawal_at=None,
+        operation_id=uuid4(),
+    )
+    assert result.state.verdict.start is None
+    assert result.state.verdict.start_basis is FactTemporalBasis.UNKNOWN
+    assert result.state.verdict.end == (_at(year=2024) if has_successor else None)
+
+
+def test_withdrawal_before_ingestion_is_rejected() -> None:
+    """Conversion cannot manufacture an impossible belief interval from inconsistent history."""
+    with pytest.raises(ValueError, match="predates fact ingestion"):
+        convert_legacy_fact(
+            legacy=_legacy(end=2025),
+            evidence=(_claim(),),
+            recorded_seed=None,
+            legacy_cap_cause="source_removal",
+            successor_world_start=None,
+            recorded_withdrawal_at=_at(year=2020),
+            operation_id=uuid4(),
+        )
