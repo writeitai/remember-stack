@@ -5346,3 +5346,39 @@ readiness, replay, erasure and consumers must share the amended contract.
 Amends D107/D110's unknown-start exclusion policy; preserves their mixed identity,
 world-time, belief-time and erasure contracts. This resolves the identified
 mixed-state contract conflict; implementation and release remain separate gates.
+
+## D112. A dated state assertion supports every compatible overlapping slice
+
+**Status:** accepted when merged. **Date:** 2026-09-07.
+
+**Context.** A broad same-value state claim can overlap several existing disjoint
+state slices. D107 requires evidence attachment, but D110's scalar application
+target forces an unsupported exclusive choice or an overlapping new row rejected
+by the state exclusion. Existing claim-to-relation evidence is already many-to-many.
+
+**Decision.** Deterministically attach dated state evidence to the complete set
+of compatible overlapping same-triple known-start state slices. Preserve each
+identity, seed and verdict; no gap becomes true from support alone. A normalized
+receipt-target table with count/digest certification replaces the scalar target.
+All support and semantic effects remain one ordered atomic application. Additional
+caps/contradictions name their exact participants and boundary authority. Model
+budgets cannot truncate deterministic support or undo it by omission. Occurrences
+retain at most one selected identity; mixed or uncertain semantic identity cannot
+use this rule.
+
+**Alternatives and consequences.** Arbitrary target selection loses support;
+merging invents chronology. Completed uncertainty with autonomous reconsideration
+requires new attempt identities, dependency triggers and terminal-application
+guards, unnecessary for proven state support. The chosen design adds one internal
+table and two receipt fields, and requires result, barrier, replay, forget and
+consumer participation. Large target sets require bounded enumeration/write
+batches under the complete D110 lock/revision protocol. No second scheduler or
+public mutation capability is introduced.
+
+**Authority.** [D110 §3.3.1](plan/designs/temporal_write_and_lifecycle_design.md)
+and its [complete schema](plan/designs/temporal_write_and_lifecycle_schema.sql).
+[Analysis](plan/analysis/temporal_state_evidence_targets.md) and
+[unchosen uncertainty-attempt alternative](plan/proposals/temporal_identity_uncertainty_attempts.md).
+Amends D107/D110's state support and receipt-target cardinality. Preserves D111,
+fact identity and verdict authority, single-target occurrence identity, D74 and
+the library boundary. Implementation and release remain separate gates.
