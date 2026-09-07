@@ -305,6 +305,13 @@ examined, and the failure looks like the deployment being down.
 - The current `RS-LoCoMo-Full-v24` pins D107 WP-T.4: all four claim temporal
   kinds, open-ended state windows, and full source timestamp headers. The
   extractor generation rolls; the fact schema and query-space contract do not.
+- D107/D110 fact temporal authority remains in development in
+  [draft PR #384](https://github.com/writeitai/remember-stack/pull/384). The
+  branch includes the guarded journal, resumable conversion and the maintenance
+  startup path. Complete participation by live writers, autonomous correction
+  execution, cache freshness, hard forget/replay, serving gates and the
+  T.2/T.3/T.5 consumer changes remain required. Conversion tests and scoped
+  reviews do not establish release readiness or benchmark improvement.
 - Historical `RS-LoCoMo-Full-v23` pins the query-space publication of those
   bounds (D107 WP-T.0b): `memory_v1.canonical_bounds`, `claims_canonical`, and
   the rewritten `examples.claims_as_of`. Ingestion and the library

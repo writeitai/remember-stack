@@ -25,6 +25,7 @@ src/tests/spine/test_resolver.py
 src/tests/spine/test_review_queue.py
 src/tests/spine/test_supersession.py
 src/tests/spine/test_temporal_conversion.py
+src/tests/spine/test_temporal_upgrade.py
 src/tests/spine/test_temporal_journal.py
 src/tests/spine/test_unmerge_ripple.py
 src/tests/spine/test_work_ledger.py

@@ -48,6 +48,8 @@ from rememberstack.spine.temporal_journal import TEMPORAL_FACT_GENERATION
 from rememberstack.spine.temporal_journal import temporal_fingerprint
 from rememberstack.spine.temporal_journal import temporal_write
 from rememberstack.spine.temporal_journal import TemporalWriteConflict
+from rememberstack.spine.temporal_schema import require_temporal_constraints_on
+from rememberstack.spine.temporal_schema import TEMPORAL_FINAL_REVISION
 
 CONVERSION_SCHEMA_REVISION = "p9_29_0050"
 CONVERSION_POLICY = "recorded-legacy-authority-2"
@@ -80,6 +82,72 @@ class _History:
     creator: RowMapping | None
     cap: RowMapping | None
     withdrawal: RowMapping | None
+
+
+def initialize_empty_temporal_generation_on(
+    *, connection: Connection, deployment_id: UUID
+) -> None:
+    """Certify a newly bootstrapped empty deployment inside its creation transaction.
+
+    At C the ordinary converter records the explicit empty campaign and D later
+    certifies it. After D, a new deployment has no legacy data to convert; verify
+    the finalized constraints and record its zero-row campaign atomically.
+    Existing deployments never use this creation-only path on bootstrap retry.
+    """
+    revision = connection.execute(
+        text("SELECT version_num FROM alembic_version")
+    ).scalar_one()
+    if revision == CONVERSION_SCHEMA_REVISION:
+        return
+    if revision != TEMPORAL_FINAL_REVISION:
+        raise TemporalWriteConflict(
+            "deployment bootstrap requires the current temporal schema"
+        )
+    require_temporal_constraints_on(connection=connection)
+    connection.execute(
+        text(
+            "SELECT deployment_id FROM deployments WHERE deployment_id = :dep FOR UPDATE"
+        ),
+        {"dep": deployment_id},
+    ).scalar_one()
+    if connection.execute(
+        text("""
+        SELECT EXISTS (SELECT 1 FROM relations WHERE deployment_id = :dep)
+            OR EXISTS (SELECT 1 FROM observations WHERE deployment_id = :dep)
+            OR EXISTS (SELECT 1 FROM temporal_conversion_runs WHERE deployment_id = :dep)
+        """),
+        {"dep": deployment_id},
+    ).scalar_one():
+        raise TemporalWriteConflict(
+            "empty bootstrap cannot certify existing fact or conversion state"
+        )
+    conversion_id = uuid5(
+        NAMESPACE_URL,
+        f"rememberstack:temporal-conversion:{deployment_id}:{TEMPORAL_FACT_GENERATION}",
+    )
+    parameters = {
+        "dep": deployment_id,
+        "id": conversion_id,
+        "generation": TEMPORAL_FACT_GENERATION,
+        "policy": CONVERSION_POLICY_FINGERPRINT,
+    }
+    connection.execute(
+        text("""
+        INSERT INTO temporal_conversion_runs (conversion_id, deployment_id, generation,
+            input_generation, policy_fingerprint, state, expected_relations, expected_observations,
+            captured_at, completed_at)
+        VALUES (:id, :dep, :generation, 'empty-current', :policy, 'complete', 0, 0,
+                transaction_timestamp(), transaction_timestamp())
+    """),
+        parameters,
+    )
+    connection.execute(
+        text("""
+        INSERT INTO temporal_fact_generations (deployment_id, generation, conversion_id, verified_at)
+        VALUES (:dep, :generation, :id, transaction_timestamp())
+    """),
+        parameters,
+    )
 
 
 class TemporalFactConverter:

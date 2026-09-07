@@ -139,3 +139,41 @@ make legacy writers participate. The existing unconditional self-host upgrade
 therefore remains a known failure. All remaining live writers, complete staging,
 correction execution, cache consumers, hard forget/replay, readiness and
 T.2/T.3/T.5 remain required. No release or merge is justified by these proofs.
+
+## Maintenance startup and finalization
+
+Self-host setup now invokes the library upgrade orchestrator. It checks for
+unfinished legacy work before changing the schema, serializes setup callers
+with a database session lock across commits, commits C explicitly, resumes all
+conversion phases for every deployment, then invokes D/head separately. A retry
+at C never reruns the legacy-exclusion removal. A retry at head neither
+reconverts live facts nor manufactures a missing generation certificate.
+
+An empty identity created at C uses the ordinary zero-row converter. A new
+identity bootstrapped after D verifies the actual constraint definitions and
+records its explicit zero-row conversion and fact certificate in the same
+creation transaction. The constraint check compares parsed SQL expressions,
+retaining Boolean grouping, enum casts and function identities; it also rejects
+unvalidated constraints and unexpected additional exclusions. It does not
+infer schema readiness from a constraint name or default column value.
+
+D now rechecks exact fact/shadow values, migration kind/result/revision,
+narrative after-image and support counts. Extra conversion shadows, edited fact
+dates, changed operation kinds or missing support cannot hide behind a campaign
+already marked complete. The D79 migration proof now uses the real orchestration
+entry point. No finalization guard or catalog count was weakened.
+
+Validation: 90 temporal/profile pure cases pass, as do Ruff, targeted Pyright,
+import boundaries and inventory checks (98 unit files, 57 integration files).
+The documentation production build and Pagefind indexing pass. Eleven private
+PostgreSQL15 upgrade cases pass using original table constraints, installed C,
+the real D revision and Alembic environment with separate commits. This probe
+omits the full pre-C graph and the pre-C drain fixture; the tracked module's
+twelve supported PostgreSQL19 lifecycle cases remain required in CI.
+
+The maintenance runner requires operators to stop old intake/serving/worker
+processes after draining them. A new advisory lock does not retroactively make
+old binaries participate. Full runtime generation/serving gates, complete
+staging and writer participation, corrections, caches, hard forget/replay,
+readiness, T.2/T.3/T.5 and release remain unfinished. This startup implementation
+does not certify those remaining mechanisms.

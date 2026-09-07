@@ -87,3 +87,21 @@ legacy constraints, the D96 entity column removal, and temporal expansion DDL;
 it does not exercise the full supported PostgreSQL19 Alembic graph. The
 converter's predecessor-cap test also verifies that the consumed successor seed
 claim is in the operation's deletion/support inventory.
+
+## Round three and supported converter evidence
+
+Antigravity reviewed `5dfe139a` and **approved the concrete converter and
+streaming journal scope**, without approving full PR #384. The completed output
+is `/tmp/rs-t1-converter-antigravity-r3.log`. It independently ran Ruff,
+targeted Pyright and the 69 pure temporal cases. Its downstream guidance is
+retained: startup must drive every bounded phase until the recorded phase
+changes, and full supported-runtime CI remains mandatory before merge.
+
+[CI34069535978](https://github.com/writeitai/remember-stack/actions/runs/34069535978)
+completed on PostgreSQL19 with **617 worker/spine cases passing and one failure**.
+All 38 journal/converter cases passed on the complete schema. The sole worker
+failure was the D79 fixture's direct upgrade to head without conversion. Quality,
+unit, surfaces and adapters passed; contract smoke and Compose retained the
+same startup gap. The following startup change replaces that direct path with
+the actual converter rather than bypassing its guard. That new change requires
+its own CI and Antigravity review.

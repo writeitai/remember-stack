@@ -14,7 +14,6 @@ from typing import Self
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from alembic import command
 from alembic.config import Config
 import psycopg
 from psycopg import sql as pg_sql
@@ -48,7 +47,6 @@ from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
-from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
@@ -56,6 +54,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.spine.temporal_upgrade import upgrade_temporal_store
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -741,15 +740,12 @@ class SelfHostProfile:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
         migration.set_main_option(
-            "sqlalchemy.url", load_database_settings().sqlalchemy_url()
+            "sqlalchemy.url",
+            load_database_settings().sqlalchemy_url().replace("%", "%%"),
         )
-        command.upgrade(config=migration, revision="head")
-        self._raw_store.ensure_bucket()
-        self._artifact_store.ensure_bucket()
-        self._corpusfs_store.ensure_bucket()
-        self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
-        self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
-        DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
+        upgrade_temporal_store(
+            engine=self._engine,
+            config=migration,
             deployment_input=DeploymentBootstrapInput(
                 deployment_id=self._settings.deployment_id,
                 slug=self._settings.deployment_slug,
@@ -758,8 +754,13 @@ class SelfHostProfile:
                 raw_bucket=f"s3://{self._settings.raw_bucket_name}",
                 artifacts_bucket=f"s3://{self._settings.artifacts_bucket_name}",
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
-            )
+            ),
         )
+        self._raw_store.ensure_bucket()
+        self._artifact_store.ensure_bucket()
+        self._corpusfs_store.ensure_bucket()
+        self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
+        self._settings.projection_work_root.mkdir(parents=True, exist_ok=True)
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
         )

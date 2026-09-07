@@ -579,7 +579,9 @@ def test_d79_migration_backfills_existing_tree_as_legacy_generation() -> None:
                 },
             )
 
-        command.upgrade(config=config, revision="head")
+        from rememberstack.spine.temporal_upgrade import upgrade_temporal_store
+
+        upgrade_temporal_store(engine=engine, config=config)
         with engine.connect() as connection:
             row = (
                 connection.execute(

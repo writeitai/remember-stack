@@ -16,6 +16,9 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBootstrapResult
 from rememberstack.model import DeploymentConflictError
 from rememberstack.spine.document_bindings import DOCUMENT_BINDING_GENERATION
+from rememberstack.spine.temporal_conversion import (
+    initialize_empty_temporal_generation_on,
+)
 
 _LOCK_DEPLOYMENT_BOOTSTRAP = "LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE"
 
@@ -176,6 +179,9 @@ class DeploymentBootstrapper:
             )
             if deployment_created:
                 _insert_core_manifest(
+                    connection=connection, deployment_id=deployment_input.deployment_id
+                )
+                initialize_empty_temporal_generation_on(
                     connection=connection, deployment_id=deployment_input.deployment_id
                 )
             else:
