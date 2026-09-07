@@ -1,5 +1,9 @@
 """Temporal admission rules for relation identity; no source clock supplies a boundary."""
 
+from hashlib import sha256
+import json
+from uuid import UUID
+
 from rememberstack.core.fact_temporal import fact_kind
 from rememberstack.core.fact_temporal import occurrence_union
 from rememberstack.core.temporal import CanonicalBounds
@@ -99,3 +103,29 @@ def union_occurrence(
         end=None if left.end is None or right.end is None else max(left.end, right.end),
         precision=precision,
     )
+
+
+def deterministic_state_targets(
+    *, assertion: StagedRelation, candidates: tuple[RelationApplicationCandidate, ...]
+) -> tuple[UUID, ...]:
+    """Return complete dated state support or the unique undated state shortcut."""
+    matches = tuple(
+        sorted(
+            candidate.relation_id
+            for candidate in candidates
+            if candidate.state.kind is FactTemporalKind.STATE
+            and candidate.state.invalidated_at is None
+            and permits_evidence(assertion=assertion, candidate=candidate)
+        )
+    )
+    if assertion_bounds(assertion=assertion).is_known or len(matches) == 1:
+        return matches
+    return ()
+
+
+def relation_target_digest(*, targets: tuple[UUID, ...]) -> str:
+    """Certify the distinct target set using D112's canonical UUID JSON encoding."""
+    encoded = json.dumps(
+        [str(value) for value in sorted(set(targets))], separators=(",", ":")
+    )
+    return sha256(encoded.encode("utf-8")).hexdigest()

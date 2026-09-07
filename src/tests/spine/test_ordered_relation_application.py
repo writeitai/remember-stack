@@ -14,7 +14,9 @@ from rememberstack.model.fact_temporal import FactTemporalKind
 from rememberstack.model.normalization import NormalizationOutput
 from rememberstack.model.normalization import NormalizedRelation
 from rememberstack.model.relation_application import RelationApplicationOutput
+from rememberstack.model.relation_application import RelationApplicationPreparation
 from rememberstack.model.relation_application import RelationIdentityVerdict
+from rememberstack.model.relation_application import RelationPairDecision
 from rememberstack.spine.normalization import NormalizationCatalog
 from rememberstack.spine.relation_application import OrderedRelationApplier
 from rememberstack.spine.supersession import SupersessionSettings
@@ -262,7 +264,6 @@ def _apply_next(
     decisions: dict[UUID, str] | None = None,
 ) -> UUID:
     """Run one actual prepare/infer/publication/application cycle with optional fixed semantic decisions."""
-    from rememberstack.model.relation_application import RelationPairDecision
 
     prepared = applier.prepare(deployment_id=inputs.deployment_id, unit_id=unit_id)
     assert prepared is not None
@@ -876,6 +877,37 @@ def test_worker_and_ledger_complete_relation_unit_from_application_receipts(
     outcome = handler.handle(work=work, meter=NoopCostMeter())
     assert outcome.relation_flush_barrier is not None and outcome.follow_up == ()
     ledger = WorkLedger(engine=database_engine, settings=WorkLedgerSettings())
+    with database_engine.begin() as connection:
+        target_rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT * FROM relation_application_targets WHERE deployment_id=:dep"
+                ),
+                {"dep": inputs.deployment_id},
+            ).mappings()
+        ]
+        connection.execute(
+            text("DELETE FROM relation_application_targets WHERE deployment_id=:dep"),
+            {"dep": inputs.deployment_id},
+        )
+    with pytest.raises(TemporalWriteConflict, match="application receipts"):
+        ledger.complete_relation_flush(
+            processing_id=work.processing_id, barrier=outcome.relation_flush_barrier
+        )
+    with database_engine.begin() as connection:
+        assert (
+            connection.execute(
+                text("SELECT status FROM processing_state WHERE processing_id=:id"),
+                {"id": work.processing_id},
+            ).scalar_one()
+            == "running"
+        )
+        connection.execute(
+            text("""INSERT INTO relation_application_targets (deployment_id, assertion_id, adjudicator_version, relation_id)
+            VALUES (:deployment_id, :assertion_id, :adjudicator_version, :relation_id)"""),
+            target_rows,
+        )
     ledger.complete_relation_flush(
         processing_id=work.processing_id, barrier=outcome.relation_flush_barrier
     )
@@ -918,6 +950,16 @@ def test_worker_and_ledger_complete_relation_unit_from_application_receipts(
         assert (
             readiness["status"] == "succeeded" and readiness["finished_at"] is not None
         )
+        target_transaction = connection.begin_nested()
+        connection.execute(
+            text("DELETE FROM relation_application_targets WHERE deployment_id=:dep"),
+            {"dep": inputs.deployment_id},
+        )
+        readiness = (
+            connection.execute(_RELATION_FLUSH_STATUS, parameters).mappings().one()
+        )
+        assert readiness["status"] == "missing" and readiness["finished_at"] is None
+        target_transaction.rollback()
         transaction = connection.begin_nested()
         connection.execute(
             text("DELETE FROM relation_application_receipts WHERE deployment_id=:dep"),
@@ -1545,3 +1587,464 @@ def test_disjoint_date_dispute_records_two_contradictory_occurrences(
         assert len(rows) == 2 and rows[0]["contradiction_group"] is not None
         assert rows[0]["contradiction_group"] == rows[1]["contradiction_group"]
         assert all(row["valid_until"] is None for row in rows)
+
+
+def _prepare_broad_state(
+    *,
+    database_engine: Engine,
+    inputs: PublicationInputs,
+    with_predecessor: bool = False,
+) -> tuple[OrderedRelationApplier, RelationApplicationPreparation, tuple[UUID, ...]]:
+    """Seed two disjoint historical slices and prepare a claim covering both and their gap."""
+    applier = OrderedRelationApplier(
+        engine=database_engine,
+        model_provider=FakeModelProvider(
+            generate_payload={
+                "decisions": [],
+                "confidence": 1,
+                "rationale": "distinct historical state",
+            }
+        ),
+        settings=SupersessionSettings(),
+    )
+    if with_predecessor:
+        predecessor = replace(
+            _second_claim(
+                database_engine=database_engine, inputs=inputs, day="2014-01-01+00"
+            ),
+            object_id=inputs.other_id,
+        )
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE claims SET claim_valid_precision='open', claim_valid_until=NULL WHERE claim_id=:id"
+                ),
+                {"id": predecessor.claim_id},
+            )
+        _apply_next(
+            applier=applier,
+            inputs=predecessor,
+            unit_id=_stage(
+                database_engine=database_engine, inputs=predecessor, number=4
+            ),
+        )
+    identities: list[UUID] = []
+    for number, start, end in ((1, 2010, 2012), (2, 2018, 2019), (3, 2010, 2019)):
+        source = (
+            inputs
+            if number == 1
+            else _second_claim(
+                database_engine=database_engine, inputs=inputs, day=f"{start}-01-01+00"
+            )
+        )
+        with database_engine.begin() as connection:
+            connection.execute(
+                text("""UPDATE claims SET claim_valid_kind='effective_period',
+                claim_valid_from=CAST(:start AS timestamptz), claim_valid_until=CAST(:end AS timestamptz),
+                claim_valid_precision='year' WHERE claim_id=:id"""),
+                {
+                    "id": source.claim_id,
+                    "start": f"{start}-01-01+00",
+                    "end": f"{end}-12-31+00",
+                },
+            )
+        unit = _stage(database_engine=database_engine, inputs=source, number=number)
+        if number < 3:
+            identities.append(_apply_next(applier=applier, inputs=source, unit_id=unit))
+    prepared = applier.prepare(deployment_id=inputs.deployment_id, unit_id=unit)
+    assert prepared is not None
+    return applier, prepared, tuple(identities)
+
+
+def test_broad_state_supports_every_slice_without_filling_the_gap(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Complete deterministic support survives omitted low-confidence model decisions and exact retry."""
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    exact = applier.infer(prepared=prepared, meter=NoopCostMeter())
+    assert exact.method == "exact"
+    with database_engine.connect() as connection:
+        before = connection.execute(
+            text("""SELECT relation_id, seed_claim_id, valid_from, valid_until,
+            from_operation_id, until_operation_id, evidence_count FROM relations WHERE deployment_id=:dep ORDER BY relation_id"""),
+            {"dep": inputs.deployment_id},
+        ).all()
+    applier.publish_output(
+        prepared=prepared,
+        output=RelationApplicationOutput(
+            verdict=RelationIdentityVerdict(
+                confidence=0.1, rationale="omitted every proven target"
+            ),
+            method="frontier_llm",
+            model="proof",
+        ),
+    )
+    result = applier.apply(prepared=prepared)
+    assert (
+        result.relation_ids == tuple(sorted(identities))
+        and result.identity_outcome == "evidence"
+    )
+    with pytest.raises(ValueError, match="no primary"):
+        _ = result.relation_id
+    assert applier.apply(prepared=prepared) == result
+    with database_engine.connect() as connection:
+        after = connection.execute(
+            text("""SELECT relation_id, seed_claim_id, valid_from, valid_until,
+            from_operation_id, until_operation_id, evidence_count FROM relations WHERE deployment_id=:dep ORDER BY relation_id"""),
+            {"dep": inputs.deployment_id},
+        ).all()
+        assert after == before
+        assert (
+            connection.execute(
+                text("""SELECT count(*) FROM relations WHERE deployment_id=:dep
+            AND valid_from <= '2015-01-01+00' AND (valid_until IS NULL OR valid_until > '2015-01-01+00')"""),
+                {"dep": inputs.deployment_id},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM relation_evidence WHERE claim_id=:claim"),
+                {"claim": prepared.inputs.assertion.testimony.claim_id},
+            ).scalar_one()
+            == 2
+        )
+        from rememberstack.core.relation_temporal import relation_target_digest
+
+        certificate = connection.execute(
+            text(
+                "SELECT target_count, target_digest FROM relation_application_receipts WHERE assertion_id=:assertion"
+            ),
+            {"assertion": prepared.inputs.assertion.assertion_id},
+        ).one()
+        assert certificate == (2, relation_target_digest(targets=identities))
+
+
+def test_second_support_target_failure_rolls_back_the_complete_assertion(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Failure inserting the second target rolls back both evidence writes, journals and parent receipt."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=applier.infer(prepared=prepared, meter=NoopCostMeter()),
+    )
+    with database_engine.begin() as connection:
+        before = connection.execute(
+            text(
+                "SELECT relation_id, temporal_revision FROM relations WHERE deployment_id=:dep ORDER BY relation_id"
+            ),
+            {"dep": inputs.deployment_id},
+        ).all()
+        connection.execute(
+            text("""CREATE FUNCTION second_target_proof_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN IF (SELECT count(*) FROM relation_application_targets WHERE deployment_id=NEW.deployment_id
+                AND assertion_id=NEW.assertion_id AND adjudicator_version=NEW.adjudicator_version) = 2
+            THEN RAISE EXCEPTION 'second target proof failure'; END IF; RETURN NEW; END $$""")
+        )
+        connection.execute(
+            text(
+                "CREATE TRIGGER second_target_proof_failure AFTER INSERT ON relation_application_targets FOR EACH ROW EXECUTE FUNCTION second_target_proof_failure()"
+            )
+        )
+    try:
+        with pytest.raises(SQLAlchemyError, match="second target proof failure"):
+            applier.apply(prepared=prepared)
+    finally:
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DROP TRIGGER second_target_proof_failure ON relation_application_targets"
+                )
+            )
+            connection.execute(text("DROP FUNCTION second_target_proof_failure()"))
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT relation_id, temporal_revision FROM relations WHERE deployment_id=:dep ORDER BY relation_id"
+                ),
+                {"dep": inputs.deployment_id},
+            ).all()
+            == before
+        )
+        for table, column, value in (
+            (
+                "relation_evidence",
+                "claim_id",
+                prepared.inputs.assertion.testimony.claim_id,
+            ),
+            (
+                "relation_application_receipts",
+                "assertion_id",
+                prepared.inputs.assertion.assertion_id,
+            ),
+            (
+                "relation_application_targets",
+                "assertion_id",
+                prepared.inputs.assertion.assertion_id,
+            ),
+            (
+                "relation_adjudications",
+                "triggering_assertion_id",
+                prepared.inputs.assertion.assertion_id,
+            ),
+        ):
+            assert (
+                connection.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE {column}=:value"),
+                    {"value": value},
+                ).scalar_one()
+                == 0
+            )
+    assert applier.apply(prepared=prepared).relation_ids == tuple(sorted(identities))
+
+
+def test_target_certificate_rejects_missing_substituted_and_forged_targets(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Matching receipt existence or cardinality alone cannot certify replay or unit completion."""
+    from rememberstack.spine.relation_application import _application_result_on
+    from rememberstack.spine.relation_receipts import relation_receipt_valid_sql
+
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=applier.infer(prepared=prepared, meter=NoopCostMeter()),
+    )
+    applier.apply(prepared=prepared)
+    with database_engine.begin() as connection:
+        for statement in (
+            "DELETE FROM relation_application_targets WHERE assertion_id=:assertion AND relation_id=:fact",
+            "UPDATE relation_application_targets SET relation_id=:other WHERE assertion_id=:assertion AND relation_id=:fact",
+            "UPDATE relation_application_receipts SET target_digest=repeat('0',64) WHERE assertion_id=:assertion",
+            "UPDATE relation_application_receipts SET target_count=1 WHERE assertion_id=:assertion",
+        ):
+            transaction = connection.begin_nested()
+            connection.execute(
+                text(statement),
+                {
+                    "assertion": prepared.inputs.assertion.assertion_id,
+                    "fact": identities[0],
+                    "other": uuid4(),
+                },
+            )
+            assert not connection.execute(
+                text(
+                    f"SELECT {relation_receipt_valid_sql(alias='r')} FROM relation_application_receipts r WHERE assertion_id=:assertion"
+                ),
+                {"assertion": prepared.inputs.assertion.assertion_id},
+            ).scalar_one()
+            with pytest.raises(TemporalWriteConflict, match="certificate"):
+                _application_result_on(
+                    connection=connection,
+                    deployment_id=inputs.deployment_id,
+                    assertion_id=prepared.inputs.assertion.assertion_id,
+                )
+            transaction.rollback()
+    assert applier.apply(prepared=prepared).relation_ids == tuple(sorted(identities))
+
+
+def _prove_multi_support_cap(
+    *, database_engine: Engine, inputs: PublicationInputs, explicit_authority: bool
+) -> None:
+    """Compare an explicitly selected successor start with a missing multi-target authority."""
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs, with_predecessor=True
+    )
+    predecessor = next(
+        candidate
+        for candidate in prepared.inputs.candidates
+        if candidate.object_entity_id == inputs.other_id
+    )
+    successor = next(
+        candidate
+        for candidate in prepared.inputs.candidates
+        if candidate.relation_id == identities[1]
+    )
+    assert (
+        successor.state.verdict.start is not None
+        and successor.state.verdict.start.year == 2018
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=RelationApplicationOutput(
+            verdict=RelationIdentityVerdict(
+                decisions=(
+                    RelationPairDecision(
+                        relation_id=predecessor.relation_id,
+                        outcome="incoming_succeeds",
+                        support_target_id=successor.relation_id
+                        if explicit_authority
+                        else None,
+                    ),
+                ),
+                confidence=1,
+                rationale="B ended when the later A state began",
+            ),
+            method="small_model",
+            model="proof",
+        ),
+    )
+    result = applier.apply(prepared=prepared)
+    assert result.relation_ids == tuple(sorted(identities))
+    with database_engine.connect() as connection:
+        until = connection.execute(
+            text("SELECT valid_until FROM relations WHERE relation_id=:id"),
+            {"id": predecessor.relation_id},
+        ).scalar_one()
+        if explicit_authority:
+            assert until == successor.state.verdict.start
+        else:
+            assert until is None
+            assert (
+                connection.execute(
+                    text("""SELECT count(*) FROM temporal_operations WHERE deployment_id=:dep
+                AND reason_code='incoming_succeeds_refused_missing_or_invalid_support_authority' AND result='noop'"""),
+                    {"dep": inputs.deployment_id},
+                ).scalar_one()
+                == 1
+            )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM relation_evidence WHERE claim_id=:claim"),
+                {"claim": prepared.inputs.assertion.testimony.claim_id},
+            ).scalar_one()
+            == 2
+        )
+    assert applier.apply(prepared=prepared) == result
+
+
+def test_multi_support_cap_uses_the_explicit_successor_verdict_start(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The later slice's 2018 start caps the predecessor, never the broad claim's 2010 start."""
+    _prove_multi_support_cap(
+        database_engine=database_engine, inputs=inputs, explicit_authority=True
+    )
+
+
+def test_multi_support_missing_cap_authority_preserves_independent_support(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Missing authority refuses only the cap and still atomically attaches both evidence targets."""
+    _prove_multi_support_cap(
+        database_engine=database_engine, inputs=inputs, explicit_authority=False
+    )
+
+
+def test_corrupt_receipt_blocks_an_already_applied_unit(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """A completed assertion cannot hide lost targets behind its retired membership."""
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=applier.infer(prepared=prepared, meter=NoopCostMeter()),
+    )
+    applier.apply(prepared=prepared)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM relation_application_targets WHERE assertion_id=:assertion AND relation_id=:fact"
+            ),
+            {
+                "assertion": prepared.inputs.assertion.assertion_id,
+                "fact": identities[0],
+            },
+        )
+        unit = connection.execute(
+            text(
+                "SELECT unit_id FROM relation_flush_inputs WHERE assertion_id=:assertion"
+            ),
+            {"assertion": prepared.inputs.assertion.assertion_id},
+        ).scalar_one()
+    with pytest.raises(TemporalWriteConflict, match="certificate"):
+        applier.prepare(deployment_id=inputs.deployment_id, unit_id=unit)
+    with pytest.raises(TemporalWriteConflict, match="certificate"):
+        applier.apply(prepared=prepared)
+
+
+def test_assertion_removal_cascades_receipt_support_targets(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """The new internal target table follows its source receipt's deletion closure."""
+    applier, prepared, _ = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=applier.infer(prepared=prepared, meter=NoopCostMeter()),
+    )
+    applier.apply(prepared=prepared)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM normalize_relation_assertions WHERE assertion_id=:assertion"
+            ),
+            {"assertion": prepared.inputs.assertion.assertion_id},
+        )
+        for table in ("relation_application_receipts", "relation_application_targets"):
+            assert (
+                connection.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE assertion_id=:assertion"),
+                    {"assertion": prepared.inputs.assertion.assertion_id},
+                ).scalar_one()
+                == 0
+            )
+
+
+def test_concurrent_helpers_reuse_one_complete_multi_target_receipt(
+    database_engine: Engine, inputs: PublicationInputs
+) -> None:
+    """Racing helpers either reuse the committed group or retry its stale head without duplicating support."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from rememberstack.model.relation_application import RelationApplicationResult
+
+    applier, prepared, identities = _prepare_broad_state(
+        database_engine=database_engine, inputs=inputs
+    )
+    applier.publish_output(
+        prepared=prepared,
+        output=applier.infer(prepared=prepared, meter=NoopCostMeter()),
+    )
+
+    def apply_or_retry() -> RelationApplicationResult:
+        """Retry a helper whose head was committed while it waited for the canonical block."""
+        try:
+            return applier.apply(prepared=prepared)
+        except TemporalWriteConflict:
+            return applier.apply(prepared=prepared)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = executor.submit(apply_or_retry), executor.submit(apply_or_retry)
+        assert first.result(timeout=30) == second.result(timeout=30)
+        assert first.result().relation_ids == tuple(sorted(identities))
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM relation_evidence WHERE claim_id=:claim"),
+                {"claim": prepared.inputs.assertion.testimony.claim_id},
+            ).scalar_one()
+            == 2
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM relation_application_receipts WHERE assertion_id=:assertion"
+                ),
+                {"assertion": prepared.inputs.assertion.assertion_id},
+            ).scalar_one()
+            == 1
+        )

@@ -15,9 +15,11 @@ from rememberstack.core.fact_temporal import cap_fact
 from rememberstack.core.fact_temporal import occurrence_union
 from rememberstack.core.fact_temporal import seed_fact
 from rememberstack.core.relation_temporal import assertion_bounds
+from rememberstack.core.relation_temporal import deterministic_state_targets
 from rememberstack.core.relation_temporal import nominated_candidate
 from rememberstack.core.relation_temporal import permits_evidence
 from rememberstack.core.relation_temporal import relation_kind
+from rememberstack.core.relation_temporal import relation_target_digest
 from rememberstack.core.relation_temporal import union_occurrence
 from rememberstack.model import ModelRequest
 from rememberstack.model.fact_temporal import ClaimTemporalWindow
@@ -42,6 +44,7 @@ from rememberstack.model.temporal_write import TemporalFactRef
 from rememberstack.model.temporal_write import TemporalOperationKind
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.spine.relation_receipts import relation_receipt_valid_sql
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionSettings
 from rememberstack.spine.temporal_journal import _canonical_subject
@@ -56,10 +59,12 @@ from rememberstack.spine.temporal_journal import TemporalWriteConflict
 from rememberstack.spine.temporal_journal import TemporalWriteSession
 
 _TESTIMONY_LIMIT = 8
+_MODEL_CANDIDATE_LIMIT = 64
+_TARGET_BATCH_SIZE = 256
 
 _PROMPT = """Adjudicate an unattached relation assertion against existing facts.
 Return one decision for each relevant existing candidate by its relation_id:
-evidence = the same state or occurrence (at most one evidence target);
+evidence = the same state or occurrence (occurrences select at most one identity);
 incoming_succeeds = the incoming state, or ending event, ends that existing state;
 existing_succeeds = the incoming dated historical state ends when that later dated state begins;
 contradict = incompatible claims about the same situation, including one event with a disputed date;
@@ -70,6 +75,10 @@ Never use said-on timestamps as world-time boundaries. Missing world time stays
 unknown. A mixed dated/undated pair or disjoint dated windows cannot be evidence.
 Only states can be ended. A state may end at a successor's world-time start;
 a time supplied by publication or ingestion is never a successor boundary.
+For a semantic effect with multiple established state support targets, name
+support_target_id: the exact successor for incoming_succeeds, predecessor for
+existing_succeeds, or other participant for contradict. Missing authority refuses
+the effect while retaining all established support. Support does not fill time gaps.
 When uncertain prefer coexist. Omitted testimony is disclosed: do not assert a
 conflict is resolved when unseen evidence could be needed to resolve it.
 
@@ -123,6 +132,18 @@ class OrderedRelationApplier:
             ):
                 raise TemporalWriteConflict(
                     "materialized relation unit has lost its assertion membership"
+                )
+            if connection.execute(
+                text(f"""SELECT EXISTS (
+                SELECT 1 FROM relation_flush_inputs i JOIN relation_application_receipts r
+                  ON r.deployment_id=i.deployment_id AND r.assertion_id=i.assertion_id
+                 AND r.adjudicator_version=i.adjudicator_version
+                WHERE i.deployment_id=:dep AND i.unit_id=:unit
+                  AND NOT {relation_receipt_valid_sql(alias="r")})"""),
+                {"dep": deployment_id, "unit": unit_id},
+            ).scalar_one():
+                raise TemporalWriteConflict(
+                    "relation unit has an incomplete or corrupt target certificate"
                 )
             if not connection.execute(
                 _UNIT_PENDING, {"dep": deployment_id, "unit": unit_id}
@@ -221,22 +242,15 @@ class OrderedRelationApplier:
                 is_change_prone=inputs.is_change_prone,
             )
         )
-        exact = tuple(
-            candidate
-            for candidate in candidates
-            if candidate.state.kind is FactTemporalKind.STATE
-            and permits_evidence(assertion=inputs.assertion, candidate=candidate)
+        exact = deterministic_state_targets(
+            assertion=inputs.assertion, candidates=candidates
         )
-        if len(exact) == 1 and len(candidates) == 1:
+        if exact and len(exact) == len(candidates):
             return RelationApplicationOutput(
                 verdict=RelationIdentityVerdict(
-                    decisions=(
-                        RelationPairDecision(
-                            relation_id=exact[0].relation_id, outcome="evidence"
-                        ),
-                    ),
+                    decisions=(),
                     confidence=1,
-                    rationale="same canonical state value with compatible world-time",
+                    rationale="complete deterministic compatible state support",
                 ),
                 method="exact",
             )
@@ -247,16 +261,28 @@ class OrderedRelationApplier:
                 ),
                 method="novelty_gate",
             )
+        # Complete deterministic support remains in the prepared fingerprint and
+        # application. Only semantic inference has a bounded, disclosed sample.
+        sampled = tuple(
+            sorted(
+                candidates,
+                key=lambda value: (value.relation_id in exact, value.relation_id),
+            )
+        )[:_MODEL_CANDIDATE_LIMIT]
         prompt = _PROMPT.format(
-            inputs=inputs.model_copy(
-                update={"candidates": candidates}
-            ).model_dump_json()
+            inputs=inputs.model_copy(update={"candidates": sampled}).model_dump_json()
         )
-        if len(exact) == 1:
+        prompt += f"\nSemantic candidate sample omits {len(candidates) - len(sampled)} candidates."
+        if exact:
+            visible_targets = [
+                str(candidate.relation_id)
+                for candidate in sampled
+                if candidate.relation_id in exact
+            ]
             prompt += (
-                "\nDeterministic compatible-state identity is already established: "
-                f"evidence target {exact[0].relation_id}. Preserve this identity; "
-                "judge only the remaining candidates' semantic relationships."
+                f"\nDeterministic state support already has {len(exact)} targets; "
+                f"visible targets: {json.dumps(visible_targets)}. Preserve every established target. "
+                "Judge only additional semantic relationships with explicitly named participants."
             )
         key = f"relation:{inputs.assertion.assertion_id}:{prepared.preparation_id}"
         call = self._model_provider.generate(
@@ -395,7 +421,7 @@ class OrderedRelationApplier:
                 output = RelationApplicationOutput.model_validate(
                     head["prepared_output"]
                 )
-                evidence_target, decisions = _validated_decisions(
+                evidence_targets, decisions = _validated_decisions(
                     prepared=prepared,
                     output=output,
                     confidence_floor=self._settings.confidence_floor,
@@ -404,7 +430,7 @@ class OrderedRelationApplier:
                     TemporalFactRef(
                         plane=FactPlane.RELATION, fact_id=prepared.new_relation_id
                     )
-                    if evidence_target is None
+                    if not evidence_targets
                     else None
                 )
                 with self._inputs_on(
@@ -423,7 +449,7 @@ class OrderedRelationApplier:
                         session=session,
                         prepared=prepared,
                         output=output,
-                        evidence_target=evidence_target,
+                        evidence_targets=evidence_targets,
                         decisions=decisions,
                     )
                     connection.execute(
@@ -434,11 +460,33 @@ class OrderedRelationApplier:
                             "generation": ADJUDICATOR_VERSION,
                             "batch": prepared.batch_id,
                             "ordinal": prepared.ordinal,
-                            "fact": result.relation_id,
+                            "target_count": len(result.relation_ids),
+                            "target_digest": relation_target_digest(
+                                targets=result.relation_ids
+                            ),
                             "outcome": result.identity_outcome,
                             "fingerprint": prepared.input_fingerprint,
                         },
                     )
+                    for offset in range(
+                        0, len(result.relation_ids), _TARGET_BATCH_SIZE
+                    ):
+                        connection.execute(
+                            text("""INSERT INTO relation_application_targets
+                            (deployment_id, assertion_id, adjudicator_version, relation_id)
+                            VALUES (:dep, :assertion, :generation, :fact)"""),
+                            [
+                                {
+                                    "dep": dep,
+                                    "assertion": assertion.assertion_id,
+                                    "generation": ADJUDICATOR_VERSION,
+                                    "fact": identity,
+                                }
+                                for identity in result.relation_ids[
+                                    offset : offset + _TARGET_BATCH_SIZE
+                                ]
+                            ],
+                        )
                     for adjudication_id in adjudications:
                         connection.execute(
                             text("""INSERT INTO relation_application_adjudications (deployment_id, assertion_id, adjudicator_version, adjudication_id)
@@ -449,6 +497,15 @@ class OrderedRelationApplier:
                                 "generation": ADJUDICATOR_VERSION,
                                 "id": adjudication_id,
                             },
+                        )
+                    verified = _application_result_on(
+                        connection=connection,
+                        deployment_id=dep,
+                        assertion_id=assertion.assertion_id,
+                    )
+                    if verified != result:
+                        raise TemporalWriteConflict(
+                            "application target/effect certificate differs before commit"
                         )
                     connection.execute(
                         _RETIRE_MEMBERSHIPS,
@@ -503,16 +560,20 @@ class OrderedRelationApplier:
         new_fact: TemporalFactRef | None = None,
     ) -> Iterator[tuple[RelationApplicationInputs, TemporalWriteSession]]:
         """Discover the complete fact lock set under its block, then snapshot exact inputs."""
-        rows = tuple(
-            connection.execute(
-                _BLOCK_FACTS,
-                {
-                    "dep": deployment_id,
-                    "subject": block.subject_entity_id,
-                    "predicate": block.predicate,
-                },
-            ).mappings()
+        rows = []
+        cursor = connection.execute(
+            _BLOCK_FACTS.execution_options(yield_per=_TARGET_BATCH_SIZE),
+            {
+                "dep": deployment_id,
+                "subject": block.subject_entity_id,
+                "predicate": block.predicate,
+            },
         )
+        try:
+            for partition in cursor.mappings().partitions(_TARGET_BATCH_SIZE):
+                rows.extend(partition)
+        finally:
+            cursor.close()
         facts = tuple(
             TemporalFactRef(plane=FactPlane.RELATION, fact_id=row["relation_id"])
             for row in rows
@@ -629,6 +690,7 @@ class OrderedRelationApplier:
                             "generation": ADJUDICATOR_VERSION,
                             "settings": self._settings.model_dump(mode="json"),
                             "testimony_limit": _TESTIMONY_LIMIT,
+                            "model_candidate_limit": _MODEL_CANDIDATE_LIMIT,
                         }
                     ),
                 ),
@@ -830,30 +892,25 @@ def _validated_decisions(
     prepared: RelationApplicationPreparation,
     output: RelationApplicationOutput,
     confidence_floor: float,
-) -> tuple[UUID | None, dict[UUID, str]]:
-    """Enforce identity and temporal permission independently of a model's confidence or wording."""
+) -> tuple[tuple[UUID, ...], tuple[RelationPairDecision, ...]]:
+    """Keep complete deterministic support independent of model omission or confidence."""
     assertion = prepared.inputs.assertion
     candidates = {
         candidate.relation_id: candidate for candidate in prepared.inputs.candidates
     }
-    decisions: dict[UUID, str] = {}
-    evidence: UUID | None = None
-    exact = tuple(
-        candidate.relation_id
-        for candidate in candidates.values()
-        if candidate.state.kind is FactTemporalKind.STATE
-        and nominated_candidate(
-            assertion=assertion,
-            candidate=candidate,
-            is_change_prone=prepared.inputs.is_change_prone,
-        )
-        and permits_evidence(assertion=assertion, candidate=candidate)
+    exact = deterministic_state_targets(
+        assertion=assertion, candidates=prepared.inputs.candidates
     )
+    evidence: set[UUID] = set(exact)
+    decisions: list[RelationPairDecision] = []
+    seen: set[tuple[UUID, UUID | None]] = set()
     for decision in output.verdict.decisions:
-        if decision.relation_id in decisions or decision.relation_id not in candidates:
+        key = (decision.relation_id, decision.support_target_id)
+        if key in seen or decision.relation_id not in candidates:
             raise TemporalWriteConflict(
                 "identity verdict repeats or invents a candidate"
             )
+        seen.add(key)
         candidate = candidates[decision.relation_id]
         if not nominated_candidate(
             assertion=assertion,
@@ -868,42 +925,33 @@ def _validated_decisions(
             if output.verdict.confidence >= confidence_floor
             else "coexist"
         )
-        if len(exact) == 1 and candidate.relation_id == exact[0]:
+        if candidate.relation_id in exact:
             outcome = "evidence"
         if outcome == "evidence":
-            if evidence is not None or not permits_evidence(
-                assertion=assertion, candidate=candidate
+            if not permits_evidence(assertion=assertion, candidate=candidate) or (
+                evidence and candidate.relation_id not in evidence
             ):
                 raise TemporalWriteConflict(
-                    "identity verdict cannot attach disjoint/mixed inputs or select multiple evidence targets"
+                    "identity verdict cannot attach disjoint/mixed inputs or select multiple semantic evidence targets"
                 )
-            evidence = candidate.relation_id
-        elif outcome == "incoming_succeeds":
-            if candidate.state.kind is not FactTemporalKind.STATE:
-                raise TemporalWriteConflict(
-                    "an occurrence or unknown fact cannot be superseded"
-                )
+            evidence.add(candidate.relation_id)
+        elif (
+            outcome == "incoming_succeeds"
+            and candidate.state.kind is not FactTemporalKind.STATE
+        ):
+            raise TemporalWriteConflict(
+                "an occurrence or unknown fact cannot be superseded"
+            )
         elif outcome == "existing_succeeds":
-            incoming = assertion_bounds(assertion=assertion)
             if (
                 relation_kind(assertion=assertion) is not FactTemporalKind.STATE
                 or candidate.state.kind is not FactTemporalKind.STATE
-                or incoming.start is None
-                or candidate.state.verdict.start is None
-                or candidate.state.verdict.start <= incoming.start
             ):
                 raise TemporalWriteConflict(
-                    "historical state succession requires two correctly ordered world-time starts"
+                    "historical state succession requires state identities"
                 )
-        decisions[decision.relation_id] = outcome
-    if len(exact) == 1:
-        if evidence is not None and evidence != exact[0]:
-            raise TemporalWriteConflict(
-                "semantic verdict conflicts with deterministic compatible-state identity"
-            )
-        evidence = exact[0]
-        decisions[evidence] = "evidence"
-    return evidence, decisions
+        decisions.append(decision.model_copy(update={"outcome": outcome}))
+    return tuple(sorted(evidence)), tuple(decisions)
 
 
 def _apply_on(
@@ -912,8 +960,58 @@ def _apply_on(
     session: TemporalWriteSession,
     prepared: RelationApplicationPreparation,
     output: RelationApplicationOutput,
+    evidence_targets: tuple[UUID, ...],
+    decisions: tuple[RelationPairDecision, ...],
+) -> tuple[RelationApplicationResult, tuple[UUID, ...]]:
+    """Apply every support target and explicitly routed effect in one assertion transaction."""
+    targets = evidence_targets or (prepared.new_relation_id,)
+    routed: dict[UUID, dict[UUID, str]] = {identity: {} for identity in targets}
+    refused: list[RelationPairDecision] = []
+    for decision in decisions:
+        if decision.outcome in ("evidence", "coexist"):
+            continue
+        authority = decision.support_target_id
+        if authority is None and len(targets) == 1:
+            authority = targets[0]
+        if (
+            authority is None
+            or authority not in routed
+            or authority == decision.relation_id
+        ):
+            refused.append(decision)
+        else:
+            routed[authority][decision.relation_id] = decision.outcome
+    affected: set[UUID] = set()
+    adjudications: list[UUID] = []
+    for index, identity in enumerate(targets):
+        result, written = _apply_target_on(
+            connection=connection,
+            session=session,
+            prepared=prepared,
+            output=output,
+            evidence_target=identity if evidence_targets else None,
+            decisions=routed[identity],
+            refused_decisions=tuple(refused) if index == 0 else (),
+        )
+        affected.update(result.affected_relation_ids)
+        adjudications.extend(written)
+    return RelationApplicationResult(
+        assertion_id=prepared.inputs.assertion.assertion_id,
+        relation_ids=targets,
+        identity_outcome="evidence" if evidence_targets else "new",
+        affected_relation_ids=tuple(sorted(affected)),
+    ), tuple(adjudications)
+
+
+def _apply_target_on(
+    *,
+    connection: Connection,
+    session: TemporalWriteSession,
+    prepared: RelationApplicationPreparation,
+    output: RelationApplicationOutput,
     evidence_target: UUID | None,
     decisions: dict[UUID, str],
+    refused_decisions: tuple[RelationPairDecision, ...],
 ) -> tuple[RelationApplicationResult, tuple[UUID, ...]]:
     """Apply the chosen identity, caps and contradiction metadata as one journal group."""
     inputs = prepared.inputs
@@ -992,6 +1090,21 @@ def _apply_on(
         adjudications.append(adjudication_id)
         affected.add(fact.fact_id)
 
+    for decision in refused_decisions:
+        fact = TemporalFactRef(plane=FactPlane.RELATION, fact_id=decision.relation_id)
+        before = session.state(fact=fact)
+        if before is None:
+            raise TemporalWriteConflict("refused effect candidate disappeared")
+        record(
+            fact=fact,
+            before=before,
+            after=before,
+            operation_id=uuid4(),
+            kind=TemporalOperationKind.EVIDENCE,
+            outcome="noop",
+            reason=f"{decision.outcome}_refused_missing_or_invalid_support_authority",
+        )
+
     if evidence_target is None:
         connection.execute(
             text("""INSERT INTO relations (relation_id, deployment_id, subject_entity_id, predicate, object_entity_id, normalizer_version, ingested_at)
@@ -1053,17 +1166,34 @@ def _apply_on(
             and candidate.object_entity_id != assertion.object_entity_id
         ):
             contradictions.add(identity)
+    group_participants = contradictions | (
+        {target.fact_id} if evidence_target is not None and contradictions else set()
+    )
     groups = {
-        group_id
-        for identity in contradictions
-        if (group_id := candidate_map[identity].state.contradiction_group) is not None
+        state.contradiction_group
+        for identity in group_participants
+        if (
+            state := session.state(
+                fact=TemporalFactRef(plane=FactPlane.RELATION, fact_id=identity)
+            )
+        )
+        is not None
+        and state.contradiction_group is not None
     }
     group = min(groups) if groups else uuid4() if contradictions else None
     if group is not None:
         contradictions.update(
             candidate.relation_id
             for candidate in inputs.candidates
-            if candidate.state.contradiction_group in groups
+            if (
+                current := session.state(
+                    fact=TemporalFactRef(
+                        plane=FactPlane.RELATION, fact_id=candidate.relation_id
+                    )
+                )
+            )
+            is not None
+            and current.contradiction_group in groups
         )
         for identity in sorted(contradictions):
             fact = TemporalFactRef(plane=FactPlane.RELATION, fact_id=identity)
@@ -1200,7 +1330,7 @@ def _apply_on(
         )
     return RelationApplicationResult(
         assertion_id=assertion.assertion_id,
-        relation_id=target.fact_id,
+        relation_ids=(target.fact_id,),
         identity_outcome="new" if evidence_target is None else "evidence",
         affected_relation_ids=tuple(sorted(affected)),
     ), tuple(adjudications)
@@ -1250,7 +1380,7 @@ def _application_result_on(
     row = (
         connection.execute(
             text(
-                "SELECT relation_id, identity_outcome FROM relation_application_receipts WHERE deployment_id=:dep AND assertion_id=:assertion AND adjudicator_version=:generation"
+                f"SELECT r.identity_outcome, {relation_receipt_valid_sql(alias='r')} AS valid FROM relation_application_receipts r WHERE r.deployment_id=:dep AND r.assertion_id=:assertion AND r.adjudicator_version=:generation"
             ),
             parameters,
         )
@@ -1259,18 +1389,17 @@ def _application_result_on(
     )
     if row is None:
         return None
-    if (
-        connection.execute(
-            text(
-                "SELECT 1 FROM relations WHERE deployment_id=:dep AND relation_id=:fact"
-            ),
-            {"dep": deployment_id, "fact": row["relation_id"]},
-        ).scalar_one_or_none()
-        is None
-    ):
+    if not row["valid"]:
         raise TemporalWriteConflict(
-            "retained relation receipt cannot resurrect a missing fact"
+            "relation target certificate is incomplete or corrupt; retained receipt cannot resurrect a missing fact"
         )
+    targets = tuple(
+        connection.execute(
+            text("""SELECT relation_id FROM relation_application_targets
+        WHERE deployment_id=:dep AND assertion_id=:assertion AND adjudicator_version=:generation ORDER BY relation_id"""),
+            parameters,
+        ).scalars()
+    )
     affected = set(
         connection.execute(
             text("""SELECT a.relation_id FROM relation_application_adjudications x
@@ -1279,10 +1408,10 @@ def _application_result_on(
             parameters,
         ).scalars()
     )
-    affected.add(row["relation_id"])
+    affected.update(targets)
     return RelationApplicationResult(
         assertion_id=assertion_id,
-        relation_id=row["relation_id"],
+        relation_ids=targets,
         identity_outcome=row["identity_outcome"],
         affected_relation_ids=tuple(sorted(affected)),
     )
@@ -1335,11 +1464,11 @@ _CANDIDATE_TESTIMONY = text("""SELECT c.claim_id FROM relation_evidence e JOIN c
 _FACT_OPERATION = text("""SELECT operation_id FROM temporal_operations WHERE deployment_id=:dep AND relation_id=:fact
     AND resulting_revision=:revision AND result='applied' ORDER BY recorded_at DESC, operation_id DESC LIMIT 1""")
 _INSERT_APPLICATION = text("""INSERT INTO relation_application_receipts
-    (deployment_id, assertion_id, adjudicator_version, batch_id, ordinal, relation_id, identity_outcome, input_digest)
-    VALUES (:dep, :assertion, :generation, :batch, :ordinal, :fact, :outcome, :fingerprint)""")
+    (deployment_id, assertion_id, adjudicator_version, batch_id, ordinal, target_count, target_digest, identity_outcome, input_digest)
+    VALUES (:dep, :assertion, :generation, :batch, :ordinal, :target_count, :target_digest, :outcome, :fingerprint)""")
 _RETIRE_MEMBERSHIPS = text("""UPDATE relation_flush_inputs SET applied_at=clock_timestamp()
     WHERE deployment_id=:dep AND assertion_id=:assertion AND adjudicator_version=:generation AND applied_at IS NULL""")
-_COMPLETE_BATCH = text("""UPDATE relation_apply_batches b SET completed_at=clock_timestamp() WHERE b.deployment_id=:dep AND b.batch_id=:batch
+_COMPLETE_BATCH = text(f"""UPDATE relation_apply_batches b SET completed_at=clock_timestamp() WHERE b.deployment_id=:dep AND b.batch_id=:batch
     AND b.expected_inputs = (SELECT count(*) FROM relation_apply_batch_inputs c WHERE c.deployment_id=b.deployment_id AND c.batch_id=b.batch_id)
     AND NOT EXISTS (SELECT 1 FROM relation_apply_batch_inputs i WHERE i.deployment_id=b.deployment_id AND i.batch_id=b.batch_id
-        AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version))""")
+        AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version AND {relation_receipt_valid_sql(alias="r")}))""")

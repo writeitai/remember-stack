@@ -49,6 +49,7 @@ from rememberstack.model import WorkNotRunningError
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.catalog_contract import lane_is_valid
 from rememberstack.spine.normalization import _receipt_on
+from rememberstack.spine.relation_receipts import relation_receipt_valid_sql
 from rememberstack.spine.temporal_journal import temporal_identity_admission
 from rememberstack.spine.temporal_journal import TemporalWriteConflict
 
@@ -678,10 +679,11 @@ class WorkLedger:
                     "materialized relation unit has lost its assertion membership"
                 )
             pending = connection.execute(
-                text("""SELECT EXISTS (
+                text(f"""SELECT EXISTS (
                 SELECT 1 FROM relation_flush_inputs i WHERE i.deployment_id=:dep AND i.unit_id=:unit
                 AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id
-                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version))"""),
+                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version
+                    AND {relation_receipt_valid_sql(alias="r")}))"""),
                 parameters,
             ).scalar_one()
             if pending:
@@ -721,11 +723,12 @@ class WorkLedger:
             if counts["expected"] != counts["ready"]:
                 return tuple(outcomes)
             if connection.execute(
-                text("""SELECT EXISTS (SELECT 1 FROM relation_flush_inputs i JOIN relation_flush_block_units u
+                text(f"""SELECT EXISTS (SELECT 1 FROM relation_flush_inputs i JOIN relation_flush_block_units u
                 ON u.deployment_id=i.deployment_id AND u.unit_id=i.unit_id
                 WHERE u.deployment_id=:dep AND u.version_id=:version AND u.normalizer_version=:normalizer
                   AND NOT EXISTS (SELECT 1 FROM relation_application_receipts r WHERE r.deployment_id=i.deployment_id
-                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version))"""),
+                    AND r.assertion_id=i.assertion_id AND r.adjudicator_version=i.adjudicator_version
+                    AND {relation_receipt_valid_sql(alias="r")}))"""),
                 parameters,
             ).scalar_one():
                 raise TemporalWriteConflict(
@@ -2340,7 +2343,7 @@ def _materialize_relation_units_on(
         text(
             "WITH assertions AS ("
             + _VERSION_RELATION_ASSERTIONS
-            + """
+            + f"""
         ) INSERT INTO relation_flush_inputs (
             deployment_id, unit_id, assertion_id, normalizer_version, adjudicator_version, applied_at
         ) SELECT :deployment_id, u.unit_id, a.assertion_id, :normalize_version,
@@ -2352,6 +2355,7 @@ def _materialize_relation_units_on(
           LEFT JOIN relation_application_receipts ar
             ON ar.deployment_id = :deployment_id AND ar.assertion_id = a.assertion_id
            AND ar.adjudicator_version = :adjudicator_version
+           AND {relation_receipt_valid_sql(alias="ar")}
         """
         ),
         parameters,

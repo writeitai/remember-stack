@@ -1,6 +1,7 @@
 """Expand temporal authority and commit the pre-conversion schema milestone.
 
 Frozen from accepted D110 SQL9025a465ddcbb9d8da49d58ec16205fef27fd4f47ae8b8497478d73741f63fc7.
+Receipt targets incorporate accepted D112 (a7d304be).
 The upgrade caller must stop at this revision, commit, and run the converter.
 Legacy writers and serving remain fenced until the final revision validates.
 
@@ -260,8 +261,10 @@ CREATE TABLE public.relation_application_receipts (
   adjudicator_version text NOT NULL,
   batch_id uuid NOT NULL,
   ordinal bigint NOT NULL,
-  relation_id uuid NOT NULL,
   identity_outcome text NOT NULL CHECK (identity_outcome IN ('new', 'evidence')),
+  target_count bigint NOT NULL CHECK (target_count > 0),
+  target_digest text NOT NULL CHECK (target_digest ~ '^[0-9a-f]{64}$'),
+  CHECK (identity_outcome <> 'new' OR target_count = 1),
   input_digest text NOT NULL,
   completed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (deployment_id, assertion_id, adjudicator_version),
@@ -270,9 +273,22 @@ CREATE TABLE public.relation_application_receipts (
       (deployment_id, batch_id, ordinal, assertion_id, adjudicator_version)
     ON DELETE CASCADE
 );
-COMMENT ON COLUMN public.relation_application_receipts.relation_id IS
-  'Historical logical target; validate under locks at apply. A retained receipt cannot resurrect a forgotten fact.';
-CREATE INDEX ix_rel_apply_receipt_fact ON public.relation_application_receipts
+COMMENT ON COLUMN public.relation_application_receipts.target_digest IS
+  'D112 SHA-256 of the complete sorted canonical UUID JSON target array; verify with target_count before replay or completion.';
+
+CREATE TABLE public.relation_application_targets (
+  deployment_id uuid NOT NULL,
+  assertion_id uuid NOT NULL,
+  adjudicator_version text NOT NULL,
+  relation_id uuid NOT NULL,
+  PRIMARY KEY (deployment_id, assertion_id, adjudicator_version, relation_id),
+  FOREIGN KEY (deployment_id, assertion_id, adjudicator_version)
+    REFERENCES public.relation_application_receipts
+      (deployment_id, assertion_id, adjudicator_version) ON DELETE CASCADE
+);
+COMMENT ON COLUMN public.relation_application_targets.relation_id IS
+  'Historical logical support target (D112); validate under locks at apply. A retained receipt cannot resurrect a forgotten fact.';
+CREATE INDEX ix_rel_application_target_fact ON public.relation_application_targets
   (deployment_id, relation_id);
 
 ALTER TABLE public.relation_adjudications
@@ -865,7 +881,7 @@ COMMENT ON TABLE public.temporal_fact_generations IS 'Completed fact semantic ge
 """
 
 _DOWNGRADE_DDL = r"""
-DROP TABLE IF EXISTS public.temporal_fact_generations, public.temporal_conversion_rows, public.temporal_conversion_runs, public.temporal_checkpoint_components, public.temporal_checkpoint_facts, public.temporal_checkpoint_blocks, public.temporal_forget_checkpoints, public.temporal_operation_support, public.fact_expiry_schedule, public.temporal_artifact_dependencies, public.temporal_artifact_certificates, public.temporal_source_members, public.temporal_sources, public.temporal_operation_evidence, public.temporal_operation_dependencies, public.temporal_operation_blocks, public.temporal_operations, public.temporal_discrepancies, public.temporal_blocks, public.relation_application_adjudications, public.relation_application_receipts, public.relation_apply_batch_inputs, public.relation_apply_batches, public.relation_flush_inputs, public.relation_flush_block_units, public.relation_flush_version_state, public.normalize_relation_assertions, public.normalize_claim_receipts CASCADE;
+DROP TABLE IF EXISTS public.temporal_fact_generations, public.temporal_conversion_rows, public.temporal_conversion_runs, public.temporal_checkpoint_components, public.temporal_checkpoint_facts, public.temporal_checkpoint_blocks, public.temporal_forget_checkpoints, public.temporal_operation_support, public.fact_expiry_schedule, public.temporal_artifact_dependencies, public.temporal_artifact_certificates, public.temporal_source_members, public.temporal_sources, public.temporal_operation_evidence, public.temporal_operation_dependencies, public.temporal_operation_blocks, public.temporal_operations, public.temporal_discrepancies, public.temporal_blocks, public.relation_application_adjudications, public.relation_application_targets, public.relation_application_receipts, public.relation_apply_batch_inputs, public.relation_apply_batches, public.relation_flush_inputs, public.relation_flush_block_units, public.relation_flush_version_state, public.normalize_relation_assertions, public.normalize_claim_receipts CASCADE;
 ALTER TABLE public.relations DROP COLUMN temporal_kind CASCADE, DROP COLUMN valid_from_basis CASCADE, DROP COLUMN valid_until_basis CASCADE, DROP COLUMN seed_claim_id CASCADE, DROP COLUMN occurs_from CASCADE, DROP COLUMN occurs_until CASCADE, DROP COLUMN occurs_precision CASCADE, DROP COLUMN temporal_revision CASCADE, DROP COLUMN from_operation_id CASCADE, DROP COLUMN until_operation_id CASCADE;
 ALTER TABLE public.observations DROP COLUMN temporal_kind CASCADE, DROP COLUMN valid_from_basis CASCADE, DROP COLUMN valid_until_basis CASCADE, DROP COLUMN seed_claim_id CASCADE, DROP COLUMN occurs_from CASCADE, DROP COLUMN occurs_until CASCADE, DROP COLUMN occurs_precision CASCADE, DROP COLUMN temporal_revision CASCADE, DROP COLUMN from_operation_id CASCADE, DROP COLUMN until_operation_id CASCADE;
 ALTER TABLE public.relation_adjudications DROP COLUMN triggering_assertion_id, DROP COLUMN temporal_operation_id, DROP CONSTRAINT uq_rel_adjudication_deployment;

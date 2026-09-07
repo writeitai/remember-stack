@@ -170,7 +170,10 @@ The API reads the same MinIO P3 snapshot store. `POST /readiness` can verify a
 bounded list of document version IDs plus requested pipeline, P1, live-graph,
 and P3 capabilities. P3 must begin after the latest requested terminal stage.
 Relation-stage readiness checks the version's complete assertion membership,
-the exact block-worker generation and its committed application receipts. An
+the exact block-worker generation and its committed application receipts. Each
+receipt certifies its complete set of supported facts; a missing or substituted
+target prevents completion. One broad state claim can support several historical
+periods while preserving their separate dates and the gaps between them. An
 empty version needs its explicit completion record; it does not run an empty
 adjudication job. Missing membership or receipts cannot be hidden by a completed
 coordinator job.

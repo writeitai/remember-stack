@@ -32,6 +32,7 @@ from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 from rememberstack.spine.projection import ProjectionCatalog
+from rememberstack.spine.relation_receipts import relation_receipt_valid_sql
 
 
 class PipelineReadinessCatalog:
@@ -729,7 +730,7 @@ _NORMALIZE_CLAIM_STATUS = text(
     """
 ).bindparams(bindparam("version_ids", expanding=True))
 
-_RELATION_FLUSH_STATUS = text("""
+_RELATION_FLUSH_STATUS = text(f"""
     WITH versions AS (
       SELECT v.version_id, v.current_representation_id, v.content_hash,
         s.normalizer_version, s.adjudicator_version, s.representation_id,
@@ -768,14 +769,13 @@ _RELATION_FLUSH_STATUS = text("""
         AND u.normalizer_version=:normalizer_version AND u.adjudicator_version=:adjudicator_version
     ), inputs AS (
       SELECT u.version_id, u.unit_id, u.subject_entity_id, u.predicate, i.assertion_id,
-        i.applied_at, r.completed_at, f.relation_id
+        i.applied_at, r.completed_at, {relation_receipt_valid_sql(alias="r")} AS receipt_valid
       FROM units u LEFT JOIN relation_flush_inputs i
         ON i.deployment_id=:deployment_id AND i.unit_id=u.unit_id
        AND i.normalizer_version=:normalizer_version AND i.adjudicator_version=:adjudicator_version
       LEFT JOIN relation_application_receipts r
         ON r.deployment_id=:deployment_id AND r.assertion_id=i.assertion_id
        AND r.adjudicator_version=:adjudicator_version
-      LEFT JOIN relations f ON f.deployment_id=r.deployment_id AND f.relation_id=r.relation_id
     ), derived AS (
       SELECT v.version_id AS target_id, 'adjudicate_supersession'::text AS stage,
         :adjudicator_version AS component_version, v.completed_at AS finished_at,
@@ -798,7 +798,7 @@ _RELATION_FLUSH_STATUS = text("""
           WHEN v.fanout_status='empty_complete' AND v.expected_units=0 AND v.completed_at IS NOT NULL THEN 'succeeded'
           WHEN v.fanout_status='barrier_complete' AND v.completed_at IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND (u.status IS DISTINCT FROM 'succeeded' OR u.finished_at IS NULL))
-            AND NOT EXISTS (SELECT 1 FROM inputs i WHERE i.version_id=v.version_id AND (i.applied_at IS NULL OR i.completed_at IS NULL OR i.relation_id IS NULL)) THEN 'succeeded'
+            AND NOT EXISTS (SELECT 1 FROM inputs i WHERE i.version_id=v.version_id AND (i.applied_at IS NULL OR i.completed_at IS NULL OR NOT i.receipt_valid)) THEN 'succeeded'
           WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='dead_letter') THEN 'dead_letter'
           WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='running') THEN 'running'
           WHEN EXISTS (SELECT 1 FROM units u WHERE u.version_id=v.version_id AND u.status='failed') THEN 'failed'

@@ -231,3 +231,21 @@ explicitly retained incomplete full-pipeline and program gates.
 The subsequent readiness/protocol/provenance-fixture corrections address actual
 CI34076741576 failures and need their own supported CI and review. They are not
 covered by round eight. The separate D112 design review remains pending.
+
+## Round nine and D112 design disposition
+
+Antigravity completed review of `978c9885` with **scoped approval** for readiness,
+fixture provenance and Full-v25 generation changes. Output:
+`/tmp/rs-t1-readiness-antigravity-r9.log`. It independently ran locked lint/format,
+full-library Pyright, 195 benchmark tests, 72 temporal tests, the 24-application
+and 22-normalization PG15 probes, and the docs build. Its cosmetic v24 test-name
+and docstring observations are corrected in the following D112 increment.
+Supported [CI34077867523](https://github.com/writeitai/remember-stack/actions/runs/34077867523)
+subsequently passed every job; the review's then-pending CI statement is superseded
+by that observed result.
+
+Antigravity separately approved D112 design commit `2f64a784` with zero blockers;
+output `/tmp/rs-t1-d112-antigravity-r1.log`. PR #386 passed its design checks and
+merged as `a7d304be`. Implementation is rebased onto that main. Neither approval
+certifies the subsequent complete-target implementation or full T.1 program;
+that increment needs its own review and supported CI.

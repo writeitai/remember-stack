@@ -111,6 +111,7 @@ EXPECTED_TABLES: Final = (
     "normalize_relation_assertions",
     "relation_application_adjudications",
     "relation_application_receipts",
+    "relation_application_targets",
     "relation_apply_batch_inputs",
     "relation_apply_batches",
     "relation_flush_block_units",
@@ -400,10 +401,10 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 182,
-    "f": 195,
-    "n": 748,
-    "p": 98,
+    "c": 185,
+    "f": 196,
+    "n": 753,
+    "p": 99,
     "u": 58,
     "x": 1,
 }

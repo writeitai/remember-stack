@@ -87,13 +87,14 @@ class RelationPairDecision(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     relation_id: UUID
+    support_target_id: UUID | None = None
     outcome: Literal[
         "evidence", "incoming_succeeds", "existing_succeeds", "contradict", "coexist"
     ]
 
 
 class RelationIdentityVerdict(BaseModel):
-    """One whole-block identity decision; at most one candidate may receive evidence."""
+    """One whole-block identity decision; deterministic state support overrides omission."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     decisions: tuple[RelationPairDecision, ...] = ()
@@ -115,6 +116,13 @@ class RelationApplicationResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     assertion_id: UUID
-    relation_id: UUID
+    relation_ids: tuple[UUID, ...] = Field(min_length=1)
     identity_outcome: Literal["new", "evidence"]
     affected_relation_ids: tuple[UUID, ...]
+
+    @property
+    def relation_id(self) -> UUID:
+        """Expose a single identity only when the receipt has exactly one target."""
+        if len(self.relation_ids) != 1:
+            raise ValueError("multi-target state support has no primary relation")
+        return self.relation_ids[0]

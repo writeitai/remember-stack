@@ -372,3 +372,55 @@ Locked repository-wide lint/format and targeted Pyright pass. Full PostgreSQL19
 CI must rerun these concrete fixes before any broader claim. D112 design PR #386
 separately proposes multi-slice state support; it is not implemented or accepted
 by these proofs.
+
+## D112 complete state support and certified targets
+
+The readiness/protocol increment `978c9885` (rebased equivalent `e58ada60`)
+passed every lane of [CI34077867523](https://github.com/writeitai/remember-stack/actions/runs/34077867523),
+including supported PostgreSQL19 worker/surface integration, contract smoke,
+quality, unit, adapters and the Compose fresh/upgrade pipeline. Antigravity
+round nine granted scoped approval. This is evidence for that increment,
+not for the unfinished full temporal program.
+
+Accepted D112 merged in #386 as `a7d304be`; the implementation branch is rebased
+onto it. The next increment replaces scalar relation receipt targets with the
+complete `relation_application_targets` set and the accepted count/SHA-256
+certificate. Admission preserves all deterministic overlapping dated state
+support; model omission and low confidence cannot remove a proven target.
+Evidence attaches independently to each fact without merging identities,
+changing seeds/verdict endpoints, or filling the intervening world-time gap.
+Undated state shortcuts and single-identity occurrence decisions remain separate.
+
+Semantic effects now name an optional `support_target_id`. A multi-target cap
+uses that exact successor's authoritative start. Missing/invalid support authority
+records a refused/no-op effect while preserving independent support. Contradiction
+group union includes existing support-target groups and current intra-transaction
+states. Complete block enumeration fetches bounded batches, model nomination
+has a disclosed 64-candidate budget (policy starting point), and receipt target
+inserts use batches of 256. The deterministic target set is never truncated.
+All support writes, effects, parent/target receipts and retirement commit together.
+
+One shared certificate predicate checks live targets, count, canonical digest
+and permitted outcome cardinality in replay, already-applied unit handling,
+batch completion, D56 membership reuse, version completion and readiness.
+A missing or substituted target cannot masquerade as a successful application.
+The new table has logical historical fact handles, receipt cascade deletion,
+and a reverse fact index. Its catalog inventory and actual expansion/downgrade
+DDL are updated; full hard-forget execution remains a separate outstanding gate.
+The relation adjudicator generation adds `complete-state-support-1`, and the
+unreleased Full-v25 protocol pins it.
+
+Validation: 32 scoped PostgreSQL15 application proofs pass with actual D79 and
+temporal constraints, including populated finalized D; 22 normalization/handoff
+proofs pass; 191 temporal/protocol/runner/backup cases pass. New database cases
+cover two-slice support and preserved gaps/seeds/bases, low-confidence omission,
+explicit/missing cap authority, failure on the second target with total rollback,
+concurrent helpers and exact replay, corrupt target certificates, worker completion
+and readiness refusal, and receipt cascade closure. Locked Ruff, full library
+Pyright, import boundaries, inventory and the production docs build pass.
+This increment still requires Antigravity review and its own supported PG19 CI.
+
+Remaining program scope is unchanged: complete observation and other authority
+writers, autonomous correction execution, cache certificates/events and serving
+checks, hard-forget inventory/sanitized replay, complete consumers T.2/T.3/T.5,
+full acceptance and release. PR #384 remains a draft.
