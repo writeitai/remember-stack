@@ -52,3 +52,4 @@ src/tests/workers/test_lifecycle_reconciliation.py
 src/tests/workers/test_p3_corpusfs.py
 src/tests/workers/test_reuse_lifecycle.py
 src/tests/workers/test_watch_loop.py
+src/tests/spine/test_claim_occurrence_provenance.py

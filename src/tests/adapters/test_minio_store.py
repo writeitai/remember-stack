@@ -54,7 +54,11 @@ class _MemoryS3:
 
     def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
         """Return one streaming body."""
-        body = _Body(content=self.objects[(Bucket, Key)][0])
+        try:
+            payload = self.objects[(Bucket, Key)][0]
+        except KeyError as error:
+            raise _client_error(code="NoSuchKey", operation="GetObject") from error
+        body = _Body(content=payload)
         self.last_body = body
         return {"Body": body}
 
@@ -121,6 +125,14 @@ def test_bucket_provision_and_immutable_round_trip() -> None:
     with pytest.raises(ObjectAlreadyExistsError):
         store.write_bytes(key=ObjectKey("documents/a.md"), content=b"replacement")
     assert store.read_bytes(key=ObjectKey("documents/a.md")) == b"first"
+
+
+def test_missing_object_is_file_not_found() -> None:
+    """Absence matches the local-FS adapter so checkpoint loads can miss cleanly."""
+    store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
+    store.ensure_bucket()
+    with pytest.raises(FileNotFoundError):
+        store.read_bytes(key=ObjectKey("missing.bin"))
 
 
 def test_purge_respects_prefix_boundaries_and_verifies() -> None:

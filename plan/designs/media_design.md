@@ -98,7 +98,8 @@ Notes an implementer needs:
   Heading/separator ranges are attributed consistently so the existing total-range
   validation still holds. Source-map offsets are rebased after assembly; never invent
   region precision. The manifest records each lane's provider/model/configuration,
-  outcome, usage and warnings. Postgres retains the existing representation URI/hash
+  outcome and warnings. Provider usage belongs to the existing cost ledger; the
+  manifest is not a second accounting authority. Postgres retains representation URI/hash
   records; downstream chunks and claims derive from this canonical Markdown with their
   representation provenance. No separate authoritative image-description column or
   second source lineage is introduced. OCR and description of one image count as one

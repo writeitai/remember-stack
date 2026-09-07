@@ -97,3 +97,6 @@ src/tests/workers/test_hard_forget_service.py
 src/tests/workers/test_ingest_admission.py
 src/tests/workers/test_ingest_gate_is_the_only_door.py
 src/tests/workers/test_ingest_routability.py
+src/tests/adapters/test_image_ocr_description.py
+src/tests/model/test_occurrence_provenance.py
+src/tests/workers/test_e2_occurrence_provenance.py

@@ -16,6 +16,7 @@ from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
+from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
 from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
@@ -53,6 +54,66 @@ class Converter(Protocol):
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Produce the Markdown reading; raise ``ConversionError`` on bad input."""
+        ...
+
+
+class LaneCheckpointStore(Protocol):
+    """Durable private storage for one successful conversion-lane result.
+
+    Keys are the lane name plus that lane's configuration fingerprint.
+    Implementations must not publish these objects as search authority.
+    """
+
+    def load(self, *, lane: str, fingerprint: str) -> bytes | None:
+        """Return the checkpoint payload, or None when it has not been saved."""
+        ...
+
+    def save(self, *, lane: str, fingerprint: str, payload: bytes) -> None:
+        """Persist one successful lane result; an occupied key is a no-op."""
+        ...
+
+
+@runtime_checkable
+class LaneUsageRecorder(Protocol):
+    """Records one billed conversion-lane attempt under the worker's meter.
+
+    The convert worker passes this into a lane-checkpoint converter so spend is
+    attributed before a successful result becomes reusable. Raising here must
+    not mark that lane's checkpoint reusable. Cached lanes must not be recorded
+    again. A crash after the provider returns and before this call can still
+    repeat a paid call; that is not exactly-once.
+    """
+
+    def record(self, *, event: ConverterUsageEvent, outcome: str = "ok") -> None:
+        """Persist this attempt's usage under the existing per-attempt meter."""
+        ...
+
+
+@runtime_checkable
+class LaneCheckpointConverter(Protocol):
+    """A converter that can reuse successful lane output across retries."""
+
+    accepts_lane_checkpoints: bool
+
+    @property
+    def name(self) -> str:
+        """The route name recorded on representations."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """The converter version (D38): a bump creates new representations."""
+        ...
+
+    def convert(
+        self,
+        *,
+        content: bytes,
+        mime: str,
+        checkpoints: LaneCheckpointStore | None = None,
+        record_usage: LaneUsageRecorder | None = None,
+    ) -> ConversionResult:
+        """Produce the Markdown reading, reusing checkpoints when provided."""
         ...
 
 

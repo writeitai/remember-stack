@@ -25,7 +25,10 @@ is successful and empty; provider failure is a failure, not evidence of no text.
 Independent retry needs durable successful lane output, keyed by source version and
 lane configuration, so a worker restart does not repeat an already completed call.
 This cannot guarantee exactly-once provider execution if a process dies between the
-provider response and durable persistence; costs from attempts remain accounted for.
+provider response and durable persistence. Usage received before persistence is
+recorded in the existing cost ledger. A crash before recording or an unaccountable
+provider response can still leave a reconciliation gap; never invent zero usage or
+claim exactly-once accounting across that external-call boundary.
 
 Inspected local contracts: `../../designs/media_design.md` §§2,5,6;
 `../../../src/rememberstack/workers/e0.py` ConvertHandler;

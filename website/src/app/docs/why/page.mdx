@@ -118,7 +118,7 @@ If it affects correctness, it ships in Apache-2.0 OSS. Cloud is ops and product 
 
 **Not yet the default smoke profile in `v0.2.0` (engine may support; do not assume wired)**
 
-- Non-Markdown conversion routes (PDF/HTML/audio/video) on the Compose self-host profile
+- Non-Markdown conversion routes (PDF/HTML/images/audio/video) on the Compose self-host profile. Static images are engine-capable via `image_ocr_description` once registered; they are not smoke-profile defaults
 - Fuzzy / phonetic / embedding tiers on **query-time** `resolve_entity` (write-time cascade is richer; query resolve is T0 exact)
 - Cross-modal `media_segments` search as a first-class public search target
 - Hosted multi-tenant control plane, no free tier, or production SLA claims from this OSS docs site

@@ -17,6 +17,7 @@ from datetime import date
 from datetime import datetime
 from datetime import UTC
 from enum import StrEnum
+import hashlib
 import logging
 import re
 from typing import Final
@@ -48,6 +49,18 @@ from rememberstack.model import SelectionDropReason
 from rememberstack.model import SelectionOutcome
 from rememberstack.model import SelectionResponse
 from rememberstack.model import SelectionVerdict
+from rememberstack.model.occurrence_provenance import OccurrenceProvenance
+from rememberstack.model.occurrence_provenance import (
+    parse_persisted_conversion_manifest,
+)
+from rememberstack.model.occurrence_provenance import parse_persisted_source_map
+from rememberstack.model.occurrence_provenance import ProvenanceMetadataCorruptError
+from rememberstack.model.occurrence_provenance import ProvenanceMetadataMissingError
+from rememberstack.model.occurrence_provenance import RepresentationOccurrenceContext
+from rememberstack.model.occurrence_provenance import resolve_occurrence_provenance
+from rememberstack.model.occurrence_provenance import (
+    resolve_reused_occurrence_provenance,
+)
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -336,7 +349,10 @@ class ExtractClaimsHandler:
         if not self._catalog.chunk_already_extracted(
             chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
         ):
-            if not self._reuse_prior_extraction(source=source, chunk=chunk):
+            occurrence_context = self._load_occurrence_context(source=source)
+            if not self._reuse_prior_extraction(
+                source=source, chunk=chunk, occurrence_context=occurrence_context
+            ):
                 document_md = self._artifact_store.read_bytes(
                     key=ObjectKey(source.markdown_uri)
                 ).decode("utf-8")
@@ -346,6 +362,7 @@ class ExtractClaimsHandler:
                     index=index,
                     document_md=document_md,
                     meter=meter,
+                    occurrence_context=occurrence_context,
                 )
         return HandlerOutcome(
             extract_chunk_barrier=ExtractChunkBarrier(
@@ -361,7 +378,11 @@ class ExtractClaimsHandler:
         )
 
     def _reuse_prior_extraction(
-        self, *, source: ChunkSource, chunk: ChunkForEmbedding
+        self,
+        *,
+        source: ChunkSource,
+        chunk: ChunkForEmbedding,
+        occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> bool:
         """The D56 chunk-grain reuse rung: re-attach instead of re-extract.
 
@@ -380,10 +401,17 @@ class ExtractClaimsHandler:
         )
         if prior is None:
             return False
+        occurrences = self._reused_occurrences(
+            source=source,
+            chunk=chunk,
+            prior_chunk_id=prior,
+            occurrence_context=occurrence_context,
+        )
         attached = self._catalog.attach_reused_claims(
             deployment_id=source.deployment_id,
             chunk_id=chunk.chunk_id,
             prior_chunk_id=prior,
+            occurrences=occurrences,
         )
         if attached == 0:
             # the prior chunk carries no claims. Zero claims no longer means
@@ -410,6 +438,7 @@ class ExtractClaimsHandler:
         index: int,
         document_md: str,
         meter: CostMeterPort,
+        occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> None:
         """Run the two Claimify calls for one chunk and land the results."""
         chunk = chunks[index]
@@ -525,9 +554,92 @@ class ExtractClaimsHandler:
             # terminal marker (D7): an extraction that found nothing claim-worthy
             # is DONE — without it, replay would re-call the model.
             decisions = [_empty_extraction_marker(source=source, chunk=chunk)]
+        accepted = tuple(claims)
+        context = occurrence_context
+        if context is None and source.conversion_uri is not None:
+            context = self._load_occurrence_context(source=source)
         self._catalog.record_extraction(
-            claims=tuple(claims), decisions=tuple(decisions)
+            claims=accepted,
+            decisions=tuple(decisions),
+            occurrences=_occurrences_for_claims(claims=accepted, context=context),
         )
+
+    def _load_occurrence_context(
+        self, *, source: ChunkSource
+    ) -> RepresentationOccurrenceContext | None:
+        """Load target conversion.json (+ source_map.json) or stay unknown.
+
+        A missing conversion_uri is legacy: occurrences remain unlabeled.
+        A present URI that cannot be read or parsed must not produce claims
+        with fabricated passthrough provenance.
+        """
+        conversion_uri = source.conversion_uri
+        if conversion_uri is None:
+            return None
+        manifest_bytes = _read_provenance_bytes(
+            artifact_store=self._artifact_store,
+            uri=conversion_uri,
+            kind="conversion manifest",
+        )
+        try:
+            persisted = parse_persisted_conversion_manifest(
+                payload=manifest_bytes, uri=conversion_uri
+            )
+        except ProvenanceMetadataCorruptError as error:
+            raise NonRetryableHandlerError(str(error)) from error
+        source_map_entries = None
+        if persisted.source_map is not None:
+            map_ref = persisted.source_map
+            map_bytes = _read_provenance_bytes(
+                artifact_store=self._artifact_store, uri=map_ref.uri, kind="source map"
+            )
+            if map_ref.sha256 is not None:
+                digest = hashlib.sha256(map_bytes).hexdigest()
+                if digest != map_ref.sha256:
+                    raise NonRetryableHandlerError(
+                        f"source map {map_ref.uri} sha256 mismatch:"
+                        f" expected {map_ref.sha256}, got {digest}"
+                    )
+            try:
+                parsed_map = parse_persisted_source_map(
+                    payload=map_bytes, uri=map_ref.uri
+                )
+            except ProvenanceMetadataCorruptError as error:
+                raise NonRetryableHandlerError(str(error)) from error
+            source_map_entries = parsed_map.entries
+        return RepresentationOccurrenceContext(
+            derivation_ranges=persisted.derivation_ranges, source_map=source_map_entries
+        )
+
+    def _reused_occurrences(
+        self,
+        *,
+        source: ChunkSource,
+        chunk: ChunkForEmbedding,
+        prior_chunk_id: UUID,
+        occurrence_context: RepresentationOccurrenceContext | None,
+    ) -> dict[UUID, OccurrenceProvenance] | None:
+        """Resolve prior claim spans against the TARGET chunk and representation."""
+        context = occurrence_context
+        if context is None and source.conversion_uri is not None:
+            context = self._load_occurrence_context(source=source)
+        if context is None:
+            return None
+        document_md = self._artifact_store.read_bytes(
+            key=ObjectKey(source.markdown_uri)
+        ).decode("utf-8")
+        anchors = self._catalog.claims_for_occurrence_reuse(chunk_id=prior_chunk_id)
+        return {
+            anchor.claim_id: resolve_reused_occurrence_provenance(
+                source_span=anchor.source_span,
+                char_start=chunk.char_start,
+                char_end=chunk.char_end,
+                document_md=document_md,
+                ranges=context.derivation_ranges,
+                source_map=context.source_map,
+            )
+            for anchor in anchors
+        }
 
 
 class GroundingGate(StrEnum):
@@ -1178,3 +1290,32 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
             f"stage {work.stage} work {work.processing_id} carries no {field!r} payload"
         )
     return UUID(value)
+
+
+def _read_provenance_bytes(
+    *, artifact_store: ObjectStorePort, uri: str, kind: str
+) -> bytes:
+    """Read a referenced provenance object; absence is a retryable failure."""
+    try:
+        return artifact_store.read_bytes(key=ObjectKey(uri))
+    except FileNotFoundError as error:
+        raise ProvenanceMetadataMissingError(
+            f"{kind} {uri} is missing; cannot publish occurrence provenance"
+        ) from error
+
+
+def _occurrences_for_claims(
+    *, claims: tuple[ClaimRecord, ...], context: RepresentationOccurrenceContext | None
+) -> dict[UUID, OccurrenceProvenance] | None:
+    """Resolve each grounded claim interval against the target representation."""
+    if context is None:
+        return None
+    return {
+        claim.claim_id: resolve_occurrence_provenance(
+            char_start=claim.char_start,
+            char_end=claim.char_end,
+            ranges=context.derivation_ranges,
+            source_map=context.source_map,
+        )
+        for claim in claims
+    }

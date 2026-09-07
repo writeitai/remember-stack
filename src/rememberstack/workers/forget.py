@@ -10,6 +10,7 @@ from rememberstack.model import ForgetManifest
 from rememberstack.model import ForgetManifestStatus
 from rememberstack.model import ForgetRedactionRequiredError
 from rememberstack.model import NonRetryableHandlerError
+from rememberstack.model import ObjectKey
 from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
@@ -21,6 +22,20 @@ from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
 from rememberstack.workers.p3 import CorpusFsBuilder
 from rememberstack.workers.reconcile import DeletionService
+
+
+def conversion_checkpoint_prefixes(
+    *, doc_id: UUID, content_hashes: tuple[str, ...]
+) -> tuple[ObjectKey, ...]:
+    """Private dual-lane conversion checkpoints under each source identity.
+
+    These objects are not search authority. Hard-forget must purge the prefix
+    so successful OCR/description output cannot outlive the forgotten source.
+    """
+    return tuple(
+        ObjectKey(f"{doc_id}/{content_hash}/conversion-checkpoints")
+        for content_hash in content_hashes
+    )
 
 
 class ForgetProjectionRebuilder(Protocol):
@@ -204,8 +219,13 @@ class HardForgetHandler:
             meter=meter,
             call_key=f"profile:hard_forget:{manifest.forget_id}",
         )
+        checkpoint_prefixes = conversion_checkpoint_prefixes(
+            doc_id=manifest.doc_id, content_hashes=manifest.content_hashes
+        )
         for purger in self._object_purgers:
-            purger.purge_objects(keys=manifest.object_keys, prefixes=())
+            purger.purge_objects(
+                keys=manifest.object_keys, prefixes=checkpoint_prefixes
+            )
         self._projection_rebuilder.rebuild_without_lineage(
             deployment_id=manifest.deployment_id, forget_id=manifest.forget_id
         )
@@ -221,7 +241,9 @@ class HardForgetHandler:
             artifact_ids=manifest.k_artifact_ids,
         )
         for purger in self._object_purgers:
-            purger.verify_objects_purged(keys=manifest.object_keys, prefixes=())
+            purger.verify_objects_purged(
+                keys=manifest.object_keys, prefixes=checkpoint_prefixes
+            )
         self._projection_purger.verify_projections_purged(
             deployment_id=manifest.deployment_id, prefixes=manifest.projection_prefixes
         )

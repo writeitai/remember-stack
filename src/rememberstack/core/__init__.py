@@ -21,6 +21,9 @@ from rememberstack.core.consumption_skill import render_consumption_skill
 from rememberstack.core.conversion import ConversionRouter
 from rememberstack.core.conversion import Converter
 from rememberstack.core.conversion import entire_document_labeling
+from rememberstack.core.conversion import LaneCheckpointConverter
+from rememberstack.core.conversion import LaneCheckpointStore
+from rememberstack.core.conversion import LaneUsageRecorder
 from rememberstack.core.conversion import MarkdownPassthroughConverter
 from rememberstack.core.conversion import PASSTHROUGH_CONVERTER_VERSION
 from rememberstack.core.conversion import STOCK_CONVERSION_ROUTE_NAMES
@@ -99,6 +102,9 @@ __all__ = (
     "ConversionRouter",
     "CONSUMPTION_SKILL_VERSION",
     "Converter",
+    "LaneCheckpointConverter",
+    "LaneCheckpointStore",
+    "LaneUsageRecorder",
     "CoreManifest",
     "EntityTypeDefinition",
     "MarkdownPassthroughConverter",

@@ -59,9 +59,21 @@ def _mistral_ocr() -> Converter:
     return MistralOcrConverter()
 
 
+def _image_ocr_description() -> Converter:
+    """The dual-lane image route; building it without both provider keys
+    (`REMEMBERSTACK_MISTRAL_OCR_API_KEY` and
+    `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) refuses composition."""
+    from rememberstack.adapters.converters.image_ocr_description import (
+        ImageOcrDescriptionConverter,
+    )
+
+    return ImageOcrDescriptionConverter()
+
+
 _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "passthrough": _passthrough,
     "markitdown": _markitdown,
     "mistral_ocr": _mistral_ocr,
+    "image_ocr_description": _image_ocr_description,
 }
 """Every converter-adapter name a route table may bind (D38)."""

@@ -56,7 +56,7 @@ All stages are **idempotent** with respect to their versioned inputs. Workers us
 | Scans | OCR |
 | Audio | Diarized speech-to-text |
 | Video | ASR + keyframes / shot notes |
-| Images | VLM description (+ optional OCR) |
+| Images (`image/png`, `image/jpeg`) | Always dedicated OCR **and** an independent vision-LLM description (`image_ocr_description`); no classifier. Static JPEG/PNG only |
 
 **Rules:**
 

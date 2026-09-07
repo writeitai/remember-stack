@@ -77,6 +77,7 @@ server = [
     "markitdown>=0.1.6",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     "pglast>=8.4,<9",
+    "pillow>=10.4",
     "psycopg[binary]>=3.2",
     "pyarrow>=25.0.0",
     "pyjwt[crypto]>=2.10",

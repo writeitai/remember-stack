@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 from typing import Any
 from typing import Final
+from typing import Protocol
 from typing import TypeVar
 
 import httpx
@@ -395,46 +396,10 @@ class OpenRouterModelProvider:
     def _completion_usage(
         self, *, body: dict[str, Any], started_ns: int
     ) -> ProviderCallUsage:
-        """Use inline accounting, or recover it by the existing generation id.
-
-        OpenRouter documents inline usage on every non-streaming response, but
-        also exposes the same accounting asynchronously by generation id. The
-        metadata fallback never creates another paid generation. It remains
-        fail-closed when the response has no id or metadata stays unavailable.
-        """
-        try:
-            return _usage(
-                body=body,
-                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-                require_output_tokens=True,
-            )
-        except ProviderAccountingError as inline_error:
-            generation_id = body.get("id")
-            if not isinstance(generation_id, str) or not generation_id.strip():
-                raise inline_error
-            last_error: Exception = inline_error
-
-        for delay_s in _GENERATION_USAGE_POLL_DELAYS_S:
-            if delay_s:
-                time.sleep(delay_s)
-            try:
-                metadata = self._get_generation(generation_id=generation_id)
-                return _generation_usage(
-                    body=metadata,
-                    fallback_model=body.get("model"),
-                    generation_id=generation_id,
-                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-                )
-            except (
-                httpx.HTTPError,
-                OpenRouterProviderError,
-                ProviderAccountingError,
-            ) as error:
-                last_error = error
-        raise ProviderAccountingError(
-            "OpenRouter response carries unusable usage accounting and generation"
-            " metadata did not recover it"
-        ) from last_error
+        """Use inline accounting, or recover it by the existing generation id."""
+        return recover_completion_usage(
+            body=body, started_ns=started_ns, fetch_generation=self._get_generation
+        )
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
@@ -519,26 +484,11 @@ class OpenRouterModelProvider:
 
     def _get_generation(self, *, generation_id: str) -> dict[str, Any]:
         """Fetch metadata for one already-created generation without its content."""
-        response = self._client.get(
-            "/generation",
-            params={"id": generation_id},
-            timeout=min(self._settings.timeout_s, _GENERATION_USAGE_TIMEOUT_S),
+        return read_generation_metadata(
+            client=self._client,
+            generation_id=generation_id,
+            timeout_s=self._settings.timeout_s,
         )
-        if response.status_code >= 400:
-            raise OpenRouterProviderError(
-                f"OpenRouter /generation returned {response.status_code}"
-            )
-        try:
-            body = response.json()
-        except ValueError as error:
-            raise OpenRouterProviderError(
-                "OpenRouter /generation returned non-JSON metadata"
-            ) from error
-        if not isinstance(body, dict):
-            raise OpenRouterProviderError(
-                "OpenRouter /generation returned malformed metadata"
-            )
-        return body
 
 
 def _in_flight_budget_retry_after(*, response: httpx.Response) -> float | None:
@@ -724,6 +674,88 @@ def _safe_finish_reason(*, body: dict[str, Any], key: str) -> str | None:
     if isinstance(value, str) and value in _SAFE_FINISH_REASONS:
         return value
     return "unexpected"
+
+
+class GenerationMetadataFetcher(Protocol):
+    """Lookup OpenRouter generation metadata without creating a new generation."""
+
+    def __call__(self, *, generation_id: str) -> dict[str, Any]:
+        """Return the ``/generation`` JSON body for one existing generation id."""
+        ...
+
+
+def recover_completion_usage(
+    *,
+    body: dict[str, Any],
+    started_ns: int,
+    fetch_generation: GenerationMetadataFetcher,
+) -> ProviderCallUsage:
+    """Use inline accounting, or recover it by the existing generation id.
+
+    OpenRouter documents inline usage on every non-streaming response, but
+    also exposes the same accounting asynchronously by generation id. The
+    metadata fallback never creates another paid generation. It remains
+    fail-closed when the response has no id or metadata stays unavailable.
+    """
+    try:
+        return _usage(
+            body=body,
+            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            require_output_tokens=True,
+        )
+    except ProviderAccountingError as inline_error:
+        generation_id = body.get("id")
+        if not isinstance(generation_id, str) or not generation_id.strip():
+            raise inline_error
+        last_error: Exception = inline_error
+
+    for delay_s in _GENERATION_USAGE_POLL_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            metadata = fetch_generation(generation_id=generation_id)
+            return _generation_usage(
+                body=metadata,
+                fallback_model=body.get("model"),
+                generation_id=generation_id,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
+        except (
+            httpx.HTTPError,
+            OpenRouterProviderError,
+            ProviderAccountingError,
+        ) as error:
+            last_error = error
+    raise ProviderAccountingError(
+        "OpenRouter response carries unusable usage accounting and generation"
+        " metadata did not recover it"
+    ) from last_error
+
+
+def read_generation_metadata(
+    *, client: httpx.Client, generation_id: str, timeout_s: float
+) -> dict[str, Any]:
+    """Fetch metadata for one already-created generation without its content."""
+    response = client.get(
+        "/generation",
+        params={"id": generation_id},
+        timeout=min(timeout_s, _GENERATION_USAGE_TIMEOUT_S),
+    )
+    if response.status_code >= 400:
+        raise OpenRouterProviderError(
+            f"OpenRouter /generation returned {response.status_code}"
+        )
+    try:
+        body = response.json()
+    except ValueError as error:
+        raise OpenRouterProviderError(
+            "OpenRouter /generation returned non-JSON metadata"
+        ) from error
+    if not isinstance(body, dict):
+        raise OpenRouterProviderError(
+            "OpenRouter /generation returned malformed metadata"
+        )
+    return body
 
 
 def _usage(

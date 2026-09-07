@@ -352,6 +352,30 @@ class ConversionError(Exception):
     """
 
 
+class ConverterLaneError(Exception):
+    """A required conversion lane failed after zero or more billed attempts.
+
+    Successful sibling lanes may already be checkpointed. `usage_events`
+    carries every billed call from this invocation so the convert worker can
+    meter them before retrying. A crash between the provider response and
+    checkpoint persistence can repeat a call; this is not exactly-once.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage_events: tuple[ConverterUsageEvent, ...] = (),
+        failed_call_keys: tuple[str, ...] = (),
+        retryable: bool = True,
+    ) -> None:
+        """Retain billed attempts so the worker can attribute spend honestly."""
+        super().__init__(message)
+        self.usage_events = usage_events
+        self.failed_call_keys = failed_call_keys
+        self.retryable = retryable
+
+
 class UnroutableMimeError(Exception):
     """No configured conversion route accepts the input's MIME type (D38).
 

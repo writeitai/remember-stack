@@ -23,6 +23,12 @@ from rememberstack.adapters.vertex import VertexSettings
 
 if TYPE_CHECKING:
     from rememberstack.adapters.converters import build_conversion_routes
+    from rememberstack.adapters.converters.image_ocr_description import (
+        ImageDescriptionSettings,
+    )
+    from rememberstack.adapters.converters.image_ocr_description import (
+        ImageOcrDescriptionConverter,
+    )
     from rememberstack.adapters.converters.markitdown import (
         MARKITDOWN_CONVERTER_VERSION,
     )
@@ -41,6 +47,8 @@ __all__ = (
     "CodexWriterAdapterSettings",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",
+    "ImageDescriptionSettings",
+    "ImageOcrDescriptionConverter",
     "MistralOcrConverter",
     "MistralOcrSettings",
     "ModelRoutedProvider",
@@ -73,6 +81,18 @@ def __getattr__(name: str) -> object:
         from rememberstack.adapters.converters import build_conversion_routes
 
         return build_conversion_routes
+    if name == "ImageDescriptionSettings":
+        from rememberstack.adapters.converters.image_ocr_description import (
+            ImageDescriptionSettings,
+        )
+
+        return ImageDescriptionSettings
+    if name == "ImageOcrDescriptionConverter":
+        from rememberstack.adapters.converters.image_ocr_description import (
+            ImageOcrDescriptionConverter,
+        )
+
+        return ImageOcrDescriptionConverter
     if name == "MistralOcrConverter":
         from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
 
