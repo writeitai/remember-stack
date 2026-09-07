@@ -432,3 +432,29 @@ Its actual constraint counts agree with the updated 99-table inventory. The
 follow-up pins `ix_rel_application_target_fact` and adds the target-table comment;
 it does not remove or relax the catalog checks. The run's quality, unit and
 Compose jobs passed; the fixed catalog still requires supported CI verification.
+
+## D112 supported acceptance and correction candidate foundation
+
+D112 catalog follow-up `dc51338a` passed every job in
+[CI34079473310](https://github.com/writeitai/remember-stack/actions/runs/34079473310),
+including supported PostgreSQL19 integration and Compose fresh/upgrade.
+Antigravity round ten approved the D112 application increment; the subsequent
+D113 design review also checked and approved the two catalog corrections.
+These are scoped approvals, not approval of the incomplete T.1 PR.
+
+The ordinary correction foundation now constructs stable endpoint candidate IDs
+from current linked canonical claim windows. Duplicate claims retain their
+distinct document-lineage inventory; source publication timestamps never supply
+endpoints. Typed model output can select existing IDs only. Admission checks
+complete necessary context, the greater of escalation/application confidence
+thresholds, reconstructed candidate authority, named support, and the existing
+monotonic/window/neighbour rules. Uncertainty and refusals preserve endpoint
+authority. Neighbours mean the complete applicable exclusion scope, which the
+future preparing journal reader must certify, not unrelated entity facts.
+
+Validation: 56 focused pure correction/fact-rule cases pass, with targeted
+Pyright, locked Ruff, import boundaries and test inventory. This foundation
+is not yet invoked by a worker: discrepancy creation, bounded prompts and
+escalation, atomic preparation/application, compensation orchestration and
+read/explain envelopes remain required. It does not claim runtime correction
+behavior or supported database acceptance for that behavior.
