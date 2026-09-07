@@ -610,7 +610,7 @@ def _scrub_mutable_fact_payloads(
     """),
         parameters,
     )
-    # Re-evaluate exclusivity for portable manifests authored before D114.
+    # Re-evaluate exclusivity for portable manifests authored before D118.
     # Counterevidence cannot preserve the forgotten assertion's source wording.
     exclusive = connection.execute(_EXCLUSIVE_FACT_IDS, parameters).scalars().all()
     parameters["fact_ids"] = sorted(set(parameters["fact_ids"]) | set(exclusive))

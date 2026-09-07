@@ -49,6 +49,8 @@ from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import ClaimNormalizeBarrier
 from rememberstack.workers.base import EntityObsFlushBarrier
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.p1 import label_relation_component_version
+from rememberstack.workers.p1 import P1Settings
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 
 _logger = logging.getLogger(__name__)
@@ -153,7 +155,7 @@ class NormalizeRelationsHandler:
             or work.target_kind is not ProcessingTarget.CLAIM
         ):
             raise NonRetryableHandlerError(
-                "obsolete normalization generation; drain or convert before D114"
+                "obsolete normalization generation; drain or convert before D118"
             )
         return self._handle_claim(work=work, meter=meter)
 
@@ -417,7 +419,7 @@ class AdjudicateObservationsHandler:
             or work.target_kind is not ProcessingTarget.ENTITY
         ):
             raise NonRetryableHandlerError(
-                "obsolete fact flush generation; drain or convert before D114"
+                "obsolete fact flush generation; drain or convert before D118"
             )
         return self._handle_entity_unit(work=work, meter=meter)
 
@@ -570,7 +572,24 @@ class AdjudicateSupersessionHandler:
         ):
             # Retained-claim replay revises facts, not extractor currency. The
             # original lifecycle events remain the authority for testimony.
-            return HandlerOutcome()
+            # A normalizer may emit no assertions for an old claim, so document
+            # repair must also reach retained facts with no new application.
+            return HandlerOutcome(
+                follow_up=(
+                    EnqueueWork(
+                        deployment_id=work.deployment_id,
+                        target_kind=work.target_kind,
+                        target_id=work.target_id,
+                        stage=PipelineStage.LABEL_RELATION,
+                        component_version=label_relation_component_version(
+                            embedding_model=P1Settings().embedding_model
+                        ),
+                        content_hash=work.content_hash,
+                        lane=work.lane,
+                        payload={"doc_id": payload.get("doc_id")},
+                    ),
+                )
+            )
         version_id = payload.get("version_id")
         representation_id = payload.get("representation_id")
         if not isinstance(version_id, str) or not isinstance(representation_id, str):

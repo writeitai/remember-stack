@@ -875,3 +875,45 @@ def test_driver_reconciles_move_and_stamps_its_single_git_revision(
             {"artifact": graph.child, "decision": result.decision_id},
         ).one()
     assert row == ("work/moved-child.md", "work/moved-child.md.curation.md", "head-1")
+
+
+def test_forget_removes_current_compiled_bytes_while_conversion_is_closed(
+    graph: _CompileGraph,
+) -> None:
+    """Skipping compilation alone would let the history purger restore forgotten bytes."""
+    remote = _GitRemote(files=graph.old_files)
+    compiler = _Compiler()
+    with graph.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        )
+        connection.execute(
+            text(
+                "UPDATE knowledge_artifacts SET content_hash=NULL, inputs_hash=NULL, status='stale' WHERE artifact_id=:id"
+            ),
+            {"id": graph.child},
+        )
+    driver = KnowledgeCommitDriver(
+        control_plane=graph.control,
+        git_remote=remote,
+        compiler=compiler,
+        settings=KnowledgeCommitSettings(max_parallel_pages=1),
+    )
+    driver.recompile_after_forget(
+        deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
+    )
+    assert graph.paths_by_id[graph.child] not in remote.files
+    assert (
+        remote.files[graph.paths_by_id[graph.parent]]
+        == graph.old_files[graph.paths_by_id[graph.parent]]
+    )
+    assert remote.publish_calls == 1
+    driver.recompile_after_forget(
+        deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
+    )
+    assert remote.publish_calls == 1
+    with pytest.raises(RuntimeError, match="conversion is incomplete"):
+        driver.run_cycle(deployment_id=_DEPLOYMENT_ID, exclusions_by_artifact={})

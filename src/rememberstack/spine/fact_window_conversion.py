@@ -1,4 +1,4 @@
-"""Bounded retained-claim replay and fail-closed D114 conversion verification.
+"""Bounded retained-claim replay and fail-closed D118 conversion verification.
 
 The ordinary E3/P1 workers do the work and meter their calls. These maintenance
 operations only enumerate missing work and prove completion; the existing ledger
@@ -23,6 +23,7 @@ from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
 from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.fact_window_readiness import FACT_WINDOW_GENERATION
 from rememberstack.spine.fact_window_readiness import fact_windows_converting
+from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.knowledge import KnowledgeControlPlane
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.work_ledger import enqueue_on
@@ -64,12 +65,13 @@ class FactWindowConversion:
                     .mappings()
                     .all()
                 )
+                missing_sources = int(
+                    connection.execute(
+                        text(_MISSING_SOURCES), {"dep": deployment_id}
+                    ).scalar_one()
+                )
                 created = 0
                 for row in rows:
-                    if row["version_id"] is None:
-                        raise ValueError(
-                            f"retained claim {row['claim_id']} has no surviving source occurrence"
-                        )
                     outcome = enqueue_on(
                         connection=connection,
                         work=EnqueueWork(
@@ -95,6 +97,7 @@ class FactWindowConversion:
             "selected": len(rows),
             "created": created,
             "enumeration_complete": len(rows) < batch_size,
+            "missing_source_claims": missing_sources,
             "ready": False,
             "normalizer_version": FACT_NORMALIZER_VERSION,
         }
@@ -111,6 +114,9 @@ class FactWindowConversion:
                 if not fact_windows_converting(
                     connection=connection, deployment_id=deployment_id
                 ):
+                    require_fact_windows_ready(
+                        connection=connection, deployment_id=deployment_id
+                    )
                     return {
                         "ready": True,
                         "generation": FACT_WINDOW_GENERATION,
@@ -196,7 +202,12 @@ WHERE cl.deployment_id=:dep AND NOT EXISTS (
 ORDER BY cl.claim_id LIMIT :limit
 """)
 
+_MISSING_SOURCES = """SELECT count(*) FROM claims cl WHERE deployment_id=:dep
+    AND NOT EXISTS (SELECT 1 FROM chunk_claims cc JOIN chunks c USING(chunk_id)
+                    WHERE cc.claim_id=cl.claim_id AND c.deployment_id=cl.deployment_id)"""
+
 _CHECKS = {
+    "missing_source_claims": _MISSING_SOURCES,
     "unfinished_work": """SELECT count(*) FROM processing_state WHERE deployment_id=:dep
         AND status NOT IN ('succeeded','skipped') AND (
             component_version=ANY(CAST(:work_versions AS text[])) OR target_kind='fact_application'

@@ -535,7 +535,8 @@ def _locked_profile_state(
         )
     entity = (
         connection.execute(
-            _SELECT_ENTITY_FOR_UPDATE, {"deployment_id": deployment_id, "entity_id": entity_id}
+            _SELECT_ENTITY_FOR_UPDATE,
+            {"deployment_id": deployment_id, "entity_id": entity_id},
         )
         .mappings()
         .one_or_none()

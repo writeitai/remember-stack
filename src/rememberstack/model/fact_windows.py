@@ -1,4 +1,4 @@
-"""The single chosen world-time window on a mutable fact (D114)."""
+"""The single chosen world-time window on a mutable fact (D118)."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -45,7 +45,7 @@ class FactWindow(BaseModel):
 
     @model_validator(mode="after")
     def coherent_window(self) -> Self:
-        """Enforce D114 shapes without filling or recanonicalizing an endpoint."""
+        """Enforce D118 shapes without filling or recanonicalizing an endpoint."""
         start, end = self.valid_from, self.valid_until
         if self.valid_precision is ClaimValidPrecision.UNKNOWN:
             if start is not None or end is not None:

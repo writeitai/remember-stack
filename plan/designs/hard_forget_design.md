@@ -1,6 +1,6 @@
 # Hard-forget design — one fail-closed lineage purge
 
-> **D114 amendment (2026-09-07; effective when merged).** The existing purge/fence/manifest contract remains. D114 §7 covers actual source-derived copies; D110 temporal stores and sanitized temporal checkpoints are withdrawn.
+> **D118 amendment (2026-09-07; effective when merged).** The existing purge/fence/manifest contract remains. D118 §7 covers actual source-derived copies; D110 temporal stores and sanitized temporal checkpoints are withdrawn.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 
@@ -223,9 +223,9 @@ table or deletion-specific scheduler is added.
 If any adapter throws or verification fails, the original exception remains visible, the work row
 retries/dead-letters normally, and the barrier remains closed. There is no partial-success response.
 
-### 4.1 Mutable fact dates and retained payloads (D114)
+### 4.1 Mutable fact dates and retained payloads (D118)
 
-[D114 §7](mutable_fact_windows_design.md#7-source-withdrawal-forgetting-and-recovery)
+[D118 §7](mutable_fact_windows_design.md#7-source-withdrawal-forgetting-and-recovery)
 requires the existing purge to cover any actual new preparation, receipt or
 adjudication payload and unsupported derived fact dates. Its deletion inventory
 and retry/rebuild proof ship with the concrete implementation. The former D110

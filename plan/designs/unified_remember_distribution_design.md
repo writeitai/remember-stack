@@ -1,6 +1,6 @@
 # Unified `remember` Distribution, Container-First Engine, and Platform CLI (Design)
 
-> **D114 amendment (2026-09-07; effective when merged).** Ordinary autonomous adjudication can revise fact dates (§3); there is no separate temporal correction subsystem. D108 client and authority boundaries remain unchanged.
+> **D118 amendment (2026-09-07; effective when merged).** Ordinary autonomous adjudication can revise fact dates (§3); there is no separate temporal correction subsystem. D108 client and authority boundaries remain unchanged.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

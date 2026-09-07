@@ -429,8 +429,6 @@ class KnowledgeCompilationFailure(BaseModel):
     session_transcript_uri: str | None = None
 
 
-
-
 class KnowledgeFactFingerprint(BaseModel):
     """The D45 state of one relation or observation candidate."""
 

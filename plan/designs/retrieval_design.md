@@ -1,6 +1,6 @@
 # Retrieval Design — the Query Machine
 
-> **D114 amendment (2026-09-07; effective when merged).** Use one chosen fact window, existing time modes, precision and explicit possible matches for unknown dates (§5). Dual windows, fact kinds, erased-basis states and temporal cache certificates are superseded.
+> **D118 amendment (2026-09-07; effective when merged).** Use one chosen fact window, existing time modes, precision and explicit possible matches for unknown dates (§5). Dual windows, fact kinds, erased-basis states and temporal cache certificates are superseded.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

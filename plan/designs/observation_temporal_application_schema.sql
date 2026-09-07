@@ -1,4 +1,4 @@
--- WITHDRAWN BY D114: historical design appendix, not normative or executable upgrade guidance.
+-- WITHDRAWN BY D118: historical design appendix, not normative or executable upgrade guidance.
 -- Replacement authority: mutable_fact_windows_design.md, especially sections 4, 7, 8 and 10.
 -- This appendix is no longer incorporated by postgres_schema_design.md.
 -- Original DDL follows only to preserve the reasoning behind the superseded design.

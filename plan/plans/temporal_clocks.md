@@ -1,8 +1,8 @@
 # Temporal work — simplify the design, then implement coherent changes
 
-**Status:** revised 2026-09-07 for D114. PR #384 is a design correction and
+**Status:** revised 2026-09-07 for D118. PR #384 is a design correction and
 withdrawal of an incomplete, unshipped implementation. It does not implement
-D114 runtime behavior. Explicit user approval is required before merge/release.
+D118 runtime behavior. Explicit user approval is required before merge/release.
 
 **Binding target:** [mutable facts with one world-time window](../designs/mutable_fact_windows_design.md).
 **Reasoning:** [audit and alternatives](../analysis/lean_mutable_fact_windows.md).
@@ -12,7 +12,7 @@ D114 runtime behavior. Explicit user approval is required before merge/release.
 1. Preserve the old draft checkpoint `7a64e34d` in Git history and local branch
    `archive/temporal-fact-framework-7a64e34d`. Do not rewrite the PR's history.
 2. Replace fixed fact categories, two fact windows, immutable seed authority,
-   dedicated temporal corrections and current-only cache machinery with D114.
+   dedicated temporal corrections and current-only cache machinery with D118.
    Mark superseded documents and SQL so future implementers cannot mistake them
    for binding instructions. Keep original reasoning accessible.
 3. Remove the draft-only runtime, migrations, tests and protocol roll built for
@@ -21,7 +21,7 @@ D114 runtime behavior. Explicit user approval is required before merge/release.
    evaluator providers, including the Codex subscription evaluator (#382).
 4. Update the design index, numbered decision log, affected authority pointers,
    project status and PR description. Remove instructions for the abandoned
-   experimental upgrade. Do not claim that main already supports D114.
+   experimental upgrade. Do not claim that main already supports D118.
 5. Verify that runtime, tests, CI and benchmark pins match main exactly. Check
    local document links, supersession pointers and whitespace. Runtime acceptance
    of the removed implementation does not transfer to its replacement.
@@ -54,10 +54,10 @@ No conversion, merge or release has been performed.
 
 Before replacement write-path code, publish the exact narrow preparation/receipt
 schema, adjudication output models, application identity, lock order, stale-input
-check, deletion inventory and recovery procedure required by D114 §§3–4,7–8.
-Implement D114 §2's shape table with fact-specific CHECK constraints; do not copy
+check, deletion inventory and recovery procedure required by D118 §§3–4,7–8.
+Implement D118 §2's shape table with fact-specific CHECK constraints; do not copy
 claim CHECKs or canonicalize incomplete/already-canonical fact windows. Specify
-D114 §5's per-result `temporal_match: confirmed | possible` in the exact versioned
+D118 §5's per-result `temporal_match: confirmed | possible` in the exact versioned
 response schema; existing closed envelopes cannot accept an unversioned extra
 field. Define the unique application key/index using deployment, normalized
 assertion identity (including its normalization generation) and adjudicator
@@ -132,4 +132,4 @@ The former #365–#368 topics remain useful questions, with revised answers:
 ordering belongs to ordinary application; date correction belongs to ordinary
 adjudication; profiles use stable dated content; forget covers the smaller actual
 storage inventory. Their old framework specifications no longer gate code; the
-concrete D114 contracts and acceptance above do.
+concrete D118 contracts and acceptance above do.

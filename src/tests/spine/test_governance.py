@@ -4,7 +4,6 @@ sample, and the D5 `other:` funnel with promotion ranking."""
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID
-from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -146,45 +145,33 @@ def test_forking_pack_is_refused_whole(database_engine: Engine) -> None:
 def test_other_funnel_registers_counts_and_ranks(database_engine: Engine) -> None:
     """The D5 escape: other:<freetext> lands as tier=other, usage-counted and
     ranked for promotion; the grammar is enforced."""
+    from tests.fact_application_support import WriterCase
+
+    case = WriterCase(engine=database_engine)
     facts = FactCatalog(engine=database_engine)
-    facts.ensure_other_predicate(
-        deployment_id=_DEPLOYMENT_ID, predicate="other:sponsors"
+    for predicate in ("other:sponsors", "other:sponsors", "other:licenses"):
+        facts.ensure_other_predicate(deployment_id=case.dep, predicate=predicate)
+    _, app = case.stage(day=10, kind="relation", predicate="other:sponsors")
+    case.decide(
+        decision={
+            "target": {"new_handle": "sponsorship"},
+            "new_facts": [
+                {"handle": "sponsorship", "assertion_application_id": str(app)}
+            ],
+        }
     )
-    facts.ensure_other_predicate(  # idempotent
-        deployment_id=_DEPLOYMENT_ID, predicate="other:sponsors"
-    )
-    facts.ensure_other_predicate(
-        deployment_id=_DEPLOYMENT_ID, predicate="other:licenses"
-    )
+    original = case.apply(app=app)
+    assert case.apply(app=app) == original
+    _, more = case.stage(day=11, kind="relation", predicate="other:sponsors")
+    case.decide(decision={"target": {"fact_id": original["fact_id"]}})
+    case.apply(app=more)
 
-    subject, object_ = uuid4(), uuid4()
-    with database_engine.begin() as connection:
-        for entity_id, name in ((subject, "Acme"), (object_, "City Marathon")):
-            connection.execute(
-                text(
-                    "INSERT INTO entities (entity_id, deployment_id,"
-                    " canonical_name, normalized_name)"
-                    " VALUES (:e, :d, :n, lower(:n))"
-                ),
-                {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name},
-            )
-    for _ in range(2):  # same fact twice: one relation, ONE usage bump
-        facts.upsert_relation(
-            deployment_id=_DEPLOYMENT_ID,
-            subject_entity_id=subject,
-            predicate="other:sponsors",
-            object_entity_id=object_,
-            claim_id=uuid4(),
-            doc_id=uuid4(),
-            normalizer_version="test",
-        )
-
-    candidates = facts.promotion_candidates(deployment_id=_DEPLOYMENT_ID)
+    candidates = facts.promotion_candidates(deployment_id=case.dep)
     assert candidates[0] == ("other:sponsors", 1)
     assert ("other:licenses", 0) in candidates
 
     # the funnel never leaks into the governed prompt vocabulary:
-    prompt = facts.predicate_prompt_lines(deployment_id=_DEPLOYMENT_ID)
+    prompt = facts.predicate_prompt_lines(deployment_id=case.dep)
     assert "other:sponsors" not in prompt
     assert "works_for" in prompt
 

@@ -37,7 +37,7 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27"
 DEFAULT_PROTOCOL_KEY: Final = "full-v27"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-absolute-dates-v27"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-mutable-windows-v28"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -95,10 +95,9 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "chunk_embedding": "qwen/qwen3-embedding-8b",
         "claim_extraction": "openai/gpt-5.6-luna",
         "context_prefix": "openai/gpt-5.6-luna",
-        "entity_observation_embedding": "qwen/qwen3-embedding-8b",
         "fact_label": "openai/gpt-5.6-luna",
-        "observation_frontier": "openai/gpt-5.6-luna",
-        "observation_small": "openai/gpt-5.6-luna",
+        "entity_resolution": "openai/gpt-5.6-luna",
+        "fact_adjudication": "openai/gpt-5.6-luna",
         "openrouter_embedding_provider": "nebius",
         "openrouter_embedding_provider_order": "unset",
         "openrouter_max_completion_tokens": "32000",
@@ -110,8 +109,6 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "section_summary": "openai/gpt-5.6-luna",
         "skeleton_check": "openai/gpt-5.6-luna",
         "structure_fallback": "openai/gpt-5.6-luna",
-        "supersession_frontier": "openai/gpt-5.6-luna",
-        "supersession_small": "openai/gpt-5.6-luna",
     }
 )
 ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"

@@ -234,8 +234,8 @@ class _KnowledgeDriver:
     def __init__(self, *, events: list[str]) -> None:
         self.events = events
 
-    def run_cycle(
-        self, *, deployment_id: UUID, exclusions_by_artifact: object
+    def recompile_after_forget(
+        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> object:
         self.events.append("knowledge-cycle")
         return object()

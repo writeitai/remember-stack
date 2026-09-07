@@ -1,6 +1,6 @@
 # K Plane — Compiled and Authored Knowledge (Design)
 
-> **D114 amendment (2026-09-07; effective when merged).** Generated pages use dated statements or explicit compilation-time snapshots and existing freshness disclosure (§6). Dual fact windows, endpoint bases and the D110 temporal certificate framework are superseded.
+> **D118 amendment (2026-09-07; effective when merged).** Generated pages use dated statements or explicit compilation-time snapshots and existing freshness disclosure (§6). Dual fact windows, endpoint bases and the D110 temporal certificate framework are superseded.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

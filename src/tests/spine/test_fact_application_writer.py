@@ -1,11 +1,10 @@
-"""PostgreSQL acceptance for ordinary single-window fact application (D114)."""
+"""PostgreSQL acceptance for ordinary single-window fact application (D118)."""
 
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from uuid import UUID
-from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -17,18 +16,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 
 from rememberstack.adapters.testing import FakeModelProvider
-from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model.fact_application import AssertionKind
-from rememberstack.model.fact_application import FactApplicationDecision
-from rememberstack.model.relations import NormalizationResponse
-from rememberstack.spine import DeploymentBootstrapper
-from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
-from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
-from rememberstack.spine.fact_adjudication import FactAdjudicator
-from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
-from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
-from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.settings import load_database_settings
+from tests.fact_application_support import WriterCase
 
 
 @pytest.fixture(scope="module")
@@ -46,146 +36,6 @@ def database_engine() -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
-
-
-class WriterCase:
-    """A real deployment with frozen source outputs and explicit model answers."""
-
-    def __init__(self, *, engine: Engine) -> None:
-        """Create isolated entity/work coordinates without bypassing fact writes."""
-        self.engine = engine
-        self.dep, self.subject, self.object, self.version = (uuid4() for _ in range(4))
-        DeploymentBootstrapper(engine=engine).bootstrap_deployment(
-            deployment_input=DeploymentBootstrapInput(
-                deployment_id=self.dep,
-                slug=f"writer-{self.dep.hex}",
-                name="Writer acceptance",
-                default_language="en",
-                raw_bucket="test-raw",
-                artifacts_bucket="test-artifacts",
-                corpusfs_bucket="test-corpus",
-            )
-        )
-        with engine.begin() as connection:
-            for entity, name in (
-                (self.subject, "Nate"),
-                (self.object, "Riverside Cup"),
-            ):
-                connection.execute(
-                    text("""INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name)
-                    VALUES(:entity,:dep,:name,:name)"""),
-                    {"entity": entity, "dep": self.dep, "name": name},
-                )
-            connection.execute(
-                text("""INSERT INTO obs_flush_entity_units(
-                unit_id,deployment_id,version_id,representation_id,subject_entity_id,
-                content_hash,normalizer_version,chunker_version,extractor_version)
-                VALUES(:unit,:dep,:version,:representation,:subject,'test',:normalizer,'test','test')"""),
-                {
-                    "unit": uuid4(),
-                    "dep": self.dep,
-                    "version": self.version,
-                    "representation": uuid4(),
-                    "subject": self.subject,
-                    "normalizer": FACT_NORMALIZER_VERSION,
-                },
-            )
-        self.catalog = FactApplicationCatalog(engine=engine)
-        self.writer = FactAdjudicator(
-            engine=engine,
-            model_provider=FakeModelProvider(),
-            settings=FactAdjudicationSettings(),
-        )
-
-    def stage(
-        self, *, day: int, kind: AssertionKind = "observation"
-    ) -> tuple[UUID, UUID]:
-        """Freeze one dated source assertion and stage its original output ordinal."""
-        claim = uuid4()
-        instant = datetime(2022, 5, day, tzinfo=timezone.utc)
-        with self.engine.begin() as connection:
-            connection.execute(
-                text("""INSERT INTO claims(claim_id,deployment_id,doc_id,chunk_id,claim_text,source_span,
-                char_start,char_end,anchor_ok,window_membership_ok,extractor_version,asserted_at,
-                claim_valid_from,claim_valid_until,claim_valid_precision,claim_valid_kind)
-                VALUES(:claim,:dep,:doc,:chunk,'Nate won the Riverside final','Nate won the Riverside final',
-                0,28,true,true,'test',:at,:at,:at,'day','event_time')"""),
-                {
-                    "claim": claim,
-                    "dep": self.dep,
-                    "doc": uuid4(),
-                    "chunk": uuid4(),
-                    "at": instant,
-                },
-            )
-        item: dict[str, object] = {
-            "subject": {"name": "Nate"},
-            "uses_claim_window": True,
-        }
-        if kind == "relation":
-            item.update(predicate="related_to", object={"name": "Riverside Cup"})
-        else:
-            item["statement"] = "Nate won the Riverside final"
-        response = NormalizationResponse.model_validate({f"{kind}s": [item]})
-        self.catalog.publish_normalization(
-            deployment_id=self.dep,
-            claim_id=claim,
-            normalizer_version=FACT_NORMALIZER_VERSION,
-            output=response,
-            accepted=((kind, 0),),
-        )  # type: ignore[arg-type]
-        app = self.catalog.stage(
-            deployment_id=self.dep,
-            claim_id=claim,
-            normalizer_version=FACT_NORMALIZER_VERSION,
-            kind=kind,
-            ordinal=0,
-            adjudicator_version=RELATION_APPLICATION_VERSION
-            if kind == "relation"
-            else OBSERVATION_APPLICATION_VERSION,
-            subject_entity_id=self.subject,
-            object_entity_id=self.object if kind == "relation" else None,
-            version_ids=(self.version,),
-        )  # type: ignore[arg-type]
-        return claim, app
-
-    def decide(self, *, decision: dict[str, object]) -> UUID:
-        """Publish a supplied answer for the actual locked prepared head."""
-        prepared = self.writer.prepare(
-            deployment_id=self.dep, subject_entity_id=self.subject
-        )
-        assert prepared is not None
-        answer = FactApplicationDecision.model_validate(
-            {
-                "confidence": 0.95,
-                "rationale": "The sources name the same final.",
-                **decision,
-            }
-        )
-        assert self.catalog.publish_decision(
-            deployment_id=self.dep, prepared=prepared, decision=answer
-        )
-        return prepared.application_id
-
-    def apply(self, *, app: UUID) -> dict:
-        """Apply the saved answer through all production locks and SQL writes."""
-        result = self.writer.apply(
-            deployment_id=self.dep, subject_entity_id=self.subject, application_id=app
-        )
-        assert result is not None
-        return result
-
-    def first(self, *, kind: AssertionKind = "observation") -> tuple[UUID, UUID, UUID]:
-        """Apply the first source as one newly believed historical fact."""
-        claim, app = self.stage(day=10, kind=kind)
-        self.decide(
-            decision={
-                "target": {"new_handle": "win"},
-                "new_facts": [{"handle": "win", "assertion_application_id": str(app)}],
-            }
-        )
-        result = self.apply(app=app)
-        return claim, app, UUID(result["fact_id"])
 
 
 @pytest.mark.parametrize("kind", ["relation", "observation"])
@@ -483,6 +333,7 @@ def test_counts_separate_undated_candidates_from_confirmed_history(
 ) -> None:
     """A completed win counts in history; an undated win never implies a dated zero."""
     from rememberstack.adapters.postgres_p1 import PostgresP1Index
+    from rememberstack.model.assured_operations import AtFactTime
     from rememberstack.model.assured_operations import HistoryFactTime
     from rememberstack.model.assured_operations import OverlapFactTime
     from rememberstack.surfaces.query_engine import QueryEngine
@@ -517,6 +368,7 @@ def test_counts_separate_undated_candidates_from_confirmed_history(
         embedding_model="test",
     )
     for mode in (
+        AtFactTime(at=datetime(2022, 5, 10, 12, tzinfo=timezone.utc)),
         HistoryFactTime(),
         OverlapFactTime.model_validate(
             {
@@ -632,3 +484,49 @@ def test_stale_embedding_does_not_discard_other_paid_vectors(
             )
         }
         assert values == {first: False, second: True}
+
+
+@pytest.mark.parametrize("kind", ["relation", "observation"])
+def test_strict_lookup_reports_incomplete_dates_without_asserting_them(
+    database_engine: Engine, kind: AssertionKind
+) -> None:
+    """At lookup returns the dated fact and a boundary for the undated candidate."""
+    from rememberstack.adapters.postgres_p1 import PostgresP1Index
+    from rememberstack.model import NegativeKind
+    from rememberstack.surfaces.query_engine import QueryEngine
+
+    case = WriterCase(engine=database_engine)
+    _, _, known = case.first(kind=kind)
+    claim, app = case.stage(day=12, kind=kind)
+    case.decide(
+        decision={
+            "target": {"new_handle": "other"},
+            "new_facts": [{"handle": "other", "assertion_application_id": str(app)}],
+            "window": {
+                "window": {"valid_precision": "unknown"},
+                "supporting_claim_ids": [str(claim)],
+            },
+        }
+    )
+    case.apply(app=app)
+    query = QueryEngine(
+        engine=database_engine,
+        search_index=PostgresP1Index(engine=database_engine, embedding_model="test"),
+        model_provider=FakeModelProvider(),
+        embedding_model="test",
+    )
+    at = datetime(2022, 5, 10, 12, tzinfo=timezone.utc)
+    result = (
+        query.lookup_relations(
+            deployment_id=case.dep, subject_entity_id=case.subject, valid_at=at
+        )
+        if kind == "relation"
+        else query.lookup_observations(
+            deployment_id=case.dep, entity_id=case.subject, valid_at=at
+        )
+    )
+    assert [fact.fact_id for fact in result.facts] == [known]
+    assert result.negative is not None and result.negative.kind == NegativeKind.BOUNDARY
+    assert result.truncation is not None and not result.truncation.total_is_exact
+    assert result.temporal_scope is not None
+    assert result.temporal_scope.evaluated_at > at

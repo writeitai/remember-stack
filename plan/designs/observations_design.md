@@ -1,6 +1,6 @@
 # The Observation Layer — Non-Graph Facts with Temporal Validity (Design)
 
-> **D114 amendment (2026-09-07; effective when merged).** Observations have one mutable world window and contextual identity (§§2–3). Kind/date gates, seed authority and occurrence unions are superseded. Fixed-period historical facts remain believed after their world interval ends.
+> **D118 amendment (2026-09-07; effective when merged).** Observations have one mutable world window and contextual identity (§§2–3). Kind/date gates, seed authority and occurrence unions are superseded. Fixed-period historical facts remain believed after their world interval ends.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

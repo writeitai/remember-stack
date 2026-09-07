@@ -1,4 +1,4 @@
-"""Closed ordinary adjudication output for D114 fact identity and window edits."""
+"""Closed ordinary adjudication output for D118 fact identity and window edits."""
 
 from typing import Annotated
 from typing import Literal

@@ -78,6 +78,6 @@ def test_extraction_model_request_sites_pin_temperature_zero() -> None:
                 f"{path}: ModelRequest temperature={temperature!r}, expected 0.0"
             )
             seen += 1
-    # Guard against vacuous green. D100 removed the resolver's frontier call,
-    # leaving fourteen extraction-class request sites.
-    assert seen >= 14
+    # Guard against a vacuous scan. D118 replaces the two relation-ladder
+    # requests with one shared fact-adjudication request.
+    assert seen >= 13

@@ -130,6 +130,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_27_0048",
         "p9_28_0049",
         "p9_29_0050",
+        "p9_30_0051",
     )
     assert len(script.get_heads()) == 1
 
@@ -668,7 +669,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_29_0050"
+    assert head_before_noop == head_after_noop == "p9_30_0051"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -676,7 +677,7 @@ def test_context_operation_rename_migrates_existing_catalog_rows() -> None:
     """D114 upgrades and downgrades names, plans, intents, and bundle shape."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="p9_27_0048")
     deployment_id = uuid4()
     rows = (
@@ -758,7 +759,7 @@ def test_context_operation_rename_migrates_existing_catalog_rows() -> None:
                 tuple({**row, "deployment_id": deployment_id} for row in rows),
             )
 
-        command.upgrade(config=config, revision="head")
+        command.upgrade(config=config, revision="p9_28_0049")
         with engine.connect() as connection:
             migrated = {
                 row["name"]: row
@@ -817,8 +818,8 @@ def test_context_operation_rename_migrates_existing_catalog_rows() -> None:
         assert "testimony" in restored["answer_context"]["result_schema"]["properties"]
     finally:
         engine.dispose()
-        command.downgrade(config=config, revision="base")
-        command.upgrade(config=config, revision="head")
+        reset_database(config=config)
+        command.upgrade(config=config, revision="p9_28_0049")
 
 
 def test_global_resolution_eval_migration_preserves_the_default_band() -> None:
@@ -1249,11 +1250,11 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
         command.upgrade(config=config, revision="head")
 
 
-def test_d114_refuses_lossy_downgrade() -> None:
+def test_d118_refuses_lossy_downgrade() -> None:
     """A downgrade cannot erase application receipts or restore false date semantics."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_28_0049"
+    assert _head_revision(database_url=database_url) == "p9_30_0051"

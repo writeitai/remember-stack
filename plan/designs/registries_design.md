@@ -1,6 +1,6 @@
 # Registries Design — Entity Resolution, Ontology, Governance
 
-> **D114 amendment (2026-09-07; effective when merged).** Salient fact inputs use one chosen world window and source timestamps. Date-qualified profiles use stable selection; occurrence unions/bases and wall-clock recency are superseded (§§5–6).
+> **D118 amendment (2026-09-07; effective when merged).** Salient fact inputs use one chosen world window and source timestamps. Date-qualified profiles use stable selection; occurrence unions/bases and wall-clock recency are superseded (§§5–6).
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 

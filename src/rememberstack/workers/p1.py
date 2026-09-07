@@ -289,10 +289,11 @@ class LabelFactsHandler:
                     for row, vector in zip(batch, response.vectors, strict=True)
                 )
                 self._fact_index.upsert_facts(rows=embedded)
-        if (
-            self._profile_refresher is not None
-            and work.target_kind is ProcessingTarget.FACT_APPLICATION
-        ):
+        if self._profile_refresher is not None:
+            if doc_id is not None:
+                relation_ids, observation_ids = self._facts.document_fact_ids(
+                    deployment_id=work.deployment_id, doc_id=doc_id
+                )
             self._profile_refresher.refresh_for_facts(
                 deployment_id=work.deployment_id,
                 relation_ids=relation_ids,

@@ -1572,7 +1572,7 @@ def _build_revision() -> str:
 def _model_bindings() -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline."""
     from rememberstack.spine import ObservationSettings
-    from rememberstack.spine import SupersessionSettings
+    from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
     from rememberstack.workers import E1Settings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
@@ -1590,7 +1590,7 @@ def _model_bindings() -> dict[str, str]:
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
-    supersession = SupersessionSettings.model_validate({})
+    facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
     openrouter = OpenRouterSettings.model_validate({})
     return {
@@ -1602,11 +1602,8 @@ def _model_bindings() -> dict[str, str]:
         "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
-        "entity_observation_embedding": observations.embedding_model,
-        "observation_small": observations.small_model,
-        "observation_frontier": observations.frontier_model,
-        "supersession_small": supersession.small_model,
-        "supersession_frontier": supersession.frontier_model,
+        "entity_resolution": observations.small_model,
+        "fact_adjudication": facts.model,
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",

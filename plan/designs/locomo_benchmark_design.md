@@ -42,12 +42,12 @@
 > and fingerprints change; earlier protocol scores are directional comparisons.
 > Binding extraction semantics: `temporal_clocks_design.md` §6.
 
-> **D114 amendment (2026-09-07; effective when merged).** Future fact-time
+> **D118 amendment (2026-09-07; effective when merged).** Future fact-time
 > inputs use one chosen window, precision and source timestamps, with explicit
 > current/history selection and unknown-date disclosure. Full-v24 and all current
 > evaluator variants remain unchanged by this design-only amendment. Roll the
 > protocol when replacement semantics ship; see
-> [D114](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
+> [D118](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
 
 > **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
 > `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,

@@ -166,7 +166,7 @@ native store tools and preserves the hard-forget manifest root first.
 
 ## Converting an existing fact store to chosen world dates
 
-Migration `p9_28_0049` changes the meaning of fact dates. Stop serving and intake,
+Migration `p9_30_0051` changes the meaning of fact dates. Stop serving and intake,
 and drain old work before running setup. The migration preserves claims, fact
 identities and system belief history, clears ungrounded legacy world dates, and
 leaves populated deployments closed until conversion is verified. Empty stores
@@ -195,3 +195,8 @@ receipts, accepted applications, version barriers, evidence counts and projectio
 repairs are complete. Only a successful verification opens the generation. A
 missing source occurrence blocks conversion explicitly. Older compiled K pages
 remain stale until the deployment's K driver rebuilds them.
+
+If a source is hard-forgotten while conversion is paused, affected generated K
+bodies are removed before Git history is purged. Their records remain stale and
+the normal K driver can rebuild them after conversion. This lets erasure finish
+without publishing summaries from partially converted facts.
