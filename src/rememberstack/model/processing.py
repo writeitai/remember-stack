@@ -47,7 +47,7 @@ class DeferReason(StrEnum):
     RETRY_BACKOFF = "retry_backoff"
     BUDGET = "budget"
     NO_ROUTE = "no_route"
-    """Convert work for input this deployment has no converter for (D115).
+    """Convert work for input this deployment has no converter for (D117).
 
     Parked at enqueue, so no attempt is ever spent and the row never reaches
     the dead-letter queue: nothing is broken, the format is simply not

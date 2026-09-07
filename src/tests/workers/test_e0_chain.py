@@ -270,7 +270,7 @@ class _E0Rig:
                 retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
             ),
         )
-        # One table feeds both the D115 scheduling table and the router, the
+        # One table feeds both the D117 scheduling table and the router, the
         # way a real deployment's `conversion_routes` does. Duplicating it
         # would let the harness prove a divergence production cannot have.
         routes: dict[str, Converter] = {
@@ -602,7 +602,7 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
 
 
 def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -> None:
-    """D115: the document lands, its convert work parks, the DLQ stays empty."""
+    """D117: the document lands, its convert work parks, the DLQ stays empty."""
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(

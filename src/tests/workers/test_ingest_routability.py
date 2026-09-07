@@ -1,4 +1,4 @@
-"""D115: E0 parks convert work for input it has no converter for.
+"""D117: E0 parks convert work for input it has no converter for.
 
 Self-host uploads remain durable when conversion is unavailable. These
 wiring tests cover byte storage and route configuration passed to the catalog;
@@ -159,7 +159,7 @@ def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
     `ConversionRouter.converter_for` is an exact dict lookup. If ingest
     normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
     did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D115 exists to remove. Normalisation belongs in the router,
+    the outcome D117 exists to remove. Normalisation belongs in the router,
     where both callers inherit it.
     """
     catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
@@ -167,7 +167,7 @@ def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:
-    """The equivalence D115 rests on: configured keys are the router's keys.
+    """The equivalence D117 rests on: configured keys are the router's keys.
 
     Ingest tests membership in the configured route-name table while the
     worker tests membership in the built router. That is only safe because

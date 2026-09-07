@@ -2,7 +2,7 @@
 
 revision: p9_29_0050
 
-D115 preserves otherwise admissible originals and parks conversion while the
+D117 preserves otherwise admissible originals and parks conversion while the
 configured route is absent. P3 separately exposes stored originals without
 changing processed currency. This migration adds the durable parking reason;
 projection and provider-mount wiring establish raw discoverability and access.
@@ -84,7 +84,7 @@ def downgrade() -> None:
     cannot remove one in place). Any row still parked as `no_route` would
     violate the restored CHECK, so they are released to ordinary pending
     first. Older application code can then convert or fail according to its
-    existing routing behavior; downgrade does not preserve D115 parking."""
+    existing routing behavior; downgrade does not preserve D117 parking."""
     op.execute("DROP INDEX IF EXISTS ix_managed_ingest_unaccepted_version")
     op.execute(
         "UPDATE processing_state SET defer_reason = NULL "

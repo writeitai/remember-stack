@@ -161,8 +161,11 @@ gates everything downstream:
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
 - **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF + images-that-are-documents → **OCR** (e.g. Mistral OCR / docling / marker); office /
-  html / email → **markitdown**; plain text → passthrough. (This generalizes the common practice of
+  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → dedicated OCR
+  plus an independent vision-LLM description call for every supported image, without a
+  classifier or conditional lane budgets (D115; `media_design.md` §2); office / html /
+  email → **markitdown**; plain
+  text → passthrough. (This generalizes the common practice of
   *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
   bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
   block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;
@@ -174,7 +177,7 @@ gates everything downstream:
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
-- **Missing conversion routes park work — D115.** E0 accepts and stores otherwise
+- **Missing conversion routes park work — D117.** E0 accepts and stores otherwise
   admissible uploads even when no conversion route exists. It passes the configured
   route set into the catalog transaction, which checks the effective
   `content_objects.mime` (first-write-wins per content hash). Convert work starts
@@ -558,7 +561,7 @@ https://cloud.google.com/storage/docs/cloud-storage-fuse/overview.)
 
 ## 6. The corpus filesystem — P3, a projection — D40
 
-### Stored originals and processed currency — D115
+### Stored originals and processed currency — D117
 
 P3 exports every live lineage with at least one durable, nondeleted version.
 It selects the latest stored version by descending `version_no`, independently
@@ -581,8 +584,10 @@ Deleting a stored version selects the newest surviving durable version; deleting
 the lineage excludes it. Existing D74 barriers and P3 snapshot purge cover these
 stubs. P3 rebuild and mount publication remain explicit operations, independent
 of processing completion. Failed builds keep the prior snapshot. Provider raw
-and artifact mounts must exist, enforce read-only access and retain D51 data-access
-auditing; configuring their existing roots must not silently create empty stores.
+and artifact mounts must exist and enforce read-only access. Read auditing follows
+the backend under D51/D116 (plain local filesystem reads are not recorded); configuring their existing roots must not silently create empty stores.
+D116 governs direct original navigation; stored-version selection is independent
+of whether the original is reached through a pointer or a browse entry.
 This adds projection queries and retained parked work, but no duplicate original
 bytes, new projection plane, LLM work or changes to D55 processed currency.
 

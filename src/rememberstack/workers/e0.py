@@ -171,7 +171,7 @@ class UploadIngestor:
     ) -> None:
         """Bind the connector to the catalog and the deployment's raw bucket.
 
-        ``routable_mimes`` is required deployment configuration (D115).
+        ``routable_mimes`` is required deployment configuration (D117).
         The catalog uses it with the canonical stored MIME to schedule or
         park conversion. Admission and managed metering retain their gates.
         """
@@ -390,7 +390,7 @@ class ConvertHandler:
         except UnroutableMimeError as err:
             # Configuration can differ from the ingestor or resume command.
             # This runs before reading bytes or making a provider call, so the
-            # runner may park and return the unused attempt (D115).
+            # runner may park and return the unused attempt (D117).
             raise NoRouteHandlerError(str(err)) from err
         existing = self._catalog.existing_representation(
             version_id=source.version_id,

@@ -1,6 +1,6 @@
 # Stored originals and conversion without a route
 
-**Status:** non-binding analysis supporting D115 and `plan/designs/e0_files_design.md`
+**Status:** non-binding analysis supporting D117 and `plan/designs/e0_files_design.md`
 §3 and §6. **Evidence inspected:** 2026-09-07, engine main `8fad369d` and the
 unpublished parking implementation inherited from `c49b9985`.
 
@@ -91,8 +91,10 @@ P3 already rebuilds explicitly (`SelfHostProfile.run_projection`), independently
 of completion of conversion. Availability begins after a successful P3 build and
 mount publication; ingest does not promise synchronous filesystem visibility.
 Use configured existing raw/artifact provider mount roots so emitted keys lead
-to bytes. Read-only enforcement and provider access auditing remain operator-owned
-D51 requirements. This PR does not provision SeaweedFS, alter production topology,
+to bytes. Read-only enforcement remains operator-owned. D116 withdraws the off-path
+restriction; backend auditing follows D51/D116, and plain local filesystem reads
+are not recorded. This implementation wires raw pointers and existing mounts;
+D116 direct browse entries and D115 source_open remain separate implementation work. This PR does not provision SeaweedFS, alter production topology,
 or assert that placeholder directories are real bucket mounts.
 
 The projection adds indexed per-lineage latest-version lookups and conversion-state

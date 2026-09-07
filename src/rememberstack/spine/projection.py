@@ -294,7 +294,7 @@ _SELECT_CORPUS_DOCUMENTS = text(
            stored.ingested_at AS stored_ingested_at,
            work.defer_reason::text AS stored_defer_reason
     FROM documents d
-    -- Raw availability is independent of processed currency (D115). Managed
+    -- Raw availability is independent of processed currency (D117). Managed
     -- metadata can predate the raw write, so only accepted originals qualify.
     JOIN LATERAL (
         SELECT dv.version_id, dv.content_hash, dv.status,

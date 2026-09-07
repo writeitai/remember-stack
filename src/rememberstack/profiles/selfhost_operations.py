@@ -49,7 +49,7 @@ class SelfHostOperations:
         ).inspect(deployment_id=deployment_id)
 
     def resume_no_route(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Release parked conversions covered by validated local routes (D115)."""
+        """Release parked conversions covered by validated local routes (D117)."""
         from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.profiles.selfhost import SelfHostSettings
 
