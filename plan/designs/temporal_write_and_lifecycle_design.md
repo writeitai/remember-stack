@@ -225,18 +225,98 @@ sequenceDiagram
 ### 3.3 Atomic effects and completion
 
 For a new identity, insert the fact, seed, add adjudication with both triggering
-claim and assertion IDs, and evidence together. For evidence, attach only to
-the identity selected by the ladder. Caps, contradictions and historical
+claim and assertion IDs, and evidence together. For evidence, attach to the
+target set selected under §3.3.1. Caps, contradictions and historical
 re-splitting produced by that decision belong to the same transaction. Write
 all resulting temporal operations and adjudications, record the application
 receipt, retire the matching eligible version memberships, and enqueue cache
 invalidation/correction intent before commit.
 
-The application receipt contains identity outcome, fact handle, input digest
+The application receipt contains identity outcome, target count/digest, input digest
 and admitted ordinal; it links all produced adjudications/effects. It does not
 duplicate their rationale or before/after bounds. A crash after application but
 before worker completion reuses the receipt. It cannot rerun an identity
 verdict and create a second occurrence.
+
+### 3.3.1 Complete state-support targets (D112)
+
+A single state assertion can support several existing historical slices without
+making them one identity. Suppose the same value has stored slices `[2010,2013)`
+and `[2018,2020)`, and a new source asserts it over `[2010,2020)`. Choosing either
+slice arbitrarily would discard support for the other; creating a broad new
+state would violate the known-start exclusion. Attach the claim as evidence to
+both slices. Preserve every fact ID, seed and authoritative verdict endpoint.
+Neither this support nor its occurrence-metadata union establishes truth in
+the intervening gap, merges identities, or proves one continuous episode.
+
+For a dated state assertion, the deterministic support set is **every**
+non-invalidated, non-erased state of the same canonical subject/predicate/object
+whose known-start verdict window overlaps the assertion's canonical window.
+D107's compatible-state rule applies to the complete set, even if additional
+semantic candidates require model inference. Model omission, low confidence or
+disagreement about another candidate cannot replace proven support with `new`.
+Mixed datedness, erased bounds, different values and occurrence identity cannot
+use this multi-target rule. An undated state retains the existing unique
+compatible-state shortcut; other undated identity decisions follow D107's
+permitted verdicts, including D111 coexistence. Occurrence evidence still selects
+at most one identity; no temporal union merges occurrences.
+
+`relation_application_targets` is the sole receipt-target authority. It contains
+one logical relation handle per application and has a reverse fact index.
+The parent receipt's `target_count` and `target_digest` certify the entire set:
+sort distinct UUIDs by their UUID byte value, render lowercase hyphenated strings
+as a compact JSON array without whitespace or trailing newline, then hash its
+UTF-8 bytes with SHA-256. `new` has exactly one target. `evidence` has one or more,
+and more than one is legal only under the deterministic dated-state rule above.
+There is no arbitrary primary target. A fact merely capped or contradiction-
+grouped by this application is an effect target, not automatically a support
+target. Existing adjudication/effect linkage preserves that distinction.
+
+Prepare the complete deterministic target set under D110's canonical block
+stability. Its membership and consumed revisions are part of the exact prepared
+fingerprint. Never truncate that set to top-k or model budget. Enumerate large
+sets and write support/target rows in bounded batches within the one application
+transaction, with complete sorted fact/source locks and revision revalidation.
+Remote inference remains bounded and outside transactions. The transaction
+commits all evidence links, narrative adjudications, temporal operations, target
+rows, receipt, version retirement and cache/correction intents together. Verify
+the count, digest and permitted cardinality before committing and whenever a
+receipt certifies replay or version completion. A missing or substituted target
+is corruption, not an empty successful application.
+
+Additional semantic effects explicitly name the affected fact and its boundary
+authority. When support has multiple state targets, a cap requires the exact
+successor fact whose authoritative start supplies it; neither the raw assertion
+start nor an arbitrary target's start substitutes. Apply the existing grounded
+chronological guards and record a refused/no-boundary effect when authority is
+missing or invalid, while retaining independently established evidence support.
+Contradiction effects likewise name their actual participant facts. All effects
+still commit in the single assertion group; none may silently change the verdict
+of an unrelated support target.
+
+Replay consumes the certified recorded target set and effects without model
+inference or current-candidate renomination. D56 reuse and crash recovery use
+that same receipt. Historical relation handles have D110's existing logical
+reference status: a missing fact cannot be resurrected or replaced by a new
+candidate. Hard forget includes this table in D74's inventory; deleting an
+assertion/receipt cascades its targets, and reverse lookup includes targets in
+the existing deletion closure. Retained structural handles and sanitized replay
+roots obey §6, without retaining forbidden source-bearing snapshots or digests.
+
+Reads, counts, labels and generated text distinguish support of multiple fact
+identities from continuous world-time truth. Evidence counts remain independent
+document-lineage counts per fact. This introduces one internal table and two
+receipt certificate fields, no new public grant or scheduler. Work scales with
+the complete matching slice set; silent truncation is not a scaling strategy.
+An uncertain-identity attempt lifecycle is more machinery for this proven-support
+case, while arbitrary selection or interval merging invents authority. The
+[analysis](../analysis/temporal_state_evidence_targets.md) records that comparison.
+
+Acceptance covers broad support of disjoint slices, unchanged gaps/verdicts/seeds,
+explicit additional-effect authority, low-confidence/omitted model decisions,
+rollback after the second target, concurrent helpers, exact replay, D56 barriers,
+source erasure, missing/substituted target rejection and unchanged single-target
+occurrence behavior. This contract does not certify those implementation gates.
 
 After releasing application locks, complete only the currently leased work
 row and evaluate its version barrier. Other workers self-complete from durable

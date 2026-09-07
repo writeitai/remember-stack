@@ -2772,6 +2772,12 @@ and sanitized forget checkpoints; and resumable conversion shadows/generation
 verification. Only existing `processing_state` owns leases/retries/scheduling.
 Private internal tables/functions are not granted to the open-query login.
 
+D112 replaces the scalar relation-application target with a normalized complete
+support-target set and parent count/digest certificate. New identities have one
+target; evidence can support multiple compatible dated-state slices without
+merging them. D110 §3.3.1 defines membership, atomic effects, completion/replay,
+boundary authority, consumer disclosure and D74 erasure participation.
+
 Validation evidence and limits live in
 `../analysis/temporal_relation_staging.md` §8. A partial predecessor PostgreSQL15
 execution and SQL parsing do not establish full-head PostgreSQL19 migration,

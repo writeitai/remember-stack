@@ -263,8 +263,10 @@ CREATE TABLE public.relation_application_receipts (
   adjudicator_version text NOT NULL,
   batch_id uuid NOT NULL,
   ordinal bigint NOT NULL,
-  relation_id uuid NOT NULL,
   identity_outcome text NOT NULL CHECK (identity_outcome IN ('new', 'evidence')),
+  target_count bigint NOT NULL CHECK (target_count > 0),
+  target_digest text NOT NULL CHECK (target_digest ~ '^[0-9a-f]{64}$'),
+  CHECK (identity_outcome <> 'new' OR target_count = 1),
   input_digest text NOT NULL,
   completed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (deployment_id, assertion_id, adjudicator_version),
@@ -273,9 +275,22 @@ CREATE TABLE public.relation_application_receipts (
       (deployment_id, batch_id, ordinal, assertion_id, adjudicator_version)
     ON DELETE CASCADE
 );
-COMMENT ON COLUMN public.relation_application_receipts.relation_id IS
-  'Historical logical target; validate under locks at apply. A retained receipt cannot resurrect a forgotten fact.';
-CREATE INDEX ix_rel_apply_receipt_fact ON public.relation_application_receipts
+COMMENT ON COLUMN public.relation_application_receipts.target_digest IS
+  'D112 SHA-256 of the complete sorted canonical UUID JSON target array; verify with target_count before replay or completion.';
+
+CREATE TABLE public.relation_application_targets (
+  deployment_id uuid NOT NULL,
+  assertion_id uuid NOT NULL,
+  adjudicator_version text NOT NULL,
+  relation_id uuid NOT NULL,
+  PRIMARY KEY (deployment_id, assertion_id, adjudicator_version, relation_id),
+  FOREIGN KEY (deployment_id, assertion_id, adjudicator_version)
+    REFERENCES public.relation_application_receipts
+      (deployment_id, assertion_id, adjudicator_version) ON DELETE CASCADE
+);
+COMMENT ON COLUMN public.relation_application_targets.relation_id IS
+  'Historical logical support target (D112); validate under locks at apply. A retained receipt cannot resurrect a forgotten fact.';
+CREATE INDEX ix_rel_application_target_fact ON public.relation_application_targets
   (deployment_id, relation_id);
 
 ALTER TABLE public.relation_adjudications

@@ -180,7 +180,9 @@ states; occurrences are never superseded):
 Consequences by kind:
 
 **States.** An overlapping same-property claim with the same value attaches
-as evidence; a disjoint one seeds a new slice (disjoint ranges satisfy the
+as evidence. D112 (D110 §3.3.1) applies dated state support to every compatible
+overlapping slice while preserving their separate identities and verdicts;
+support does not fill a gap between slices. A disjoint one seeds a new slice (disjoint ranges satisfy the
 relations `EXCLUDE`, which applies `WHERE temporal_kind = 'state'`); an
 overlapping different value is the supersede/contradict question (§4.4).
 
