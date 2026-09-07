@@ -646,11 +646,13 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time"
+                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time,"
+                " valid_precision='instant', window_claim_ids=ARRAY[:claim]::uuid[]"
                 " WHERE relation_id = :fact"
             ),
             {
                 "fact": seeded["two_anchor_fact"],
+                "claim": seeded["both_claim"],
                 "from_time": _NOW - timedelta(days=10),
                 "to_time": _NOW - timedelta(days=2),
             },
@@ -680,7 +682,8 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
         with database_engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE relations SET valid_from = NULL, valid_until = NULL"
+                    "UPDATE relations SET valid_from = NULL, valid_until = NULL,"
+                    " valid_precision='unknown', window_claim_ids='{}'"
                     " WHERE relation_id = :fact"
                 ),
                 {"fact": seeded["two_anchor_fact"]},
@@ -795,7 +798,7 @@ def test_ranked_search_never_crosses_deployments(
                     "UPDATE entities SET profile_summary = :summary,"
                     " embedding = CAST(:embedding AS vector),"
                     " embedding_model = :model,"
-                    " embedding_input_policy_version = 'entity-profile-v2',"
+                    " embedding_input_policy_version = 'entity-profile-v3:dated-history',"
                     " embedding_text_hash = 'search-scope-proof'"
                     " WHERE deployment_id = :deployment AND entity_id = :entity"
                 ),

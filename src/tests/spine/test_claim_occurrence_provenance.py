@@ -19,6 +19,7 @@ from rememberstack.model.conversion import NormalizedRegion
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("83000000-0000-0000-0000-000000000001")
@@ -39,7 +40,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -53,7 +54,7 @@ def empty_claim_tables(database_engine: Engine) -> None:
     """Each proof starts from empty claim/occurrence partitions."""
     with database_engine.begin() as connection:
         for table in ("chunk_claims", "claims", "claim_extraction_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table}"))
+            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
 
 
 def _claim(*, chunk_id: UUID, source_span: str, char_start: int) -> ClaimRecord:
