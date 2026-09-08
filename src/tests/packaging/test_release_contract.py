@@ -1,5 +1,6 @@
 """WP-7.6 acceptance tests for one release version across every artifact."""
 
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -136,6 +137,50 @@ def test_release_publishes_immutable_image_receipts_to_umc() -> None:
     assert "client_payload[source_revision]" in workflow
     assert "client_payload[application_digest]" in workflow
     assert "client_payload[postgres_digest]" in workflow
+    assert ".github/ci/postgres-evidence.jq" in workflow
+
+
+def test_postgres_receipt_excludes_buildx_attestation_descriptors() -> None:
+    """Only runnable linux images enter the immutable PostgreSQL receipt."""
+    root = Path(__file__).resolve().parents[3]
+    payload = {
+        "manifests": [
+            {
+                "digest": "sha256:amd",
+                "platform": {"os": "linux", "architecture": "amd64"},
+            },
+            {
+                "digest": "sha256:arm",
+                "platform": {"os": "linux", "architecture": "arm64"},
+            },
+            {
+                "digest": "sha256:att",
+                "platform": {"os": "unknown", "architecture": "unknown"},
+            },
+        ]
+    }
+    result = subprocess.run(
+        [
+            "jq",
+            "--arg",
+            "image",
+            "example.invalid/postgres:tag",
+            "--arg",
+            "manifest",
+            "sha256:index",
+            "-f",
+            str(root / ".github/ci/postgres-evidence.jq"),
+        ],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    evidence = json.loads(result.stdout)
+    assert [item["digest"] for item in evidence["platforms"]] == [
+        "sha256:amd",
+        "sha256:arm",
+    ]
 
 
 def test_unreleased_change_gate_stops_loop_and_detects_later_commit(
