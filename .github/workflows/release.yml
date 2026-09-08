@@ -288,7 +288,7 @@ jobs:
           if [ -z "$digest" ]; then digest="$(docker buildx imagetools inspect "$IMAGE" | awk '/^Digest:/ {print $2; exit}')"; fi
           test -n "$digest"
           mkdir -p release-evidence
-          jq -n --arg image "$IMAGE" --arg digest "$digest" --arg revision "${{ needs.prepare.outputs.source_sha }}" '{image:$image,digest:$digest,source_revision:$revision}' > release-evidence/application-image-digest.json
+          jq -n --arg image "$IMAGE" --arg digest "$digest" --arg revision "${{ needs.prepare.outputs.source_sha }}" --arg tag "${{ needs.prepare.outputs.tag }}" '{image:$image,digest:$digest,source_revision:$revision,tag:$tag}' > release-evidence/application-image-digest.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
         with:
           name: application-image-evidence
@@ -381,6 +381,9 @@ jobs:
             [.platforms[] | select(.os == "linux") | .architecture]
             | sort == ["amd64", "arm64"]
           ' release-evidence/postgres-image-digests.json
+          tmp="$(mktemp)"
+          jq --arg revision "${{ needs.prepare.outputs.source_sha }}" --arg tag "${{ needs.prepare.outputs.tag }}" '. + {source_revision:$revision,tag:$tag}' release-evidence/postgres-image-digests.json > "$tmp"
+          mv "$tmp" release-evidence/postgres-image-digests.json
 
       - name: Upload immutable PostgreSQL image evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
