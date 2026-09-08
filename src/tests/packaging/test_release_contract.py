@@ -111,6 +111,21 @@ def test_release_completion_revisits_changes_merged_during_publication() -> None
     assert "scripts/check_unreleased_changes.py" in prepare
 
 
+def test_release_publishes_immutable_image_receipts_to_umc() -> None:
+    """UMC receives only release-attached image digests bound to one source."""
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "application-image-digest.json" in workflow
+    assert "postgres-image-digests.json" in workflow
+    assert "source_revision:$revision" in workflow
+    assert "actions/create-github-app-token@" in workflow
+    assert "ultimate-memory-cloud" in workflow
+    assert "event_type=remember-stack-release" in workflow
+    assert "client_payload[source_revision]" in workflow
+    assert "client_payload[application_digest]" in workflow
+    assert "client_payload[postgres_digest]" in workflow
+
+
 def test_unreleased_change_gate_stops_loop_and_detects_later_commit(
     tmp_path: Path,
 ) -> None:

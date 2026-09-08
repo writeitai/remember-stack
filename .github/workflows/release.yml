@@ -238,6 +238,7 @@ jobs:
           fi
 
       - name: Build and publish the shared API/worker image
+        id: build
         if: steps.existing.outputs.present != 'true'
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
@@ -250,6 +251,22 @@ jobs:
           annotations: org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
           build-args: |
             REMEMBERSTACK_BUILD_REVISION=${{ needs.prepare.outputs.source_sha }}
+
+      - name: Record immutable application image evidence
+        env:
+          IMAGE: ghcr.io/writeitai/remember-stack:${{ needs.prepare.outputs.version }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          digest="$BUILT_DIGEST"
+          if [ -z "$digest" ]; then digest="$(docker buildx imagetools inspect "$IMAGE" | awk '/^Digest:/ {print $2; exit}')"; fi
+          test -n "$digest"
+          mkdir -p release-evidence
+          jq -n --arg image "$IMAGE" --arg digest "$digest" --arg revision "${{ needs.prepare.outputs.source_sha }}" '{image:$image,digest:$digest,source_revision:$revision}' > release-evidence/application-image-digest.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
+        with:
+          name: application-image-evidence
+          path: release-evidence/application-image-digest.json
+          if-no-files-found: error
 
 
   publish-postgres-ghcr:
@@ -368,6 +385,12 @@ jobs:
           name: postgres-image-evidence
           path: release-evidence/
 
+      - name: Download application image evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: application-image-evidence
+          path: release-evidence/
+
       # Asset names here are not always the names published. GitHub prefixes a
       # dotfile with "default", so `.env.example` below is downloadable as
       # `default.env.example` and by no other name. A consumer pinning the
@@ -384,9 +407,31 @@ jobs:
           files: |
             dist/*
             release-evidence/postgres-image-digests.json
+            release-evidence/application-image-digest.json
             compose.yaml
             .env.example
             openapi.json
+      - id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.REMEMBER_RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.REMEMBER_RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: writeitai
+          repositories: |
+            remember-stack
+            ultimate-memory-cloud
+      - name: Notify UMC of the immutable release receipts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          app_digest="$(jq -r .digest release-evidence/application-image-digest.json)"
+          postgres_digest="$(jq -r .manifest_digest release-evidence/postgres-image-digests.json)"
+          gh api --method POST repos/writeitai/ultimate-memory-cloud/dispatches \
+            -f event_type=remember-stack-release \
+            -F "client_payload[tag]=${{ needs.prepare.outputs.tag }}" \
+            -F "client_payload[source_revision]=${{ needs.prepare.outputs.source_sha }}" \
+            -F "client_payload[application_digest]=${app_digest}" \
+            -F "client_payload[postgres_digest]=${postgres_digest}"
       - name: Revisit main changes that arrived during publication
         env:
           GH_TOKEN: ${{ github.token }}
