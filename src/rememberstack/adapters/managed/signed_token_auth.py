@@ -253,6 +253,11 @@ class SignedTokenAuth:
 def load_verification_keys(*, jwks: str) -> dict[str, PyJWK]:
     """Parse a JWKS document into keys by ``kid``.
 
+    An explicit ``{"keys": []}`` loads an empty verifier that denies signed
+    credentials. This lets a managed host converge to withdrawn authority without
+    failing startup and leaving a previous process serving old keys. It does not
+    remove a separately configured shared-secret authenticator.
+
     Raises ``ValueError`` on anything malformed rather than skipping it. A key
     set that silently loads three of four keys is a rotation that half works,
     discovered later by a caller holding the fourth.
@@ -265,7 +270,7 @@ def load_verification_keys(*, jwks: str) -> dict[str, PyJWK]:
         raise ValueError("verification key set has no 'keys' array")
     declared = document["keys"]
     if not declared:
-        raise ValueError("verification key set is empty")
+        return {}
 
     try:
         key_set = jwt.PyJWKSet.from_dict(document)

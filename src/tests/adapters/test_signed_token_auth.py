@@ -37,6 +37,8 @@ from rememberstack.model import IngestPrincipalKind
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.profiles.selfhost import resolve_selfhost_api_auth
+from rememberstack.profiles.selfhost import SelfHostSettings
 from rememberstack.surfaces.http_api import build_api
 
 
@@ -885,3 +887,42 @@ def test_key_ops_members_must_all_be_strings() -> None:
 
     with pytest.raises(ValueError, match="malformed key_ops"):
         load_verification_keys(jwks=json.dumps(document))
+
+
+@pytest.mark.parametrize("require_api_auth", [False, True])
+def test_explicit_empty_verifiers_deny_old_credentials_through_http(
+    require_api_auth: bool,
+) -> None:
+    """Withdrawing every key keeps a closed perimeter rather than an open API."""
+    deployment_id = uuid4()
+    private, jwks = _keypair(kid="withdrawn-key")
+    old_token = _token(
+        private=private, kid="withdrawn-key", audience=str(deployment_id), scope="write"
+    )
+    prior = SignedTokenAuth(
+        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
+    )
+    assert _present(prior, old_token).scope is PerimeterScope.WRITE
+
+    settings = SelfHostSettings(
+        deployment_id=deployment_id,
+        require_api_auth=require_api_auth,
+        api_signing_keys='{"keys": []}',
+        api_bearer_bind=None,
+        api_bearer_token=None,
+    )
+    auth = resolve_selfhost_api_auth(settings=settings)
+    assert isinstance(auth, SignedTokenAuth)
+    assert not auth.configured
+    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+    for authorization in (None, f"Bearer {old_token}", f"Bearer umc_dp_{old_token}"):
+        headers = {"Content-Type": "application/octet-stream"}
+        if authorization is not None:
+            headers["Authorization"] = authorization
+        response = client.post(
+            "/ingest?filename=memory.md&mime=text/markdown",
+            content=b"memory",
+            headers=headers,
+        )
+        assert response.status_code == 401, response.text
+    assert ingest.calls == 0
