@@ -382,7 +382,7 @@ def resolve_selfhost_api_auth(
 
 
 def _resolve_signed_auth(*, settings: SelfHostSettings) -> AuthPerimeterPort | None:
-    """Build the signature adapter when keys are configured, else None."""
+    """Build a verifier for explicit JWKS, including an empty deny-only key set."""
     jwks = (settings.api_signing_keys or "").strip()
     if not jwks:
         return None
