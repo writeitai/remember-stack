@@ -70,11 +70,13 @@ def test_release_workflow_is_main_only_and_derives_one_immutable_coordinate() ->
     assert 'tags: ["v*.*.*"]' not in workflow
     assert "group: remember-stack-release-main" in workflow
     assert 'test "$GITHUB_REF" = refs/heads/main' in workflow
-    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
+    assert 'source_sha="$(git rev-parse HEAD)"' in workflow
+    assert 'git merge-base --is-ancestor "$source_sha" FETCH_HEAD' in workflow
     assert "tag_name: ${{ needs.prepare.outputs.tag }}" in workflow
-    assert "target_commitish: ${{ github.sha }}" in workflow
+    assert "target_commitish: ${{ needs.prepare.outputs.source_sha }}" in workflow
     assert "GITHUB_REF_NAME" not in workflow
     assert "org.opencontainers.image.revision" in workflow
+    assert "event_type=release-completed" in workflow
 
 
 def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
@@ -89,6 +91,23 @@ def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
     assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
     assert 'gh pr merge "$existing" --squash' in workflow
+    assert "types: [release-completed]" in workflow
+
+
+def test_release_completion_revisits_changes_merged_during_publication() -> None:
+    """A newer main tip neither changes source A nor strands later commit B."""
+    root = Path(__file__).resolve().parents[3]
+    publish = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    prepare = (root / ".github/workflows/release-prepare.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "ref: ${{ needs.prepare.outputs.source_sha }}" in publish
+    assert 'git merge-base --is-ancestor "$source_sha" FETCH_HEAD' in publish
+    assert '"${tagged}" != "$source_sha"' in publish
+    assert "event_type=release-completed" in publish
+    assert "repository_dispatch:" in prepare
+    assert "types: [release-completed]" in prepare
+    assert "refs/tags/v${current}" in prepare
 
 
 def test_release_contract_can_print_the_validated_version_for_ci() -> None:
