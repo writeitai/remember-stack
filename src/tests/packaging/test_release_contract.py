@@ -60,6 +60,38 @@ def test_release_contract_rejects_a_mismatched_tag() -> None:
     assert f"release tag must be 'v{version}', found '{invalid_tag}'" in result.stderr
 
 
+def test_release_workflow_is_main_only_and_derives_one_immutable_coordinate() -> None:
+    """Publishing starts from protected main, never from a caller-created tag."""
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "branches: [main]" in workflow
+    assert 'tags: ["v*.*.*"]' not in workflow
+    assert "group: remember-stack-release-main" in workflow
+    assert 'test "$GITHUB_REF" = refs/heads/main' in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
+    assert "tag_name: ${{ needs.prepare.outputs.tag }}" in workflow
+    assert "target_commitish: ${{ github.sha }}" in workflow
+    assert "GITHUB_REF_NAME" not in workflow
+
+
+def test_release_contract_can_print_the_validated_version_for_ci() -> None:
+    """The workflow consumes the validator's version rather than parsing TOML twice."""
+    root = Path(__file__).resolve().parents[3]
+    version = _project_version(root=root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts/check_release_contract.py"),
+            "--print-version",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == version
+
+
 def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) -> None:
     """Reject a public document that advertises a different release."""
     root = Path(__file__).resolve().parents[3]

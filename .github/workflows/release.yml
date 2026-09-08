@@ -2,14 +2,57 @@ name: Release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    branches: [main]
+    paths: [pyproject.toml]
+  workflow_dispatch:
+
+concurrency:
+  group: remember-stack-release-main
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  prepare:
+    name: Resolve immutable main release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Bind the version to this main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          version="$(python scripts/check_release_contract.py --print-version)"
+          tag="v${version}"
+          git fetch --force --tags origin
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            tagged="$(git rev-list -n 1 "${tag}")"
+            if [ "${tagged}" != "$GITHUB_SHA" ]; then
+              echo "::error::${tag} already binds a different immutable commit"
+              exit 1
+            fi
+            publish=false
+          else
+            publish=true
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
   verify:
     name: Verify release
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     # This job runs the WHOLE suite in one process, so its budget must exceed the
     # sum of CI's split integration jobs — not match any one of them. CI alone
@@ -25,14 +68,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Tagged commit is on main
+      - name: Release commit is current main
         run: |
           git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD; then
-            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main"
+          if [ "$(git rev-parse FETCH_HEAD)" != "${GITHUB_SHA}" ]; then
+            echo "::error::release commit is not the current main tip"
             exit 1
           fi
-          echo "${GITHUB_SHA} is on main"
+          echo "${GITHUB_SHA} is the current main tip"
 
       - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
@@ -50,7 +93,7 @@ jobs:
         run: uv sync --locked --python 3.14
 
       - name: Validate tag and shared artifact version
-        run: uv run python scripts/check_release_contract.py --tag "$GITHUB_REF_NAME"
+        run: uv run python scripts/check_release_contract.py --tag "${{ needs.prepare.outputs.tag }}"
 
       - name: Verify architecture, style, and types
         run: |
@@ -66,7 +109,7 @@ jobs:
         run: |
           uv build
           # The terminal deprecation transition package 'rememberstack' is published exactly once on v0.17.0
-          if [ "${GITHUB_REF_NAME}" = "v0.17.0" ]; then
+          if [ "${{ needs.prepare.outputs.tag }}" = "v0.17.0" ]; then
             uv build packages/rememberstack --out-dir dist
           fi
 
@@ -113,7 +156,7 @@ jobs:
 
   publish-pypi:
     name: Publish PyPI
-    needs: verify
+    needs: [prepare, verify]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -135,7 +178,7 @@ jobs:
 
   publish-ghcr:
     name: Publish GHCR
-    needs: verify
+    needs: [prepare, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -156,7 +199,7 @@ jobs:
         with:
           images: ghcr.io/writeitai/remember-stack
           flavor: latest=false
-          tags: type=semver,pattern={{version}}
+          tags: type=raw,value=${{ needs.prepare.outputs.version }}
 
       - name: Build and publish the shared API/worker image
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
@@ -171,7 +214,7 @@ jobs:
 
   publish-postgres-ghcr:
     name: Publish multi-architecture PostgreSQL foundation
-    needs: verify
+    needs: [prepare, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -198,7 +241,7 @@ jobs:
         with:
           images: ghcr.io/writeitai/remember-stack-postgres
           flavor: latest=false
-          tags: type=semver,pattern=19beta3-{{version}}
+          tags: type=raw,value=19beta3-${{ needs.prepare.outputs.version }}
 
       - name: Build and publish both supported architectures
         id: build
@@ -240,7 +283,7 @@ jobs:
 
   github-release:
     name: Publish GitHub release
-    needs: [publish-pypi, publish-ghcr, publish-postgres-ghcr]
+    needs: [prepare, publish-pypi, publish-ghcr, publish-postgres-ghcr]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -269,6 +312,8 @@ jobs:
       - name: Create the release with pinned deployment inputs
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.1
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: |
             dist/*

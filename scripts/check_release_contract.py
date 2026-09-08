@@ -26,7 +26,10 @@ def main() -> None:
     _validate_terminal_package_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
-    print(f"release contract valid for RememberStack {version}")
+    if arguments.print_version:
+        print(version)
+    else:
+        print(f"release contract valid for RememberStack {version}")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +38,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tag",
         help="release tag to compare with the package version, for example v0.1.0",
+    )
+    parser.add_argument(
+        "--print-version",
+        action="store_true",
+        help="print only the validated package version",
     )
     return parser
 
@@ -137,7 +145,7 @@ def _validate_postgres_release(*, root: Path) -> None:
     for required in (
         "file: Dockerfile.postgres",
         "platforms: linux/amd64,linux/arm64",
-        f"pattern={base}-{{{{version}}}}",
+        f"type=raw,value={base}-${{{{ needs.prepare.outputs.version }}}}",
         "postgres-image-digests.json",
     ):
         if required not in workflow:
@@ -161,14 +169,12 @@ def _validate_terminal_package_release(*, root: Path) -> None:
         )
     deps = project.get("dependencies", [])
     if "remember>=0.17.0" not in deps:
-        raise ValueError(
-            "packages/rememberstack must depend on 'remember>=0.17.0'"
-        )
+        raise ValueError("packages/rememberstack must depend on 'remember>=0.17.0'")
 
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
-    if 'if [ "${GITHUB_REF_NAME}" = "v0.17.0" ]; then' not in workflow:
+    if 'if [ "${{ needs.prepare.outputs.tag }}" = "v0.17.0" ]; then' not in workflow:
         raise ValueError(
             "release workflow must gate packages/rememberstack build strictly on v0.17.0"
         )
