@@ -1,6 +1,7 @@
 {
   image: $image,
   manifest_digest: $manifest,
+  media_type: .mediaType,
   platforms: [
     .manifests[]
     | select(

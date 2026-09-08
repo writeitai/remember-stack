@@ -288,7 +288,15 @@ jobs:
           if [ -z "$digest" ]; then digest="$(docker buildx imagetools inspect "$IMAGE" | awk '/^Digest:/ {print $2; exit}')"; fi
           test -n "$digest"
           mkdir -p release-evidence
-          jq -n --arg image "$IMAGE" --arg digest "$digest" --arg revision "${{ needs.prepare.outputs.source_sha }}" --arg tag "${{ needs.prepare.outputs.tag }}" '{image:$image,digest:$digest,source_revision:$revision,tag:$tag}' > release-evidence/application-image-digest.json
+          docker buildx imagetools inspect --raw "$IMAGE@$digest" \
+            | jq --arg image "$IMAGE" --arg digest "$digest" --arg revision "${{ needs.prepare.outputs.source_sha }}" --arg tag "${{ needs.prepare.outputs.tag }}" '
+                {image:$image,digest:$digest,source_revision:$revision,tag:$tag,media_type:.mediaType,
+                 platforms:(if (.manifests | type) == "array"
+                   then [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") |
+                     {os:.platform.os,architecture:.platform.architecture,digest:.digest}]
+                   else [{os:"linux",architecture:"amd64",digest:$digest}] end)}
+              ' > release-evidence/application-image-digest.json
+          jq -e '.platforms | length == 1' release-evidence/application-image-digest.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.1
         with:
           name: application-image-evidence
