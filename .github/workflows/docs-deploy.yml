@@ -69,6 +69,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Verify docs origin hostname
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cname=$(gh api "repos/${{ github.repository }}/pages" --jq .cname)
+          if [ "$cname" != "docs.remember.dev" ]; then
+            echo "::error::GitHub Pages must retain docs.remember.dev: remember.dev/docs proxies to this origin. Restore the Pages custom domain before deploying."
+            exit 1
+          fi
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

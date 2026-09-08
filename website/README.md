@@ -1,8 +1,8 @@
 # Remember documentation site
 
 The public documentation for [Remember](https://github.com/writeitai/remember-stack),
-canonically published at **[remember.dev/docs](https://remember.dev/docs)** (with
-`docs.remember.dev` 301-redirecting to `remember.dev/docs` per D109).
+canonically published at **[remember.dev/docs](https://remember.dev/docs)** with
+`docs.remember.dev` serving the GitHub Pages origin and compatibility site.
 
 
 It is a self-contained static site: a Next.js App-Router app whose pages are authored
@@ -123,5 +123,27 @@ The documentation site is deployed canonically at **`https://remember.dev/docs`*
 
 - Next.js exports static HTML with `assetPrefix: "/docs"` into `website/out/`.
 - Postbuild mirrors `out/_next` into `out/docs/_next` and Pagefind into `out/docs/pagefind`, ensuring all static assets are served under `/docs/_next/...` and `/docs/pagefind/...` without collisions with the root Cloud web application at `remember.dev`.
-- Ingress routing on `remember.dev` routes `/docs*` traffic directly to the static documentation artifact.
-- The legacy subdomain `https://docs.remember.dev/` issues permanent 301 redirects to `https://remember.dev/docs/`.
+- The Cloudflare Pages Function on `remember.dev` proxies `/docs` and `/docs/*` to `https://docs.remember.dev` with the path preserved. `/pagefind/*` is also proxied for compatibility.
+- GitHub Pages **must retain the custom domain `docs.remember.dev`**, and its DNS-only CNAME must point to `writeitai.github.io`. Removing the repository custom domain produces GitHub 404s at both addresses even when the build and deploy succeed.
+- `docs.remember.dev` currently serves the documentation directly; it does **not** redirect to the canonical site. Redirecting that hostname back to `remember.dev/docs` would loop because it is also the proxy origin. A future redirect cutover needs a separate, verified origin first.
+
+### Hosting recovery and verification
+
+On 2026-09-08, the repository Pages custom domain was missing while the cloud
+proxy still targeted it. Restoring the Pages setting recovered the origin; the
+deploy workflow now checks that setting before publishing.
+
+Inspect the setting with `gh api repos/writeitai/remember-stack/pages`. To restore
+this topology, run:
+
+```sh
+gh api --method PUT repos/writeitai/remember-stack/pages -f cname=docs.remember.dev
+gh workflow run docs-deploy.yml --ref main -R writeitai/remember-stack
+```
+
+Verify both `https://docs.remember.dev/docs/` and `https://remember.dev/docs/`, a
+nested page such as `/docs/getting-started/`, the page's `/docs/_next/` assets,
+and `/docs/pagefind/pagefind.js`. Open search and follow a result in a browser.
+Also check `https://docs.remember.dev/` for old inbound links. GitHub's CDN can
+retain a previous 404 for several minutes; check ordinary URLs after caches
+expire, not just cache-busted requests.
