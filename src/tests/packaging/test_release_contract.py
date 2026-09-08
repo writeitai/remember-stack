@@ -7,6 +7,7 @@ import sys
 import tomllib
 
 import pytest
+from scripts.check_github_release import _required_assets
 from scripts.check_pypi_release import _require_identical
 from scripts.check_release_contract import _validate_release_docs
 from scripts.prepare_next_release import _COORDINATE_FILES
@@ -243,6 +244,16 @@ def test_release_contract_can_print_the_validated_version_for_ci() -> None:
     assert result.stdout.strip() == version
 
 
+def test_github_release_completion_requires_every_attachment() -> None:
+    """A matching tag alone cannot suppress recovery of a partial release upload."""
+    required = _required_assets(version="0.17.0")
+    assert "application-image-digest.json" in required
+    assert "postgres-image-digests.json" in required
+    assert "remember-0.17.0-py3-none-any.whl" in required
+    assert "rememberstack-0.17.0-py3-none-any.whl" in required
+    assert len(required - {"application-image-digest.json"}) > 0
+
+
 def test_release_preparer_updates_only_canonical_root_coordinates(
     tmp_path: Path,
 ) -> None:
@@ -250,6 +261,9 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     root = Path(__file__).resolve().parents[3]
     (tmp_path / "pyproject.toml").write_text(
         (root / "pyproject.toml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (tmp_path / "uv.lock").write_text(
+        (root / "uv.lock").read_text(encoding="utf-8"), encoding="utf-8"
     )
     for relative in _COORDINATE_FILES:
         destination = tmp_path / relative
@@ -273,6 +287,10 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     )
     assert result.stdout.strip() == target
     assert _project_version(root=tmp_path) == target
+    subprocess.run(["uv", "lock", "--offline"], cwd=tmp_path, check=True)
+    subprocess.run(["uv", "lock", "--check", "--offline"], cwd=tmp_path, check=True)
+    lock = (tmp_path / "uv.lock").read_text(encoding="utf-8")
+    assert f'name = "remember"\nversion = "{target}"' in lock
     for relative in _COORDINATE_FILES:
         assert current not in (tmp_path / relative).read_text(encoding="utf-8")
 

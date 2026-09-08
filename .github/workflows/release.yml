@@ -49,7 +49,14 @@ jobs:
               echo "::error::${tag} already binds a different immutable commit"
               exit 1
             fi
-            publish=false
+            if gh release view "$tag" --json assets \
+              | python scripts/check_github_release.py --version "$version" \
+              | grep -qx complete; then
+              publish=false
+            else
+              echo "${tag} is incomplete; resuming its exact immutable source."
+              publish=true
+            fi
           else
             publish=true
           fi
