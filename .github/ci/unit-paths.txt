@@ -52,6 +52,7 @@ src/tests/model/test_forget.py
 src/tests/model/test_resolution.py
 src/tests/packaging/test_client_wheel.py
 src/tests/packaging/test_release_contract.py
+src/tests/packaging/test_pypi_release_cli.py
 src/tests/spine/test_catalog_lanes.py
 src/tests/spine/test_clustering_lock_policy.py
 src/tests/spine/test_entity_eligibility.py
