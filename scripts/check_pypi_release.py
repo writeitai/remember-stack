@@ -27,7 +27,7 @@ def main() -> None:
     local = {
         path.name: sha256(path.read_bytes()).hexdigest()
         for path in sorted(arguments.dist.iterdir())
-        if path.is_file() and path.name.replace("-", "_").startswith(prefix)
+        if path.is_file() and path.name.startswith(prefix)
     }
     if not local:
         raise RuntimeError(f"no local distributions found for {arguments.project}")
