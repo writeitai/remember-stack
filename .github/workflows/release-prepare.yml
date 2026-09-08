@@ -22,6 +22,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.REMEMBER_RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.REMEMBER_RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
       - name: Prepare the next version only after the current version is released
         id: version
         shell: bash
@@ -41,7 +47,7 @@ jobs:
       - name: Commit the deterministic release coordinates
         if: steps.version.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
@@ -49,6 +55,7 @@ jobs:
           branch=automation/next-release
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          gh auth setup-git
           git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}" || true
           git checkout -B "$branch"
           git add pyproject.toml compose.yaml README.md website/
@@ -58,5 +65,7 @@ jobs:
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher."
           else
-            gh pr create --base main --head "$branch" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher."
+            existing="$(gh pr create --base main --head "$branch" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher.")"
           fi
+          gh pr checks "$existing" --watch --fail-fast
+          gh pr merge "$existing" --squash

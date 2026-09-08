@@ -74,6 +74,21 @@ def test_release_workflow_is_main_only_and_derives_one_immutable_coordinate() ->
     assert "tag_name: ${{ needs.prepare.outputs.tag }}" in workflow
     assert "target_commitish: ${{ github.sha }}" in workflow
     assert "GITHUB_REF_NAME" not in workflow
+    assert "org.opencontainers.image.revision" in workflow
+
+
+def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
+    """Bot pushes trigger normal checks and merge only after those checks pass."""
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/release-prepare.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "actions/create-github-app-token@" in workflow
+    assert "REMEMBER_RELEASE_AUTOMATION_APP_ID" in workflow
+    assert "REMEMBER_RELEASE_AUTOMATION_APP_PRIVATE_KEY" in workflow
+    assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
+    assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
+    assert 'gh pr merge "$existing" --squash' in workflow
 
 
 def test_release_contract_can_print_the_validated_version_for_ci() -> None:

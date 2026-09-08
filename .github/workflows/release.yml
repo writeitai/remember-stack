@@ -215,7 +215,13 @@ jobs:
         env:
           IMAGE: ghcr.io/writeitai/remember-stack:${{ needs.prepare.outputs.version }}
         run: |
-          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull --platform linux/amd64 "$IMAGE" >/dev/null
+            test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$GITHUB_SHA"
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and publish the shared API/worker image
         if: steps.existing.outputs.present != 'true'
@@ -265,7 +271,13 @@ jobs:
         env:
           IMAGE: ghcr.io/writeitai/remember-stack-postgres:19beta3-${{ needs.prepare.outputs.version }}
         run: |
-          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull --platform linux/amd64 "$IMAGE" >/dev/null
+            test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$GITHUB_SHA"
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and publish both supported architectures
         id: build
