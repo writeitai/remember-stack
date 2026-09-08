@@ -88,6 +88,8 @@ def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
     assert "actions/create-github-app-token@" in workflow
     assert "REMEMBER_RELEASE_AUTOMATION_APP_ID" in workflow
     assert "REMEMBER_RELEASE_AUTOMATION_APP_PRIVATE_KEY" in workflow
+    assert "if: github.ref == 'refs/heads/main'" in workflow
+    assert "ref: main" in workflow
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
     assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
     assert 'gh pr merge "$existing" --squash' in workflow
