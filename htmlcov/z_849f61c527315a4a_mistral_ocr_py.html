@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/rememberstack/adapters/converters/mistral_ocr.py: 87.8%</title>
+    <title>Coverage for src/rememberstack/adapters/converters/mistral_ocr.py: 89.0%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>rememberstack<span class="sep">/</span>adapters<span class="sep">/</span>converters<span class="sep">/</span>mistral_ocr.py</b>:
-            <span class="pc_cov">87.8%</span>
+            <span class="pc_cov">89.0%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,10 +56,10 @@
         </aside>
         <h2>
             <span class="text">263 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">242<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">21<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">243<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">20<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">20<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">17<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_849f61c527315a4a_markitdown_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_ab0b64c1143e1f10_composite_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -358,8 +358,8 @@
     <p class="pln"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">        <span class="nam">confidence</span> <span class="op">=</span> <span class="nam">_page_confidence</span><span class="op">(</span><span class="nam">page</span><span class="op">=</span><span class="nam">page</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">        <span class="nam">segments</span> <span class="op">=</span> <span class="nam">_page_segments</span><span class="op">(</span><span class="nam">page</span><span class="op">=</span><span class="nam">page</span><span class="op">,</span> <span class="nam">body</span><span class="op">=</span><span class="nam">body</span><span class="op">,</span> <span class="nam">last</span><span class="op">=</span><span class="nam">position</span> <span class="op">==</span> <span class="nam">len</span><span class="op">(</span><span class="nam">pages</span><span class="op">)</span> <span class="op">-</span> <span class="num">1</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">segments</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">277&#x202F;&#x219B;&#x202F;278</span><span class="annotate long">line 277 didn't jump to line 278 because the condition on line 277 was never true</span></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">            <span class="nam">warnings</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">page </span><span class="op">{</span><span class="nam">number</span><span class="op">}</span><span class="fst"> produced no text</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">segments</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">            <span class="nam">warnings</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">page </span><span class="op">{</span><span class="nam">number</span><span class="op">}</span><span class="fst"> produced no text</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="nam">page_start</span> <span class="op">=</span> <span class="nam">offset</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">        <span class="nam">markdown_start</span> <span class="op">=</span> <span class="nam">offset</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">        <span class="key">for</span> <span class="nam">text</span><span class="op">,</span> <span class="nam">kind</span> <span class="key">in</span> <span class="nam">segments</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -377,7 +377,7 @@
     <p class="run run2"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">                    <span class="nam">confidence</span><span class="op">=</span><span class="nam">confidence</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">                <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">        <span class="key">if</span> <span class="nam">offset</span> <span class="op">&gt;</span> <span class="nam">page_start</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">296&#x202F;&#x219B;&#x202F;308</span><span class="annotate long">line 296 didn't jump to line 308 because the condition on line 296 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">        <span class="key">if</span> <span class="nam">offset</span> <span class="op">&gt;</span> <span class="nam">page_start</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">            <span class="nam">source_map</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">                <span class="nam">SourceMapEntry</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">                    <span class="nam">start</span><span class="op">=</span><span class="nam">page_start</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -452,7 +452,7 @@
     <p class="run"><span class="n"><a id="t368" href="#t368">368</a></span><span class="t">    <span class="key">if</span> <span class="nam">header</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">        <span class="nam">segments</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="op">(</span><span class="nam">header</span> <span class="op">+</span> <span class="str">&quot;\n\n&quot;</span><span class="op">,</span> <span class="str">&quot;page_header&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">    <span class="nam">stripped</span> <span class="op">=</span> <span class="nam">body</span><span class="op">.</span><span class="nam">rstrip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">    <span class="key">if</span> <span class="nam">stripped</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">371&#x202F;&#x219B;&#x202F;373</span><span class="annotate long">line 371 didn't jump to line 373 because the condition on line 371 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">    <span class="key">if</span> <span class="nam">stripped</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">        <span class="nam">segments</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="op">(</span><span class="nam">stripped</span> <span class="op">+</span> <span class="str">&quot;\n&quot;</span><span class="op">,</span> <span class="str">&quot;ocr&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">    <span class="nam">footer</span> <span class="op">=</span> <span class="op">(</span><span class="nam">page</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&quot;footer&quot;</span><span class="op">)</span> <span class="key">or</span> <span class="str">&quot;&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t374" href="#t374">374</a></span><span class="t">    <span class="key">if</span> <span class="nam">footer</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -670,7 +670,7 @@
             <a class="nav" href="z_ab0b64c1143e1f10_composite_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
     </div>
 </footer>

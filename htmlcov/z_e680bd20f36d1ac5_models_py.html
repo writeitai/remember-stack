@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_4a26b861144505d4_errors_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -810,16 +810,16 @@
     <p class="run"><span class="n"><a id="t726" href="#t726">726</a></span><span class="t">    <span class="nam">negative</span><span class="op">:</span> <span class="nam">Negative</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t727" href="#t727">727</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t728" href="#t728">728</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t729" href="#t729">729</a></span><span class="t"><span class="key">class</span> <span class="nam">ContextBundleV1</span><span class="op">(</span><span class="nam">BaseModel</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t729" href="#t729">729</a></span><span class="t"><span class="key">class</span> <span class="nam">ContextBundleV2</span><span class="op">(</span><span class="nam">BaseModel</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t730" href="#t730">730</a></span><span class="t">    <span class="nam">model_config</span> <span class="op">=</span> <span class="nam">ConfigDict</span><span class="op">(</span><span class="nam">frozen</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">extra</span><span class="op">=</span><span class="str">&quot;forbid&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t731" href="#t731">731</a></span><span class="t">    <span class="nam">contract</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="str">&quot;ContextBundle/v1&quot;</span><span class="op">]</span> <span class="op">=</span> <span class="str">&quot;ContextBundle/v1&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t732" href="#t732">732</a></span><span class="t">    <span class="nam">testimony</span><span class="op">:</span> <span class="nam">Envelope</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t731" href="#t731">731</a></span><span class="t">    <span class="nam">contract</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="str">&quot;ContextBundle/v2&quot;</span><span class="op">]</span> <span class="op">=</span> <span class="str">&quot;ContextBundle/v2&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t732" href="#t732">732</a></span><span class="t">    <span class="nam">claims_and_sources</span><span class="op">:</span> <span class="nam">Envelope</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t733" href="#t733">733</a></span><span class="t">    <span class="nam">facts</span><span class="op">:</span> <span class="nam">Envelope</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t734" href="#t734">734</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t735" href="#t735">735</a></span><span class="t">    <span class="op">@</span><span class="nam">model_validator</span><span class="op">(</span><span class="nam">mode</span><span class="op">=</span><span class="str">&quot;after&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t736" href="#t736">736</a></span><span class="t">    <span class="key">def</span> <span class="nam">_child_grains_are_exact</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Self</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t737" href="#t737">737</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">testimony</span><span class="op">.</span><span class="nam">grain</span> <span class="key">is</span> <span class="key">not</span> <span class="nam">Grain</span><span class="op">.</span><span class="nam">EVIDENCE</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t738" href="#t738">738</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">&quot;ContextBundle testimony must be evidence grain&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t737" href="#t737">737</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">claims_and_sources</span><span class="op">.</span><span class="nam">grain</span> <span class="key">is</span> <span class="key">not</span> <span class="nam">Grain</span><span class="op">.</span><span class="nam">EVIDENCE</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t738" href="#t738">738</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">&quot;ContextBundle claims_and_sources must be evidence grain&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t739" href="#t739">739</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">facts</span><span class="op">.</span><span class="nam">grain</span> <span class="key">is</span> <span class="key">not</span> <span class="nam">Grain</span><span class="op">.</span><span class="nam">FACT</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t740" href="#t740">740</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">&quot;ContextBundle facts must be fact grain&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t741" href="#t741">741</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span>&nbsp;</span><span class="r"></span></p>
@@ -855,7 +855,7 @@
             <a class="nav" href="z_4a26b861144505d4_errors_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
     </div>
 </footer>

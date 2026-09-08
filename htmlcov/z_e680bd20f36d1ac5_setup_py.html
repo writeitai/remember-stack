@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_7527130cc66ce521___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -119,9 +119,9 @@
     <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="str">Before making architectural decisions, refactoring core subsystems, or answering</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t"><span class="str">questions about past codebase designs, consult Remember bitemporal memory via the</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="str">available MCP tools (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`, `query_sql`).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="str">available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`).</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t"><span class="str">- Use `fact_context` or `answer_context` to retrieve attested facts and evidence.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t"><span class="str">- Use `facts_context` or `combined_context` to retrieve attested facts and evidence.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t"><span class="str">- Use `query_sql` to run sandboxed SQL against `facts_current` or `graph_edges_current`.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t"><span class="str">- Check past decisions and bitemporal validity before asserting assumptions.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="str">- Never guess historical rationale when it is recorded in Remember.</span>&nbsp;</span><span class="r"></span></p>
@@ -135,11 +135,11 @@
     <p class="run run2"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="str"># Remember Bitemporal Memory Skill</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t"><span class="str">You have access to Remember, an open bitemporal memory infrastructure for AI agents.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">Use the Remember MCP tools (`fact_context`, `answer_context`, `testimony_context`, `resolve_entity`, `query_sql`, `describe_query_space`)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">Use the Remember MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`, `describe_query_space`)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="str">to query past system decisions, architectural records, and entity-relationship knowledge graphs.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t"><span class="str">## Core Guidelines</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t"><span class="str">1. Query attested facts using `fact_context` or `query_sql`.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t"><span class="str">1. Query attested facts using `facts_context` or `query_sql`.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t"><span class="str">2. Inspect bitemporal validity ranges (`valid_at`, `believed_at`) when examining changes.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t"><span class="str">3. Trust attested records over unverified guesswork.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
@@ -896,7 +896,7 @@
             <a class="nav" href="z_7527130cc66ce521___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
     </div>
 </footer>

@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_96f21cdf4a4be28f_mcp_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -130,7 +130,7 @@
     <p class="run"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">ConnectorCreate</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">ConnectorDescriptor</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">ConnectorNotFoundError</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">ContextBundleV1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">ContextBundleV2</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">DeploymentBuildInfo</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">DocumentPage</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t"><span class="key">from</span> <span class="nam">rememberstack</span><span class="op">.</span><span class="nam">model</span> <span class="key">import</span> <span class="nam">DocumentStatusFilter</span>&nbsp;</span><span class="r"></span></p>
@@ -1112,12 +1112,12 @@
     <p class="pln"><span class="n"><a id="t1028" href="#t1028">1028</a></span><span class="t">        <span class="str">&quot;&quot;&quot;The four assured operations for this deployment.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1029" href="#t1029">1029</a></span><span class="t">        <span class="key">return</span> <span class="nam">list</span><span class="op">(</span><span class="nam">surface</span><span class="op">.</span><span class="nam">descriptors</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1030" href="#t1030">1030</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1031" href="#t1031">1031</a></span><span class="t">    <span class="op">@</span><span class="nam">app</span><span class="op">.</span><span class="nam">post</span><span class="op">(</span><span class="str">&quot;/operations/{name}&quot;</span><span class="op">,</span> <span class="nam">response_model</span><span class="op">=</span><span class="nam">Envelope</span> <span class="op">|</span> <span class="nam">ContextBundleV1</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1031" href="#t1031">1031</a></span><span class="t">    <span class="op">@</span><span class="nam">app</span><span class="op">.</span><span class="nam">post</span><span class="op">(</span><span class="str">&quot;/operations/{name}&quot;</span><span class="op">,</span> <span class="nam">response_model</span><span class="op">=</span><span class="nam">Envelope</span> <span class="op">|</span> <span class="nam">ContextBundleV2</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1032" href="#t1032">1032</a></span><span class="t">    <span class="key">def</span> <span class="nam">run_operation</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1033" href="#t1033">1033</a></span><span class="t">        <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1034" href="#t1034">1034</a></span><span class="t">        <span class="nam">arguments</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">object</span><span class="op">]</span><span class="op">,</span> <span class="nam">Body</span><span class="op">(</span><span class="nam">default_factory</span><span class="op">=</span><span class="nam">dict</span><span class="op">)</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1035" href="#t1035">1035</a></span><span class="t">        <span class="nam">request</span><span class="op">:</span> <span class="nam">Request</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1036" href="#t1036">1036</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Envelope</span> <span class="op">|</span> <span class="nam">ContextBundleV1</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1036" href="#t1036">1036</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Envelope</span> <span class="op">|</span> <span class="nam">ContextBundleV2</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1037" href="#t1037">1037</a></span><span class="t">        <span class="str">&quot;&quot;&quot;Run one assured operation by name over JSON arguments.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1038" href="#t1038">1038</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1039" href="#t1039">1039</a></span><span class="t"><span class="str">        The route-level table cannot classify this one: operations are registry</span>&nbsp;</span><span class="r"></span></p>
@@ -1599,7 +1599,7 @@
             <a class="nav" href="z_96f21cdf4a4be28f_mcp_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-07 10:30 +0000
+            created at 2026-09-08 09:55 +0000
         </p>
     </div>
 </footer>
