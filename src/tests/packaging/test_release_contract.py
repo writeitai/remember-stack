@@ -108,6 +108,49 @@ def test_release_completion_revisits_changes_merged_during_publication() -> None
     assert "repository_dispatch:" in prepare
     assert "types: [release-completed]" in prepare
     assert "refs/tags/v${current}" in prepare
+    assert "scripts/check_unreleased_changes.py" in prepare
+
+
+def test_unreleased_change_gate_stops_loop_and_detects_later_commit(
+    tmp_path: Path,
+) -> None:
+    """Release A emits no new PR; a later substantive commit B emits exactly one."""
+    root = Path(__file__).resolve().parents[3]
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    marker = tmp_path / "source"
+    marker.write_text("A", encoding="utf-8")
+    subprocess.run(["git", "add", "source"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, check=True)
+
+    command = [
+        sys.executable,
+        str(root / "scripts/check_unreleased_changes.py"),
+        "--root",
+        str(tmp_path),
+        "--tag",
+        "v1.0.0",
+    ]
+    assert (
+        subprocess.run(
+            command, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        == "false"
+    )
+    marker.write_text("B", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "B"], cwd=tmp_path, check=True)
+    assert (
+        subprocess.run(
+            command, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        == "true"
+    )
 
 
 def test_release_contract_can_print_the_validated_version_for_ci() -> None:

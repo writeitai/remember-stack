@@ -42,6 +42,11 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ "$(python scripts/check_unreleased_changes.py --tag "v${current}")" = false ]; then
+            echo "No commits followed v${current}; no later version is prepared."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           next="$(python scripts/prepare_next_release.py)"
           python scripts/check_release_contract.py --tag "v${next}"
           echo "version=${next}" >> "$GITHUB_OUTPUT"
