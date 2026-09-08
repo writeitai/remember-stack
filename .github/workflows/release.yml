@@ -187,13 +187,40 @@ jobs:
       - name: Refuse a conflicting existing PyPI version
         id: existing
         run: |
-          state="$(python scripts/check_pypi_release.py --project remember --version '${{ needs.prepare.outputs.version }}' --dist dist)"
+          state="$(python scripts/check_pypi_release.py --project remember --version '${{ needs.prepare.outputs.version }}' --dist dist --missing-dir publish-dist)"
           echo "state=${state}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish through PyPI Trusted Publishing
+      - name: Select all artifacts for a missing release
         if: steps.existing.outputs.state == 'missing'
+        run: |
+          mkdir -p publish-dist
+          cp dist/remember-* publish-dist/
+
+      - name: Validate terminal transition package recovery
+        id: terminal
+        if: needs.prepare.outputs.tag == 'v0.17.0'
+        run: |
+          state="$(python scripts/check_pypi_release.py --project rememberstack --version '${{ needs.prepare.outputs.version }}' --dist dist --missing-dir publish-terminal-dist)"
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+
+      - name: Select terminal artifacts for a missing release
+        if: needs.prepare.outputs.tag == 'v0.17.0' && steps.terminal.outputs.state == 'missing'
+        run: |
+          mkdir -p publish-terminal-dist
+          cp dist/rememberstack-* publish-terminal-dist/
+
+      - name: Publish missing remember artifacts through PyPI Trusted Publishing
+        if: steps.existing.outputs.state != 'identical'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1.12.4
         with:
+          packages-dir: publish-dist/
+          skip-existing: true
+
+      - name: Publish missing terminal artifacts through PyPI Trusted Publishing
+        if: needs.prepare.outputs.tag == 'v0.17.0' && steps.terminal.outputs.state != 'identical'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1.12.4
+        with:
+          packages-dir: publish-terminal-dist/
           skip-existing: true
 
 

@@ -6,6 +6,7 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -22,17 +23,26 @@ def main() -> None:
             print("missing")
             return
         raise
+    prefix = arguments.project.replace("-", "_") + "-"
     local = {
         path.name: sha256(path.read_bytes()).hexdigest()
         for path in sorted(arguments.dist.iterdir())
-        if path.is_file()
+        if path.is_file() and path.name.replace("-", "_").startswith(prefix)
     }
-    _require_identical(local=local, payload=payload)
-    print("identical")
+    if not local:
+        raise RuntimeError(f"no local distributions found for {arguments.project}")
+    missing = _require_identical(local=local, payload=payload)
+    if arguments.missing_dir is not None:
+        arguments.missing_dir.mkdir(parents=True, exist_ok=True)
+        for filename in missing:
+            shutil.copy2(arguments.dist / filename, arguments.missing_dir / filename)
+    print("identical" if not missing else "partial")
 
 
-def _require_identical(*, local: dict[str, str], payload: dict[str, object]) -> None:
-    """Require PyPI's complete filename/hash set to equal verified local files."""
+def _require_identical(
+    *, local: dict[str, str], payload: dict[str, object]
+) -> tuple[str, ...]:
+    """Validate every existing file and return verified local files still missing."""
     urls = payload.get("urls")
     if not isinstance(urls, list):
         raise RuntimeError("PyPI release response omitted artifact URLs")
@@ -45,8 +55,18 @@ def _require_identical(*, local: dict[str, str], payload: dict[str, object]) -> 
         if not isinstance(filename, str) or not isinstance(digest, str):
             raise RuntimeError("PyPI release response has invalid artifact identity")
         remote[filename] = digest
-    if local != remote:
-        raise RuntimeError("existing PyPI release differs from verified distributions")
+    unexpected = sorted(set(remote) - set(local))
+    conflicts = sorted(
+        filename
+        for filename, digest in remote.items()
+        if filename in local and local[filename] != digest
+    )
+    if unexpected or conflicts:
+        raise RuntimeError(
+            "existing PyPI release differs from verified distributions: "
+            f"unexpected={unexpected}, conflicts={conflicts}"
+        )
+    return tuple(sorted(set(local) - set(remote)))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -55,6 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--dist", required=True, type=Path)
+    parser.add_argument("--missing-dir", type=Path)
     return parser
 
 

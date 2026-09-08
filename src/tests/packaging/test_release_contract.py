@@ -92,6 +92,16 @@ def test_release_preparation_uses_app_identity_and_waits_for_checks() -> None:
     assert 'gh pr checks "$existing" --watch --fail-fast' in workflow
     assert 'gh pr merge "$existing" --squash' in workflow
     assert "types: [release-completed]" in workflow
+    assert "uv lock --check" in workflow
+    assert "git add pyproject.toml uv.lock" in workflow
+
+
+def test_cla_has_an_explicit_release_automation_bot_contract() -> None:
+    """The organization-owned App is exempted by exact login, not fake assent."""
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/cla.yml").read_text(encoding="utf-8")
+    assert "REMEMBER_RELEASE_AUTOMATION_APP_BOT_LOGIN" in workflow
+    assert "trusted_bots.add(automation_bot)" in workflow
 
 
 def test_release_completion_revisits_changes_merged_during_publication() -> None:
@@ -221,13 +231,17 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
 
 
 def test_existing_pypi_release_must_be_byte_identical() -> None:
-    """Partial-run recovery cannot silently accept another artifact body."""
+    """Partial recovery uploads missing files and rejects conflicting content."""
     payload: dict[str, object] = {
         "urls": [{"filename": "remember.whl", "digests": {"sha256": "abc"}}]
     }
-    _require_identical(local={"remember.whl": "abc"}, payload=payload)
+    assert _require_identical(
+        local={"remember.whl": "abc", "remember.tar.gz": "def"}, payload=payload
+    ) == ("remember.tar.gz",)
     with pytest.raises(RuntimeError, match="differs"):
         _require_identical(local={"remember.whl": "def"}, payload=payload)
+    with pytest.raises(RuntimeError, match="unexpected"):
+        _require_identical(local={"other.whl": "abc"}, payload=payload)
 
 
 def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) -> None:
