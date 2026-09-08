@@ -262,9 +262,12 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     (tmp_path / "pyproject.toml").write_text(
         (root / "pyproject.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    (tmp_path / "uv.lock").write_text(
-        (root / "uv.lock").read_text(encoding="utf-8"), encoding="utf-8"
+    terminal = tmp_path / "packages/rememberstack/pyproject.toml"
+    terminal.parent.mkdir(parents=True)
+    terminal_document = (root / "packages/rememberstack/pyproject.toml").read_text(
+        encoding="utf-8"
     )
+    terminal.write_text(terminal_document, encoding="utf-8")
     for relative in _COORDINATE_FILES:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -287,12 +290,44 @@ def test_release_preparer_updates_only_canonical_root_coordinates(
     )
     assert result.stdout.strip() == target
     assert _project_version(root=tmp_path) == target
+    assert terminal.read_text(encoding="utf-8") == terminal_document
+    for relative in _COORDINATE_FILES:
+        assert current not in (tmp_path / relative).read_text(encoding="utf-8")
+
+
+def test_release_lock_regeneration_works_with_an_empty_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regenerate the root coordinate offline without cached optional dependencies."""
+    root = Path(__file__).resolve().parents[3]
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "empty-cache"))
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    monkeypatch.setenv("UV_PYTHON", sys.executable)
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "remember"\nversion = "1.2.3"\n'
+        'requires-python = ">=3.12"\ndependencies = []\n',
+        encoding="utf-8",
+    )
+    for relative in _COORDINATE_FILES:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("Release 1.2.3\n", encoding="utf-8")
+    subprocess.run(["uv", "lock", "--offline"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts/prepare_next_release.py"),
+            "--root",
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     subprocess.run(["uv", "lock", "--offline"], cwd=tmp_path, check=True)
     subprocess.run(["uv", "lock", "--check", "--offline"], cwd=tmp_path, check=True)
     lock = (tmp_path / "uv.lock").read_text(encoding="utf-8")
-    assert f'name = "remember"\nversion = "{target}"' in lock
-    for relative in _COORDINATE_FILES:
-        assert current not in (tmp_path / relative).read_text(encoding="utf-8")
+    assert 'name = "remember"\nversion = "1.2.4"' in lock
 
 
 def test_existing_pypi_release_must_be_byte_identical() -> None:
