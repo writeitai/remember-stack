@@ -6,7 +6,9 @@ import sys
 import tomllib
 
 import pytest
+from scripts.check_pypi_release import _require_identical
 from scripts.check_release_contract import _validate_release_docs
+from scripts.prepare_next_release import _COORDINATE_FILES
 
 _RELEASE_DOCS = (
     Path("README.md"),
@@ -90,6 +92,50 @@ def test_release_contract_can_print_the_validated_version_for_ci() -> None:
         text=True,
     )
     assert result.stdout.strip() == version
+
+
+def test_release_preparer_updates_only_canonical_root_coordinates(
+    tmp_path: Path,
+) -> None:
+    """The generated PR advances a patch without changing the terminal shim."""
+    root = Path(__file__).resolve().parents[3]
+    (tmp_path / "pyproject.toml").write_text(
+        (root / "pyproject.toml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    for relative in _COORDINATE_FILES:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            (root / relative).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    current = _project_version(root=root)
+    major, minor, patch = (int(part) for part in current.split("."))
+    target = f"{major}.{minor}.{patch + 1}"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts/prepare_next_release.py"),
+            "--root",
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == target
+    assert _project_version(root=tmp_path) == target
+    for relative in _COORDINATE_FILES:
+        assert current not in (tmp_path / relative).read_text(encoding="utf-8")
+
+
+def test_existing_pypi_release_must_be_byte_identical() -> None:
+    """Partial-run recovery cannot silently accept another artifact body."""
+    payload: dict[str, object] = {
+        "urls": [{"filename": "remember.whl", "digests": {"sha256": "abc"}}]
+    }
+    _require_identical(local={"remember.whl": "abc"}, payload=payload)
+    with pytest.raises(RuntimeError, match="differs"):
+        _require_identical(local={"remember.whl": "def"}, payload=payload)
 
 
 def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) -> None:

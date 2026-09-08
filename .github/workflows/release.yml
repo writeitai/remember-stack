@@ -164,13 +164,22 @@ jobs:
     permissions:
       id-token: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+
       - name: Download distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: python-distributions
           path: dist/
 
+      - name: Refuse a conflicting existing PyPI version
+        id: existing
+        run: |
+          state="$(python scripts/check_pypi_release.py --project remember --version '${{ needs.prepare.outputs.version }}' --dist dist)"
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+
       - name: Publish through PyPI Trusted Publishing
+        if: steps.existing.outputs.state == 'missing'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1.12.4
         with:
           skip-existing: true
@@ -201,7 +210,15 @@ jobs:
           flavor: latest=false
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
 
+      - name: Preserve an existing immutable image tag on recovery
+        id: existing
+        env:
+          IMAGE: ghcr.io/writeitai/remember-stack:${{ needs.prepare.outputs.version }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
+
       - name: Build and publish the shared API/worker image
+        if: steps.existing.outputs.present != 'true'
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
@@ -243,8 +260,16 @@ jobs:
           flavor: latest=false
           tags: type=raw,value=19beta3-${{ needs.prepare.outputs.version }}
 
+      - name: Preserve an existing immutable foundation tag on recovery
+        id: existing
+        env:
+          IMAGE: ghcr.io/writeitai/remember-stack-postgres:19beta3-${{ needs.prepare.outputs.version }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
+
       - name: Build and publish both supported architectures
         id: build
+        if: steps.existing.outputs.present != 'true'
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
@@ -260,7 +285,12 @@ jobs:
           POSTGRES_MANIFEST_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p release-evidence
-          image_coordinate="${POSTGRES_IMAGE_TAG}@${POSTGRES_MANIFEST_DIGEST}"
+          image_coordinate="${POSTGRES_IMAGE_TAG}"
+          if [ -z "${POSTGRES_MANIFEST_DIGEST}" ]; then
+            POSTGRES_MANIFEST_DIGEST="$(docker buildx imagetools inspect "${POSTGRES_IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')"
+          fi
+          test -n "${POSTGRES_MANIFEST_DIGEST}"
+          image_coordinate="${image_coordinate}@${POSTGRES_MANIFEST_DIGEST}"
           docker buildx imagetools inspect --raw "${image_coordinate}" \
             | jq --arg image "${POSTGRES_IMAGE_TAG}" \
                  --arg manifest "${POSTGRES_MANIFEST_DIGEST}" \

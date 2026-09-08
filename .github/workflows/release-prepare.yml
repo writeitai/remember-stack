@@ -1,0 +1,62 @@
+name: Prepare next release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: [pyproject.toml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: remember-stack-release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Refresh patch release PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Prepare the next version only after the current version is released
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(python scripts/check_release_contract.py --print-version)"
+          git fetch --force --tags origin
+          if ! git rev-parse --verify --quiet "refs/tags/v${current}" >/dev/null; then
+            echo "Current v${current} is awaiting publication; no later version is prepared."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          next="$(python scripts/prepare_next_release.py)"
+          python scripts/check_release_contract.py --tag "v${next}"
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Commit the deterministic release coordinates
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=automation/next-release
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}" || true
+          git checkout -B "$branch"
+          git add pyproject.toml compose.yaml README.md website/
+          git commit -m "chore(release): prepare v${VERSION}"
+          git push --force-with-lease origin "HEAD:${branch}"
+          existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher."
+          else
+            gh pr create --base main --head "$branch" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher."
+          fi
