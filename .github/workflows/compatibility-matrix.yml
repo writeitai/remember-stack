@@ -24,6 +24,8 @@ jobs:
     name: Client vs Engine (${{ matrix.engine-version }})
     runs-on: [self-hosted, remember-ci]
     timeout-minutes: 20
+    env:
+      CI_SLOT_KEY: ${{ github.run_id }}-${{ github.job }}-${{ matrix.engine-version }}-${{ github.run_attempt }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,20 +66,18 @@ jobs:
         run: .github/ci/start-postgres.sh
 
       - name: Start MinIO Object Store
+        run: .github/ci/start-minio.sh
+
+      - name: Allocate isolated engine API port
         run: |
-          docker run --detach --name remember-minio \
-            --publish 9000:9000 --publish 9001:9001 \
-            --env MINIO_ROOT_USER=rememberstack \
-            --env MINIO_ROOT_PASSWORD=rememberstack_test \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z \
-            server /data --console-address :9001
-          for attempt in $(seq 1 30); do
-            if curl -s -f http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
-              echo "MinIO is healthy"
-              break
-            fi
-            sleep 1
-          done
+          . .github/ci/ci-slot.sh
+          slot="$(ci_slot_id)"
+          port="$(ci_host_port "${slot}" 35000 5000)"
+          {
+            echo "REMEMBERSTACK_SELFHOST_API_PORT=${port}"
+            echo "REMEMBERSTACK_SELFHOST_API_URL=http://127.0.0.1:${port}"
+            echo "REMEMBER_ENGINE_CONTAINER=remember-engine-${slot}"
+          } >> "$GITHUB_ENV"
 
       - name: Pull or build engine image (${{ matrix.engine-version }})
         id: engine
@@ -94,8 +94,10 @@ jobs:
       - name: Run engine setup and migrations (${{ matrix.engine-version }})
         run: |
           docker run --rm --network host \
-            --env REMEMBERSTACK_DATABASE_URL="postgresql+psycopg://rememberstack:rememberstack_test@127.0.0.1:5432/rememberstack_test" \
-            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="http://127.0.0.1:9000" \
+            --label umc-gha=1 \
+            --label "gha-runner=${RUNNER_NAME}" \
+            --env REMEMBERSTACK_DATABASE_URL="${REMEMBERSTACK_DATABASE_URL}" \
+            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="${REMEMBERSTACK_MINIO_ENDPOINT_URL}" \
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
@@ -106,42 +108,45 @@ jobs:
 
       - name: Start engine API container and verify client operations (${{ matrix.engine-version }})
         run: |
-          docker run --detach --name remember-engine --network host \
-            --env REMEMBERSTACK_DATABASE_URL="postgresql+psycopg://rememberstack:rememberstack_test@127.0.0.1:5432/rememberstack_test" \
-            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="http://127.0.0.1:9000" \
+          docker run --detach --name "${REMEMBER_ENGINE_CONTAINER}" --network host \
+            --label umc-gha=1 \
+            --label "gha-runner=${RUNNER_NAME}" \
+            --env REMEMBERSTACK_DATABASE_URL="${REMEMBERSTACK_DATABASE_URL}" \
+            --env REMEMBERSTACK_MINIO_ENDPOINT_URL="${REMEMBERSTACK_MINIO_ENDPOINT_URL}" \
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
-            --env REMEMBERSTACK_SELFHOST_API_PORT="8000" \
+            --env REMEMBERSTACK_SELFHOST_API_PORT="${REMEMBERSTACK_SELFHOST_API_PORT}" \
             "${{ steps.engine.outputs.image }}" api
 
           for attempt in $(seq 1 30); do
-            if curl -s -f http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
-              echo "Engine API is healthy at http://127.0.0.1:8000/healthz"
+            if curl -s -f "${REMEMBERSTACK_SELFHOST_API_URL}/healthz" >/dev/null 2>&1; then
+              echo "Engine API is healthy at ${REMEMBERSTACK_SELFHOST_API_URL}/healthz"
               break
             fi
             sleep 1
             if [ "$attempt" -eq 30 ]; then
               echo "::error::Engine failed to become healthy within 30 seconds"
-              docker logs remember-engine
+              docker logs "${REMEMBER_ENGINE_CONTAINER}"
               exit 1
             fi
           done
 
           # Verify candidate client wheel interacting with live engine
           test-venv/bin/remember --version
-          test-venv/bin/remember whoami --self-hosted
-          test-venv/bin/remember projects list --self-hosted
-          test-venv/bin/remember doctor --self-hosted --api-url http://127.0.0.1:8000
-          test-venv/bin/remember operations list --api-url http://127.0.0.1:8000
+          test-venv/bin/remember whoami --self-hosted --api-url "${REMEMBERSTACK_SELFHOST_API_URL}"
+          test-venv/bin/remember projects list --self-hosted --api-url "${REMEMBERSTACK_SELFHOST_API_URL}"
+          test-venv/bin/remember doctor --self-hosted --api-url "${REMEMBERSTACK_SELFHOST_API_URL}"
+          test-venv/bin/remember operations list --api-url "${REMEMBERSTACK_SELFHOST_API_URL}"
 
           # Validate programmatic SDK contract against live engine
           test-venv/bin/python -c "
-          import remember
-          client = remember.Client(data_plane_url='http://127.0.0.1:8000', api_key='test-compatibility-key')
+          import os, remember
+          url = os.environ['REMEMBERSTACK_SELFHOST_API_URL']
+          client = remember.Client(data_plane_url=url, api_key='test-compatibility-key')
           ops = client.list_operations()
           assert isinstance(ops, tuple) and len(ops) > 0, f'expected operations tuple, got {ops}'
           version = client.ingest(source=b'# Test\nLive engine compatibility probe.\n', filename='probe.md')
@@ -159,4 +164,15 @@ jobs:
               raise AssertionError('expected nonexistent_operation to raise MemoryApiError')
           "
 
-          docker rm --force remember-engine remember-minio >/dev/null 2>&1 || true
+          docker rm --force "${REMEMBER_ENGINE_CONTAINER}" "${REMEMBERSTACK_MINIO_CONTAINER}" >/dev/null 2>&1 || true
+
+      - name: Remove isolated service containers
+        if: always()
+        run: |
+          for name in \
+            "${REMEMBER_ENGINE_CONTAINER:-}" \
+            "${REMEMBERSTACK_MINIO_CONTAINER:-}" \
+            "${REMEMBERSTACK_PG_CONTAINER:-}"; do
+            [[ -n "${name}" ]] || continue
+            docker rm --force "${name}" >/dev/null 2>&1 || true
+          done
