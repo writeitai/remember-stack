@@ -135,7 +135,7 @@ services:
       timeout: 5s
       retries: 30
     ports:
-      - "9001:9001"
+      - "${REMEMBERSTACK_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
 

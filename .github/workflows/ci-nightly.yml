@@ -16,23 +16,26 @@ concurrency:
 jobs:
   compose-quickstart:
     name: Compose quickstart
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     timeout-minutes: 25
     permissions:
       contents: read
     env:
       QUICKSTART_TARGET_SECONDS: "600"
       REMEMBERSTACK_BUILD_REVISION: ${{ github.sha }}
+      CI_SLOT_KEY: ${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+      - name: Isolate Compose host ports
+        run: .github/ci/compose-isolate.sh
       - name: Validate Compose model
         run: docker compose --env-file .env.example config --quiet
       - name: Start fresh self-host deployment
         run: |
           started_at="$(date +%s)"
           docker compose --env-file .env.example up --build --detach --wait
-          curl --fail http://localhost:8000/operations
-          served_revision="$(curl --fail --silent http://localhost:8000/deployment \
+          curl --fail "${REMEMBERSTACK_SELFHOST_API_URL}/operations"
+          served_revision="$(curl --fail --silent "${REMEMBERSTACK_SELFHOST_API_URL}/deployment" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
           test "$served_revision" = "${REMEMBERSTACK_BUILD_REVISION}"
           elapsed_seconds="$(($(date +%s) - started_at))"
@@ -44,11 +47,12 @@ jobs:
         run: docker compose --env-file .env.example down --volumes
 
   checks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     timeout-minutes: 90
     permissions:
       contents: read
     env:
+      CI_SLOT_KEY: ${{ github.run_id }}-${{ github.job }}-${{ matrix.python-version }}-${{ github.run_attempt }}
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
     strategy:
       fail-fast: false
@@ -89,7 +93,7 @@ jobs:
 
   coverage:
     name: Coverage report
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     needs: checks
     permissions:
       pull-requests: write

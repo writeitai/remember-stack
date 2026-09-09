@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     defaults:
       run:
         working-directory: website
@@ -60,7 +60,7 @@ jobs:
     # Only publish from main; PRs run the build job above as a check.
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     # Serialize production deployments only, so PR build-checks stay concurrent.
     concurrency:
       group: "pages-deploy"
