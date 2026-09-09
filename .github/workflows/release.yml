@@ -20,7 +20,7 @@ permissions:
 jobs:
   prepare:
     name: Resolve immutable main release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     outputs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
@@ -69,7 +69,7 @@ jobs:
     name: Verify release
     needs: prepare
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     # This job runs the WHOLE suite in one process, so its budget must exceed the
     # sum of CI's split integration jobs — not match any one of them. CI alone
     # budgets 45 minutes for workers and 50 for surfaces. At 30 minutes this job
@@ -174,7 +174,7 @@ jobs:
   publish-pypi:
     name: Publish PyPI
     needs: [prepare, verify]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     environment:
       name: pypi
       url: https://pypi.org/p/remember
@@ -234,7 +234,7 @@ jobs:
   publish-ghcr:
     name: Publish GHCR
     needs: [prepare, verify]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     permissions:
       contents: read
       packages: write
@@ -314,7 +314,7 @@ jobs:
   publish-postgres-ghcr:
     name: Publish multi-architecture PostgreSQL foundation
     needs: [prepare, verify]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     permissions:
       contents: read
       packages: write
@@ -407,7 +407,7 @@ jobs:
   github-release:
     name: Publish GitHub release
     needs: [prepare, publish-pypi, publish-ghcr, publish-postgres-ghcr]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     permissions:
       contents: write
     steps:
@@ -464,7 +464,7 @@ jobs:
     name: Notify UMC dependency automation
     needs: [prepare, github-release]
     if: always() && needs.prepare.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     permissions:
       contents: read
     steps:

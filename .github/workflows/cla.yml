@@ -9,7 +9,7 @@ permissions: {}
 jobs:
   cla:
     name: CLA
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     timeout-minutes: 2
     steps:
       # Security invariant: pull_request_target evaluates only event metadata. It must

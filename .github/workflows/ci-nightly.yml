@@ -16,7 +16,7 @@ concurrency:
 jobs:
   compose-quickstart:
     name: Compose quickstart
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     timeout-minutes: 25
     permissions:
       contents: read
@@ -44,7 +44,7 @@ jobs:
         run: docker compose --env-file .env.example down --volumes
 
   checks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -89,7 +89,7 @@ jobs:
 
   coverage:
     name: Coverage report
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, remember-ci]
     needs: checks
     permissions:
       pull-requests: write
