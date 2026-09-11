@@ -819,6 +819,21 @@ lake sunrise last year!` yielded a correct attributed claim, then layer 2 reject
 prompt-required scaffolding without weakening content or numeric traceability. Rejections still drop
 the claim and are ledgered; `edit_detail.failed_tokens` names the tokens that failed.
 
+**Amendment (2026-09-11, own valid-time exemption).** Layer 2 gains one traceable exception to
+the numeric rule so the D41 amendment of the same day can write a resolved date into claim text.
+Before tokenizing an addition, the gate removes exact occurrences of the ISO renderings of the
+claim's *own* parsed `claim_valid_*` bounds, tied to the stored precision: `day` → `YYYY-MM-DD`,
+`month` → `YYYY-MM`, `year` → `YYYY`, `quarter` → both calendar bounds as `YYYY-MM-DD`/`YYYY-MM`,
+`open` → the start as `YYYY-MM-DD`/`YYYY-MM`/`YYYY`, `instant` → the model's ISO strings verbatim
+and their UTC parse; `unknown` precision exempts nothing. Every remaining numeric token still needs
+a union match, so a day written against a year-precise bound, a differently spelled date, or a date
+with no structured bounds is rejected exactly as before. The invariant becomes: every content token
+of every addition is traceable verbatim to source-derived bundle text **or** is the rendering of
+the claim's own structured valid time, which is itself derived from the document header anchor.
+The functional allowlist also admits the temporal connectives `since`, `until`, `between`, and
+`during` that the prompt asks the model to write around a date. Extractor generation
+`temporal-anchor-4`.
+
 **Refined by D65 (media).** For media-derived documents grounding is **two hops**: the anchor
 (layer 1) proves the claim derives from the *representation* (document.md); it cannot prove the
 ASR heard or the VLM saw correctly. The layer-4 sampled audit therefore becomes
@@ -1085,6 +1100,27 @@ text, not these structured fields. Evidence payloads, including `claims_verbatim
 surface `claim_valid_from` and `claim_valid_until`, so an answer agent can use the extracted time.
 The same rule applies when the relative expression is inside a preserved direct quotation or
 attributed claim.
+
+**Amendment (2026-09-11, resolved dates are written into claim text).** The #158 rule that the
+claim text keeps the relative wording is reversed. A relative time expression ("last Friday",
+"yesterday", "last year") is context a standalone claim must not depend on — the same defect a
+dangling pronoun is — so decontextualization now treats it the same way: whenever E2 can resolve
+the expression against the in-document anchor and emit `claim_valid_*`, it also replaces the
+expression in `claim_text` with the same absolute value in ISO form (`on 2022-01-21`, `in 2022`,
+`since 2019`, `from 2024-01-01 to 2024-03-31`, an instant exactly as `valid_from_iso`). This applies
+inside preserved quotations and attributed speech too; the verbatim wording survives in
+`source_span`. When the expression cannot be resolved, the source wording stays as spoken and no
+date is guessed — so a relative phrase still present in claim text is itself the signal that
+resolution failed, to be read against `asserted_at`. The structured fields are unchanged in
+meaning and remain the queryable form; the LoCoMo conv-42 miss on "printed it last Friday"
+(answered with the message date rather than the resolved day) was the measured cost of making
+every reader recombine claim text with separately labelled timestamps. Grounding of the written
+date is the D32 amendment of the same day. Agent-facing surfaces (the consumption skill, the
+`EvidenceResult` field descriptions, the LoCoMo answer prompt) now define the two source-asserted
+times in plain words: `asserted_at` is *when the source made this statement*; `claim_valid_from` /
+`claim_valid_until` are *when the claim says it happened or was true*, with `claim_valid_kind`
+naming which (event happened / state was true / period a figure covers). Extractor generation
+`temporal-anchor-4`.
 
 **Amendment (2026-08-03, retrieval surface Batch B).** The D41-era no-default-index stance is
 superseded for PostgreSQL claim-window retrieval. The default schema now carries the partial index

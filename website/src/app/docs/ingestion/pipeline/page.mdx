@@ -137,9 +137,19 @@ When a new extraction basis completes, prior claims for that basis become **non-
 ### Source time and claim windows
 
 The extractor receives the full source timestamp, using `source_modified_at`
-when present and otherwise `published_at`. A relative phrase such as “three
-hours ago” is resolved against that instant. The original phrase stays in
-claim text; resolved dates belong in the structured validity fields.
+when present and otherwise `published_at`. A relative phrase such as “last
+Friday” or “three hours ago” is resolved against that instant. The resolved
+date is written into the claim text in ISO form (“printed the screenplay on
+2022-01-21”), exactly as a pronoun is replaced with the name it refers to, and
+the same value is stored in the structured validity fields. The verbatim source
+wording stays in `source_span`. A phrase the extractor cannot resolve stays as
+the source spoke it, with no guessed date: a relative phrase still present in
+claim text means resolution failed, and it is read against `asserted_at`, the
+time the source made the statement.
+
+The written date is grounded by the claim’s own validity fields rather than by
+the source text: a date that does not match the stored bounds, or appears with
+unknown precision, is rejected as an outside fact.
 
 The prompt distinguishes `event_time` (a happening), `effective_period` (a
 state or arrangement), `measurement_period` (a reporting span), and

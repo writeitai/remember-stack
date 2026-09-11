@@ -1,5 +1,18 @@
 # LoCoMo full-system benchmark design
 
+> **Binding v27 amendment (2026-09-11).** The protocol pins extractor
+> generation `temporal-anchor-4`: E2 writes a resolved relative date into
+> claim text as an ISO value and grounds it by the claim's own valid-time
+> fields (D41/D32 amendments of 2026-09-11). The answer prompt replaces "use
+> timestamps to resolve relative dates" with a plain-word definition of the
+> two evidence times — `asserted_at` is when the source made the statement,
+> `claim_valid_from` / `claim_valid_until` are when the claim says it happened
+> or was true, `claim_valid_kind` names which — and tells the agent that a
+> relative phrase still in claim text is unresolved and reads against
+> `asserted_at`. Adapter version, protocol identities, and fingerprints roll
+> together; stores ingested under v26 must be re-ingested. Dataset, models,
+> retrieval behavior, budgets, judge rubric, and scoring are unchanged.
+
 > **Binding D114 / v26 amendment (2026-09-07).** The three assured context
 > tools adopt `claims_and_sources_context`, `facts_context`, and
 > `combined_context`; the last returns `ContextBundle/v2`. The catalog,
@@ -147,7 +160,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v26
+protocol                RS-LoCoMo-Full-v27
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -495,7 +508,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v26-codex-subscription` is an additive evaluator-provider variant for
+`full-v27-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -531,11 +544,11 @@ accounting becomes a material requirement.
 
 The provider controls force a distinct protocol. Codex does not expose
 temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
-reasoning effort `high`, rather than v26's OpenRouter-specific `none`. The v26
+reasoning effort `high`, rather than v27's OpenRouter-specific `none`. The v27
 prompt is the same object used by the OpenRouter and Gemma variants; schemas,
 budgets, catalog, and judge rubric remain aligned.
 These runs are useful for smoke/development comparison but are not canonical
-v26 publication results. The SDK's synchronous turn currently has no
+v27 publication results. The SDK's synchronous turn currently has no
 benchmark-enforced deadline, so this variant is not the default unattended
 publication path.
 
@@ -794,7 +807,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v26 requires to be
+- the non-secret `document_binding_generation`, which Full-v27 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -943,12 +956,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26 \
+  --protocol full-v27 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v26`; the
-explicit `full-v26-gemma-vertex` and `full-v26-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v27`; the
+explicit `full-v27-gemma-vertex` and `full-v27-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

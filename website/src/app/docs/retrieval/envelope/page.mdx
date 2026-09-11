@@ -69,7 +69,7 @@ There is **no** `confidence` field on the shipped fact record.
 | `claim_id`, `doc_id`, `chunk_id` | Anchors |
 | `claim_text`, `source_span`, `char_start`, `char_end` | Text + grounding |
 | `is_current_testimony` | Currency filter result |
-| `asserted_at`, `claim_valid_*` | Source-asserted testimony times (not system belief) |
+| `asserted_at`, `claim_valid_*` | When the source made the statement, and when the claim says it happened or was true (source-asserted, not system belief) |
 | `corroboration_count`, `grouped_claim_ids` | Duplicate collapse metadata when present |
 
 Provenance is **flat on the claim** (and via top-level `sources[]`), not a nested `provenance: { hydrate_handle, derivation }` object.

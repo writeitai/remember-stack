@@ -51,9 +51,9 @@ source**, and only trustworthy if it is **actually supported** by that source. T
 
 - **Understandability fails.** In isolation the model cannot know what *It* is or which valid-time
   bounds *last year* denotes, so it emits `"It launched last year in three markets"` — a claim whose
-  entity and valid-time cannot be resolved downstream. With the context bundle, the entity is
-  decontextualized in `claim_text`; the relative wording stays there, while its anchored resolution
-  lands only in the structured valid-time fields.
+  entity and valid-time cannot be resolved downstream. With the context bundle, both the entity and
+  the relative time are decontextualized in `claim_text` ("Project Atlas launched in 2024 in three
+  markets"), and the same resolution is stored in the structured valid-time fields.
 - **Faithfulness is mis-aimed.** A *verbatim-quote* requirement rewards copying surface text, which is
   the opposite of making a claim standalone — and it has no opinion about whether `"The team considers
   it a runaway success"` (an opinion, not a checkable fact) should be a claim at all.
@@ -109,8 +109,10 @@ Over that bundle the model does three things, in order (the "Claimify" shape). E
    is handled right here, in the same call (D19): no claim leaves E2 with a dangling pronoun. The
    discipline that makes this safe: **if a careful reader could not pick one interpretation from the
    bundle, drop the candidate** rather than guess. In the example, the neighbours name *Project Atlas*
-   so "It launched last year" becomes "Project Atlas launched last year." The relative wording remains
-   in claim text; its absolute resolution is structured valid-time, described below.
+   so "It launched last year" (against a 2025 header) becomes "Project Atlas launched in 2024." A
+   relative time expression is treated exactly like a pronoun: resolved in claim text when the
+   bundle supports it, kept as spoken when it does not. The same resolution is also stored as
+   structured valid-time, described below.
 
 3. **Decomposition — split into atoms.** Break the disambiguated sentence into the simplest standalone
    claims, preserving attribution ("*X said* Y" stays attributed, it does not become a bare "Y"). The
@@ -146,13 +148,33 @@ without rejecting the claim. Most claims have no stated world-time and leave the
 
 **Amendment (2026-07-29, issue #158):** relative temporal expressions are resolved against an
 absolute timestamp in the document header whenever that arithmetic supports an honest interval.
-The computed date goes only into `valid_from_iso` / `valid_until_iso`; `claim_text` keeps the relative
-phrase as the source spoke it. For example, with a 2023-05-08 header, "visited yesterday" keeps that
-wording and emits the day bounds 2023-05-07, while "painted last year" emits the year bounds
+The computed date goes into `valid_from_iso` / `valid_until_iso`; with a 2023-05-08 header,
+"visited yesterday" emits the day bounds 2023-05-07, while "painted last year" emits the year bounds
 2022-01-01 through 2022-12-31 with `valid_precision=year`. With no absolute in-document anchor, or
 when a vague phrase cannot fit the available precision vocabulary without invention, E2 omits the
 structured time. D32 layer 2 does not gate these structured fields: its membership union applies only
-to text in `added_context`. The evidence-row builder used by `claims_verbatim`, claim hydration, and
+to text in `added_context`. (The #158 rule that `claim_text` keeps the relative phrase as spoken is
+reversed by the 2026-09-11 amendment below.)
+
+**Amendment (2026-09-11, resolved dates are written into claim text):** whenever E2 emits
+valid-time fields for a relative expression, it also replaces that expression in `claim_text` with
+the same absolute value in ISO form, so the claim stands alone without a separately labelled
+timestamp: "visited yesterday" becomes "visited on 2023-05-07", "painted last year" becomes "painted
+in 2022", "has been CEO since last year" becomes "has been CEO since 2022", a bounded span is written
+"from 2024-01-01 to 2024-03-31", and an instant exactly as its `valid_from_iso`. The replacement is
+made inside preserved quotations and attributed speech as well; the verbatim wording is preserved by
+`source_span`, never by `claim_text`. An expression that cannot be resolved stays exactly as the
+source spoke it and no date is guessed, so a relative phrase still present in claim text means
+resolution failed and a reader interprets it against `asserted_at`. The written date is an
+`added_context` entry; D32 layer 2 grounds it by equality with the claim's own parsed bounds rather
+than by source-union membership (the D32 amendment of the same day, mirrored in
+`_own_valid_time_strings`), so a date that disagrees with the structured fields — or appears with
+`unknown` precision — is still rejected as an outside fact. Why: the structured fields alone forced
+every reader (an answer agent included) to recombine "printed it last Friday" with an
+`asserted_at` of 2022-01-23 and compute 2022-01-21; the LoCoMo conv-42 run answered with the
+message date instead. A claim that already says "on 2022-01-21" needs no such step, and the fields
+remain the queryable form for `claims_as_of` and adjudication. Extractor generation
+`temporal-anchor-4`. The evidence-row builder used by `claims_verbatim`, claim hydration, and
 `explain` now returns `claim_valid_from` and `claim_valid_until`. A #158 non-goal is surfacing
 `valid_precision` or `valid_kind` on `EvidenceResult`: it exposes only `claim_valid_from` and
 `claim_valid_until`. Precision is inferable from the bounds for these cases (equal ends = day;

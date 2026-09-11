@@ -815,6 +815,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "When the source made this statement (the message was sent, the page was published). Any relative phrase still present in claim_text is relative to this time.",
                     "title": "Asserted At"
                   },
                   "char_end": {
@@ -850,6 +851,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "Start of when the claim says it happened or was true, as the source asserted it. A date the extractor could resolve is also written into claim_text. Null when claim_valid_precision is unknown.",
                     "title": "Claim Valid From"
                   },
                   "claim_valid_kind": {
@@ -862,10 +864,12 @@
                       }
                     ],
                     "default": null,
+                    "description": "What the bounds describe: event_time = when the claimed event happened; effective_period or proposition_validity = when the claimed state was true; measurement_period = the period a claimed figure covers.",
                     "title": "Claim Valid Kind"
                   },
                   "claim_valid_precision": {
                     "default": "unknown",
+                    "description": "How exact the bounds are: instant, day, month, quarter, year, open (known start, ongoing), or unknown (no usable source date).",
                     "title": "Claim Valid Precision",
                     "type": "string"
                   },
@@ -880,6 +884,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "End of when the claim says it happened or was true, as the source asserted it. Null for an open-ended state or unknown precision.",
                     "title": "Claim Valid Until"
                   },
                   "corroboration_count": {
@@ -2873,6 +2878,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "When the source made this statement (the message was sent, the page was published). Any relative phrase still present in claim_text is relative to this time.",
                     "title": "Asserted At"
                   },
                   "char_end": {
@@ -2908,6 +2914,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "Start of when the claim says it happened or was true, as the source asserted it. A date the extractor could resolve is also written into claim_text. Null when claim_valid_precision is unknown.",
                     "title": "Claim Valid From"
                   },
                   "claim_valid_kind": {
@@ -2920,10 +2927,12 @@
                       }
                     ],
                     "default": null,
+                    "description": "What the bounds describe: event_time = when the claimed event happened; effective_period or proposition_validity = when the claimed state was true; measurement_period = the period a claimed figure covers.",
                     "title": "Claim Valid Kind"
                   },
                   "claim_valid_precision": {
                     "default": "unknown",
+                    "description": "How exact the bounds are: instant, day, month, quarter, year, open (known start, ongoing), or unknown (no usable source date).",
                     "title": "Claim Valid Precision",
                     "type": "string"
                   },
@@ -2938,6 +2947,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "End of when the claim says it happened or was true, as the source asserted it. Null for an open-ended state or unknown precision.",
                     "title": "Claim Valid Until"
                   },
                   "corroboration_count": {
@@ -4571,6 +4581,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "When the source made this statement (the message was sent, the page was published). Any relative phrase still present in claim_text is relative to this time.",
                     "title": "Asserted At"
                   },
                   "char_end": {
@@ -4606,6 +4617,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "Start of when the claim says it happened or was true, as the source asserted it. A date the extractor could resolve is also written into claim_text. Null when claim_valid_precision is unknown.",
                     "title": "Claim Valid From"
                   },
                   "claim_valid_kind": {
@@ -4618,10 +4630,12 @@
                       }
                     ],
                     "default": null,
+                    "description": "What the bounds describe: event_time = when the claimed event happened; effective_period or proposition_validity = when the claimed state was true; measurement_period = the period a claimed figure covers.",
                     "title": "Claim Valid Kind"
                   },
                   "claim_valid_precision": {
                     "default": "unknown",
+                    "description": "How exact the bounds are: instant, day, month, quarter, year, open (known start, ongoing), or unknown (no usable source date).",
                     "title": "Claim Valid Precision",
                     "type": "string"
                   },
@@ -4636,6 +4650,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "End of when the claim says it happened or was true, as the source asserted it. Null for an open-ended state or unknown precision.",
                     "title": "Claim Valid Until"
                   },
                   "corroboration_count": {
@@ -6335,6 +6350,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "When the source made this statement (the message was sent, the page was published). Any relative phrase still present in claim_text is relative to this time.",
                     "title": "Asserted At"
                   },
                   "char_end": {
@@ -6370,6 +6386,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "Start of when the claim says it happened or was true, as the source asserted it. A date the extractor could resolve is also written into claim_text. Null when claim_valid_precision is unknown.",
                     "title": "Claim Valid From"
                   },
                   "claim_valid_kind": {
@@ -6382,10 +6399,12 @@
                       }
                     ],
                     "default": null,
+                    "description": "What the bounds describe: event_time = when the claimed event happened; effective_period or proposition_validity = when the claimed state was true; measurement_period = the period a claimed figure covers.",
                     "title": "Claim Valid Kind"
                   },
                   "claim_valid_precision": {
                     "default": "unknown",
+                    "description": "How exact the bounds are: instant, day, month, quarter, year, open (known start, ongoing), or unknown (no usable source date).",
                     "title": "Claim Valid Precision",
                     "type": "string"
                   },
@@ -6400,6 +6419,7 @@
                       }
                     ],
                     "default": null,
+                    "description": "End of when the claim says it happened or was true, as the source asserted it. Null for an open-ended state or unknown precision.",
                     "title": "Claim Valid Until"
                   },
                   "corroboration_count": {
@@ -40763,5 +40783,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
+  "surface_manifest_hash": "650309393d6a12955a4ff4572b2a54e69a9581d5267ff6170541555921b30716"
 }
