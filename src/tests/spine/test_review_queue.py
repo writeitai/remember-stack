@@ -180,7 +180,7 @@ def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
         )
         connection.execute(
             text("""INSERT INTO relation_evidence(deployment_id,relation_id,claim_id,doc_id,
-            stance,legacy_stance,normalizer_version) SELECT :dep,:id,claim_id,doc_id,'supports','supports','test'
+            stance,normalizer_version) SELECT :dep,:id,claim_id,doc_id,'supports','test'
             FROM claims WHERE claim_id=:claim"""),
             {"dep": _DEPLOYMENT_ID, "id": relation, "claim": claim_id},
         )

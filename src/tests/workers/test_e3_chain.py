@@ -480,13 +480,14 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
     assert [e["canonical_name"] for e in entities] == ["Acme", "Alice Novak"]
     assert new_decisions == 2
 
-    # the observation landed once with collapsed evidence and its novelty-gate
-    # adjudication (D43/D4):
+    # the observation landed once with collapsed evidence: the first assertion
+    # on an empty entity is decided without a model call (contract §8), the
+    # repeat is an inferred attachment to the same identity:
     (observation,) = observations
     assert observation["statement"] == "Acme employs Alice Novak as an engineer."
     assert observation["evidence_count"] == 1
     assert [dict(a) for a in adjudications] == [
-        {"outcome": "add", "method": "small_model"},
+        {"outcome": "add", "method": "novelty_gate"},
         {"outcome": "noop", "method": "small_model"},
     ]
 
@@ -883,171 +884,3 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
         meter=NoopCostMeter(),
     )
     assert len(rig.provider.generated_prompts) == calls
-
-
-@pytest.mark.parametrize("empty_replay", [False, True])
-def test_retained_store_conversion_reuses_workers_and_preserves_historical_claims(
-    rig: _E3Rig, empty_replay: bool
-) -> None:
-    """Two extractor generations in one version replay without re-extraction or reopening belief."""
-    from rememberstack.spine.fact_window_conversion import FactWindowConversion
-
-    rig.ingestor.ingest(
-        deployment_id=_DEPLOYMENT_ID,
-        upload=DocumentUpload(
-            filename="staffing.md",
-            mime="text/markdown",
-            content=_SOURCE.encode("utf-8"),
-        ),
-    )
-    rig.run_chain()
-    with rig.engine.begin() as connection:
-        original_facts = set(
-            connection.execute(text("SELECT relation_id FROM relations")).scalars()
-        )
-        claims = tuple(
-            connection.execute(
-                text("SELECT claim_id FROM claims ORDER BY claim_id")
-            ).scalars()
-        )
-        assert len(claims) == 2
-        # Model a retained pre-cutover store: source/fact identities survive, old
-        # work is drained, its evidence predates application pointers.
-        connection.execute(text("UPDATE relation_evidence SET legacy_stance=stance"))
-        connection.execute(text("UPDATE observation_evidence SET legacy_stance=stance"))
-        connection.execute(text("DELETE FROM fact_applications"))
-        connection.execute(text("DELETE FROM normalization_outputs"))
-        connection.execute(
-            text(
-                "UPDATE processing_state SET component_version=component_version || '-old'"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE obs_flush_entity_units SET normalizer_version=normalizer_version || '-old'"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE obs_flush_version_state SET normalizer_version=normalizer_version || '-old'"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE claims SET extractor_version='retained-old-extractor',is_current_testimony=false WHERE claim_id=:id"
-            ),
-            {"id": claims[0]},
-        )
-        connection.execute(
-            text(
-                "UPDATE relations SET ingested_at='2026-01-01Z',invalidated_at='2026-08-01Z'"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
-            ),
-            {"dep": _DEPLOYMENT_ID},
-        )
-    if empty_replay:
-        rig.normalization_payload = {"relations": [], "observations": []}
-        with rig.engine.begin() as connection:
-            connection.execute(
-                text(
-                    "UPDATE entities SET profile_summary='STALE_PRE_CONVERSION_PROFILE', embedding=NULL, embedding_model=NULL, embedding_input_policy_version=NULL, embedding_text_hash=NULL"
-                )
-            )
-    conversion = FactWindowConversion(engine=rig.engine)
-    assert conversion.seed_batch(deployment_id=_DEPLOYMENT_ID)["created"] == 2
-    assert not conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
-    before = len(rig.provider.generated_prompts)
-    rig.run_chain()
-    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
-
-    with rig.engine.begin() as connection:
-        assert (
-            connection.execute(
-                text(
-                    "SELECT count(*) FROM processing_state WHERE stage='reconcile' AND component_version NOT LIKE '%-old'"
-                )
-            ).scalar_one()
-            == 0
-        )
-        changed = connection.execute(
-            text(
-                "UPDATE processing_state SET status='dead_letter' WHERE stage='adjudicate_supersession' AND component_version=:version"
-            ),
-            {"version": ADJUDICATOR_VERSION},
-        ).rowcount
-        assert changed > 0
-    blocked = conversion.verify(deployment_id=_DEPLOYMENT_ID)
-    assert not blocked["ready"]
-    problems = blocked["problems"]
-    assert isinstance(problems, dict)
-    assert problems["unfinished_work"] > 0
-    with rig.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE processing_state SET status='succeeded' WHERE stage='adjudicate_supersession' AND component_version=:version"
-            ),
-            {"version": ADJUDICATOR_VERSION},
-        )
-    assert conversion.verify(deployment_id=_DEPLOYMENT_ID)["ready"]
-    if empty_replay:
-        with rig.engine.connect() as connection:
-            assert (
-                connection.execute(
-                    text("SELECT count(*) FROM fact_applications")
-                ).scalar_one()
-                == 0
-            )
-            profiles = dict(
-                connection.execute(
-                    text("SELECT canonical_name,profile_summary FROM entities")
-                )
-                .tuples()
-                .all()
-            )
-            # The relation's system belief was withdrawn above. Alice's stale
-            # profile must clear; Acme still has its supported observation.
-            assert profiles["Alice Novak"] is None
-            assert "world date unknown" in profiles["Acme"]
-            assert "STALE_PRE_CONVERSION_PROFILE" not in profiles["Acme"]
-
-    assert all(
-        "Claimify" not in request for request in rig.provider.generated_prompts[before:]
-    )
-    with rig.engine.connect() as connection:
-        assert (
-            set(connection.execute(text("SELECT relation_id FROM relations")).scalars())
-            == original_facts
-        )
-        assert connection.execute(
-            text("SELECT bool_and(invalidated_at IS NOT NULL) FROM relations")
-        ).scalar_one()
-        assert (
-            connection.execute(
-                text("SELECT is_current_testimony FROM claims WHERE claim_id=:id"),
-                {"id": claims[0]},
-            ).scalar_one()
-            is False
-        )
-        assert (
-            connection.execute(
-                text("SELECT count(*) FROM normalization_outputs")
-            ).scalar_one()
-            == 2
-        )
-        assert (
-            connection.execute(
-                text("SELECT count(*) FROM normalize_observation_staging")
-            ).scalar_one()
-            == 0
-        )
-        assert (
-            connection.execute(
-                text("SELECT count(*) FROM cost_ledger WHERE deployment_id=:dep"),
-                {"dep": _DEPLOYMENT_ID},
-            ).scalar_one()
-            > 0
-        )

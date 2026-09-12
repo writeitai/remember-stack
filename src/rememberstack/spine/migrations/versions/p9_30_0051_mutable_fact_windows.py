@@ -1,8 +1,9 @@
 """D118 single mutable world window and guarded fact application stores.
 
-Existing populated stores remain fenced until retained-claim conversion and
-consumer/projection verification complete. Experimental draft schema heads are
-not ancestors of this migration and have no automatic downgrade path.
+Stores that already hold claims are not converted: their fact dates carry the
+old meaning and are recreated by re-ingestion (design §8). Experimental draft
+schema heads are not ancestors of this migration and have no automatic
+downgrade path.
 """
 
 from alembic import op
@@ -15,8 +16,6 @@ revision: str = "p9_30_0051"
 down_revision: str | None = "p9_29_0050"
 branch_labels = None
 depends_on = None
-
-FACT_WINDOW_GENERATION = "mutable-fact-window-1"
 
 _STORAGE_DDL = r"""
 CREATE TABLE public.normalization_outputs (
@@ -97,7 +96,7 @@ CREATE INDEX ix_fact_applications_observation_support
   ON public.fact_applications (deployment_id, support_observation_id, claim_id)
   WHERE support_observation_id IS NOT NULL;
 
--- No pending legacy rows are permitted at this maintenance boundary.
+-- No pending staging rows are permitted at this maintenance boundary.
 ALTER TABLE public.normalize_observation_staging
   ADD COLUMN application_id uuid NOT NULL,
   DROP CONSTRAINT normalize_observation_staging_pkey,
@@ -106,13 +105,6 @@ ALTER TABLE public.normalize_observation_staging
     REFERENCES public.fact_applications (deployment_id, application_id)
     ON DELETE CASCADE;
 ALTER TABLE public.normalize_observation_staging ALTER COLUMN statement DROP NOT NULL;
-ALTER TABLE public.relation_evidence
-  ADD COLUMN legacy_stance public.evidence_stance;
-ALTER TABLE public.observation_evidence
-  ADD COLUMN legacy_stance public.evidence_stance;
--- Conversion sets legacy_stance=stance on old links. New inserts leave it NULL;
--- application recount includes but never overwrites the retained legacy stance.
-
 ALTER TABLE public.relations
   ADD COLUMN valid_precision public.claim_valid_precision,
   ADD COLUMN window_claim_ids uuid[];
@@ -124,7 +116,7 @@ CREATE INDEX ix_observations_window_claims ON public.observations USING gin (win
 
 -- Drop the original relation exclusion by its catalog identity in the migration;
 -- it must not be replaced by any date/type-based uniqueness constraint.
--- After grounded conversion, install this exact CHECK on BOTH fact tables:
+-- Install this exact CHECK on BOTH fact tables:
 -- CHECK (
 --   (valid_precision = 'unknown' AND valid_from IS NULL AND valid_until IS NULL
 --      AND cardinality(window_claim_ids) = 0)
@@ -137,7 +129,6 @@ CREATE INDEX ix_observations_window_claims ON public.observations USING gin (win
 --      AND (valid_from IS NULL OR valid_until IS NULL OR valid_from < valid_until)
 --      AND cardinality(window_claim_ids) > 0)
 -- );
--- Never expose the expand/convert interval through an open readiness gate.
 
 ALTER TABLE public.relation_adjudications
   ADD COLUMN consumed_claim_ids uuid[] NOT NULL DEFAULT '{}';
@@ -361,7 +352,7 @@ $$;
 
 
 def upgrade() -> None:
-    """Fence populated stores, expand, clear ungrounded dates and install constraints."""
+    """Refuse a populated store, then expand and install the chosen-window shape."""
     connection = op.get_bind()
     # Keep the maintenance drain check and the schema cut in one locked interval.
     op.execute(
@@ -370,7 +361,13 @@ def upgrade() -> None:
     op.execute(
         "ALTER TYPE processing_target ADD VALUE IF NOT EXISTS 'fact_application'"
     )
-    # Maintenance requires all old work drained, not just an empty staging snapshot.
+    # Existing fact dates carry the old meaning (a null end read as "still
+    # true", endpoints often copied from source time). They are not converted.
+    if connection.execute(text("SELECT EXISTS(SELECT 1 FROM claims)")).scalar_one():
+        raise RuntimeError(
+            "D118 does not convert a store that already holds claims; "
+            "recreate the deployment and ingest its sources again"
+        )
     pending = connection.execute(
         text(
             "SELECT EXISTS(SELECT 1 FROM processing_state WHERE status NOT IN ('succeeded','skipped','dead_letter')) OR EXISTS(SELECT 1 FROM normalize_observation_staging)"
@@ -382,25 +379,7 @@ def upgrade() -> None:
         )
     for statement in _split_sql(sql=_STORAGE_DDL):
         op.execute(statement)
-    # Every prior K compile used a different writer/input contract. Its stored
-    # manifest cannot certify the new dated-history generation.
-    op.execute(
-        "UPDATE knowledge_artifacts SET status='stale' WHERE page_kind='compiled' AND status='active'"
-    )
-    op.execute("ALTER TABLE deployments ADD COLUMN fact_window_generation text")
-    op.execute(
-        "UPDATE deployments d SET fact_window_generation='mutable-fact-window-1' WHERE NOT EXISTS(SELECT 1 FROM claims c WHERE c.deployment_id=d.deployment_id)"
-    )
-    op.execute(
-        "ALTER TABLE deployments ALTER COLUMN fact_window_generation SET DEFAULT 'mutable-fact-window-1'"
-    )
-    for kind, table in (("relation", "relations"), ("observation", "observations")):
-        op.execute(f"UPDATE {kind}_evidence SET legacy_stance=stance")
-        # Main's source-time windows carry no proof of world-time authority.
-        # Existing fact IDs, statements, evidence and system closure survive replay.
-        op.execute(
-            f"UPDATE {table} SET valid_from=NULL,valid_until=NULL,valid_precision='unknown',window_claim_ids='{{}}'"
-        )
+    for table in ("relations", "observations"):
         op.execute(
             f"ALTER TABLE {table} ALTER COLUMN valid_precision SET NOT NULL, ALTER COLUMN valid_precision SET DEFAULT 'unknown', ALTER COLUMN window_claim_ids SET NOT NULL, ALTER COLUMN window_claim_ids SET DEFAULT '{{}}'"
         )
@@ -427,11 +406,6 @@ def upgrade() -> None:
           valid_precision NOT IN ('day','month','quarter','year') OR
           ((valid_from IS NULL OR valid_from AT TIME ZONE 'UTC'=date_trunc(valid_precision::text,valid_from AT TIME ZONE 'UTC'))
            AND (valid_until IS NULL OR valid_until AT TIME ZONE 'UTC'=date_trunc(valid_precision::text,valid_until AT TIME ZONE 'UTC'))))""")
-        # Conservatively inventory old transcripts through all surviving fact evidence.
-        op.execute(f"""UPDATE {kind}_adjudications a SET consumed_claim_ids=ARRAY(
-          SELECT DISTINCT id FROM (SELECT a.triggering_claim_id AS id UNION ALL
-            SELECT e.claim_id FROM {kind}_evidence e WHERE e.deployment_id=a.deployment_id AND e.{kind}_id=a.{kind}_id) ids
-          WHERE id IS NOT NULL ORDER BY id)""")
 
     apply_view_ddl(sql=FACT_WINDOWS_VIEW_DDL)
     op.execute("DROP FUNCTION memory_v1.facts_as_of(timestamptz,timestamptz,integer)")

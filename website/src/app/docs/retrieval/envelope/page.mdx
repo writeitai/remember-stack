@@ -68,9 +68,12 @@ permission to assume the fact held at every date. `ingested_at` and
 `invalidated_at` describe when the engine believed it, not when it happened.
 
 A `possible` match means incomplete dates have not ruled it out. It is not a
-stored dispute flag. For example: "Three wins are dated to 2022; one additional
-win has no accepted date." Context results are bounded candidates, so their
-length never proves an exhaustive count.
+stored dispute flag. Fact-grain operations (`facts_context`, relation and
+observation lookups) return possible matches in the same list as confirmed
+ones, each flagged; only the published strict SQL view `facts_current` and the
+live graph exclude them. For example: "Three wins are dated to 2022; one
+additional win has no accepted date." Context results are bounded candidates,
+so their length never proves an exhaustive count.
 
 There is **no** `confidence` field on the shipped fact record.
 

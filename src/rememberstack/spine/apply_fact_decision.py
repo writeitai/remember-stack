@@ -34,11 +34,14 @@ def apply_fact_decision(
     connection: Connection,
     snapshot: dict[str, Any],
     decision: FactApplicationDecision,
+    method: str = "small_model",
 ) -> dict[str, Any]:
     """Apply only a revalidated prepared snapshot on the caller's locked transaction.
 
     The caller commits this together with the application receipt. There is no
     independent correction transaction, evidence min/max, or date identity gate.
+    ``method`` is the existing transcript vocabulary: ``small_model`` for an
+    inferred answer, ``novelty_gate`` for the deterministic empty-candidate case.
     """
     kind = snapshot["kind"]
     if kind not in ("relation", "observation"):
@@ -48,7 +51,7 @@ def apply_fact_decision(
         if kind == "relation"
         else ("observations", "observation_id")
     )
-    pointer, evidence = f"support_{kind}_id", f"{kind}_evidence"
+    pointer = f"support_{kind}_id"
     deployment_id, application_id = (
         _uuid(snapshot["deployment_id"]),
         _uuid(snapshot["application_id"]),
@@ -56,10 +59,6 @@ def apply_fact_decision(
     facts = {_uuid(row["fact_id"]): row for row in snapshot["facts"]}
     claims = {_uuid(row["claim_id"]): row for row in snapshot["claims"]}
     assertions = {_uuid(row["application_id"]): row for row in snapshot["assertions"]}
-    links = {
-        (_uuid(row["fact_id"]), _uuid(row["claim_id"])): row
-        for row in snapshot["evidence"]
-    }
     scope = ApplicationScope(
         incoming_application_id=application_id,
         fact_ids=frozenset(facts),
@@ -68,9 +67,6 @@ def apply_fact_decision(
             key: _uuid(row[pointer]) if row[pointer] else None
             for key, row in assertions.items()
         },
-        legacy_links=frozenset(
-            key for key, row in links.items() if row["legacy_stance"] is not None
-        ),
     )
     validate_application_scope(decision=decision, scope=scope)
     for assertion in assertions.values():
@@ -187,37 +183,6 @@ def apply_fact_decision(
         )
         moved_claim = _uuid(assertions[move.application_id]["claim_id"])
         pairs.update(((move.expected_fact_id, moved_claim), (destination, moved_claim)))
-        changed.update((move.expected_fact_id, destination))
-    for move in decision.legacy_support_moves:
-        destination = resolve_fact_reference(
-            reference=move.target, application_id=application_id
-        )
-        stance = links[(move.expected_fact_id, move.claim_id)]["legacy_stance"]
-        connection.execute(
-            text(
-                f"UPDATE {evidence} SET legacy_stance=NULL WHERE deployment_id=:deployment_id AND {id_column}=:source AND claim_id=:moved_claim"
-            ),
-            {**params, "source": move.expected_fact_id, "moved_claim": move.claim_id},
-        )
-        connection.execute(
-            text(f"""INSERT INTO {evidence}(deployment_id,{id_column},claim_id,doc_id,stance,normalizer_version,legacy_stance)
-            SELECT :deployment_id,:destination,claim_id,doc_id,CAST(:stance AS evidence_stance),:normalizer_version,CAST(:stance AS evidence_stance)
-            FROM claims WHERE deployment_id=:deployment_id AND claim_id=:moved_claim
-            ON CONFLICT ({id_column},claim_id) DO UPDATE SET legacy_stance=
-              CASE WHEN {evidence}.legacy_stance='supports' OR excluded.legacy_stance='supports'
-                   THEN 'supports'::evidence_stance ELSE excluded.legacy_stance END
-        """),
-            {
-                **params,
-                "destination": destination,
-                "moved_claim": move.claim_id,
-                "stance": stance,
-                "normalizer_version": snapshot["normalizer_version"],
-            },
-        )
-        pairs.update(
-            ((move.expected_fact_id, move.claim_id), (destination, move.claim_id))
-        )
         changed.update((move.expected_fact_id, destination))
     replacements = [(update.target, update.window) for update in decision.updates]
     if decision.window is not None:
@@ -358,7 +323,7 @@ def apply_fact_decision(
         connection.execute(
             text(f"""INSERT INTO {kind}_adjudications(adjudication_id,deployment_id,{id_column},
             outcome,method,confidence,triggering_claim_id,features,adjudicator_version,consumed_claim_ids,related_{id_column})
-            VALUES (:adjudication_id,:deployment_id,:fact_id,CAST(:outcome AS adjudication_outcome),'small_model',
+            VALUES (:adjudication_id,:deployment_id,:fact_id,CAST(:outcome AS adjudication_outcome),CAST(:method AS adjudication_method),
                     :confidence,:claim_id,CAST(:features AS jsonb),:adjudicator_version,:consumed_claim_ids,:related_fact_id)
         """),
             {
@@ -373,6 +338,7 @@ def apply_fact_decision(
                 if fact_id in grouped
                 else "noop",
                 "confidence": decision.confidence,
+                "method": method,
                 "features": canonical_json(features),
                 "adjudicator_version": snapshot["adjudicator_version"],
                 "consumed_claim_ids": sorted(claims),
@@ -406,7 +372,7 @@ def _recount_link(
     claim_id: UUID,
     normalizer_version: str,
 ) -> None:
-    """Aggregate assertion pointers plus the retained legacy stance for one link."""
+    """Aggregate the surviving assertion pointers for one fact/claim link."""
     evidence, id_column, pointer = (
         f"{kind}_evidence",
         f"{kind}_id",
@@ -422,8 +388,6 @@ def _recount_link(
         connection.execute(
             text(f"""SELECT support_stance::text FROM fact_applications
         WHERE deployment_id=:deployment_id AND {pointer}=:fact_id AND claim_id=:claim_id
-        UNION ALL SELECT legacy_stance::text FROM {evidence}
-        WHERE deployment_id=:deployment_id AND {id_column}=:fact_id AND claim_id=:claim_id AND legacy_stance IS NOT NULL
     """),
             params,
         ).scalars()
@@ -438,8 +402,8 @@ def _recount_link(
         return
     params["stance"] = "supports" if "supports" in stances else "contradicts"
     connection.execute(
-        text(f"""INSERT INTO {evidence}(deployment_id,{id_column},claim_id,doc_id,stance,normalizer_version,legacy_stance)
-      SELECT :deployment_id,:fact_id,claim_id,doc_id,CAST(:stance AS evidence_stance),:normalizer_version,NULL
+        text(f"""INSERT INTO {evidence}(deployment_id,{id_column},claim_id,doc_id,stance,normalizer_version)
+      SELECT :deployment_id,:fact_id,claim_id,doc_id,CAST(:stance AS evidence_stance),:normalizer_version
       FROM claims WHERE deployment_id=:deployment_id AND claim_id=:claim_id
       ON CONFLICT ({id_column},claim_id) DO UPDATE SET stance=excluded.stance
     """),

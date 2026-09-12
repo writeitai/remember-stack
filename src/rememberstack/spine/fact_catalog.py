@@ -90,15 +90,6 @@ class FactCatalog:
                 )
                 connection.commit()
 
-    def converting(self, *, deployment_id: UUID) -> bool:
-        """Read the maintenance fence without opening serving or changing claims."""
-        from rememberstack.spine.fact_window_readiness import fact_windows_converting
-
-        with self._engine.connect() as connection:
-            return fact_windows_converting(
-                connection=connection, deployment_id=deployment_id
-            )
-
     def application_changes(
         self, *, deployment_id: UUID, application_id: UUID
     ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:

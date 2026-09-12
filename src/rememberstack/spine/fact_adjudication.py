@@ -67,7 +67,6 @@ belief in the old fact. Distinct identities may overlap. Empty windows are inval
 
 An A→B→A split requires seeing the original assertions and explicitly assigning
 support: support_moves names an application_id, its expected_fact_id, and target.
-legacy_support_moves moves one supplied whole-claim link with legacy_stance only.
 Do not automatically move evidence by date or publication order. Each new handle
 must receive evidence; only supplied facts/claims/assertions are admissible. The
 incoming application is assigned by target, not a support move. Use contradict_with
@@ -200,9 +199,6 @@ class FactAdjudicator:
                 root=root,
                 members=members,
                 application=app,
-                include_withdrawn=self._converting(
-                    connection=connection, deployment_id=deployment_id
-                ),
             )
             digest = snapshot_hash(snapshot=snapshot)
             # Reload the application after its row lock; a concurrent publication can
@@ -226,9 +222,18 @@ class FactAdjudicator:
                     else None,
                 )
             attempt_id = uuid4()
+            # With no candidate facts there is nothing to compare: the only valid
+            # answer is a new identity, so it is recorded here without a model
+            # call, under the same attempt, fingerprint and re-read checks.
+            decision = (
+                None
+                if snapshot["facts"]
+                else _sole_new_fact(application_id=UUID(str(app["application_id"])))
+            )
             connection.execute(
                 text("""UPDATE fact_applications SET attempt_id=:attempt,input_hash=:hash,
-                prepared=CAST(:prepared AS jsonb),decision=NULL,input_claim_ids=:claims
+                prepared=CAST(:prepared AS jsonb),decision=CAST(:decision AS jsonb),
+                input_claim_ids=:claims
                 WHERE application_id=:id AND applied_at IS NULL
             """),
                 {
@@ -236,6 +241,7 @@ class FactAdjudicator:
                     "attempt": attempt_id,
                     "hash": digest,
                     "prepared": canonical_json(snapshot),
+                    "decision": decision.model_dump_json() if decision else None,
                     "claims": [
                         UUID(str(row["claim_id"])) for row in snapshot["claims"]
                     ],
@@ -246,18 +252,8 @@ class FactAdjudicator:
                 attempt_id=attempt_id,
                 input_hash=digest,
                 inputs=json.loads(canonical_json(snapshot)),
-                decision=None,
+                decision=decision,
             )
-
-    @staticmethod
-    def _converting(*, connection: Any, deployment_id: UUID) -> bool:
-        """Read the fenced conversion state; ordinary new stores are already ready."""
-        return connection.execute(
-            text(
-                "SELECT fact_window_generation IS NULL FROM deployments WHERE deployment_id=:id"
-            ),
-            {"id": deployment_id},
-        ).scalar_one()
 
     def apply(
         self, *, deployment_id: UUID, subject_entity_id: UUID, application_id: UUID
@@ -323,9 +319,6 @@ class FactAdjudicator:
                 root=root,
                 members=members,
                 application=app,
-                include_withdrawn=self._converting(
-                    connection=connection, deployment_id=deployment_id
-                ),
             )
             current = (
                 connection.execute(
@@ -358,7 +351,10 @@ class FactAdjudicator:
             try:
                 with connection.begin_nested():
                     return apply_fact_decision(
-                        connection=connection, snapshot=snapshot, decision=decision
+                        connection=connection,
+                        snapshot=snapshot,
+                        decision=decision,
+                        method="small_model" if snapshot["facts"] else "novelty_gate",
                     )
             except ValueError as error:
                 # Roll back all attempted effects, but commit removal of the invalid
@@ -373,3 +369,15 @@ class FactAdjudicator:
         raise ApplicationInputChanged(
             f"invalid adjudication answer rejected: {invalid_answer}"
         )
+
+
+def _sole_new_fact(*, application_id: UUID) -> FactApplicationDecision:
+    """The fixed answer for an empty candidate set; the transcript marks it novelty_gate."""
+    return FactApplicationDecision(
+        target=FactReference(new_handle="assertion"),
+        new_facts=(
+            NewFact(handle="assertion", assertion_application_id=application_id),
+        ),
+        confidence=1.0,
+        rationale="No candidate facts on this entity; the assertion is a new identity.",
+    )

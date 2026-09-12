@@ -430,9 +430,8 @@ WITH version_claims AS (
  JOIN chunks ch ON ch.chunk_id=cc.chunk_id
  WHERE cl.deployment_id=:deployment_id AND ch.deployment_id=:deployment_id
    AND ch.version_id=:version_id
-   AND ((SELECT fact_window_generation IS NULL FROM deployments WHERE deployment_id=:deployment_id)
-        OR (ch.representation_id=:representation_id
-            AND ch.chunker_version=:chunker_version AND cl.extractor_version=:extractor_version))
+   AND ch.representation_id=:representation_id
+   AND ch.chunker_version=:chunker_version AND cl.extractor_version=:extractor_version
 ), expected AS (
  SELECT cl.*,n.normalizer_version AS receipt,x->>'kind' AS kind,(x->>'ordinal')::int AS ordinal
  FROM version_claims cl LEFT JOIN normalization_outputs n ON n.deployment_id=:deployment_id

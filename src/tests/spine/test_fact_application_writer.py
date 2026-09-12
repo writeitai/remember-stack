@@ -487,12 +487,12 @@ def test_stale_embedding_does_not_discard_other_paid_vectors(
 
 
 @pytest.mark.parametrize("kind", ["relation", "observation"])
-def test_strict_lookup_reports_incomplete_dates_without_asserting_them(
+def test_lookup_returns_undated_candidates_flagged_as_possible(
     database_engine: Engine, kind: AssertionKind
 ) -> None:
-    """At lookup returns the dated fact and a boundary for the undated candidate."""
+    """At lookup returns both facts; the undated one is flagged, not dropped."""
     from rememberstack.adapters.postgres_p1 import PostgresP1Index
-    from rememberstack.model import NegativeKind
+    from rememberstack.model.fact_windows import TemporalMatch
     from rememberstack.surfaces.query_engine import QueryEngine
 
     case = WriterCase(engine=database_engine)
@@ -525,8 +525,111 @@ def test_strict_lookup_reports_incomplete_dates_without_asserting_them(
             deployment_id=case.dep, entity_id=case.subject, valid_at=at
         )
     )
-    assert [fact.fact_id for fact in result.facts] == [known]
-    assert result.negative is not None and result.negative.kind == NegativeKind.BOUNDARY
-    assert result.truncation is not None and not result.truncation.total_is_exact
+    matches = {fact.fact_id: fact.temporal_match for fact in result.facts}
+    assert matches[known] is TemporalMatch.CONFIRMED
+    assert set(matches.values()) == {TemporalMatch.CONFIRMED, TemporalMatch.POSSIBLE}
+    assert len(matches) == 2
+    assert result.negative is None and result.truncation is None
     assert result.temporal_scope is not None
     assert result.temporal_scope.evaluated_at > at
+
+
+def test_empty_candidate_set_is_decided_without_the_model(
+    database_engine: Engine,
+) -> None:
+    """A first assertion on an entity needs no inference; the transcript says so."""
+    from rememberstack.adapters.testing import NoopCostMeter
+    from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+    from rememberstack.spine.fact_adjudication import FactAdjudicator
+
+    case = WriterCase(engine=database_engine)
+    case.stage(day=10)
+
+    def refuse(prompt: str, type_name: str) -> dict[str, object]:
+        raise AssertionError(f"unexpected model call for {type_name}")
+
+    writer = FactAdjudicator(
+        engine=database_engine,
+        model_provider=FakeModelProvider(generate_router=refuse),
+        settings=FactAdjudicationSettings(),
+    )
+    drained = writer.drain(
+        deployment_id=case.dep,
+        subject_entity_id=case.subject,
+        meter=NoopCostMeter(),
+        call_key="test",
+    )
+    assert len(drained) == 1
+    with database_engine.connect() as connection:
+        transcript = connection.execute(
+            text(
+                "SELECT method::text,outcome::text FROM observation_adjudications WHERE deployment_id=:dep"
+            ),
+            {"dep": case.dep},
+        ).all()
+    assert [tuple(row) for row in transcript] == [("novelty_gate", "add")]
+    # With one candidate now present, the next assertion must be inferred.
+    case.stage(day=12)
+    with pytest.raises(AssertionError, match="unexpected model call"):
+        writer.drain(
+            deployment_id=case.dep,
+            subject_entity_id=case.subject,
+            meter=NoopCostMeter(),
+            call_key="test",
+        )
+
+
+def test_exact_triple_is_nominated_ahead_of_ranked_lookalikes(
+    database_engine: Engine,
+) -> None:
+    """Full-text rank alone can push the same triple out of the window; the exact tier cannot."""
+    from uuid import uuid4
+
+    case = WriterCase(engine=database_engine)
+    exact = uuid4()
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """INSERT INTO relations(relation_id,deployment_id,subject_entity_id,predicate,object_entity_id,normalizer_version)
+                VALUES(:id,:dep,:subject,'related_to',:object,'test')"""
+            ),
+            {
+                "id": exact,
+                "dep": case.dep,
+                "subject": case.subject,
+                "object": case.object,
+            },
+        )
+        for index in range(30):
+            decoy = uuid4()
+            connection.execute(
+                text(
+                    """INSERT INTO entities(entity_id,deployment_id,canonical_name,normalized_name)
+                    VALUES(:entity,:dep,:name,:name)"""
+                ),
+                {
+                    "entity": decoy,
+                    "dep": case.dep,
+                    "name": f"Riverside Cup Riverside Cup Riverside Cup Nate {index}",
+                },
+            )
+            connection.execute(
+                text(
+                    """INSERT INTO relations(relation_id,deployment_id,subject_entity_id,predicate,object_entity_id,normalizer_version)
+                    VALUES(:id,:dep,:subject,'related_to',:object,'test')"""
+                ),
+                {
+                    "id": uuid4(),
+                    "dep": case.dep,
+                    "subject": case.subject,
+                    "object": decoy,
+                },
+            )
+    case.stage(day=10, kind="relation")
+    prepared = case.writer.prepare(
+        deployment_id=case.dep, subject_entity_id=case.subject
+    )
+    assert prepared is not None
+    nominated = [fact["fact_id"] for fact in prepared.inputs["facts"]]
+    assert str(exact) in nominated
+    assert len(nominated) == 20 and prepared.inputs["potentially_truncated"]

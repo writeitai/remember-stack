@@ -294,3 +294,44 @@ current pages. The same proof includes a tombstoned compiled artifact, which is
 included explicitly in the erasure path inventory. Ordinary checkout classification
 continues to exclude tombstoned artifacts. No new erasure store or scheduler is
 introduced.
+
+## No existing-store conversion (2026-09-11)
+
+The operator decided that stores populated before D118 are recreated, not
+converted: the product is unreleased and no populated deployment needs the
+in-place path. The design and contract now state this as a scope boundary. The
+implemented conversion was withdrawn on the same branch. Concretely this removed
+the deployment readiness column and the serving/intake fence it drove in the
+query engine, the query-role connection factory, forget admission and every K
+compile and commit step; the maintenance seeder and verifier and their CLI; the
+conversion branches in the E3 follow-up handler and the K forget driver; the
+snapshot mode that admitted system-closed facts as candidates; the barrier SQL
+that spanned retired extractor generations; and the legacy evidence stance with
+its whole-claim support move in the decision schema. The migration now refuses a
+database that holds claims instead of clearing its windows.
+
+Three smaller changes landed with it, each reasoned here so a later reader can
+tell a design rule from a tuning choice:
+
+- **Empty candidate set decides without the model.** When the entity has no
+  candidate facts there is nothing to compare; the only valid answer is a new
+  fact. Preparation records that answer itself under the same attempt and
+  fingerprint checks, and the transcript uses `novelty_gate`. This restores the
+  cheapest shortcut main had without restoring any text-equality merge.
+- **Exact matches are always nominated.** Full-text ranking alone could push
+  the same-triple relation or identical statement out of the twenty-fact window
+  on a busy entity, and those are the likeliest identity candidates. They are
+  now the first tier; ranking fills the rest. Nomination only; no identity rule.
+- **Direct lookups return possible matches flagged instead of dropping them.**
+  Facts context already returned undated facts marked `possible`; the relation
+  and observation lookups dropped them and reported only a count. The same
+  question gave different answers through two surfaces. Both now return the
+  flagged list. The strict published SQL view keeps excluding them.
+
+The real-Git purge fix found during the conversion work is not conversion
+specific: a compiled page whose file is already absent from the checkout (a
+retired page removed by an ordinary K cycle) made the purger stage a missing
+path. The fix and its real-Git test stay, exercised through that ordinary path.
+
+Points that are sound on paper but need observation on real corpora are kept in
+[the watch list](mutable_fact_windows_watch_list.md).

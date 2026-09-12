@@ -164,39 +164,12 @@ quickstart deployment—not for backup or restore. Production portability uses
 native store tools and preserves the hard-forget manifest root first.
 
 
-## Converting an existing fact store to chosen world dates
+## Fact stores created before chosen world dates
 
-Migration `p9_30_0051` changes the meaning of fact dates. Stop serving and intake,
-and drain old work before running setup. The migration preserves claims, fact
-identities and system belief history, clears ungrounded legacy world dates, and
-leaves populated deployments closed until conversion is verified. Empty stores
-start ready. Automatic downgrade is refused because it would lose the new
-application receipts and restore incompatible date semantics.
-
-Inside the engine's internal operations environment:
-
-```bash
-remember ops fact-windows seed --deployment DEPLOYMENT_UUID --batch-size 500
-```
-
-Repeat until `enumeration_complete` is true. Run the usual normalize, fact
-adjudication and P1 workers: replay uses their existing steady lane and cost
-ledger. It reprocesses retained claims, including historical extractor outputs;
-it does not re-extract documents. Resume failures through the existing work
-ledger and dead-letter replay commands. Model calls incur the usual ingestion
-costs.
-
-```bash
-remember ops fact-windows verify --deployment DEPLOYMENT_UUID
-```
-
-The verifier reports incomplete inventories and keeps serving closed until source
-receipts, accepted applications, version barriers, evidence counts and projection
-repairs are complete. Only a successful verification opens the generation. A
-missing source occurrence blocks conversion explicitly. Older compiled K pages
-remain stale until the deployment's K driver rebuilds them.
-
-If a source is hard-forgotten while conversion is paused, affected generated K
-bodies are removed before Git history is purged. Their records remain stale and
-the normal K driver can rebuild them after conversion. This lets erasure finish
-without publishing summaries from partially converted facts.
+Migration `p9_30_0051` changes the meaning of fact dates: a missing end no longer
+means "still true", and dates are world time chosen by adjudication rather than
+copied from source time. Earlier stores are not converted in place. The migration
+refuses to run against a database that already holds claims, and it refuses
+downgrade because that would drop the application receipts and restore the old
+meaning. Recreate the deployment and ingest its sources again. Disposable
+quickstart deployments use `docker compose down --volumes` above.

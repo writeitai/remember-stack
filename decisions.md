@@ -5735,6 +5735,14 @@ remain requirements. Relation identity must precede attachment; distinct events
 can overlap, so universal same-triple interval exclusion is removed from the
 replacement contract. Extra model use for contextual identity must be measured.
 
+**Existing stores (2026-09-11).** Stores populated before this decision are
+recreated and re-ingested, not converted in place; the migration refuses a
+database that already holds claims. The in-place conversion built during
+implementation was withdrawn as unneeded for an unreleased product
+([design §8](plan/designs/mutable_fact_windows_design.md#8-existing-stores-and-deployment)).
+Points to observe on real corpora are kept in
+[the watch list](plan/analysis/mutable_fact_windows_watch_list.md).
+
 **Authority and delivery.** [D118 design](plan/designs/mutable_fact_windows_design.md)
 contains the full concepts, semantics, alternatives, security/recovery obligations
 and explicit supersession map for D106/D107/D110–D113. [Analysis](plan/analysis/lean_mutable_fact_windows.md)

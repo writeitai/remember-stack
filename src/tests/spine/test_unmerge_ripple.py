@@ -120,7 +120,20 @@ def _relation(
         object_id=object_,
     )
     day = 12 if prior else 10
-    claim, app = case.stage(day=day, kind="relation", predicate="works_for")
+    # The first spell on an entity is decided deterministically (contract §8):
+    # no model call, so its window comes only from the normalizer's attribution.
+    # Leave it undated so the successor's explicit cap is the first end date.
+    claim, app = case.stage(
+        day=day, kind="relation", predicate="works_for", uses_claim_window=bool(prior)
+    )
+    if prior is None:
+        case.decide(
+            decision={
+                "target": {"new_handle": "job"},
+                "new_facts": [{"handle": "job", "assertion_application_id": str(app)}],
+            }
+        )
+        return UUID(case.apply(app=app)["fact_id"])
     updates = (
         []
         if prior is None

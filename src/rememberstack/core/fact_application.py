@@ -17,14 +17,13 @@ class ApplicationScope:
 
     The store constructs this only after checking deployment, resolved identities,
     and complete input fingerprints under locks. Original assertions are supplied
-    with their current destinations; legacy links have no assertion identity.
+    with their current destinations.
     """
 
     incoming_application_id: UUID
     fact_ids: frozenset[UUID]
     claim_ids: frozenset[UUID]
     assertion_targets: Mapping[UUID, UUID | None]
-    legacy_links: frozenset[tuple[UUID, UUID]]
 
 
 def new_fact_id(*, application_id: UUID, handle: str) -> UUID:
@@ -55,7 +54,6 @@ def validate_application_scope(
         decision.target,
         *(update.target for update in decision.updates),
         *(move.target for move in decision.support_moves),
-        *(move.target for move in decision.legacy_support_moves),
     )
     if any(
         reference.fact_id is not None and reference.fact_id not in scope.fact_ids
@@ -82,11 +80,3 @@ def validate_application_scope(
             raise ValueError("support move no longer matches its expected source")
         if move.expected_fact_id not in scope.fact_ids:
             raise ValueError("support source is outside the supplied facts")
-    for move in decision.legacy_support_moves:
-        if (move.expected_fact_id, move.claim_id) not in scope.legacy_links:
-            raise ValueError("legacy move must name a supplied whole-claim link")
-        if (
-            move.claim_id not in scope.claim_ids
-            or move.expected_fact_id not in scope.fact_ids
-        ):
-            raise ValueError("legacy move participants are outside the supplied scope")

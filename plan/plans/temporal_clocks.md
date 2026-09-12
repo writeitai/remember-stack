@@ -46,9 +46,11 @@ runtime or release approval. The private PostgreSQL writer probe verifies atomic
 correction, stale-source rejection and rollback. The focused pure suite passes
 37 tests; the first broader unit run reports 1510 passed, 18 failed, 6 skipped.
 Remaining work includes supported PostgreSQL migration/concurrency/erasure tests,
-projection recovery, conversion verification, consumer/generation cutover and
+projection recovery, consumer/generation cutover and
 final independent runtime reviews. Serving populated stores remains fenced.
-No conversion, merge or release has been performed.
+No merge or release has been performed. Existing stores are recreated rather than
+converted (decided 2026-09-11); the [watch list](../analysis/mutable_fact_windows_watch_list.md)
+names what to observe once real corpora run through the replacement runtime.
 
 ### A. Concrete storage and application contract
 
@@ -67,7 +69,7 @@ and source lifecycle wherever possible. Independent review must cover concurrent
 helpers, late inference replies, identity changes and forget before code lands.
 The withdrawn D110/D113 SQL is not a shortcut through this gate.
 
-### B. Ordinary mutable-fact adjudication and conversion
+### B. Ordinary mutable-fact adjudication
 
 Implement both relation and observation paths together with their workers,
 barriers, readiness, source withdrawal and forget participation. Stage relations
@@ -76,10 +78,8 @@ identity vetoes, and replace the entire chosen window through ordinary decisions
 Support explicit history splits/evidence assignments with atomic result receipts.
 Remove the same-triple overlap exclusion without allowing retry duplicates.
 
-Convert existing source-time fact windows only when evidence grounds world time;
-otherwise preserve unknown dates. Retain fact IDs where identity remains valid.
-Prove bounded restartable conversion, exclusive cutover and all-writer/readiness
-coverage. Do not expose partially converted windows to existing consumers.
+Stores populated before this contract are recreated, not converted (D118 §8,
+decided 2026-09-11); the migration refuses a database that already holds claims.
 
 Required tests: same-event date corrected earlier and later; extended/reopened
 end; dated/undated contextual identity; distinct same-day same-triple events;
@@ -90,7 +90,7 @@ full migration, worker, surface and Compose checks for the integrated change.
 
 ### C. Retrieval, profiles and consumer cutover
 
-**Release blocker:** do not enable B's data conversion or serving cutover without
+**Release blocker:** do not enable B's serving cutover without
 C's historical/achievement caller routing, prompts and versioned response changes.
 Every served consumer must use the compatible contract; unsupported legacy
 generations must be upgraded or refused at the cutover. Completed events must not

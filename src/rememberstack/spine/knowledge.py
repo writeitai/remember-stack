@@ -106,8 +106,6 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import PredicateBeatRuleParams
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ScopeInterestsRuleParams
-from rememberstack.spine.fact_window_readiness import fact_windows_converting
-from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.work_ledger import enqueue_on
 
 _RULE_ADAPTER = TypeAdapter(KnowledgeRuleParams)
@@ -889,13 +887,6 @@ class KnowledgeControlPlane:
                 if not released:
                     raise KnowledgeCompilationError("Plane-K commit lease was lost")
 
-    def fact_windows_converting(self, *, deployment_id: UUID) -> bool:
-        """Tell the erasure driver whether compilation is fenced by conversion."""
-        with self._engine.connect() as connection:
-            return fact_windows_converting(
-                connection=connection, deployment_id=deployment_id
-            )
-
     def compile_artifacts(
         self, *, deployment_id: UUID
     ) -> tuple[KnowledgeCompileArtifact, ...]:
@@ -918,16 +909,12 @@ class KnowledgeControlPlane:
             )
 
     def artifact_path_states(
-        self, *, deployment_id: UUID, include_tombstoned: bool = False
+        self, *, deployment_id: UUID
     ) -> tuple[KnowledgeArtifactPathState, ...]:
-        """Classify checkout paths; erasure also inventories retired artifacts."""
+        """Return body and curation paths used to classify checkout Markdown files."""
         with self._engine.connect() as connection:
             rows = connection.execute(
-                _SELECT_ARTIFACT_PATH_STATES,
-                {
-                    "deployment_id": deployment_id,
-                    "include_tombstoned": include_tombstoned,
-                },
+                _SELECT_ARTIFACT_PATH_STATES, {"deployment_id": deployment_id}
             ).mappings()
             return tuple(
                 KnowledgeArtifactPathState.model_validate(dict(row)) for row in rows
@@ -1492,9 +1479,6 @@ class KnowledgeControlPlane:
         if len(compilation_ids) != len(compilations):
             raise KnowledgeCompilationError("pending cycle repeats a compilation ID")
         with self._engine.begin() as connection:
-            require_fact_windows_ready(
-                connection=connection, deployment_id=compilations[0].deployment_id
-            )
             for compilation in compilations:
                 citations = _unique_citations(citations=compilation.citations)
                 self._validate_citations(
@@ -1559,9 +1543,6 @@ class KnowledgeControlPlane:
         if len({item.deployment_id for item in compilations}) != 1:
             raise KnowledgeCompilationError("commit cycle crosses deployments")
         with self._engine.begin() as connection:
-            require_fact_windows_ready(
-                connection=connection, deployment_id=compilations[0].deployment_id
-            )
             to_finalize: list[
                 tuple[KnowledgeCompilationWrite, tuple[KnowledgeCitation, ...]]
             ] = []
@@ -2651,11 +2632,6 @@ class KnowledgeControlPlane:
         child_summary_hashes: tuple[str, ...] | None = None,
     ) -> KnowledgeInputSnapshot:
         """Assemble a manifest on an existing connection."""
-        deployment_id = connection.execute(
-            text("SELECT deployment_id FROM knowledge_artifacts WHERE artifact_id=:id"),
-            {"id": artifact_id},
-        ).scalar_one()
-        require_fact_windows_ready(connection=connection, deployment_id=deployment_id)
         rule_rows = tuple(
             connection.execute(
                 _SELECT_ARTIFACT_RULES, {"artifact_id": artifact_id}
@@ -4053,8 +4029,7 @@ _SELECT_ARTIFACT_PATH_STATES = text(
     """
     SELECT artifact_id, git_path, page_kind::text AS page_kind, curation_path
     FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id
-      AND (:include_tombstoned OR status <> 'tombstoned')
+    WHERE deployment_id = :deployment_id AND status <> 'tombstoned'
     ORDER BY git_path
     """
 )

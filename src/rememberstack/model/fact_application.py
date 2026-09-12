@@ -70,16 +70,6 @@ class AssertionSupportMove(BaseModel):
     target: FactReference
 
 
-class LegacySupportMove(BaseModel):
-    """An explicit whole-claim move for evidence with no original application."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    claim_id: UUID
-    expected_fact_id: UUID
-    target: FactReference
-
-
 class FactApplicationDecision(BaseModel):
     """Identity, date changes and support assignments in one ordinary decision.
 
@@ -95,7 +85,6 @@ class FactApplicationDecision(BaseModel):
     window: GroundedFactWindow | None = None
     updates: tuple[FactWindowUpdate, ...] = ()
     support_moves: tuple[AssertionSupportMove, ...] = ()
-    legacy_support_moves: tuple[LegacySupportMove, ...] = ()
     contradict_with: tuple[UUID, ...] = ()
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     rationale: _NonEmpty
@@ -110,15 +99,10 @@ class FactApplicationDecision(BaseModel):
             self.target,
             *(update.target for update in self.updates),
             *(move.target for move in self.support_moves),
-            *(move.target for move in self.legacy_support_moves),
         )
         assigned_handles = {
             target.new_handle
-            for target in (
-                self.target,
-                *(move.target for move in self.support_moves),
-                *(move.target for move in self.legacy_support_moves),
-            )
+            for target in (self.target, *(move.target for move in self.support_moves))
             if target.new_handle is not None
         }
         if assigned_handles != handles:
@@ -138,11 +122,6 @@ class FactApplicationDecision(BaseModel):
         moved = [move.application_id for move in self.support_moves]
         if len(set(moved)) != len(moved):
             raise ValueError("an assertion cannot be moved twice")
-        legacy = [
-            (move.claim_id, move.expected_fact_id) for move in self.legacy_support_moves
-        ]
-        if len(set(legacy)) != len(legacy):
-            raise ValueError("a legacy claim link cannot be moved twice")
         if self.target.fact_id in self.contradict_with:
             raise ValueError("a fact cannot contradict itself")
         return self

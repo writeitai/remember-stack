@@ -20,7 +20,6 @@ _SCOPE = ApplicationScope(
     fact_ids=frozenset({_B}),
     claim_ids=frozenset({_C}),
     assertion_targets={_A: None, _D: _B},
-    legacy_links=frozenset({(_B, _C)}),
 )
 
 
@@ -79,7 +78,6 @@ def test_split_uses_original_assertion_and_checks_current_support() -> None:
         fact_ids=_SCOPE.fact_ids,
         claim_ids=_SCOPE.claim_ids,
         assertion_targets={_A: None, _D: None},
-        legacy_links=_SCOPE.legacy_links,
     )
     with pytest.raises(ValueError, match="expected source"):
         validate_application_scope(decision=decision, scope=stale)
