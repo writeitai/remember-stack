@@ -92,7 +92,6 @@ from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
-from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
@@ -212,15 +211,6 @@ def _with_surface[**P, T](
         @wraps(method)
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
             with open_surface_scope(surface=surface):
-                instance = args[0] if args else None
-                deployment_id = kwargs.get("deployment_id")
-                if isinstance(instance, QueryEngine) and isinstance(
-                    deployment_id, UUID
-                ):
-                    with instance._engine.connect() as connection:
-                        require_fact_windows_ready(
-                            connection=connection, deployment_id=deployment_id
-                        )
                 return method(*args, **kwargs)
 
         return wrapped
@@ -347,7 +337,6 @@ class QueryEngine:
             connection.exec_driver_sql("SELECT 1")
             yield connection
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def resolve(
         self,
         *,
@@ -425,7 +414,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def documents_about(
         self, *, deployment_id: UUID, entity: str, k: int = 20
     ) -> Envelope:
@@ -602,7 +590,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def chunk_neighbors(
         self, *, deployment_id: UUID, chunk_id: UUID, radius: int = 1
     ) -> Envelope:
@@ -1228,7 +1215,6 @@ class QueryEngine:
             }
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def lookup_relations(
         self,
         *,
@@ -1264,17 +1250,11 @@ class QueryEngine:
                 .mappings()
                 .all()
             )
-        candidates = tuple(_fact_result(row=row, kind="relation") for row in rows)
-        possible = sum(
-            fact.temporal_match is TemporalMatch.POSSIBLE for fact in candidates
-        )
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
-            facts=tuple(
-                fact
-                for fact in candidates
-                if fact.temporal_match is TemporalMatch.CONFIRMED
-            ),
+            facts=tuple(_fact_result(row=row, kind="relation") for row in rows),
             kind="relation",
         )
         return _envelope(
@@ -1288,22 +1268,7 @@ class QueryEngine:
             ),
             facts=facts,
             freshness=_freshness(),
-            truncation=Truncation(
-                truncated=False,
-                returned=len(facts),
-                estimated_total=len(candidates),
-                total_is_exact=False,
-                reason="incomplete_world_dates",
-            )
-            if possible
-            else None,
-            negative=Negative(
-                kind=NegativeKind.BOUNDARY,
-                explanation=f"{possible} additional candidate(s) have incomplete world dates; they are not confirmed matches",
-                workaround="use facts_context to inspect possible matches and their evidence",
-            )
-            if possible
-            else None
+            negative=None
             if facts
             else Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
@@ -1364,17 +1329,11 @@ class QueryEngine:
                 observation_ids=tuple(UUID(item) for item in nominated),
                 as_of=as_of,
             )
-        candidates = tuple(_fact_result(row=row, kind="observation") for row in rows)
-        possible = sum(
-            fact.temporal_match is TemporalMatch.POSSIBLE for fact in candidates
-        )
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
-            facts=tuple(
-                fact
-                for fact in candidates
-                if fact.temporal_match is TemporalMatch.CONFIRMED
-            ),
+            facts=tuple(_fact_result(row=row, kind="observation") for row in rows),
             kind="observation",
         )
         return _envelope(
@@ -1389,22 +1348,7 @@ class QueryEngine:
             facts=facts,
             freshness=_freshness(),
             dropped_by_hydration=dropped,
-            truncation=Truncation(
-                truncated=False,
-                returned=len(facts),
-                estimated_total=len(candidates),
-                total_is_exact=False,
-                reason="incomplete_world_dates",
-            )
-            if possible
-            else None,
-            negative=Negative(
-                kind=NegativeKind.BOUNDARY,
-                explanation=f"{possible} additional candidate(s) have incomplete world dates; they are not confirmed matches",
-                workaround="use facts_context to inspect possible matches and their evidence",
-            )
-            if possible
-            else None
+            negative=None
             if facts
             else Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
@@ -1588,7 +1532,6 @@ class QueryEngine:
             embedder_generation=self._embedder_generation,
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents.
 
@@ -1650,7 +1593,6 @@ class QueryEngine:
             freshness=_freshness(),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def transcript(
         self,
         *,
@@ -1721,7 +1663,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def transcript_relation(
         self, *, deployment_id: UUID, relation_id: UUID
     ) -> Envelope:
@@ -1765,7 +1706,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_claims(
         self,
         *,
@@ -1830,7 +1770,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def hydrate_chunks(
         self,
         *,
@@ -2000,7 +1939,6 @@ class QueryEngine:
         ranked = rerank_by_signal(items=items, signal=signal, ascending=ascending)
         return _envelope(grain=Grain.EVIDENCE, ranking=ranked, freshness=_freshness())
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def delta(
         self,
         *,
@@ -2082,7 +2020,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def pages_about(
         self,
         *,
@@ -2146,7 +2083,6 @@ class QueryEngine:
             ),
         )
 
-    @_with_surface(SurfaceCostKind.LIBRARY)
     def aggregate(
         self,
         *,

@@ -54,7 +54,6 @@ from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSIO
 from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
 from rememberstack.spine.fact_applications import register_version_applications_on
 from rememberstack.spine.fact_applications import version_applications_ready_on
-from rememberstack.spine.fact_window_readiness import fact_windows_converting
 
 
 class WorkLedgerSettings(BaseSettings):
@@ -391,9 +390,7 @@ class WorkLedger:
                     # Do not open a sibling barrier until its extract set has
                     # closed (extract barrier ready) — otherwise a partial
                     # D56 attach can look like a complete normalize set.
-                    if not fact_windows_converting(
-                        connection=connection, deployment_id=deployment_id
-                    ) and not _extract_barrier_ready(
+                    if not _extract_barrier_ready(
                         connection=connection,
                         deployment_id=deployment_id,
                         representation_id=representation_id,
@@ -1785,10 +1782,9 @@ _BARRIER_EXPECTED_CLAIMS = text(
     WHERE cl.deployment_id = :deployment_id
       AND c.deployment_id = :deployment_id
       AND c.version_id = :version_id
-      AND ((SELECT fact_window_generation IS NULL FROM deployments WHERE deployment_id=:deployment_id)
-           OR (c.representation_id = :representation_id
-               AND c.chunker_version = :chunker_version
-               AND cl.extractor_version = :extractor_version))
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     """
 )
 
@@ -1808,10 +1804,9 @@ _BARRIER_READY_CLAIMS = text(
     WHERE cl.deployment_id = :deployment_id
       AND c.deployment_id = :deployment_id
       AND c.version_id = :version_id
-      AND ((SELECT fact_window_generation IS NULL FROM deployments WHERE deployment_id=:deployment_id)
-           OR (c.representation_id = :representation_id
-               AND c.chunker_version = :chunker_version
-               AND cl.extractor_version = :extractor_version))
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version
+      AND cl.extractor_version = :extractor_version
     """
 )
 

@@ -52,7 +52,6 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
-from rememberstack.spine.fact_window_readiness import require_fact_windows_ready
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
@@ -583,9 +582,7 @@ def _query_role_connect_factory(*, engine: Engine):
     port = int(url.port or 5432)
 
     def connect() -> psycopg.Connection:
-        """Open as the deployment query role after the persistent conversion fence."""
-        with engine.connect() as connection:
-            require_fact_windows_ready(connection=connection)
+        """Open as the deployment query role with keyword connection args."""
         return psycopg.connect(
             host=host, port=port, dbname=database, user=role, password=password
         )

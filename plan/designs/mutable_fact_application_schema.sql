@@ -1,8 +1,6 @@
--- D118 target storage shape; NOT a standalone migration or automatic converter.
--- Expansion/conversion/defaults/checks must follow contract section 7 atomically
--- with respect to serving. Nullable expansion columns below are finalized there.
--- Apply only with serving/intake/workers stopped and legacy staging drained.
--- The implementation migration must also close its fact-generation readiness gate.
+-- D118 target storage shape; NOT a standalone migration.
+-- The implementation migration applies this only to a store with no claims
+-- (contract section 7); populated pre-D118 stores are recreated, not converted.
 -- The existing LABEL_RELATION stage uses source-owned application receipts as
 -- durable repair targets; no new queue or pipeline stage is introduced.
 ALTER TYPE public.processing_target ADD VALUE IF NOT EXISTS 'fact_application';
@@ -82,7 +80,7 @@ CREATE INDEX ix_fact_applications_observation_support
   ON public.fact_applications (deployment_id, support_observation_id, claim_id)
   WHERE support_observation_id IS NOT NULL;
 
--- No pending legacy rows are permitted at this maintenance boundary.
+-- No pending staging rows are permitted at this maintenance boundary.
 ALTER TABLE public.normalize_observation_staging
   ADD COLUMN application_id uuid NOT NULL,
   DROP CONSTRAINT normalize_observation_staging_pkey,
@@ -91,12 +89,6 @@ ALTER TABLE public.normalize_observation_staging
     REFERENCES public.fact_applications (deployment_id, application_id)
     ON DELETE CASCADE;
 ALTER TABLE public.normalize_observation_staging ALTER COLUMN statement DROP NOT NULL;
-ALTER TABLE public.relation_evidence
-  ADD COLUMN legacy_stance public.evidence_stance;
-ALTER TABLE public.observation_evidence
-  ADD COLUMN legacy_stance public.evidence_stance;
--- Conversion sets legacy_stance=stance on old links. New inserts leave it NULL;
--- application recount includes but never overwrites the retained legacy stance.
 
 ALTER TABLE public.relations
   ADD COLUMN valid_precision public.claim_valid_precision,
@@ -109,7 +101,7 @@ CREATE INDEX ix_observations_window_claims ON public.observations USING gin (win
 
 -- Drop the original relation exclusion by its catalog identity in the migration;
 -- it must not be replaced by any date/type-based uniqueness constraint.
--- After grounded conversion, install this exact CHECK on BOTH fact tables:
+-- Install this exact CHECK on BOTH fact tables:
 -- CHECK (
 --   (valid_precision = 'unknown' AND valid_from IS NULL AND valid_until IS NULL
 --      AND cardinality(window_claim_ids) = 0)
@@ -122,7 +114,7 @@ CREATE INDEX ix_observations_window_claims ON public.observations USING gin (win
 --      AND (valid_from IS NULL OR valid_until IS NULL OR valid_from < valid_until)
 --      AND cardinality(window_claim_ids) > 0)
 -- );
--- Never expose the expand/convert interval through an open readiness gate.
+-- The shape checks apply from the first row; there is no expand-then-convert interval.
 
 ALTER TABLE public.relation_adjudications
   ADD COLUMN consumed_claim_ids uuid[] NOT NULL DEFAULT '{}';

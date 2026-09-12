@@ -89,8 +89,13 @@ class WriterCase:
         day: int,
         kind: AssertionKind = "observation",
         predicate: str = "related_to",
+        uses_claim_window: bool = True,
     ) -> tuple[UUID, UUID]:
-        """Freeze one dated source assertion and stage its original output ordinal."""
+        """Freeze one dated source assertion and stage its original output ordinal.
+
+        ``uses_claim_window=False`` models a normalizer that did not attribute
+        the claim's dates to this assertion, so a new fact starts undated.
+        """
         claim = uuid4()
         instant = datetime(2022, 5, day, tzinfo=timezone.utc)
         with self.engine.begin() as connection:
@@ -110,7 +115,7 @@ class WriterCase:
             )
         item: dict[str, object] = {
             "subject": {"name": "Nate"},
-            "uses_claim_window": True,
+            "uses_claim_window": uses_claim_window,
         }
         if kind == "relation":
             item.update(predicate=predicate, object={"name": "Riverside Cup"})
@@ -145,6 +150,14 @@ class WriterCase:
             deployment_id=self.dep, subject_entity_id=self.subject
         )
         assert prepared is not None
+        if prepared.decision is not None:
+            # An empty candidate set is decided deterministically (contract §8):
+            # only a plain "new fact" request is compatible with that answer.
+            assert set(decision) <= {"target", "new_facts", "confidence", "rationale"}
+            new_facts = decision["new_facts"]
+            assert isinstance(new_facts, list) and isinstance(new_facts[0], dict)
+            assert decision["target"] == {"new_handle": new_facts[0]["handle"]}
+            return prepared.application_id
         answer = FactApplicationDecision.model_validate(
             {
                 "confidence": 0.95,

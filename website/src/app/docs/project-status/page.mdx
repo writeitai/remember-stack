@@ -21,8 +21,8 @@ Facts use one mutable chosen world-time window with explicit precision. Contextu
 adjudication handles identity and date corrections together; immutable source
 claims remain available as evidence. Retrieval distinguishes confirmed temporal
 matches from incomplete-date candidates. Entity descriptions and fact labels show
-dated history, and existing stores require verified retained-claim conversion
-before serving the new meaning. See [conversion operations](/docs/deployment#converting-an-existing-fact-store-to-chosen-world-dates).
+dated history. Stores created before this change are recreated, not converted;
+see [deployment](/docs/deployment#fact-stores-created-before-chosen-world-dates).
 
 ### Retrieval and agent surfaces
 
@@ -361,8 +361,9 @@ summaries use the chosen window without a stored state/event taxonomy or separat
 verdict dates. The evaluator generation is Full-v27; this change does not establish
 a benchmark score improvement.
 
-Existing stores must complete the retained-claim conversion and verification
-[described in deployment](/docs/deployment) before ingestion and fact reads reopen.
+Stores created before this change are recreated and re-ingested; the migration
+refuses a populated database rather than converting it
+([deployment](/docs/deployment#fact-stores-created-before-chosen-world-dates)).
 
 ## What landed after v0.6.0 (in v0.7.0; historical resolver generation)
 

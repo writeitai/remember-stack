@@ -305,22 +305,24 @@ the old per-endpoint compensation/checkpoint design is removed.
 
 ## 8. Existing stores and deployment
 
-Preserve existing fact IDs and historical evidence where their accepted identity
-remains supportable. Do not merely relabel source-time dates as world time. An
-existing date can survive only when evidence or a retained adjudication grounds
-it as world time; unrecoverable dates become unknown. Recoverable historical
-identity splits use ordinary adjudication and recorded evidence reassignment.
-
-The concrete migration must specify bounded progress, restart behavior, serving
-and intake fences, and readiness verification across every affected writer and
-reader. Migration does not require inventing kinds, evidence unions, seed
-ownership, or compensating operations. It must not serve a mixed interpretation
-of the same window columns during conversion.
+Stores created before this design hold fact dates whose meaning differs from the
+chosen window: a null end there meant "still true" and the endpoints were often
+copied from source time. Those values cannot be relabelled as world time, and
+re-deriving them would mean replaying every retained claim through the new
+adjudicator at ordinary model cost. This design does not convert such stores.
+The schema migration refuses to run against a deployment that already holds
+claims; the operator recreates the deployment and ingests its sources again.
+This is a documented scope boundary, not a deferred feature: an in-place
+conversion path was implemented, reviewed and then withdrawn on 2026-09-11
+because no populated store needs it while the product is unreleased, and
+carrying it added a serving fence, a second evidence-provenance mechanism and a
+replay/verification surface to every writer and reader
+([analysis](../analysis/mutable_fact_application_storage.md#no-existing-store-conversion-2026-09-11)).
 
 The removed experimental migrations were never released. There is no automatic
-downgrade promise for databases manually upgraded from the draft branch. They
-need an explicitly reviewed recovery path before use with a replacement schema.
-Ordinary upgrades from released main retain their separate acceptance gate.
+downgrade from this schema either: a downgrade would drop the application
+receipts and restore the old date meaning, so it raises instead. Disposable
+test databases are recreated rather than downgraded.
 
 ## 9. Alternatives, costs and security
 

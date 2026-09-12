@@ -882,53 +882,12 @@ def test_driver_reconciles_move_and_stamps_its_single_git_revision(
     assert row == ("work/moved-child.md", "work/moved-child.md.curation.md", "head-1")
 
 
-def test_forget_removes_current_compiled_bytes_while_conversion_is_closed(
-    graph: _CompileGraph,
+@pytest.mark.parametrize("retired", [False, True])
+def test_forget_purge_erases_history_without_restoring_absent_bodies(
+    graph: _CompileGraph, tmp_path: Path, retired: bool
 ) -> None:
-    """Skipping compilation alone would let the history purger restore forgotten bytes."""
-    remote = _GitRemote(files=graph.old_files)
-    compiler = _Compiler()
-    with graph.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
-            ),
-            {"dep": _DEPLOYMENT_ID},
-        )
-        connection.execute(
-            text(
-                "UPDATE knowledge_artifacts SET content_hash=NULL, inputs_hash=NULL, status='stale' WHERE artifact_id=:id"
-            ),
-            {"id": graph.child},
-        )
-    driver = KnowledgeCommitDriver(
-        control_plane=graph.control,
-        git_remote=remote,
-        compiler=compiler,
-        settings=KnowledgeCommitSettings(max_parallel_pages=1),
-    )
-    driver.recompile_after_forget(
-        deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
-    )
-    assert graph.paths_by_id[graph.child] not in remote.files
-    assert (
-        remote.files[graph.paths_by_id[graph.parent]]
-        == graph.old_files[graph.paths_by_id[graph.parent]]
-    )
-    assert remote.publish_calls == 1
-    driver.recompile_after_forget(
-        deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
-    )
-    assert remote.publish_calls == 1
-    with pytest.raises(RuntimeError, match="conversion is incomplete"):
-        driver.run_cycle(deployment_id=_DEPLOYMENT_ID, exclusions_by_artifact={})
-
-
-@pytest.mark.parametrize("artifact_status", ["stale", "tombstoned"])
-def test_conversion_forget_deletes_compiled_bytes_before_real_git_purge(
-    graph: _CompileGraph, tmp_path: Path, artifact_status: str
-) -> None:
-    """History erasure must not restore generated bodies, including retired pages."""
+    """History erasure re-adds only surviving bytes; a page an ordinary K cycle
+    already removed or rewrote must not come back through the purge commit."""
     repository = tmp_path / "truth"
     _git("init", "--quiet", "-b", "main", str(repository))
     _git("-C", str(repository), "config", "user.name", "Fixture")
@@ -938,38 +897,31 @@ def test_conversion_forget_deletes_compiled_bytes_before_real_git_purge(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     affected = repository / graph.paths_by_id[graph.child]
-    affected.write_text("UNIQUE_CONVERSION_FORGET_TOKEN\n", encoding="utf-8")
+    affected.write_text("UNIQUE_FORGET_TOKEN\n", encoding="utf-8")
     _commit(repository=repository, message="generated page with retained source")
-    with graph.engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE deployments SET fact_window_generation=NULL WHERE deployment_id=:dep"
-            ),
-            {"dep": _DEPLOYMENT_ID},
-        )
-        connection.execute(
-            text(
-                "UPDATE knowledge_artifacts SET content_hash=NULL, inputs_hash=NULL, status=CAST(:status AS knowledge_artifact_status) WHERE artifact_id=:id"
-            ),
-            {"id": graph.child, "status": artifact_status},
-        )
+    # The ordinary K cycle runs before the purge: it either recompiles the page
+    # without the forgotten source or retires it entirely.
+    if retired:
+        affected.unlink()
+        with graph.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE knowledge_artifacts SET status='tombstoned' WHERE artifact_id=:id"
+                ),
+                {"id": graph.child},
+            )
+        _commit(repository=repository, message="cycle retired the page")
+    else:
+        affected.write_text("sanitized body\n", encoding="utf-8")
+        _commit(repository=repository, message="cycle recompiled the page")
     remote = LocalGitRepository(
         repository=repository,
         path_catalog=ForgetCatalog(engine=graph.engine),
         author_name="Fixture",
         author_email="fixture@example.test",
     )
-    driver = KnowledgeCommitDriver(
-        control_plane=graph.control,
-        git_remote=remote,
-        compiler=_Compiler(),
-        settings=KnowledgeCommitSettings(max_parallel_pages=1),
-    )
     forget_id = uuid4()
     for _ in range(2):
-        driver.recompile_after_forget(
-            deployment_id=_DEPLOYMENT_ID, artifact_ids=(graph.child,)
-        )
         remote.purge_artifacts(
             deployment_id=_DEPLOYMENT_ID,
             forget_id=forget_id,
@@ -980,7 +932,7 @@ def test_conversion_forget_deletes_compiled_bytes_before_real_git_purge(
             forget_id=forget_id,
             artifact_ids=(graph.child,),
         )
-        assert not affected.exists()
+        assert affected.exists() is (not retired)
         assert (
             _output(
                 "-C",
@@ -988,7 +940,7 @@ def test_conversion_forget_deletes_compiled_bytes_before_real_git_purge(
                 "log",
                 "--all",
                 "-S",
-                "UNIQUE_CONVERSION_FORGET_TOKEN",
+                "UNIQUE_FORGET_TOKEN",
                 "--format=%H",
             )
             == ""

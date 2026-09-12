@@ -122,41 +122,6 @@ class KnowledgeCommitDriver:
         self._settings = settings
         self._authored = KnowledgeAuthoredSynchronizer(control_plane=control_plane)
 
-    def recompile_after_forget(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> None:
-        """Sanitize affected bodies even when fact conversion prevents compilation.
-
-        The Git purger retains current bytes after rewriting history. During
-        conversion remove machine-owned bodies before that purge; merely skipping
-        compilation would reintroduce the forgotten content as a fresh commit.
-        Scrubbed PostgreSQL rows stay stale and normal compilation rebuilds them
-        after conversion. Authored bodies/curation retain their preflight contract.
-        """
-        if not self._control_plane.fact_windows_converting(deployment_id=deployment_id):
-            self.run_cycle(deployment_id=deployment_id, exclusions_by_artifact={})
-            return
-        with self._control_plane.commit_lease(deployment_id=deployment_id):
-            paths = tuple(
-                state.git_path
-                for state in self._control_plane.artifact_path_states(
-                    deployment_id=deployment_id, include_tombstoned=True
-                )
-                if state.artifact_id in artifact_ids
-                and state.page_kind is KnowledgePageKind.COMPILED
-            )
-            with TemporaryDirectory(prefix="rememberstack-k-forget-") as temporary:
-                worktree = Path(temporary)
-                self._git_remote.checkout(destination=worktree)
-                changed = False
-                for path in paths:
-                    changed = (
-                        _remove_worktree_file(worktree=worktree, git_path=path)
-                        or changed
-                    )
-                if changed:
-                    self._git_remote.publish(worktree=worktree)
-
     def run_cycle(
         self,
         *,

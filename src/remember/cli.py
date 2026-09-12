@@ -993,14 +993,6 @@ def _run_ops(args: argparse.Namespace) -> int:
 
     operations = operations_type.from_settings()
     try:
-        if args.ops_command == "fact-windows":
-            report = operations.fact_windows(
-                deployment_id=args.deployment,
-                action=args.action,
-                batch_size=args.batch_size,
-            )
-            print(json.dumps(report, sort_keys=True))
-            return 0 if args.action == "seed" or report["ready"] else 1
         if args.ops_command == "inspect":
             report = operations.inspect(deployment_id=args.deployment)
             print(report.model_dump_json())
@@ -2239,12 +2231,6 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
             "inspect", help="bounded pipeline, DLQ, projection, and currency report"
         )
         ops_inspect.add_argument("--deployment", type=UUID, required=True)
-        fact_windows = ops_commands.add_parser(
-            "fact-windows", help="seed or verify retained-claim temporal conversion"
-        )
-        fact_windows.add_argument("action", choices=("seed", "verify"))
-        fact_windows.add_argument("--deployment", type=UUID, required=True)
-        fact_windows.add_argument("--batch-size", type=int, default=500)
         cost_export = ops_commands.add_parser(
             "cost-export", help="print one content-free v1 cost-export page"
         )

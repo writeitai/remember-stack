@@ -33,12 +33,11 @@ Two new internal tables have distinct purposes:
 
 The only new fact data are `valid_precision` and `window_claim_ids`: the latter
 records the evidence grounding the current complete window, not a seed or an
-endpoint owner. It changes whenever that window changes. Existing evidence tables
-receive nullable `legacy_stance` to retain the original stance of links not
-represented by application support pointers. New application-derived links set
-it NULL; recount never overwrites an existing legacy stance. A boolean would
-lose a legacy contradiction when an application temporarily adds support. No temporal
-operation, discrepancy, checkpoint or cache-certificate store is introduced.
+endpoint owner. It changes whenever that window changes. Every evidence link is
+an aggregate over application support pointers; there is no second provenance
+for links that predate applications, because stores that predate this contract
+are recreated rather than converted (design §8). No temporal operation,
+discrepancy, checkpoint or cache-certificate store is introduced.
 
 The ordinal indexes the original frozen `output.relations` or
 `output.observations` array, never a compacted accepted-only array.
@@ -167,7 +166,6 @@ The closed typed decision has these fields (all arrays default empty):
 | `window` | `GroundedFactWindow|null` for the identity target; contains the complete canonical window and nonempty cited claim IDs |
 | `updates` | `{target: same fact reference, window: GroundedFactWindow}` entries |
 | `support_moves` | `{application_id: UUID, expected_fact_id: UUID, target: same fact reference}` entries |
-| `legacy_support_moves` | `{claim_id: UUID, expected_fact_id: UUID, target: same fact reference}` entries, only for explicitly supplied whole-claim legacy support |
 | `contradict_with` | UUIDs of supplied existing facts incompatible with the target |
 | `confidence` | number from 0 through 1 |
 | `rationale` | nonempty string |
@@ -204,9 +202,7 @@ Support moves identify the original application and its expected current target.
 Its retained normalized assertion must be supplied to the adjudicator. Update its
 current support pointer; preserve its immutable original result. Recount the
 source and destination evidence links from all surviving applications, with
-`supports` dominating `contradicts` for a fact/claim pair. Include the retained
-`legacy_stance` in that aggregation, restoring it if application support moves away. A legacy link can move only through an explicit whole-claim decision
-that has inspected that complete claim; date position alone cannot move it.
+`supports` dominating `contradicts` for a fact/claim pair.
 Statements and their support cannot be silently reconstructed from a different
 fact's display label. All affected participants commit atomically.
 
@@ -262,56 +258,46 @@ support according to D74; erase source-derived statement text through its existi
 purge/reconstruction contract as well. Positive current support from a surviving
 lineage is required to retain a shared source-derived assertion; a contradiction
 alone cannot preserve the forgotten wording. Reconstruct a shared observation
-from a surviving supporting original normalization output, falling back to its
-independent legacy supporting claim text. Never adopt counterevidence as the
+from a surviving supporting original normalization output. Never adopt counterevidence as the
 fact's replacement statement. Recompute exclusivity for older portable manifests
 without changing their bytes. Existing NULL profile input hashes permit bounded
 repair discovery on retry. Evidence aggregates must agree with remaining
-application pointers and legacy support. No prepared fingerprint, cited UUID array,
+application pointers. No prepared fingerprint, cited UUID array,
 cache or restored backup may reintroduce erased content. Verification includes
 pending replies, retries, partial purge failure and restored older manifests.
 
-## 7. Existing-store cutover
+## 7. Existing stores and the schema migration
 
-The migration requires stopped serving and drained old intake/workers/staging.
-A nullable `deployments.fact_window_generation` stores readiness: NULL means
-conversion is incomplete; the D118 generation string means the coordinated
-writers/readers are ready. Existing stores containing claims start NULL; empty
-stores and newly bootstrapped deployments use the D118 default. Serving and intake
-check this column. Conversion workers use the new generation while it is NULL;
-only the conversion verifier can mark a populated converting store ready.
-It first rejects nonempty legacy staging and closes the fact-generation readiness
-gate. The SQL file describes the target storage shape, not a standalone migration.
-Add precision and witness columns nullable with no defaults; clear ungrounded
-legacy endpoints to `(NULL,NULL,'unknown',{})` under the fence. Canonicalize any
-grounded raw endpoints once (an instant is `[t,t+1 microsecond)`). Then set NOT NULL
-and defaults for new rows, remove old `>=` checks, and install the D118 shape
-checks. The enum addition commits before any writer uses `update`. No reader may
-observe intermediate shapes. It adds the structural stores while unready; it must not
-silently assign unknown precision beside old source-time endpoints and serve them.
-Clear ungrounded legacy windows under the fence, retaining IDs/system history and
-legacy support. Reprocess retained source claims with the new normalizer and
-ordinary adjudicator using existing work/replay facilities, with existing fact
-identities available as candidates. This is in-place fact conversion, not source
-re-extraction. Withdrawn historical facts retain their system closure; conversion
-must not revive them. Already recorded source removal does not become a world end.
+Stores that predate this contract are not converted (design §8). The migration
+takes the same maintenance lock the old cutover took, then refuses when any
+claim exists in the database or any ordinary work is still pending; the operator
+recreates the deployment. On an empty store it adds the two application tables,
+the precision and witness columns with their NOT NULL defaults, the transcript
+claim inventories, the `update` outcome, the application-aware staging key, and
+the D118 shape checks, drops the old same-triple exclusion and `>=` date checks,
+and rebuilds the published views, the `facts_as_of` function and the live graphs.
+No readiness column, serving fence, replay seeder or verifier exists; a freshly
+migrated or bootstrapped deployment serves immediately.
 
-Replay is bounded by existing claim/entity work units and idempotent application
-receipts. A crash resumes missing work; it cannot reopen readiness from a partial
-store. New fact, retrieval and derived-content generations switch together only
-when all expected source applications, evidence accounting and projection repairs
-are verified. The current consumer cutover is a strict gate. Experimental archived
-D110 schema heads fail with an explicit recovery requirement, never an automatic
-downgrade. Conversion costs model calls on retained claims and must expose those
-through existing metering; tests do not authorize running it against production.
+Experimental archived D110 schema heads are not ancestors of this migration and
+fail with an explicit recovery requirement. Downgrade raises rather than dropping
+application receipts and restoring source-time date semantics; disposable test
+databases are recreated instead.
 
-The maintenance surface is `remember ops fact-windows seed|verify --deployment ID`.
-`seed` enumerates a bounded batch of retained claims without a current-source or
-extractor filter and enqueues ordinary steady-lane normalization. Repeat until
-`enumeration_complete`; the usual workers meter and complete the work. While the
-store is fenced, each version barrier spans all retained source generations in
-that version, rather than one historical extractor/representation pin. Missing
-source occurrences fail explicitly. `verify` reports incomplete inventories and
-keeps readiness NULL until they are empty. A partial run, failure or restart does
-not reopen serving. No command implicitly performs paid source conversion during
-schema setup.
+## 8. Candidate nomination and the deterministic empty case
+
+Preparation nominates candidate facts on the canonical subject in two tiers.
+Exact matches come first: relations with the same predicate whose object
+resolves to the same canonical entity as the incoming assertion, and observations
+with an identical statement. Full-text relevance to the incoming assertion fills
+the remainder up to the fact limit. Exact matches are nomination only: they
+guarantee the most likely identity candidates are visible to the model even on
+an entity with many similarly worded facts, and they impose no identity rule.
+
+When the nominated set is empty the answer is fixed: there is nothing to compare,
+so the only valid decision is a new fact carrying the incoming assertion, dated
+from the claim window when the normalizer said it applies. Preparation records
+that decision itself under the same attempt, fingerprint and application checks,
+and no model call is made. The transcript records this outcome with the existing
+`novelty_gate` method so cost and audit can distinguish it from a model decision.
+Every non-empty candidate set still goes to the model.

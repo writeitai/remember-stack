@@ -11,6 +11,7 @@ from sqlalchemy.engine import Connection
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_entity
 from rememberstack.spine.fact_applications import canonical_json
+from rememberstack.spine.fact_applications import entity_members
 
 # Bounds limit model input, never certify complete identity/evidence coverage.
 _FACT_LIMIT = 20
@@ -48,12 +49,13 @@ def application_snapshot(
     root: UUID,
     members: list[UUID],
     application: Mapping[str, Any],
-    include_withdrawn: bool = False,
 ) -> dict[str, Any]:
     """Build coherent inputs after ordered locks, rejecting a changed participant set.
 
     The caller holds forget/identity/canonical entity locks. Candidate selection
     considers completed windows, and never uses dates as identity predicates.
+    Exact triple or statement matches are nominated first, then full-text
+    relevance fills the bounded set; both are nomination only.
     Model operations can address only the payload participants, not unseen members.
     """
     kind = application["output_kind"]
@@ -71,7 +73,6 @@ def application_snapshot(
         "claim_id": application["claim_id"],
         "application_id": application["application_id"],
         "normalizer_version": application["normalizer_version"],
-        "include_withdrawn": include_withdrawn,
     }
     incoming = _rows(
         connection=connection,
@@ -106,11 +107,29 @@ def application_snapshot(
         if kind == "observation"
         else "JOIN entities s ON s.entity_id=f.subject_entity_id JOIN entities o ON o.entity_id=f.object_entity_id"
     )
-    selection = f"""SELECT f.{id_column} AS fact_id FROM {table} f {joins}
-        WHERE f.deployment_id=:deployment_id AND f.subject_entity_id=ANY(:members)
-          AND (:include_withdrawn OR f.invalidated_at IS NULL)
-        ORDER BY ts_rank_cd(to_tsvector('simple',{content}),plainto_tsquery('simple',:query)) DESC,
-                 f.{id_column} LIMIT {_FACT_LIMIT}"""
+    if kind == "relation":
+        params["predicate"] = assertion["predicate"]
+        params["object_members"] = entity_members(
+            connection=connection,
+            deployment_id=deployment_id,
+            root=canonical_entity(
+                connection=connection,
+                deployment_id=deployment_id,
+                entity_id=UUID(str(incoming[0]["object_entity_id"])),
+            ),
+        )
+        exact = "f.predicate=:predicate AND f.object_entity_id=ANY(:object_members)"
+    else:
+        params["statement"] = assertion["statement"]
+        exact = "f.statement=:statement"
+    selection = f"""WITH block AS (
+          SELECT f.{id_column} AS fact_id,
+                 CASE WHEN {exact} THEN 0 ELSE 1 END AS tier,
+                 ts_rank_cd(to_tsvector('simple',{content}),plainto_tsquery('simple',:query)) AS rank
+          FROM {table} f {joins}
+          WHERE f.deployment_id=:deployment_id AND f.subject_entity_id=ANY(:members)
+            AND f.invalidated_at IS NULL)
+        SELECT fact_id FROM block ORDER BY tier, rank DESC, fact_id LIMIT {_FACT_LIMIT}"""
     nominated = _rows(connection=connection, sql=selection, params=params)
     params["fact_ids"] = sorted(row["fact_id"] for row in nominated)
     # Keep complete support membership in the fingerprint, but cap model copies.
@@ -173,7 +192,7 @@ def application_snapshot(
     supports = _rows(
         connection=connection,
         sql=f"""
-      SELECT e.{id_column} AS fact_id,e.claim_id,e.stance,e.legacy_stance
+      SELECT e.{id_column} AS fact_id,e.claim_id,e.stance
       FROM {evidence} e WHERE e.deployment_id=:deployment_id AND e.{id_column}=ANY(:fact_ids)
         AND e.claim_id=ANY(:claim_ids) ORDER BY e.{id_column},e.claim_id
     """,
@@ -208,14 +227,14 @@ def application_snapshot(
         connection=connection,
         sql=f"""
       SELECT {id_column} FROM {table} WHERE deployment_id=:deployment_id AND subject_entity_id=ANY(:members)
-        AND (:include_withdrawn OR invalidated_at IS NULL) ORDER BY {id_column}
+        AND invalidated_at IS NULL ORDER BY {id_column}
     """,
         params=params,
     )
     evidence_hash = _digest_rows(
         connection=connection,
         sql=f"""
-      SELECT {id_column},claim_id,stance,legacy_stance FROM {evidence}
+      SELECT {id_column},claim_id,stance FROM {evidence}
       WHERE deployment_id=:deployment_id AND {id_column}=ANY(:fact_ids) ORDER BY {id_column},claim_id
     """,
         params=params,
