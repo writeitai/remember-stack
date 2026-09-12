@@ -35,9 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26"
-DEFAULT_PROTOCOL_KEY: Final = "full-v26"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-context-names-v26"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27"
+DEFAULT_PROTOCOL_KEY: Final = "full-v27"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-absolute-dates-v27"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -46,7 +46,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
+    "650309393d6a12955a4ff4572b2a54e69a9581d5267ff6170541555921b30716"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -72,7 +72,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "embed_chunk": "e1-embed-2026.08-d80",
         "extract_claims": (
             "e2-extract-2026.08a:d80-location-elements-1:"
-            "token-union-grounding-1:temporal-anchor-3:d107-kind-vocabulary-1:"
+            "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
@@ -119,12 +119,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v26-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v27-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v26 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v27 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -132,8 +132,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v26-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v27-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -157,8 +157,21 @@ normal memory agent and choose the cheapest suitable path:
 
 Respect every response envelope's grain, negative, freshness, truncation, and
 dropped_by_hydration fields. Evidence says what a source asserted; it is not
-automatically current fact. Use timestamps to resolve relative dates. Do not
-confuse people mentioned in a memory with the conversation speakers. General
+automatically current fact. Do not confuse people mentioned in a memory with
+the conversation speakers.
+
+Each evidence row carries two kinds of time. asserted_at is when the source
+made this statement (when the message was sent). claim_valid_from and
+claim_valid_until are when the claim says it happened or was true, as the
+source asserted it; claim_valid_kind names which: event_time = when the
+claimed event happened, effective_period or proposition_validity = when the
+claimed state was true, measurement_period = the period a claimed figure
+covers; claim_valid_precision says how exact those bounds are, and unknown
+means the source gave no usable date. A date the extractor could resolve is
+already written into claim_text and repeated in those bounds. If claim_text
+still contains a relative phrase such as "last week", the extractor could not
+resolve it: read it relative to that row's asserted_at and do not invent more
+precision than the source gives. General
 knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
 reference solutions, reference evidence labels, or evaluator artifacts. If the deployment
@@ -250,7 +263,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v26",
+    key="full-v27",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,

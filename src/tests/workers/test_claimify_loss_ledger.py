@@ -6,6 +6,8 @@ claimify_omitted. Postgres-free so they always run; the enum migration insert
 proof lives in test_claimify_loss_ledger_pg.py.
 """
 
+from datetime import datetime
+from datetime import UTC
 from typing import cast
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,6 +21,8 @@ from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimRecord
+from rememberstack.model import ClaimValidKind
+from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
 from rememberstack.model import SectionSpan
@@ -28,6 +32,7 @@ from rememberstack.workers import E2Settings
 from rememberstack.workers.e2 import _claimify_omitted_decision
 from rememberstack.workers.e2 import _grounded_claim
 from rememberstack.workers.e2 import _grounding_rejected_decision
+from rememberstack.workers.e2 import _own_valid_time_strings
 from rememberstack.workers.e2 import ExtractClaimsHandler
 from rememberstack.workers.e2 import GroundingGate
 from rememberstack.workers.e2 import GroundingRejection
@@ -295,6 +300,148 @@ def test_numeric_token_requires_source_union_membership() -> None:
     document_md = _DOC_MD + "The archive covers 2022.\n"
     present = _ground(candidate=candidate, document_md=document_md)
     assert isinstance(present, ClaimRecord)
+
+
+def _dated_candidate(
+    *,
+    claim_text: str,
+    addition: str,
+    valid_from_iso: str | None,
+    valid_until_iso: str | None,
+    valid_precision: ClaimValidPrecision,
+) -> CandidateClaim:
+    """A Caroline claim whose written date must be licensed by its own bounds."""
+    return CandidateClaim(
+        claim_text=claim_text,
+        source_span=_KEEP_CAROLINE,
+        added_context=(AddedContext(text=addition, source_kind="header"),),
+        entailment_self_verdict=True,
+        valid_kind=ClaimValidKind.EVENT_TIME
+        if valid_precision is not ClaimValidPrecision.UNKNOWN
+        else None,
+        valid_from_iso=valid_from_iso,
+        valid_until_iso=valid_until_iso,
+        valid_precision=valid_precision,
+    )
+
+
+@pytest.mark.parametrize(
+    ("addition", "valid_from_iso", "valid_until_iso", "precision"),
+    [
+        ("on 2024-03-06", "2024-03-06", "2024-03-06", ClaimValidPrecision.DAY),
+        ("in 2024-03", "2024-03-01", "2024-03-31", ClaimValidPrecision.MONTH),
+        ("in 2023", "2023-01-01", "2023-12-31", ClaimValidPrecision.YEAR),
+        (
+            "from 2024-01-01 to 2024-03-31",
+            "2024-01-01",
+            "2024-03-31",
+            ClaimValidPrecision.QUARTER,
+        ),
+        ("since 2019", "2019-01-01", None, ClaimValidPrecision.OPEN),
+        (
+            "at 2024-03-06T16:30:00+02:00",
+            "2024-03-06T16:30:00+02:00",
+            "2024-03-06T16:30:00+02:00",
+            ClaimValidPrecision.INSTANT,
+        ),
+    ],
+)
+def test_written_date_is_grounded_by_the_claims_own_valid_time(
+    addition: str,
+    valid_from_iso: str,
+    valid_until_iso: str | None,
+    precision: ClaimValidPrecision,
+) -> None:
+    """A resolved date absent from every source element passes when it equals the bounds."""
+    candidate = _dated_candidate(
+        claim_text=f"Caroline went to the launch {addition}.",
+        addition=addition,
+        valid_from_iso=valid_from_iso,
+        valid_until_iso=valid_until_iso,
+        valid_precision=precision,
+    )
+
+    result = _ground(candidate=candidate, kept_spans=(_KEEP_CAROLINE,))
+
+    assert isinstance(result, ClaimRecord)
+    assert result.claim_valid_precision is precision
+    assert result.claim_valid_from is not None
+
+
+def test_written_date_must_match_the_stored_precision() -> None:
+    """A year-precise bound cannot license an invented day in claim text."""
+    candidate = _dated_candidate(
+        claim_text="Caroline went to the launch on 2024-03-06.",
+        addition="on 2024-03-06",
+        valid_from_iso="2024-01-01",
+        valid_until_iso="2024-12-31",
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+
+    result = _ground(candidate=candidate, kept_spans=(_KEEP_CAROLINE,))
+
+    assert isinstance(result, GroundingRejection)
+    assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED
+    assert "03" in result.failed_tokens
+    assert "06" in result.failed_tokens
+
+
+def test_written_date_without_valid_time_is_still_an_outside_fact() -> None:
+    """Unknown precision licenses nothing: the numeric rule stands unchanged."""
+    candidate = _dated_candidate(
+        claim_text="Caroline went to the launch on 2024-03-06.",
+        addition="on 2024-03-06",
+        valid_from_iso=None,
+        valid_until_iso=None,
+        valid_precision=ClaimValidPrecision.UNKNOWN,
+    )
+
+    result = _ground(candidate=candidate, kept_spans=(_KEEP_CAROLINE,))
+
+    assert isinstance(result, GroundingRejection)
+    assert result.gate is GroundingGate.ADDED_CONTEXT_UNVERIFIED
+    assert result.failed_tokens == ("-", "03", "06")
+
+
+def test_own_valid_time_strings_follow_precision() -> None:
+    """Each precision renders only the forms the prompt asks the model to write."""
+    day = datetime(2024, 3, 6, tzinfo=UTC)
+    candidate = CandidateClaim(
+        claim_text="x",
+        source_span=_KEEP_CAROLINE,
+        entailment_self_verdict=True,
+        valid_from_iso="2024-03-06",
+        valid_until_iso="2024-03-06",
+        valid_precision=ClaimValidPrecision.DAY,
+    )
+
+    assert _own_valid_time_strings(
+        candidate=candidate,
+        valid_from=day,
+        valid_until=day,
+        precision=ClaimValidPrecision.DAY,
+    ) == ("2024-03-06",)
+    assert _own_valid_time_strings(
+        candidate=candidate,
+        valid_from=day,
+        valid_until=day,
+        precision=ClaimValidPrecision.YEAR,
+    ) == ("2024",)
+    assert _own_valid_time_strings(
+        candidate=candidate,
+        valid_from=day,
+        valid_until=None,
+        precision=ClaimValidPrecision.OPEN,
+    ) == ("2024-03-06", "2024-03", "2024")
+    assert (
+        _own_valid_time_strings(
+            candidate=candidate,
+            valid_from=None,
+            valid_until=None,
+            precision=ClaimValidPrecision.UNKNOWN,
+        )
+        == ()
+    )
 
 
 @pytest.mark.parametrize(

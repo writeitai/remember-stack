@@ -1,4 +1,13 @@
-# RS-LoCoMo-Full-v26 setup
+# RS-LoCoMo-Full-v27 setup
+
+v27 (2026-09-11) pins extractor generation `temporal-anchor-4`, in which a
+resolved relative date is written into claim text as an ISO value (D41/D32
+amendments of 2026-09-11), and the answer prompt defines the two evidence
+times in plain words: `asserted_at` is when the source made the statement;
+`claim_valid_from` / `claim_valid_until` are when the claim says it happened
+or was true. Stores ingested under v26 are not comparable and must be
+re-ingested. Dataset, models, retrieval behavior, budgets, judge rubric, and
+scoring are unchanged from v26.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -16,12 +25,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26 \
+  --protocol full-v27 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v26` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v27` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -168,9 +177,9 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
-## Gemma 4 on Vertex as the answer agent (`full-v26-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v27-gemma-vertex`)
 
-`full-v26-gemma-vertex` is a *variant* of `full-v26`, not a new benchmark
+`full-v27-gemma-vertex` is a *variant* of `full-v27`, not a new benchmark
 identity: every pin is identical -- ingestion bindings, prompts, tool catalog,
 budgets, temperature, and the frozen Luna judge -- except that the answer
 agent is `google/gemma-4-26b-a4b-it-maas`, Google's managed Gemma 4 26B-A4B
@@ -199,7 +208,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26-gemma-vertex \
+  --protocol full-v27-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 
@@ -241,7 +250,7 @@ any upload.
 
 ## Codex ChatGPT subscription for answer and judge
 
-`full-v26-codex-subscription` runs both evaluator seats through the official
+`full-v27-codex-subscription` runs both evaluator seats through the official
 local Codex app-server and the operator's existing ChatGPT login. It does not
 read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
 ChatGPT response route directly. Run `codex login` once, then prepare the
@@ -251,14 +260,14 @@ separately fingerprinted protocol:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26-codex-subscription \
+  --protocol full-v27-codex-subscription \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 
-The v26 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+The v27 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
 the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
 effort `high`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v26 score.
+provider variant, not a canonical v27 score.
 
 Each model call uses a fresh ephemeral thread, an empty temporary directory,
 read-only/no-network sandboxing, and deny-all approvals. It receives no custom

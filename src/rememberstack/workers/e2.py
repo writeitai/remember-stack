@@ -129,6 +129,10 @@ _ADDED_CONTEXT_FUNCTIONAL_ALLOWLIST: Final = frozenset(
         "as",
         "by",
         "from",
+        "since",
+        "until",
+        "between",
+        "during",
         ",",
         ".",
         ":",
@@ -189,11 +193,22 @@ an interval representable by the schema. Otherwise keep time unknown; never
 turn an uncertain part of a day into an invented instant. Unrepresentable
 timing alone must not drop an otherwise entailed claim: keep its source-faithful
 text and use null valid_kind/from/until with unknown precision.
-Put the computed absolute time ONLY in those structured valid-time fields. The
-claim_text MUST stay faithful to the source: keep the relative phrase as spoken
-and never replace it with the computed date. When claim_text preserves a direct
-quotation, the quoted text itself stays verbatim; its resolution goes only to
-the valid-time fields.
+
+WRITE THE RESOLVED DATE INTO claim_text. A relative time expression is context
+a standalone claim must not depend on, exactly like a pronoun: whenever you
+emit valid-time fields for a relative expression, replace that expression in
+claim_text with the same absolute calendar value in ISO form — a single day as
+YYYY-MM-DD ("on 2023-05-07"), a month as YYYY-MM ("in 2023-04"), a year as
+YYYY ("in 2022"), a bounded span as "from <start> to <end>" in those forms, an
+open-ended span as "since <start>", and an exact instant exactly as its
+valid_from_iso value ("at 2023-05-08T16:30:00+00:00"). Inside a direct
+quotation or attributed speech make the same replacement; the verbatim wording
+is preserved by source_span, never by claim_text. The written date is an
+addition: list it in added_context (tag header). It is grounded only by the
+valid-time fields you emit, so it must equal them exactly. When the expression
+cannot be resolved to valid-time fields, keep the relative phrase exactly as
+the source spoke it and never write a guessed date. An explicit absolute date
+already in the source stays as written.
 
 Use ISO-8601 dates (YYYY-MM-DD) or datetimes WITH an explicit offset or Z;
 never emit a datetime without an offset. Choose the kind by meaning, independently of precision:
@@ -220,20 +235,23 @@ relative expressions. Explicit absolute dates in the source still resolve
 without a header date. Never invent an anchor or a date.
 
 Examples (DOCUMENT HEADER date → structured output):
-- date 2023-05-08;
-  claim_text="Caroline said: I went to a support group yesterday" →
+- date 2023-05-08; "Caroline: I went to a support group yesterday" →
+  claim_text="Caroline said: I went to a support group on 2023-05-07",
+  added_context=[{{text: "on 2023-05-07", source_kind: header}}],
   valid_kind=event_time, valid_from_iso=2023-05-07,
   valid_until_iso=2023-05-07, valid_precision=day.
-  Note the quote form: the relative word stays inside the quoted claim_text;
-  the resolution goes only to the valid_* fields.
+  Note the quote form: the resolved date replaces "yesterday" even inside the
+  attributed speech; source_span keeps the verbatim wording.
 - date 2023-05-08; "painted a lake sunrise last year" →
-  claim_text="painted a lake sunrise last year", valid_kind=event_time,
-  valid_from_iso=2022-01-01, valid_until_iso=2022-12-31,
-  valid_precision=year.
+  claim_text="painted a lake sunrise in 2022",
+  added_context=[{{text: "in 2022", source_kind: header}}],
+  valid_kind=event_time, valid_from_iso=2022-01-01,
+  valid_until_iso=2022-12-31, valid_precision=year.
 - date 2023-05-08; "met the organizer last Saturday" →
-  claim_text="met the organizer last Saturday", valid_kind=event_time,
-  valid_from_iso=2023-05-06, valid_until_iso=2023-05-06,
-  valid_precision=day.
+  claim_text="met the organizer on 2023-05-06",
+  added_context=[{{text: "on 2023-05-06", source_kind: header}}],
+  valid_kind=event_time, valid_from_iso=2023-05-06,
+  valid_until_iso=2023-05-06, valid_precision=day.
 
 - date 2023-05-08; "Alice has been CEO since 2019" →
   valid_kind=proposition_validity, valid_from_iso=2019-01-01,
@@ -246,15 +264,18 @@ Examples (DOCUMENT HEADER date → structured output):
   valid_until_iso=2023-12-31, valid_precision=year (calendar fiscal year
   only when the source establishes that calendar; otherwise retain uncertainty).
 - date 2023-05-08T19:30:00+00:00; "the final ended three hours ago" →
+  claim_text="the final ended at 2023-05-08T16:30:00+00:00",
   valid_kind=event_time, valid_from_iso=2023-05-08T16:30:00+00:00,
   valid_until_iso=2023-05-08T16:30:00+00:00, valid_precision=instant.
 - date 2023-05-08T22:00:00+00:00; the same "three hours ago" →
+  claim_text="the final ended at 2023-05-08T19:00:00+00:00",
   valid_kind=event_time, valid_from_iso=2023-05-08T19:00:00+00:00,
   valid_until_iso=2023-05-08T19:00:00+00:00, valid_precision=instant.
 
 - date 2023-05-08T19:30:00+00:00; "Alice won the final this morning" →
   keep claim_text="Alice won the final this morning", valid_kind=null,
-  valid_from_iso=null, valid_until_iso=null, valid_precision=unknown.
+  valid_from_iso=null, valid_until_iso=null, valid_precision=unknown
+  (unresolved wording stays as spoken; no date is written).
 
 KEPT PROPOSITIONS:
 {keeps}
@@ -681,12 +702,19 @@ def _grounded_claim(
     tokenize each non-empty addition, then require every content token to
     appear case-insensitively at a word boundary in the source-derived bundle
     union. Only the closed functional allowlist may supply absent scaffolding;
-    numeric tokens are never allowlisted. The model's ``source_kind`` is
-    preserved as advisory provenance but cannot reject a grounded addition by
-    being wrong. Section summaries are excluded from this union (the stored
-    prefix, though LLM text, is a designed union member — D79's accepted
-    second-order channel). A failed check returns which gate fired and which
-    tokens failed so the D33 ledger can record ``grounding_rejected`` (#161).
+    numeric tokens are never allowlisted, with one traceable exception: the
+    ISO renderings of the claim's OWN parsed valid-time bounds (D41). The
+    prompt asks the model to write a resolved relative date ("last Friday")
+    into ``claim_text`` as an absolute ISO value; that value never occurs in
+    the source, so it is grounded by equality with the structured valid-time
+    fields instead, which are themselves derived from the document header
+    anchor. Any other numeric token still needs a union match. The model's
+    ``source_kind`` is preserved as advisory provenance but cannot reject a
+    grounded addition by being wrong. Section summaries are excluded from this
+    union (the stored prefix, though LLM text, is a designed union member —
+    D79's accepted second-order channel). A failed check returns which gate
+    fired and which tokens failed so the D33 ledger can record
+    ``grounding_rejected`` (#161).
     Semantic invention behind a real span is layer-3/4 territory: the in-call
     self-verdict is stored advisory, and the sampled independent audit owns the
     honest measurement.
@@ -709,11 +737,22 @@ def _grounded_claim(
     grounding_elements = _source_grounding_elements(
         source=source, chunks=chunks, index=index, document_md=document_md
     )
+    valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
+        candidate=candidate
+    )
+    own_valid_time_strings = _own_valid_time_strings(
+        candidate=candidate,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        precision=valid_precision,
+    )
     for added in candidate.added_context:
         if not added.text.strip():
             continue
         failed_tokens = _failed_added_context_tokens(
-            text=added.text, grounding_elements=grounding_elements
+            text=added.text,
+            grounding_elements=grounding_elements,
+            own_valid_time_strings=own_valid_time_strings,
         )
         if failed_tokens:
             return GroundingRejection(
@@ -724,9 +763,6 @@ def _grounded_claim(
                 searched_elements=tuple(name for name, _ in grounding_elements),
                 failed_tokens=failed_tokens,
             )
-    valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
-        candidate=candidate
-    )
     return ClaimRecord(
         claim_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -785,6 +821,61 @@ def _parse_claim_valid_time(
         # A kind without an interval is meaningless; never store it bare.
         kind = None
     return valid_from, valid_until, precision, kind
+
+
+def _own_valid_time_strings(
+    *,
+    candidate: CandidateClaim,
+    valid_from: datetime | None,
+    valid_until: datetime | None,
+    precision: ClaimValidPrecision,
+) -> tuple[str, ...]:
+    """Render the forms a claim's own valid-time bounds may take in claim_text.
+
+    These are the only numeric strings an ``added_context`` entry may carry
+    without a source-union match (D32 amendment 2026-09-11). Each form is
+    tied to the stored precision so a day-precise bound cannot license a
+    bare year, and a year-precise bound cannot license an invented day:
+
+    - ``day`` → ``YYYY-MM-DD`` of each bound;
+    - ``month`` → ``YYYY-MM`` of each bound;
+    - ``quarter`` → ``YYYY-MM-DD`` and ``YYYY-MM`` of each bound (a quarter
+      is written as its calendar span);
+    - ``year`` → ``YYYY`` of each bound;
+    - ``open`` → ``YYYY-MM-DD``, ``YYYY-MM``, and ``YYYY`` of the start
+      ("since 2019" is stored as a 2019-01-01 start);
+    - ``instant`` → the model's own ISO strings verbatim plus their UTC
+      parse, so an offset-bearing instant matches whichever spelling the
+      claim used.
+
+    ``unknown`` precision yields nothing: with no stored bounds there is no
+    resolved date that could have been written. Longest strings sort first
+    so a caller can strip them before tokenizing.
+    """
+    if precision is ClaimValidPrecision.UNKNOWN:
+        return ()
+    bounds = tuple(bound for bound in (valid_from, valid_until) if bound is not None)
+    forms: set[str] = set()
+    if precision is ClaimValidPrecision.INSTANT:
+        for raw in (candidate.valid_from_iso, candidate.valid_until_iso):
+            if raw and raw.strip():
+                forms.add(raw.strip())
+        for bound in bounds:
+            forms.add(bound.isoformat())
+    elif precision is ClaimValidPrecision.YEAR:
+        forms.update(f"{bound:%Y}" for bound in bounds)
+    elif precision is ClaimValidPrecision.MONTH:
+        forms.update(f"{bound:%Y-%m}" for bound in bounds)
+    elif precision is ClaimValidPrecision.DAY:
+        forms.update(f"{bound:%Y-%m-%d}" for bound in bounds)
+    elif precision is ClaimValidPrecision.QUARTER:
+        forms.update(f"{bound:%Y-%m-%d}" for bound in bounds)
+        forms.update(f"{bound:%Y-%m}" for bound in bounds)
+    elif precision is ClaimValidPrecision.OPEN and valid_from is not None:
+        forms.update(
+            (f"{valid_from:%Y-%m-%d}", f"{valid_from:%Y-%m}", f"{valid_from:%Y}")
+        )
+    return tuple(sorted(forms, key=len, reverse=True))
 
 
 def _parse_iso_timestamp(*, value: str | None) -> tuple[datetime | None, bool]:
@@ -1001,16 +1092,27 @@ def _location_grounding_pairs(
 
 
 def _failed_added_context_tokens(
-    *, text: str, grounding_elements: tuple[tuple[str, str], ...]
+    *,
+    text: str,
+    grounding_elements: tuple[tuple[str, str], ...],
+    own_valid_time_strings: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """Return normalized addition tokens that fail D32 layer-2 membership.
 
     All numeric tokens must appear in the source union even if the functional
-    allowlist is later edited incorrectly. Repeated failures are reported once,
-    in first-seen order, for compact and useful decision-ledger diagnostics.
+    allowlist is later edited incorrectly. The single exception is an exact
+    occurrence of one of ``own_valid_time_strings`` — the ISO renderings of
+    the claim's own structured valid-time bounds — which is removed before
+    tokenizing because it is grounded by those fields, not by the union. A
+    partial or differently spelled date still fails. Repeated failures are
+    reported once, in first-seen order, for compact and useful decision-ledger
+    diagnostics.
     """
+    remaining = text
+    for own_string in own_valid_time_strings:
+        remaining = remaining.replace(own_string, " ")
     failed: list[str] = []
-    for token in _added_context_tokens(text):
+    for token in _added_context_tokens(remaining):
         if _token_in_grounding_union(
             token=token, grounding_elements=grounding_elements
         ):

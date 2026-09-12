@@ -291,11 +291,46 @@ class EvidenceResult(BaseModel):
     char_end: int
     is_attributed: bool
     is_current_testimony: bool
-    asserted_at: UTCDateTime | None = None
-    claim_valid_from: UTCDateTime | None = None
-    claim_valid_until: UTCDateTime | None = None
-    claim_valid_precision: str = "unknown"
-    claim_valid_kind: str | None = None
+    asserted_at: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "When the source made this statement (the message was sent, the "
+            "page was published). Any relative phrase still present in "
+            "claim_text is relative to this time."
+        ),
+    )
+    claim_valid_from: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "Start of when the claim says it happened or was true, as the "
+            "source asserted it. A date the extractor could resolve is also "
+            "written into claim_text. Null when claim_valid_precision is "
+            "unknown."
+        ),
+    )
+    claim_valid_until: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "End of when the claim says it happened or was true, as the source "
+            "asserted it. Null for an open-ended state or unknown precision."
+        ),
+    )
+    claim_valid_precision: str = Field(
+        default="unknown",
+        description=(
+            "How exact the bounds are: instant, day, month, quarter, year, open "
+            "(known start, ongoing), or unknown (no usable source date)."
+        ),
+    )
+    claim_valid_kind: str | None = Field(
+        default=None,
+        description=(
+            "What the bounds describe: event_time = when the claimed event "
+            "happened; effective_period or proposition_validity = when the "
+            "claimed state was true; measurement_period = the period a claimed "
+            "figure covers."
+        ),
+    )
     document_title: str | None = None
     source_kind: str | None = None
     corroboration_count: int | None = Field(default=None, ge=1)

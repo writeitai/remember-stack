@@ -25,7 +25,7 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v26}
+protocol=${LOCOMO_PROTOCOL:-full-v27}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -59,7 +59,7 @@ backup_python() {
     "$python_bin" "$@"
 }
 
-# RS-LoCoMo-Full-v26's non-secret ingest identity. Override ambient self-host
+# RS-LoCoMo-Full-v27's non-secret ingest identity. Override ambient self-host
 # defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
 export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
 export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna

@@ -107,6 +107,9 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
     assert "`resolve_entity`" in skill.content
     assert "`claims_and_sources_context`" in skill.content
     assert "`facts_context`" in skill.content
+    assert "**when the source made this statement**" in skill.content
+    assert "**when the claim says it happened or was true**" in skill.content
+    assert "interpret it relative to `asserted_at`" in skill.content
     # The old intent-first steering is gone.
     assert "Default motion: orient, verify, audit" not in skill.content
 

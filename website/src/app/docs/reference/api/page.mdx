@@ -546,10 +546,18 @@ returning ten results.
 
 Evidence rows returned by claim search and relation hydration include
 `asserted_at`, `claim_valid_from`, `claim_valid_until`,
-`claim_valid_precision`, and `claim_valid_kind`. These fields distinguish when
-the source spoke from the source-asserted world interval during which the fact
-holds or happened; they are evidence, not the fact layer's current-validity
-verdict. Chunk results disclose an optional deterministic `context_prefix`
+`claim_valid_precision`, and `claim_valid_kind`. `asserted_at` is when the
+source made this statement (the message was sent, the page was published).
+`claim_valid_from` / `claim_valid_until` are when the claim says it happened or
+was true, as the source asserted it; `claim_valid_kind` names which
+(`event_time` = when the claimed event happened, `effective_period` or
+`proposition_validity` = when the claimed state was true, `measurement_period`
+= the period a claimed figure covers), and `claim_valid_precision` says how
+exact the bounds are. A date the extractor could resolve is already written
+into `claim_text` and repeated in the bounds; a relative phrase still present in
+`claim_text` is relative to `asserted_at`. These are evidence, not the fact
+layer's current-validity verdict. The OpenAPI document carries the same
+descriptions on each field. Chunk results disclose an optional deterministic `context_prefix`
 (location header under the embedding-input policy) separately from body-only
 `chunk_text` and carry the current document, version,
 representation, offsets, and source timestamps confirmed by the live spine.

@@ -52,7 +52,7 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
 
 
 def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:
-    """The extraction request makes #158's structured-only rule unmistakable."""
+    """The extraction request resolves relative time into both text and fields."""
     rendered = _CLAIMIFY_PROMPT.format(
         keeps="- Melanie painted a lake sunrise last year.",
         bundle=(
@@ -66,11 +66,20 @@ def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> Non
     assert "regardless of claim form" in rendered
     assert "relative expression inside quoted or attributed text" in rendered
     assert "you MUST resolve the expression" in rendered
-    assert "computed absolute time ONLY in those structured" in rendered
+    assert "WRITE THE RESOLVED DATE INTO claim_text" in rendered
+    assert "exactly like a pronoun" in rendered
     assert "valid-time fields" in rendered
-    assert 'claim_text="Caroline said: I went to a support group yesterday"' in rendered
-    assert "the relative word stays inside the quoted claim_text" in rendered
-    assert 'claim_text="painted a lake sunrise last year"' in rendered
+    assert (
+        'claim_text="Caroline said: I went to a support group on 2023-05-07"'
+        in rendered
+    )
+    assert 'the resolved date replaces "yesterday" even inside the' in rendered
+    assert 'claim_text="painted a lake sunrise in 2022"' in rendered
+    assert 'claim_text="met the organizer on 2023-05-06"' in rendered
+    assert 'added_context=[{text: "on 2023-05-06", source_kind: header}]' in rendered
+    assert "keep the relative phrase exactly as\nthe source spoke it" in rendered
+    assert "never write a guessed date" in rendered
+    assert "unresolved wording stays as spoken; no date is written" in rendered
     assert "valid_from_iso=2022-01-01" in rendered
     assert "valid_until_iso=2022-12-31" in rendered
     assert "valid_precision=year" in rendered
