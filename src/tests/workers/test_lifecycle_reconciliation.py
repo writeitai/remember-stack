@@ -57,8 +57,6 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
@@ -66,6 +64,8 @@ from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import SyncCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -89,7 +89,9 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("e5000000-0000-0000-0000-000000000001")
@@ -134,6 +136,8 @@ _TABLES = (
 
 def _canned(prompt: str, type_name: str) -> dict[str, object]:
     """Deterministic model behavior for every seat the chain touches."""
+    if type_name == "FactApplicationDecision":
+        return same_fact_application_answer(prompt=prompt)
     if type_name == "ContextPrefix":
         return {"prefix": "Sits in the staffing file."}
     if type_name in {"SelectionResponse", "ClaimifyResponse"}:
@@ -188,7 +192,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -299,8 +303,10 @@ class _LifecycleRig:
             ),
         )
         facts = FactCatalog(engine=engine)
-        obs_adjudicator = ObservationAdjudicator(
-            engine=engine, model_provider=self.provider, settings=ObservationSettings()
+        obs_adjudicator = FactAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=FactAdjudicationSettings(),
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
@@ -359,6 +365,7 @@ class _LifecycleRig:
         registry.register(
             stage=PipelineStage.LABEL_RELATION,
             handler=LabelFactsHandler(
+                profile_refresher=self.profile_refresher,
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
                 fact_index=self.p1,
@@ -448,7 +455,7 @@ def rig(database_engine: Engine, tmp_path: Path) -> _LifecycleRig:
 def test_worked_example_edit_retracts_solely_supported_fact(rig: _LifecycleRig) -> None:
     """Lifecycle §5's worked example, end to end: the living edit removes the
     fact's sole support → currency flips, count hits zero, the relation
-    closes per shape with a recorded retraction, and the fact-level
+    closes system belief with a recorded retraction, and the fact-level
     `evidence_changed` delta is emitted. A replayed run re-emits as no-ops."""
     rig.observe(
         source_ref="a.md",
@@ -469,9 +476,8 @@ def test_worked_example_edit_retracts_solely_supported_fact(rig: _LifecycleRig) 
 
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # capped at the withdrawing edit
-    assert str(fact["valid_until"]).startswith("2026-02-01")
-    assert fact["invalidated_at"] is None  # retraction is not "learned wrong"
+    assert fact["valid_until"] is None  # withdrawal does not invent a world end
+    assert fact["invalidated_at"] is not None  # no supporting testimony remains
     event = rig.scalar(
         "SELECT count(*) FROM testimony_currency_events"
         " WHERE reason = 'version_superseded' AND became_current = false"
@@ -677,7 +683,8 @@ def test_cycle_finalization_closes_a_genuinely_removed_fact(rig: _LifecycleRig) 
     rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # closed at the barrier
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # belief closes at the barrier
     assert (
         rig.scalar(
             "SELECT count(*) FROM relation_adjudications"
@@ -784,7 +791,8 @@ def test_a_no_claims_replacement_still_supersedes(rig: _LifecycleRig) -> None:
     rig.drain()
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # closed: the source acted
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # support was withdrawn
     assert (
         rig.scalar("SELECT count(*) FROM entities WHERE profile_summary IS NOT NULL")
         == 0
@@ -845,7 +853,8 @@ def test_interrupted_reconcile_completes_on_retry(rig: _LifecycleRig) -> None:
     assert outcome is RunResultOutcome.SUCCEEDED
     fact = rig.relation()
     assert fact["evidence_count"] == 0
-    assert fact["valid_until"] is not None  # the retry finished the close
+    assert fact["valid_until"] is None
+    assert fact["invalidated_at"] is not None  # retry finishes belief withdrawal
     assert (
         rig.scalar(
             "SELECT count(*) FROM knowledge_refresh_queue"
@@ -1111,4 +1120,5 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
     else:
         rig.lifecycle.delete_lineage(doc_id=parked.doc_id)
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
-    assert rig.relation()["valid_until"] is not None
+    assert rig.relation()["valid_until"] is None
+    assert rig.relation()["invalidated_at"] is not None

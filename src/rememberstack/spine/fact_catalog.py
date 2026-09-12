@@ -11,7 +11,6 @@ from contextlib import contextmanager
 import re
 from typing import Final
 from uuid import UUID
-from uuid import uuid4
 
 from sqlalchemy import bindparam
 from sqlalchemy import JSON
@@ -23,7 +22,9 @@ from rememberstack.model import FactForLabeling
 from rememberstack.model import ObservationForEmbedding
 from rememberstack.model import OtherPredicateGrammarError
 from rememberstack.model import RelationUpsert
+from rememberstack.model.fact_windows import FactWindow
 from rememberstack.ports.p1_index import FACT_INPUT_POLICY
+from rememberstack.spine.fact_applications import FactApplicationCatalog
 
 OTHER_PREDICATE_GRAMMAR: Final = re.compile(r"other:[a-z][a-z0-9_]{1,40}")
 """The D5 escape-value grammar: short snake_case behind the other: prefix."""
@@ -35,6 +36,7 @@ class FactCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+        self.applications = FactApplicationCatalog(engine=engine)
 
     def upsert_relation(
         self,
@@ -47,62 +49,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> RelationUpsert:
-        """Land one asserted fact: one relation row, evidence-once, recount.
-
-        An existing believed relation for the (s, p, o) key is reused; the
-        evidence link is ON CONFLICT DO NOTHING (a retry can never inflate the
-        count); the D54 recount runs in the same transaction.
-        """
-        with self._engine.begin() as connection:
-            key = {
-                "deployment_id": deployment_id,
-                "subject_entity_id": subject_entity_id,
-                "predicate": predicate,
-                "object_entity_id": object_entity_id,
-            }
-            # serialize concurrent upserts of one fact key (Codex review):
-            connection.execute(
-                _LOCK_FACT,
-                {
-                    "key": f"{deployment_id}:rel:{subject_entity_id}"
-                    f":{predicate}:{object_entity_id}"
-                },
-            )
-            existing = connection.execute(_SELECT_RELATION, key).scalar_one_or_none()
-            relation_id = existing if existing is not None else uuid4()
-            if existing is None:
-                # a re-occurring fact (a prior CLOSED row exists) starts a
-                # fresh row whose window opens at the re-occurrence boundary,
-                # so the EXCLUDE constraint's non-overlap holds and the new
-                # spell is adjudicable (Codex review; D41 refines the time):
-                reoccurrence_boundary = connection.execute(
-                    _LATEST_CLOSED_UNTIL, key
-                ).scalar_one_or_none()
-                connection.execute(
-                    _INSERT_RELATION,
-                    {
-                        **key,
-                        "relation_id": relation_id,
-                        "valid_from": reoccurrence_boundary,
-                        "normalizer_version": normalizer_version,
-                    },
-                )
-                connection.execute(  # the D5 promotion funnel's ranking input
-                    _BUMP_PREDICATE_USAGE,
-                    {"deployment_id": deployment_id, "predicate": predicate},
-                )
-            connection.execute(
-                _INSERT_RELATION_EVIDENCE,
-                {
-                    "deployment_id": deployment_id,
-                    "relation_id": relation_id,
-                    "claim_id": claim_id,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
-            connection.execute(_RECOUNT_RELATION, {"relation_id": relation_id})
-        return RelationUpsert(relation_id=relation_id, created=existing is None)
+        """Reject the superseded direct writer; stage through D118 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def upsert_observation(
         self,
@@ -114,61 +64,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> UUID:
-        """Land one entity-anchored statement (D43) with the novelty gate.
-
-        The gate: an identical live statement on the entity is the same
-        observation (evidence collapses onto it); anything else coexists as a
-        new row — fail-safe, never silently resolved. Each mint records an
-        append-only `add` adjudication by the novelty_gate rung (D4).
-        """
-        with self._engine.begin() as connection:
-            connection.execute(
-                _LOCK_FACT,
-                {"key": f"{deployment_id}:obs:{subject_entity_id}:{statement}"},
-            )
-            existing = connection.execute(
-                _SELECT_OBSERVATION,
-                {
-                    "deployment_id": deployment_id,
-                    "subject_entity_id": subject_entity_id,
-                    "statement": statement,
-                },
-            ).scalar_one_or_none()
-            observation_id = existing if existing is not None else uuid4()
-            if existing is None:
-                connection.execute(
-                    _INSERT_OBSERVATION,
-                    {
-                        "observation_id": observation_id,
-                        "deployment_id": deployment_id,
-                        "subject_entity_id": subject_entity_id,
-                        "statement": statement,
-                        "normalizer_version": normalizer_version,
-                    },
-                )
-                connection.execute(
-                    _INSERT_OBS_ADJUDICATION,
-                    {
-                        "adjudication_id": uuid4(),
-                        "deployment_id": deployment_id,
-                        "observation_id": observation_id,
-                        "triggering_claim_id": claim_id,
-                        "features": {"statement": statement},
-                        "adjudicator_version": normalizer_version,
-                    },
-                )
-            connection.execute(
-                _INSERT_OBS_EVIDENCE,
-                {
-                    "deployment_id": deployment_id,
-                    "observation_id": observation_id,
-                    "claim_id": claim_id,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
-            connection.execute(_RECOUNT_OBSERVATION, {"observation_id": observation_id})
-        return observation_id
+        """Reject the superseded direct writer; stage through D118 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     @contextmanager
     def label_lock(self, *, deployment_id: UUID) -> Iterator[None]:
@@ -191,8 +90,53 @@ class FactCatalog:
                 )
                 connection.commit()
 
+    def application_changes(
+        self, *, deployment_id: UUID, application_id: UUID
+    ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
+        """Recover every changed fact from the atomic receipt, even after a crash."""
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT output_kind,result FROM fact_applications WHERE deployment_id=:dep AND application_id=:id AND applied_at IS NOT NULL"
+                    ),
+                    {"dep": deployment_id, "id": application_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return (), ()  # Source erasure retired the application; never recreate it.
+        ids = tuple(UUID(value) for value in row["result"]["changed_fact_ids"])
+        return (ids, ()) if row["output_kind"] == "relation" else ((), ids)
+
+    def document_fact_ids(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
+        """Load retained facts for document projection repair, including zero-output replay."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text("""
+                SELECT 'relation' AS kind,relation_id AS id FROM relation_evidence
+                WHERE deployment_id=:dep AND doc_id=:doc
+                UNION
+                SELECT 'observation',observation_id FROM observation_evidence
+                WHERE deployment_id=:dep AND doc_id=:doc ORDER BY kind,id
+            """),
+                {"dep": deployment_id, "doc": doc_id},
+            ).all()
+        return (
+            tuple(row.id for row in rows if row.kind == "relation"),
+            tuple(row.id for row in rows if row.kind == "observation"),
+        )
+
     def relations_for_labeling(
-        self, *, deployment_id: UUID, doc_id: UUID, label_version: str
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID | None,
+        label_version: str,
+        fact_ids: tuple[UUID, ...] = (),
     ) -> tuple[FactForLabeling, ...]:
         """The document's relations still lacking this label generation.
 
@@ -206,6 +150,7 @@ class FactCatalog:
                     {
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
+                        "fact_ids": list(fact_ids),
                         "label_version": label_version,
                     },
                 )
@@ -215,7 +160,7 @@ class FactCatalog:
         return tuple(FactForLabeling.model_validate(dict(row)) for row in rows)
 
     def record_fact_label(
-        self, *, relation_id: UUID, label: str, label_version: str
+        self, *, relation_id: UUID, label: str, label_version: str, window: FactWindow
     ) -> None:
         """Stamp one relation's readable label (Phase L; clears embed readiness).
 
@@ -230,6 +175,26 @@ class FactCatalog:
                     "relation_id": relation_id,
                     "label": label,
                     "label_version": label_version,
+                    **window.model_dump(),
+                },
+            )
+
+    def record_observation_label(
+        self, *, observation_id: UUID, statement: str, label: str, window: FactWindow
+    ) -> None:
+        """Stamp a dated observation label only while its source inputs match."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("""UPDATE observations SET obs_label=:label
+                WHERE observation_id=:id AND statement=:statement
+                  AND valid_from IS NOT DISTINCT FROM CAST(:valid_from AS timestamptz)
+                  AND valid_until IS NOT DISTINCT FROM CAST(:valid_until AS timestamptz)
+                  AND valid_precision::text=:valid_precision"""),
+                {
+                    "id": observation_id,
+                    "statement": statement,
+                    "label": label,
+                    **window.model_dump(),
                 },
             )
 
@@ -237,9 +202,10 @@ class FactCatalog:
         self,
         *,
         deployment_id: UUID,
-        doc_id: UUID,
+        doc_id: UUID | None,
         label_version: str,
         embedding_model: str,
+        fact_ids: tuple[UUID, ...] = (),
     ) -> tuple[FactForEmbedding, ...]:
         """Labeled relations still missing this embed generation (Phase E)."""
         with self._engine.connect() as connection:
@@ -249,6 +215,7 @@ class FactCatalog:
                     {
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
+                        "fact_ids": list(fact_ids),
                         "label_version": label_version,
                         "embedding_model": embedding_model,
                         "input_policy": FACT_INPUT_POLICY,
@@ -260,7 +227,12 @@ class FactCatalog:
         return tuple(FactForEmbedding.model_validate(dict(row)) for row in rows)
 
     def observations_for_embedding(
-        self, *, deployment_id: UUID, doc_id: UUID, embedding_model: str
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID | None,
+        embedding_model: str,
+        fact_ids: tuple[UUID, ...] = (),
     ) -> tuple[ObservationForEmbedding, ...]:
         """The document's observations still lacking this embed generation."""
         with self._engine.connect() as connection:
@@ -270,6 +242,7 @@ class FactCatalog:
                     {
                         "deployment_id": deployment_id,
                         "doc_id": doc_id,
+                        "fact_ids": list(fact_ids),
                         "embedding_model": embedding_model,
                         "input_policy": FACT_INPUT_POLICY,
                     },
@@ -343,20 +316,10 @@ class FactCatalog:
         doc_id: UUID,
         normalizer_version: str,
     ) -> None:
-        """Buffer one observation until the post-barrier ordered D43 flush (D88)."""
-        with self._engine.begin() as connection:
-            connection.execute(
-                _UPSERT_OBS_STAGING,
-                {
-                    "deployment_id": deployment_id,
-                    "version_id": version_id,
-                    "claim_id": claim_id,
-                    "subject_entity_id": subject_entity_id,
-                    "statement": statement,
-                    "doc_id": doc_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
+        """Reject the superseded direct writer; stage through D118 fact applications."""
+        raise RuntimeError(
+            "direct fact writes are retired; use normalized fact applications"
+        )
 
     def load_staged_observations(
         self, *, deployment_id: UUID, version_id: UUID, normalizer_version: str
@@ -751,16 +714,17 @@ _SELECT_OBSERVATIONS_BY_ORIGIN_CLAIMS = text(
 _SELECT_RELATIONS_FOR_LABELING = text(
     """
     SELECT r.relation_id, subject.canonical_name AS subject_name, r.predicate,
-           object.canonical_name AS object_name, r.status::text AS status
+           object.canonical_name AS object_name, r.status::text AS status,
+           r.valid_from, r.valid_until, r.valid_precision::text AS valid_precision
     FROM relations r
     JOIN entities subject ON subject.entity_id = r.subject_entity_id
     JOIN entities object ON object.entity_id = r.object_entity_id
     WHERE r.deployment_id = :deployment_id
       AND (r.fact_label_version IS NULL OR r.fact_label_version <> :label_version)
-      AND EXISTS (
+      AND (r.relation_id=ANY(CAST(:fact_ids AS uuid[])) OR EXISTS (
           SELECT 1 FROM relation_evidence e
-          WHERE e.relation_id = r.relation_id AND e.doc_id = :doc_id
-      )
+          WHERE e.relation_id = r.relation_id AND e.doc_id = CAST(:doc_id AS uuid)
+      ))
     ORDER BY r.created_at, r.relation_id
     """
 )
@@ -779,6 +743,9 @@ _STAMP_FACT_LABEL = text(
         embedding_text_hash = NULL,
         updated_at = now()
     WHERE relation_id = :relation_id
+      AND valid_from IS NOT DISTINCT FROM CAST(:valid_from AS timestamptz)
+      AND valid_until IS NOT DISTINCT FROM CAST(:valid_until AS timestamptz)
+      AND valid_precision::text=:valid_precision
       AND (fact_label_version IS NULL OR fact_label_version <> :label_version)
     """
 )
@@ -786,7 +753,7 @@ _STAMP_FACT_LABEL = text(
 _SELECT_RELATIONS_FOR_EMBEDDING = text(
     """
     SELECT r.relation_id, r.fact_label, r.status::text AS status,
-           r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at
+           r.valid_from, r.valid_until, r.valid_precision::text AS valid_precision, r.ingested_at, r.invalidated_at
     FROM relations r
     WHERE r.deployment_id = :deployment_id
       AND r.fact_label IS NOT NULL
@@ -796,19 +763,19 @@ _SELECT_RELATIONS_FOR_EMBEDDING = text(
             OR r.embedding_model <> :embedding_model
             OR r.embedding_input_policy_version <> :input_policy
           )
-      AND EXISTS (
+      AND (r.relation_id=ANY(CAST(:fact_ids AS uuid[])) OR EXISTS (
           SELECT 1 FROM relation_evidence e
-          WHERE e.relation_id = r.relation_id AND e.doc_id = :doc_id
-      )
+          WHERE e.relation_id = r.relation_id AND e.doc_id = CAST(:doc_id AS uuid)
+      ))
     ORDER BY r.created_at, r.relation_id
     """
 )
 
 _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
     """
-    SELECT observation_id, coalesce(obs_label, statement) AS obs_label,
+    SELECT observation_id, statement AS obs_label,
            status::text AS status,
-           valid_from, valid_until, ingested_at, invalidated_at
+           valid_from, valid_until, valid_precision::text AS valid_precision, ingested_at, invalidated_at
     FROM observations
     WHERE observations.deployment_id = :deployment_id
       AND (
@@ -816,11 +783,11 @@ _SELECT_OBSERVATIONS_FOR_EMBEDDING = text(
             OR embedding_model <> :embedding_model
             OR embedding_input_policy_version <> :input_policy
           )
-      AND EXISTS (
+      AND (observations.observation_id=ANY(CAST(:fact_ids AS uuid[])) OR EXISTS (
           SELECT 1 FROM observation_evidence e
           WHERE e.observation_id = observations.observation_id
-            AND e.doc_id = :doc_id
-      )
+            AND e.doc_id = CAST(:doc_id AS uuid)
+      ))
     ORDER BY created_at, observation_id
     """
 )

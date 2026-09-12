@@ -96,6 +96,20 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 | **Surface** | **Public** transcript endpoints for supported subjects (see API) |
 | **Out** | decision history (recent-first, bounded; truncation signaled) |
 
+### Choosing the fact time scope
+
+Use `history` for biographies and achievements: a completed tournament win
+remains part of someone's history. Use `current` for what holds now, `at` for a
+particular instant, and `overlap` for a bounded interval. History excludes known
+future starts; future planning uses an explicit future `at` or `overlap` request.
+
+The library's enumerated `aggregate` accepts the same time selector. Counts and
+groups report `count`/`total` for confirmed matches and
+`possible_count`/`possible_total` for incomplete-date candidates separately. A
+nonzero possible total or truncation prevents an exact-count claim. Timeline
+buckets use chosen world dates, with an undated bucket rather than an ingestion
+date fallback. `delta_top_entities` remains a system change feed.
+
 ### `delta` / `pages_about` / `aggregate` / `scan`
 
 | | |

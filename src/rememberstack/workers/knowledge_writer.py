@@ -43,7 +43,7 @@ from rememberstack.ports import ObjectStorePort
 from rememberstack.spine.knowledge import KnowledgeControlPlane
 from rememberstack.workers.knowledge_fact_sheet import KnowledgeFactSheetCompiler
 
-KNOWLEDGE_WRITER_VERSION: Final = "k-writer-2026.07"
+KNOWLEDGE_WRITER_VERSION: Final = "k-writer-2026.09:dated-history"
 
 _WRITER_PROMPT: Final = """You compile exactly one Plane-K prose band.
 Your working directory is the declared output/ surface. Read ../INSTRUCTIONS.md and every
@@ -53,6 +53,12 @@ internet, initialize git, commit, or edit outside this temporary workspace.
 
 Write only these declared files in the current directory (archived under output/):
 - prose.md: non-empty prose band; do not reproduce the generated fact sheet.
+- Describe dated history using each fact's chosen valid_from/valid_until and valid_precision.
+  These are canonical half-open world dates. Do not infer unknown endpoints or
+  turn an unknown end into "still/currently". Claims are attributed testimony;
+  their source dates do not replace a fact's chosen world dates.
+- Qualify any current-state statement with the supplied evidence_as_of timestamp;
+  this saved page does not become fresh merely because the wall clock advances.
 - citations.json: JSON array of objects with role supports|contradicts|cites and exactly one
   target: claim_lineage_id + claim_chunk_content_hash together, relation_id, or doc_id. Copy
   stable claim coordinates and IDs exactly from available evidence.

@@ -65,6 +65,9 @@ from rememberstack.spine.migrations.versions.p9_27_0048_query_space_canonical_bo
 from rememberstack.spine.migrations.versions.p9_27_0048_query_space_canonical_bounds import (
     CLAIMS_CLOCK_COMMENT_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_30_0051_mutable_fact_windows import (
+    FACT_WINDOWS_VIEW_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -165,6 +168,7 @@ def _authored_parts() -> tuple[
         MEMORY_V1_TYPE_CUT_DDL,
         CLAIMS_CANONICAL_VIEW_DDL,
         CLAIMS_CLOCK_COMMENT_DDL,
+        FACT_WINDOWS_VIEW_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

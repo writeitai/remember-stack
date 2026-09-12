@@ -18,16 +18,20 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core.fact_label import deterministic_fact_label
+from rememberstack.core.fact_windows import describe_fact_window
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1FactRow
+from rememberstack.model import ProcessingTarget
+from rememberstack.model.fact_windows import FactWindow
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimIndexPort
 from rememberstack.ports.p1_index import FactIndexPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.fact_catalog import FactCatalog
@@ -36,7 +40,7 @@ from rememberstack.workers.base import HandlerOutcome
 P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 """The claim-embed stage's component version (the model rides settings)."""
 
-FACT_LABEL_VERSION: Final = "p1-fact-label-2026.08:deterministic-s4"
+FACT_LABEL_VERSION: Final = "p1-fact-label-2026.09:chosen-window"
 """Fact-label generation: deterministic predicate surface templates (S4/S1)."""
 
 
@@ -156,16 +160,32 @@ class LabelFactsHandler:
         model_provider: ModelProviderPort,
         fact_index: FactIndexPort,
         settings: P1Settings,
+        profile_refresher: ProfileRefresherPort | None = None,
     ) -> None:
         """Bind the handler to the fact catalog, provider, and facts index."""
         self._facts = facts
         self._model_provider = model_provider
         self._fact_index = fact_index
         self._settings = settings
+        self._profile_refresher = profile_refresher
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Label (checkpointed) then embed facts still lacking this generation."""
-        doc_id = _payload_uuid(work=work, field="doc_id")
+        relation_ids: tuple[UUID, ...] = ()
+        observation_ids: tuple[UUID, ...] = ()
+        if work.target_kind is ProcessingTarget.FACT_APPLICATION:
+            if self._profile_refresher is None:
+                raise NonRetryableHandlerError(
+                    "application projection repair requires a profile refresher"
+                )
+            relation_ids, observation_ids = self._facts.application_changes(
+                deployment_id=work.deployment_id, application_id=work.target_id
+            )
+            if not relation_ids and not observation_ids:
+                return HandlerOutcome()
+            doc_id = None
+        else:
+            doc_id = _payload_uuid(work=work, field="doc_id")
         label_generation = FACT_LABEL_VERSION
         with self._facts.label_lock(deployment_id=work.deployment_id):
             # Phase L — deterministic labels, durable per relation.
@@ -173,16 +193,24 @@ class LabelFactsHandler:
                 deployment_id=work.deployment_id,
                 doc_id=doc_id,
                 label_version=label_generation,
+                fact_ids=relation_ids,
             ):
                 label = deterministic_fact_label(
                     subject=relation.subject_name,
                     predicate=relation.predicate,
                     object_name=relation.object_name,
                 )
+                window = FactWindow(
+                    valid_from=relation.valid_from,
+                    valid_until=relation.valid_until,
+                    valid_precision=relation.valid_precision,
+                )
+                label = f"{label} [world time: {describe_fact_window(window=window)}]"
                 self._facts.record_fact_label(
                     relation_id=relation.relation_id,
                     label=label,
                     label_version=label_generation,
+                    window=window,
                 )
 
             # Phase E — embed rows missing this embed generation.
@@ -195,6 +223,7 @@ class LabelFactsHandler:
                     status=relation.status,
                     valid_from=relation.valid_from,
                     valid_until=relation.valid_until,
+                    valid_precision=relation.valid_precision,
                     ingested_at=relation.ingested_at,
                     invalidated_at=relation.invalidated_at,
                     vector=(0.0,),
@@ -203,28 +232,43 @@ class LabelFactsHandler:
                     deployment_id=work.deployment_id,
                     doc_id=doc_id,
                     label_version=label_generation,
+                    fact_ids=relation_ids,
                     embedding_model=self._settings.embedding_model,
                 )
             ]
-            rows.extend(
-                P1FactRow(
-                    fact_id=observation.observation_id,
-                    deployment_id=work.deployment_id,
-                    kind="observation",
-                    label=observation.obs_label,
-                    status=observation.status,
+            for observation in self._facts.observations_for_embedding(
+                deployment_id=work.deployment_id,
+                doc_id=doc_id,
+                fact_ids=observation_ids,
+                embedding_model=self._settings.embedding_model,
+            ):
+                window = FactWindow(
                     valid_from=observation.valid_from,
                     valid_until=observation.valid_until,
-                    ingested_at=observation.ingested_at,
-                    invalidated_at=observation.invalidated_at,
-                    vector=(0.0,),
+                    valid_precision=observation.valid_precision,
                 )
-                for observation in self._facts.observations_for_embedding(
-                    deployment_id=work.deployment_id,
-                    doc_id=doc_id,
-                    embedding_model=self._settings.embedding_model,
+                label = f"{observation.obs_label} [world time: {describe_fact_window(window=window)}]"
+                self._facts.record_observation_label(
+                    observation_id=observation.observation_id,
+                    statement=observation.obs_label,
+                    label=label,
+                    window=window,
                 )
-            )
+                rows.append(
+                    P1FactRow(
+                        fact_id=observation.observation_id,
+                        deployment_id=work.deployment_id,
+                        kind="observation",
+                        label=label,
+                        status=observation.status,
+                        valid_from=observation.valid_from,
+                        valid_until=observation.valid_until,
+                        valid_precision=observation.valid_precision,
+                        ingested_at=observation.ingested_at,
+                        invalidated_at=observation.invalidated_at,
+                        vector=(0.0,),
+                    )
+                )
             batch_size = self._settings.embed_batch_size
             for batch_start in range(0, len(rows), batch_size):
                 batch = rows[batch_start : batch_start + batch_size]
@@ -245,6 +289,18 @@ class LabelFactsHandler:
                     for row, vector in zip(batch, response.vectors, strict=True)
                 )
                 self._fact_index.upsert_facts(rows=embedded)
+        if self._profile_refresher is not None:
+            if doc_id is not None:
+                relation_ids, observation_ids = self._facts.document_fact_ids(
+                    deployment_id=work.deployment_id, doc_id=doc_id
+                )
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=work.deployment_id,
+                relation_ids=relation_ids,
+                observation_ids=observation_ids,
+                meter=meter,
+                call_key=f"profile:application:{work.target_id}",
+            )
         return HandlerOutcome()
 
 

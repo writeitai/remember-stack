@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EntityRef
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ResolvedEntity
+from rememberstack.model.relations import NormalizationResponse
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 
@@ -65,6 +67,17 @@ class RecordingFacts:
         self.predicates = predicates or {"related_to": None}
         self.other_ensured: list[str] = []
         self.upserts: list[dict[str, Any]] = []
+        self.applications = RecordingApplications()
+
+    def active_predicates(self, *, deployment_id: object) -> dict[str, str | None]:
+        """Expose the configured governed vocabulary."""
+        del deployment_id
+        return self.predicates
+
+    def predicate_prompt_lines(self, *, deployment_id: object) -> str:
+        """Render the governed predicate names for the fixture prompt."""
+        del deployment_id
+        return "\n".join(self.predicates)
 
     def ensure_other_predicate(self, *, deployment_id: object, predicate: str) -> None:
         """Record other-predicate registration."""
@@ -93,6 +106,35 @@ class RecordingFacts:
             relation_id = uuid4()
 
         return _Upserted()
+
+
+class RecordingApplications:
+    """Retain the first normalization answer and record staged output coordinates."""
+
+    def __init__(self) -> None:
+        """Start with no published answer or staged assertions."""
+        self.published: tuple[NormalizationResponse, tuple[Any, ...]] | None = None
+        self.staged: list[dict[str, Any]] = []
+
+    def normalization(
+        self, **kwargs: Any
+    ) -> tuple[NormalizationResponse, tuple[Any, ...]] | None:
+        """Return the already frozen answer on retry."""
+        del kwargs
+        return self.published
+
+    def publish_normalization(
+        self, *, output: NormalizationResponse, accepted: tuple[Any, ...], **kwargs: Any
+    ) -> tuple[NormalizationResponse, tuple[Any, ...]]:
+        """Retain the original answer and accepted ordinals."""
+        del kwargs
+        if self.published is None:
+            self.published = (output, accepted)
+        return self.published
+
+    def stage(self, **kwargs: Any) -> None:
+        """Record a staging request without creating a fact."""
+        self.staged.append(kwargs)
 
 
 def _claim() -> ClaimForNormalization:
@@ -132,3 +174,29 @@ def _handler(
         settings=E3Settings(normalize_model="test-model"),
         chunker_version="test",
     )
+
+
+def same_fact_application_answer(*, prompt: str) -> dict[str, object]:
+    """Canned identity decision for fixtures explicitly describing one repeated fact.
+
+    This is test input, not an identity heuristic in the engine. Contextual split
+    and correction decisions have separate PostgreSQL writer acceptance cases.
+    """
+    snapshot = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
+    if snapshot["facts"]:
+        return {
+            "target": {"fact_id": snapshot["facts"][0]["fact_id"]},
+            "confidence": 0.9,
+            "rationale": "Fixture reports the same fact.",
+        }
+    return {
+        "target": {"new_handle": "fixture"},
+        "new_facts": [
+            {
+                "handle": "fixture",
+                "assertion_application_id": snapshot["application_id"],
+            }
+        ],
+        "confidence": 0.9,
+        "rationale": "First fixture assertion.",
+    }

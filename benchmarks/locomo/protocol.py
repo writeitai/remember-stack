@@ -35,9 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26"
-DEFAULT_PROTOCOL_KEY: Final = "full-v26"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-context-names-v26"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27"
+DEFAULT_PROTOCOL_KEY: Final = "full-v27"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-mutable-windows-v27"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -46,7 +46,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
+    "497bb97a6f325cc5ad599d398a8748447e140d3d457d0b29fc2c0aeced4ce4e5"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -76,17 +76,17 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
         "normalize_relations": (
-            "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:"
-            "no-types-1:binary-t4-1:document-t0-1"
+            "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
+            "no-types-1:binary-t4-1:document-t0-1:mutable-window-1"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush-2026.09b:canonical-bounds-1:temporal-gate-1:claim-fanout-1:entity-fanout-1"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:relation-adjudicator-2026.09c:mutable-window-1:obs-adjudicator-2026.09c:mutable-window-1"
         ),
-        "adjudicate_supersession": "adjudicator-2026.07b:temp0-1",
+        "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
         "label_relation": (
-            "p1-fact-label-2026.08:deterministic-s4+qwen/qwen3-embedding-8b"
+            "p1-fact-label-2026.09:chosen-window+qwen/qwen3-embedding-8b"
         ),
     }
 )
@@ -95,10 +95,9 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "chunk_embedding": "qwen/qwen3-embedding-8b",
         "claim_extraction": "openai/gpt-5.6-luna",
         "context_prefix": "openai/gpt-5.6-luna",
-        "entity_observation_embedding": "qwen/qwen3-embedding-8b",
         "fact_label": "openai/gpt-5.6-luna",
-        "observation_frontier": "openai/gpt-5.6-luna",
-        "observation_small": "openai/gpt-5.6-luna",
+        "entity_resolution": "openai/gpt-5.6-luna",
+        "fact_adjudication": "openai/gpt-5.6-luna",
         "openrouter_embedding_provider": "nebius",
         "openrouter_embedding_provider_order": "unset",
         "openrouter_max_completion_tokens": "32000",
@@ -110,8 +109,6 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "section_summary": "openai/gpt-5.6-luna",
         "skeleton_check": "openai/gpt-5.6-luna",
         "structure_fallback": "openai/gpt-5.6-luna",
-        "supersession_frontier": "openai/gpt-5.6-luna",
-        "supersession_small": "openai/gpt-5.6-luna",
     }
 )
 ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
@@ -119,8 +116,8 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v26-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v27-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
@@ -132,8 +129,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v26-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v26-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v27-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v27-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -145,6 +142,13 @@ normal memory agent and choose the cheapest suitable path:
 1. Assured operations: claims_and_sources_context for what sources said,
    facts_context for current or historical adjudicated truth, combined_context
    when both authorities are useful, and resolve_entity for exact names.
+   Explicitly choose time.mode=history for biography, achievements, and "has ever"
+   questions so completed facts remain visible. Choose current/at for what holds
+   at one instant, and overlap for a requested period. A history result need not
+   hold now. Fact dates are the chosen world window; asserted_at is source time.
+   temporal_match=possible identifies missing date information, not a disputed
+   fact. Keep possible matches separate from confirmed dated counts, and never
+   call a top-k or truncated result an exhaustive total.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
 3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
@@ -250,7 +254,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v26",
+    key="full-v27",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,

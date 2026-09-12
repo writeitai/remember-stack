@@ -82,6 +82,8 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.fact_windows import FactWindow
+from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -1231,7 +1233,8 @@ class QueryEngine:
         is echoed in the envelope. An existing entity with no matching facts
         is `known_empty` (S39).
         """
-        as_of = valid_at or datetime.now(tz=UTC)
+        evaluated_at = datetime.now(tz=UTC)
+        as_of = valid_at or evaluated_at
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -1247,6 +1250,8 @@ class QueryEngine:
                 .mappings()
                 .all()
             )
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="relation") for row in rows),
@@ -1255,7 +1260,9 @@ class QueryEngine:
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
-                AtTemporalScope(at=valid_at, evaluated_at=as_of, believed_at=as_of)
+                AtTemporalScope(
+                    at=valid_at, evaluated_at=evaluated_at, believed_at=evaluated_at
+                )
                 if valid_at is not None
                 else current_temporal_scope(evaluated_at=as_of)
             ),
@@ -1289,7 +1296,8 @@ class QueryEngine:
         is read directly.
         """
         dropped = 0
-        as_of = valid_at or datetime.now(tz=UTC)
+        evaluated_at = datetime.now(tz=UTC)
+        as_of = valid_at or evaluated_at
         if property_query is None:
             with self._engine.connect() as connection:
                 rows = (
@@ -1321,6 +1329,8 @@ class QueryEngine:
                 observation_ids=tuple(UUID(item) for item in nominated),
                 as_of=as_of,
             )
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="observation") for row in rows),
@@ -1329,7 +1339,9 @@ class QueryEngine:
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
-                AtTemporalScope(at=valid_at, evaluated_at=as_of, believed_at=as_of)
+                AtTemporalScope(
+                    at=valid_at, evaluated_at=evaluated_at, believed_at=evaluated_at
+                )
                 if valid_at is not None
                 else current_temporal_scope(evaluated_at=as_of)
             ),
@@ -2080,6 +2092,7 @@ class QueryEngine:
         predicate: str | None = None,
         since: datetime | None = None,
         limit: int = 50,
+        time: FactTime | None = None,
     ) -> Envelope:
         """An enumerated aggregate — never a general GROUP BY (retrieval §9).
 
@@ -2109,11 +2122,18 @@ class QueryEngine:
                 ),
             )
         statement, needs = builder
+        selected_time = time or (
+            HistoryFactTime() if form == "timeline" else CurrentFactTime()
+        )
+        evaluated_at = datetime.now(UTC)
+        if form != "delta_top_entities":
+            statement = text(_AGGREGATE_TIME_CTE + str(statement))
         parameters = {
             "deployment_id": deployment_id,
             "subject_entity_id": subject_entity_id,
             "predicate": predicate,
             "since": since,
+            **_fact_time_parameters(time=selected_time, evaluated_at=evaluated_at),
             "fetch": limit + 1,  # one extra row reveals a truncation honestly
         }
         for required, value in (
@@ -2131,17 +2151,23 @@ class QueryEngine:
             AggregateBucket(
                 key=None if row["key"] is None else str(row["key"]),
                 count=row["count"],
+                possible_count=row.get("possible_count", 0),
                 entity_id=row.get("entity_id"),
             )
             for row in (rows[:limit] if bounded else rows)
         )
         total = sum(bucket.count for bucket in buckets)
+        possible_total = sum(bucket.possible_count for bucket in buckets)
         return _envelope(
             grain=Grain.FACT,
+            temporal_scope=_fact_temporal_scope(
+                time=selected_time, evaluated_at=evaluated_at
+            ),
             aggregate=AggregateReport(
                 form=form,
                 buckets=buckets,
                 total=total,
+                possible_total=possible_total,
                 bounded_by="delta window" if form == "delta_top_entities" else None,
             ),
             freshness=_freshness(),
@@ -2149,12 +2175,13 @@ class QueryEngine:
                 truncated=truncated,
                 returned=len(buckets),
                 estimated_total=len(buckets),
-                total_is_exact=not truncated,
+                total_is_exact=not truncated and possible_total == 0,
             )
-            if bounded
+            if bounded or possible_total
             else None,
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def scan(
         self, *, deployment_id: UUID, kind: str, batch_size: int = DEFAULT_SCAN_BATCH
     ) -> Iterator[ScanRow]:
@@ -3396,12 +3423,20 @@ def _normalize_hybrid_text(*, value: str) -> str:
 def _group_claim_evidence(
     *, evidence: Sequence[EvidenceResult]
 ) -> tuple[EvidenceResult, ...]:
-    """Group confirmed claims in incoming rank order by normalized text."""
-    grouped: dict[str, list[EvidenceResult]] = {}
+    """Group repeated testimony only when text, both clocks and attribution agree."""
+    grouped: dict[tuple[object, ...], list[EvidenceResult]] = {}
     for record in evidence:
-        grouped.setdefault(_normalize_hybrid_text(value=record.claim_text), []).append(
-            record
+        key = (
+            _normalize_hybrid_text(value=record.claim_text),
+            record.asserted_at,
+            record.claim_valid_from,
+            record.claim_valid_until,
+            record.claim_valid_precision,
+            record.claim_valid_kind,
+            record.is_attributed,
+            record.is_current_testimony,
         )
+        grouped.setdefault(key, []).append(record)
     return tuple(
         members[0].model_copy(
             update={
@@ -3501,9 +3536,19 @@ def _fact_result(*, row, kind: str) -> FactResult:  # noqa: ANN001
         evidence_count=row["evidence_count"],
         contradiction_group=mapping.get("contradiction_group"),
         support=FactSupport(mapping.get("support_state", FactSupport.CURRENT.value)),
+        temporal_match=(
+            TemporalMatch.CONFIRMED
+            if FactWindow(
+                valid_from=row["valid_from"],
+                valid_until=row["valid_until"],
+                valid_precision=row["valid_precision"],
+            ).is_complete
+            else TemporalMatch.POSSIBLE
+        ),
         validity=Validity(
             valid_from=row["valid_from"],
             valid_until=row["valid_until"],
+            valid_precision=row["valid_precision"],
             ingested_at=row["ingested_at"],
             invalidated_at=mapping.get("invalidated_at"),
         ),
@@ -3519,6 +3564,7 @@ def _co_member(row: dict[str, object]) -> CoMember:
         validity=Validity(
             valid_from=row["valid_from"],  # type: ignore[arg-type]
             valid_until=row["valid_until"],  # type: ignore[arg-type]
+            valid_precision=row["valid_precision"],  # type: ignore[arg-type]
             ingested_at=row["ingested_at"],  # type: ignore[arg-type]
             invalidated_at=row["invalidated_at"],  # type: ignore[arg-type]
         ),
@@ -3702,7 +3748,7 @@ _LOOKUP_RELATIONS = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
@@ -3721,7 +3767,7 @@ _LOOKUP_RELATIONS = text(
 _LOOKUP_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3781,7 +3827,7 @@ def _confirm_facts_context_statement(
     SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.contradiction_group,
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
@@ -3809,7 +3855,7 @@ _FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.support_state_current AS support_state
     FROM memory_v1.facts_visible_history AS fact
     WHERE fact.deployment_id = :deployment_id
@@ -3880,7 +3926,7 @@ _CURRENT_FACT_EVIDENCE = text(
 _CONFIRM_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3995,7 +4041,7 @@ _HYDRATE_RELATION = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id AND relation_id = :relation_id
@@ -4257,10 +4303,36 @@ _PAGES_ABOUT = text(
     """
 )
 
+_AGGREGATE_TIME_CTE = (
+    "WITH "
+    + ", ".join(
+        f"""eligible_{table} AS (
+        SELECT fact.*,
+            (valid_from IS NOT NULL AND (valid_until IS NOT NULL OR valid_precision='open')) AS confirmed
+        FROM {table} fact
+        WHERE deployment_id=:deployment_id AND invalidated_at IS NULL
+          AND ingested_at<=:evaluated_at
+          AND (valid_from IS NULL OR valid_from <= CASE :time_mode
+              WHEN 'at' THEN CAST(:at AS timestamptz)
+              WHEN 'overlap' THEN CAST(:to AS timestamptz)
+              ELSE :evaluated_at END)
+          AND (:time_mode='history' OR valid_until IS NULL
+              OR valid_until > CASE :time_mode
+                  WHEN 'at' THEN CAST(:at AS timestamptz)
+                  WHEN 'overlap' THEN CAST(:from AS timestamptz)
+                  ELSE :evaluated_at END)
+    )"""
+        for table in ("relations", "observations")
+    )
+    + " "
+)
+"""Count accepted matches and disclose incomplete candidates in the same snapshot."""
+
 _AGG_COUNT = text(
     """
-    SELECT NULL::text AS key, count(*) AS count, NULL::uuid AS entity_id
-    FROM relations
+    SELECT NULL::text AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
+    FROM eligible_relations
     WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
       AND (CAST(:subject_entity_id AS uuid) IS NULL
            OR subject_entity_id = :subject_entity_id)
@@ -4270,8 +4342,9 @@ _AGG_COUNT = text(
 
 _AGG_GROUP_BY_PREDICATE = text(
     """
-    SELECT predicate AS key, count(*) AS count, NULL::uuid AS entity_id
-    FROM relations
+    SELECT predicate AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
+    FROM eligible_relations
     WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
       AND subject_entity_id = :subject_entity_id
     GROUP BY predicate
@@ -4282,9 +4355,10 @@ _AGG_GROUP_BY_PREDICATE = text(
 
 _AGG_GROUP_BY_OBJECT = text(
     """
-    SELECT e.canonical_name AS key, count(*) AS count,
+    SELECT e.canonical_name AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count,
            r.object_entity_id AS entity_id
-    FROM relations r
+    FROM eligible_relations r
     JOIN entities e ON e.deployment_id = r.deployment_id
                    AND e.entity_id = r.object_entity_id
     WHERE r.deployment_id = :deployment_id AND r.invalidated_at IS NULL
@@ -4302,16 +4376,17 @@ _AGG_TIMELINE = text(
     -- observations about it, so the timeline is the whole fact evolution,
     -- not just relations
     SELECT to_char(date_trunc('year', ts), 'YYYY') AS key,
-           count(*) AS count, NULL::uuid AS entity_id
+           count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
     FROM (
-        SELECT coalesce(valid_from, ingested_at) AS ts
-        FROM relations
+        SELECT valid_from AS ts, confirmed
+        FROM eligible_relations
         WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
           AND (subject_entity_id = :subject_entity_id
                OR object_entity_id = :subject_entity_id)
         UNION ALL
-        SELECT coalesce(valid_from, ingested_at) AS ts
-        FROM observations
+        SELECT valid_from AS ts, confirmed
+        FROM eligible_observations
         WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
           AND subject_entity_id = :subject_entity_id
     ) facts
@@ -4348,19 +4423,21 @@ _AGG_DELTA_TOP_ENTITIES = text(
 
 _AGG_PREDICATE_ABSENCE = text(
     """
-    -- entities with NO live relation of a predicate (S40, D96: no type filter).
-    -- Each bucket IS one absent entity (count 1).
-    SELECT e.canonical_name AS key, 1 AS count, e.entity_id AS entity_id
+    SELECT e.canonical_name AS key,
+           CASE WHEN possible.present THEN 0 ELSE 1 END AS count,
+           CASE WHEN possible.present THEN 1 ELSE 0 END AS possible_count,
+           e.entity_id AS entity_id
     FROM entities e
-    WHERE e.deployment_id = :deployment_id AND e.status = 'active'
-      AND NOT EXISTS (
-          SELECT 1 FROM relations r
-          WHERE r.deployment_id = e.deployment_id
-            AND r.subject_entity_id = e.entity_id
-            AND r.predicate = :predicate
-            AND r.invalidated_at IS NULL
-      )
-    ORDER BY e.canonical_name
+    CROSS JOIN LATERAL (
+        SELECT EXISTS (SELECT 1 FROM eligible_relations r
+            WHERE r.subject_entity_id=e.entity_id AND r.predicate=:predicate
+              AND NOT r.confirmed) AS present
+    ) possible
+    WHERE e.deployment_id=:deployment_id AND e.status='active'
+      AND NOT EXISTS (SELECT 1 FROM eligible_relations r
+          WHERE r.subject_entity_id=e.entity_id AND r.predicate=:predicate
+            AND r.confirmed)
+    ORDER BY e.canonical_name, e.entity_id
     LIMIT :fetch
     """
 )
@@ -4409,9 +4486,11 @@ _CONTRADICTION_MEMBERS_RELATIONS = text(
     SELECT member.contradiction_group, member.fact_id,
            member.fact_label AS label,
            member.evidence_count,
-           member.valid_from, member.valid_until, member.ingested_at,
+           member.valid_from, member.valid_until, fact.valid_precision, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_visible_history AS fact
+      ON fact.deployment_id=member.deployment_id AND fact.fact_kind=member.fact_kind AND fact.fact_id=member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'relation'
       AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))
@@ -4424,9 +4503,11 @@ _CONTRADICTION_MEMBERS_OBSERVATIONS = text(
     SELECT member.contradiction_group, member.fact_id,
            member.fact_label AS label,
            member.evidence_count,
-           member.valid_from, member.valid_until, member.ingested_at,
+           member.valid_from, member.valid_until, fact.valid_precision, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_visible_history AS fact
+      ON fact.deployment_id=member.deployment_id AND fact.fact_kind=member.fact_kind AND fact.fact_id=member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'observation'
       AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))

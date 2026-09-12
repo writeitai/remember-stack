@@ -35,6 +35,7 @@ from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import GraphQueries
 import rememberstack.surfaces.graph_queries as graph_queries_module
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("43000000-0000-0000-0000-000000000001")
@@ -61,7 +62,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for graph proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -311,7 +312,7 @@ class _GraphCorpus:
         subject: str,
         predicate: str,
         obj: str,
-        valid_from: datetime | None = None,
+        valid_from: datetime | None = _JAN_2024,
         valid_until: datetime | None = None,
     ) -> UUID:
         """Create one supported relation with optional world-time bounds."""
@@ -321,9 +322,9 @@ class _GraphCorpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, valid_from,"
-                " valid_until) VALUES (:relation_id, :deployment_id,"
+                " valid_until, valid_precision, window_claim_ids) VALUES (:relation_id, :deployment_id,"
                 " :subject_entity_id, :predicate, :object_entity_id, 'toy',"
-                " :fact_label, 1, :valid_from, :valid_until)"
+                " :fact_label, 1, :valid_from, :valid_until, :precision, ARRAY[:claim]::uuid[])"
             ),
             {
                 "relation_id": relation_id,
@@ -334,6 +335,8 @@ class _GraphCorpus:
                 "fact_label": f"{subject} {predicate} {obj}",
                 "valid_from": valid_from,
                 "valid_until": valid_until,
+                "precision": "open" if valid_until is None else "instant",
+                "claim": evidence_claim,
             },
         )
         connection.execute(

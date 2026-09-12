@@ -1,22 +1,8 @@
 # Design: entity-grain observation flush fan-out
 
-> **D113 amendment.** [Observation temporal application](observation_temporal_application_design.md)
-> supplies durable closed admission, prepared-answer CAS, original receipts and
-> current assertion support. It replaces lock-held model calls and disposable
-> staging with generation-qualified retained membership and D110 revalidation.
-> Its incorporated SQL replaces the older natural keys described below.
-
-> **Binding D110 amendment (2026-09-07).** D110 §§2–3 qualify global order as closed-admission order plus exact recorded-history replay and require the common lock/revision protocol on both planes. No claim is made that an immutable seed is invariant across unseen future inputs. D107 world-time late-arrival re-splitting remains.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
-
-> **Binding D107 amendment (2026-09-03).** The total processing order of §5.5
-> (`asserted_at NULLS LAST, claim_id, statement`) is unchanged and remains a
-> work order only. The §5.5.3 late-arrival re-split decides eligibility by the
-> attached state claim's canonical occurrence start relative to the
-> world-time cap `T`, not by `asserted_at`; undated attached evidence is never
-> re-split. The staggered acceptance case gains a variant with said-on and
-> is-about orders reversed whose final slices follow the world. Contract:
-> `temporal_clocks_design.md` §4.5.
+> **D118 amendment (2026-09-07; effective when merged).** Existing entity-grain work topology remains. D118 §§3.2–4 replace automatic time-based re-splits and D110/D113 application storage. Historical D113 keys, handlers, barriers and proof stores below are not replacement implementation authority.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 **Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS (r3+r4); Codex
 r3 ordering gap closed in this revision — binding once landed on `main`  

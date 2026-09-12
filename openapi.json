@@ -32,6 +32,12 @@
               }
             ],
             "title": "Key"
+          },
+          "possible_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Possible Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -67,6 +73,12 @@
           "form": {
             "title": "Form",
             "type": "string"
+          },
+          "possible_total": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Possible Total",
+            "type": "integer"
           },
           "total": {
             "minimum": 0.0,
@@ -377,6 +389,20 @@
         ],
         "title": "ChunkEvidenceResult",
         "type": "object"
+      },
+      "ClaimValidPrecision": {
+        "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+        "enum": [
+          "unknown",
+          "instant",
+          "day",
+          "month",
+          "quarter",
+          "year",
+          "open"
+        ],
+        "title": "ClaimValidPrecision",
+        "type": "string"
       },
       "CoMember": {
         "additionalProperties": false,
@@ -1195,6 +1221,10 @@
             "$ref": "#/components/schemas/FactSupport",
             "default": "current"
           },
+          "temporal_match": {
+            "$ref": "#/components/schemas/TemporalMatch",
+            "default": "possible"
+          },
           "validity": {
             "$ref": "#/components/schemas/Validity"
           }
@@ -1378,6 +1408,10 @@
               }
             ],
             "title": "Valid From"
+          },
+          "valid_precision": {
+            "$ref": "#/components/schemas/ClaimValidPrecision",
+            "default": "unknown"
           },
           "valid_until": {
             "anyOf": [
@@ -2891,6 +2925,15 @@
         "title": "SqlQueryRequest",
         "type": "object"
       },
+      "TemporalMatch": {
+        "description": "How a chosen window matches this query, independently of fact confidence.",
+        "enum": [
+          "confirmed",
+          "possible"
+        ],
+        "title": "TemporalMatch",
+        "type": "string"
+      },
       "ToolDescriptor": {
         "additionalProperties": false,
         "properties": {
@@ -3181,6 +3224,10 @@
               }
             ],
             "title": "Valid From"
+          },
+          "valid_precision": {
+            "$ref": "#/components/schemas/ClaimValidPrecision",
+            "default": "unknown"
           },
           "valid_until": {
             "anyOf": [

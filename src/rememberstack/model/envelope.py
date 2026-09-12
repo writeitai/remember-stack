@@ -19,6 +19,8 @@ from pydantic import Field
 from pydantic import model_validator
 
 from rememberstack.model.adjudication import TranscriptEntry
+from rememberstack.model.claims import ClaimValidPrecision
+from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.model.queue import UTCDateTime
 
 
@@ -175,6 +177,7 @@ class Validity(BaseModel):
 
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 
@@ -272,6 +275,7 @@ class FactResult(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    temporal_match: TemporalMatch = TemporalMatch.POSSIBLE
     contradiction_group: UUID | None = None  # the raw group id (S23)
     contradiction: Contradiction | None = None  # the surfaced co-members (S23)
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
@@ -388,6 +392,7 @@ class GraphEdge(BaseModel):
     evidence_count: int
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
@@ -457,6 +462,7 @@ class AggregateBucket(BaseModel):
 
     key: str | None
     count: int = Field(ge=0)
+    possible_count: int = Field(default=0, ge=0)
     entity_id: UUID | None = None
 
 
@@ -475,6 +481,7 @@ class AggregateReport(BaseModel):
     form: str
     buckets: tuple[AggregateBucket, ...] = ()
     total: int = Field(ge=0)
+    possible_total: int = Field(default=0, ge=0)
     bounded_by: str | None = None
 
 

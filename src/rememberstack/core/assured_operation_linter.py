@@ -44,9 +44,9 @@ _PRIMITIVE_CHAINS = {
 
 _VERSIONS = {
     AssuredOperationName.RESOLVE_ENTITY: 1,
-    AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT: 1,
-    AssuredOperationName.FACTS_CONTEXT: 2,
-    AssuredOperationName.COMBINED_CONTEXT: 3,
+    AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT: 2,
+    AssuredOperationName.FACTS_CONTEXT: 3,
+    AssuredOperationName.COMBINED_CONTEXT: 4,
 }
 
 

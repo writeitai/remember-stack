@@ -274,6 +274,9 @@ class FactForLabeling(BaseModel):
     predicate: _NonEmpty
     object_name: _NonEmpty
     status: _NonEmpty
+    valid_from: UTCDateTime | None = None
+    valid_until: UTCDateTime | None = None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
 
 
 class FactForEmbedding(BaseModel):
@@ -286,6 +289,7 @@ class FactForEmbedding(BaseModel):
     status: _NonEmpty
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 
@@ -300,6 +304,7 @@ class ObservationForEmbedding(BaseModel):
     status: _NonEmpty
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 

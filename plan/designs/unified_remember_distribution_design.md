@@ -1,7 +1,8 @@
 # Unified `remember` Distribution, Container-First Engine, and Platform CLI (Design)
 
-> **Binding D110 amendment (2026-09-07).** D110 §§2, 4 supply the explicit autonomous temporal-correction contract that reconciles D108 authority with the superseded human mechanism in D107 §4.3. Existing plane adjudication logs record decisions; uncertainty does not create a public human queue.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D118 amendment (2026-09-07; effective when merged).** Ordinary autonomous adjudication can revise fact dates (§3); there is no separate temporal correction subsystem. D108 client and authority boundaries remain unchanged.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D108 decision (2026-09-05).** The single canonical package on PyPI is **`remember`**.
 > The database and worker engine is distributed exclusively via Docker container images (`ghcr.io/writeitai/remember-stack:<tag>`)

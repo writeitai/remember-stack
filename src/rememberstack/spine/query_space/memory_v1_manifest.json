@@ -373,6 +373,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -409,6 +415,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -658,6 +670,20 @@
                 ],
                 "title": "ChunkEvidenceResult",
                 "type": "object"
+              },
+              "ClaimValidPrecision": {
+                "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+                "enum": [
+                  "unknown",
+                  "instant",
+                  "day",
+                  "month",
+                  "quarter",
+                  "year",
+                  "open"
+                ],
+                "title": "ClaimValidPrecision",
+                "type": "string"
               },
               "CoMember": {
                 "additionalProperties": false,
@@ -1095,6 +1121,10 @@
                     "$ref": "#/$defs/FactSupport",
                     "default": "current"
                   },
+                  "temporal_match": {
+                    "$ref": "#/$defs/TemporalMatch",
+                    "default": "possible"
+                  },
                   "validity": {
                     "$ref": "#/$defs/Validity"
                   }
@@ -1251,6 +1281,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -1691,6 +1725,15 @@
                 "title": "SourceRecord",
                 "type": "object"
               },
+              "TemporalMatch": {
+                "description": "How a chosen window matches this query, independently of fact confidence.",
+                "enum": [
+                  "confirmed",
+                  "possible"
+                ],
+                "title": "TemporalMatch",
+                "type": "string"
+              },
               "TranscriptEntry": {
                 "additionalProperties": false,
                 "description": "One append-only decision record, as the `transcript` primitive returns it.\n\nThe audit trail is uniform across the four subjects a decision can be\nabout (S8/S32/S35): a supersession-adjudicated relation or observation,\na resolved/merged entity, or a compiled K page. `subject_kind` says\nwhich, and `related_id` points at the counterpart the decision paired\nthe subject with — the other relation/observation in a supersede pair,\nthe entity absorbed in a merge, or the compilation's artifact — so an\nagent can walk from any decision to what it acted on.",
@@ -1853,6 +1896,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -2081,7 +2128,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 1
+          "version": 2
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
@@ -2226,6 +2273,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -2262,6 +2315,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -2511,6 +2570,20 @@
                 ],
                 "title": "ChunkEvidenceResult",
                 "type": "object"
+              },
+              "ClaimValidPrecision": {
+                "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+                "enum": [
+                  "unknown",
+                  "instant",
+                  "day",
+                  "month",
+                  "quarter",
+                  "year",
+                  "open"
+                ],
+                "title": "ClaimValidPrecision",
+                "type": "string"
               },
               "CoMember": {
                 "additionalProperties": false,
@@ -3153,6 +3226,10 @@
                     "$ref": "#/$defs/FactSupport",
                     "default": "current"
                   },
+                  "temporal_match": {
+                    "$ref": "#/$defs/TemporalMatch",
+                    "default": "possible"
+                  },
                   "validity": {
                     "$ref": "#/$defs/Validity"
                   }
@@ -3309,6 +3386,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -3749,6 +3830,15 @@
                 "title": "SourceRecord",
                 "type": "object"
               },
+              "TemporalMatch": {
+                "description": "How a chosen window matches this query, independently of fact confidence.",
+                "enum": [
+                  "confirmed",
+                  "possible"
+                ],
+                "title": "TemporalMatch",
+                "type": "string"
+              },
               "TranscriptEntry": {
                 "additionalProperties": false,
                 "description": "One append-only decision record, as the `transcript` primitive returns it.\n\nThe audit trail is uniform across the four subjects a decision can be\nabout (S8/S32/S35): a supersession-adjudicated relation or observation,\na resolved/merged entity, or a compiled K page. `subject_kind` says\nwhich, and `related_id` points at the counterpart the decision paired\nthe subject with — the other relation/observation in a supersede pair,\nthe entity absorbed in a merge, or the compilation's artifact — so an\nagent can walk from any decision to what it acted on.",
@@ -3912,6 +4002,10 @@
                     ],
                     "title": "Valid From"
                   },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
+                  },
                   "valid_until": {
                     "anyOf": [
                       {
@@ -3958,7 +4052,7 @@
             "title": "ContextBundleV2",
             "type": "object"
           },
-          "version": 3
+          "version": 4
         },
         {
           "channels": {
@@ -4129,6 +4223,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -4165,6 +4265,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -4414,6 +4520,20 @@
                 ],
                 "title": "ChunkEvidenceResult",
                 "type": "object"
+              },
+              "ClaimValidPrecision": {
+                "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+                "enum": [
+                  "unknown",
+                  "instant",
+                  "day",
+                  "month",
+                  "quarter",
+                  "year",
+                  "open"
+                ],
+                "title": "ClaimValidPrecision",
+                "type": "string"
               },
               "CoMember": {
                 "additionalProperties": false,
@@ -4851,6 +4971,10 @@
                     "$ref": "#/$defs/FactSupport",
                     "default": "current"
                   },
+                  "temporal_match": {
+                    "$ref": "#/$defs/TemporalMatch",
+                    "default": "possible"
+                  },
                   "validity": {
                     "$ref": "#/$defs/Validity"
                   }
@@ -5007,6 +5131,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -5447,6 +5575,15 @@
                 "title": "SourceRecord",
                 "type": "object"
               },
+              "TemporalMatch": {
+                "description": "How a chosen window matches this query, independently of fact confidence.",
+                "enum": [
+                  "confirmed",
+                  "possible"
+                ],
+                "title": "TemporalMatch",
+                "type": "string"
+              },
               "TranscriptEntry": {
                 "additionalProperties": false,
                 "description": "One append-only decision record, as the `transcript` primitive returns it.\n\nThe audit trail is uniform across the four subjects a decision can be\nabout (S8/S32/S35): a supersession-adjudicated relation or observation,\na resolved/merged entity, or a compiled K page. `subject_kind` says\nwhich, and `related_id` points at the counterpart the decision paired\nthe subject with — the other relation/observation in a supersede pair,\nthe entity absorbed in a merge, or the compilation's artifact — so an\nagent can walk from any decision to what it acted on.",
@@ -5609,6 +5746,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -5837,7 +5978,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 2
+          "version": 3
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -5893,6 +6034,12 @@
                       }
                     ],
                     "title": "Key"
+                  },
+                  "possible_count": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Count",
+                    "type": "integer"
                   }
                 },
                 "required": [
@@ -5929,6 +6076,12 @@
                   "form": {
                     "title": "Form",
                     "type": "string"
+                  },
+                  "possible_total": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Possible Total",
+                    "type": "integer"
                   },
                   "total": {
                     "minimum": 0,
@@ -6178,6 +6331,20 @@
                 ],
                 "title": "ChunkEvidenceResult",
                 "type": "object"
+              },
+              "ClaimValidPrecision": {
+                "description": "Granularity of a claim's source-asserted world interval (Postgres enum).\n\nValues must match the ``claim_valid_precision`` PostgreSQL enum exactly.\n``unknown`` is the default for claims with no stated world-time.",
+                "enum": [
+                  "unknown",
+                  "instant",
+                  "day",
+                  "month",
+                  "quarter",
+                  "year",
+                  "open"
+                ],
+                "title": "ClaimValidPrecision",
+                "type": "string"
               },
               "CoMember": {
                 "additionalProperties": false,
@@ -6615,6 +6782,10 @@
                     "$ref": "#/$defs/FactSupport",
                     "default": "current"
                   },
+                  "temporal_match": {
+                    "$ref": "#/$defs/TemporalMatch",
+                    "default": "possible"
+                  },
                   "validity": {
                     "$ref": "#/$defs/Validity"
                   }
@@ -6771,6 +6942,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -7211,6 +7386,15 @@
                 "title": "SourceRecord",
                 "type": "object"
               },
+              "TemporalMatch": {
+                "description": "How a chosen window matches this query, independently of fact confidence.",
+                "enum": [
+                  "confirmed",
+                  "possible"
+                ],
+                "title": "TemporalMatch",
+                "type": "string"
+              },
               "TranscriptEntry": {
                 "additionalProperties": false,
                 "description": "One append-only decision record, as the `transcript` primitive returns it.\n\nThe audit trail is uniform across the four subjects a decision can be\nabout (S8/S32/S35): a supersession-adjudicated relation or observation,\na resolved/merged entity, or a compiled K page. `subject_kind` says\nwhich, and `related_id` points at the counterpart the decision paired\nthe subject with — the other relation/observation in a supersede pair,\nthe entity absorbed in a merge, or the compilation's artifact — so an\nagent can walk from any decision to what it acted on.",
@@ -7373,6 +7557,10 @@
                       }
                     ],
                     "title": "Valid From"
+                  },
+                  "valid_precision": {
+                    "$ref": "#/$defs/ClaimValidPrecision",
+                    "default": "unknown"
                   },
                   "valid_until": {
                     "anyOf": [
@@ -7688,6 +7876,8 @@
             "text",
             "timestamptz",
             "timestamptz",
+            "text",
+            "text",
             "text"
           ],
           "columns": [
@@ -7710,7 +7900,9 @@
             "support_state_current",
             "applied_valid_at",
             "applied_believed_at",
-            "identity_regime"
+            "identity_regime",
+            "valid_precision",
+            "temporal_match"
           ],
           "filters": [],
           "max_rows_hard_cap": 1000,
@@ -30775,14 +30967,14 @@
               "type": "text"
             },
             {
-              "comment": "World-time start of the fact, null for unknown or always.",
+              "comment": "Canonical inclusive world-time start; NULL means unknown.",
               "enum_values": null,
               "name": "valid_from",
               "nullable": true,
               "type": "timestamp with time zone"
             },
             {
-              "comment": "World-time end of the fact, null while the fact is open; the interval is half-open, so a fact whose valid_until equals the evaluation instant is already excluded.",
+              "comment": "Canonical exclusive world-time end; NULL means unknown unless valid_precision is open.",
               "enum_values": null,
               "name": "valid_until",
               "nullable": true,
@@ -30839,9 +31031,16 @@
               "name": "evaluated_at",
               "nullable": false,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Chosen world-date precision; unknown and partial boundaries are distinct from explicitly open.",
+              "enum_values": null,
+              "name": "valid_precision",
+              "nullable": false,
+              "type": "text"
             }
           ],
-          "comment": "One row per currently valid relation or observation, keyed by (deployment_id, fact_kind, fact_id) and joined to fact_claim_evidence_live and evidence_lineage on the same triple. THIS IS THE ADJUDICATED CURRENT WORLDVIEW and the right starting point for any what-holds-now question; claim relations answer what a source said, never what the system believes. Both D41 clocks are applied at exactly one instant: the fact must have been believed by evaluated_at and not since invalidated, and its world-time interval must contain evaluated_at under a half-open convention where valid_from is inclusive and valid_until is exclusive, with a null endpoint meaning unbounded. Every reference to a current relation inside one SQL statement observes that same evaluated_at, which is emitted on every row. Membership additionally requires a surviving provenance lineage, so forgotten sources remove the fact rather than orphaning it. The counts are exact counts of distinct current-testimony lineages taken from evidence_lineage, and support_state is derived at read time from the open support_withdrawn review row: a zero count never manufactures a withdrawn state and deletion never infers one.",
+          "comment": "Confirmed facts holding at the single evaluated_at instant and still believed. Unknown or partial windows are excluded from this strict current view; inspect facts_visible_history for possible matches and historical achievements. A NULL end alone never establishes ongoing validity. Counts are distinct current testimony lineages.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -30912,6 +31111,10 @@
               {
                 "@": "String",
                 "sval": "evaluated_at"
+              },
+              {
+                "@": "String",
+                "sval": "valid_precision"
               }
             ],
             "query": {
@@ -31264,6 +31467,22 @@
                       }
                     ]
                   }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "h"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "valid_precision"
+                      }
+                    ]
+                  }
                 }
               ],
               "whereClause": {
@@ -31332,29 +31551,49 @@
                     }
                   },
                   {
+                    "@": "A_Expr",
+                    "kind": {
+                      "#": "A_Expr_Kind",
+                      "name": "AEXPR_OP"
+                    },
+                    "lexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "h"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "valid_from"
+                        }
+                      ]
+                    },
+                    "name": [
+                      {
+                        "@": "String",
+                        "sval": "<="
+                      }
+                    ],
+                    "rexpr": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "clock"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "evaluated_at"
+                        }
+                      ]
+                    },
+                    "rexpr_list_end": 0,
+                    "rexpr_list_start": 0
+                  },
+                  {
                     "@": "BoolExpr",
                     "args": [
-                      {
-                        "@": "NullTest",
-                        "arg": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "h"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "valid_from"
-                            }
-                          ]
-                        },
-                        "argisrow": false,
-                        "nulltesttype": {
-                          "#": "NullTestType",
-                          "name": "IS_NULL"
-                        }
-                      },
                       {
                         "@": "A_Expr",
                         "kind": {
@@ -31370,61 +31609,26 @@
                             },
                             {
                               "@": "String",
-                              "sval": "valid_from"
+                              "sval": "valid_precision"
                             }
                           ]
                         },
                         "name": [
                           {
                             "@": "String",
-                            "sval": "<="
+                            "sval": "="
                           }
                         ],
                         "rexpr": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "clock"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "evaluated_at"
-                            }
-                          ]
+                          "@": "A_Const",
+                          "isnull": false,
+                          "val": {
+                            "@": "String",
+                            "sval": "open"
+                          }
                         },
                         "rexpr_list_end": 0,
                         "rexpr_list_start": 0
-                      }
-                    ],
-                    "boolop": {
-                      "#": "BoolExprType",
-                      "name": "OR_EXPR"
-                    }
-                  },
-                  {
-                    "@": "BoolExpr",
-                    "args": [
-                      {
-                        "@": "NullTest",
-                        "arg": {
-                          "@": "ColumnRef",
-                          "fields": [
-                            {
-                              "@": "String",
-                              "sval": "h"
-                            },
-                            {
-                              "@": "String",
-                              "sval": "valid_until"
-                            }
-                          ]
-                        },
-                        "argisrow": false,
-                        "nulltesttype": {
-                          "#": "NullTestType",
-                          "name": "IS_NULL"
-                        }
                       },
                       {
                         "@": "A_Expr",
@@ -31480,7 +31684,7 @@
                 }
               }
             },
-            "replace": false,
+            "replace": true,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -31590,14 +31794,14 @@
               "type": "text"
             },
             {
-              "comment": "Raw world-time start of the fact, null for unknown or always.",
+              "comment": "Canonical inclusive world-time start; NULL means unknown.",
               "enum_values": null,
               "name": "valid_from",
               "nullable": true,
               "type": "timestamp with time zone"
             },
             {
-              "comment": "Raw world-time end of the fact, null while the fact has not been capped; the interval is half-open so a fact does not hold at valid_until.",
+              "comment": "Canonical exclusive world-time end; NULL means unknown unless valid_precision is open.",
               "enum_values": null,
               "name": "valid_until",
               "nullable": true,
@@ -31654,9 +31858,16 @@
               "name": "support_state_current",
               "nullable": false,
               "type": "text"
+            },
+            {
+              "comment": "Chosen world-date precision; unknown and partial boundaries are distinct from explicitly open.",
+              "enum_values": null,
+              "name": "valid_precision",
+              "nullable": false,
+              "type": "text"
             }
           ],
-          "comment": "One row per historically visible relation or observation, keyed by (deployment_id, fact_kind, fact_id) and joined to fact_claim_evidence_live and evidence_lineage on the same triple. Membership requires SURVIVING HISTORICAL PROVENANCE rather than current support: a fact stays visible while at least one of its evidence lineages is still live, so a fact whose current testimony was processed away remains here with zero current support and a withdrawn support state, while a fact whose every source has been forgotten disappears. Both clocks are RAW: valid_from and valid_until are world time with a half-open interval, ingested_at and invalidated_at are transaction time, a null endpoint is unbounded or unknown, and membership here is not a claim that the fact currently holds. The three columns suffixed _current are LIVE CURRENT-TESTIMONY VALUES READ NOW and are explicitly not historical reconstructions: they never assert that those counts or that support state held at any historical instant. The counts are exact counts of distinct current-testimony lineages taken from evidence_lineage, and support_state_current is derived at read time from the open support_withdrawn review row rather than from any stored column. Entity endpoints are survivor identities.",
+          "comment": "Historically visible adjudicated facts with one canonical world window and separate system timestamps. Membership requires surviving provenance. Unknown dates and partial windows are possible temporal matches, not proof of being current; open precision explicitly means ongoing. Completed windows remain believed history while invalidated_at is NULL. Evidence counts and support state are current testimony, not reconstructed historical counts.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -31727,6 +31938,10 @@
               {
                 "@": "String",
                 "sval": "support_state_current"
+              },
+              {
+                "@": "String",
+                "sval": "valid_precision"
               }
             ],
             "query": {
@@ -31741,14 +31956,396 @@
                     "name": "JOIN_INNER"
                   },
                   "larg": {
-                    "@": "RangeVar",
+                    "@": "RangeSubselect",
                     "alias": {
                       "@": "Alias",
                       "aliasname": "fact"
                     },
-                    "inh": true,
-                    "relname": "v_memory_fact_visible",
-                    "relpersistence": "p"
+                    "lateral": false,
+                    "subquery": {
+                      "@": "SelectStmt",
+                      "all": false,
+                      "fromClause": [
+                        {
+                          "@": "JoinExpr",
+                          "isNatural": false,
+                          "jointype": {
+                            "#": "JoinType",
+                            "name": "JOIN_LEFT"
+                          },
+                          "larg": {
+                            "@": "JoinExpr",
+                            "isNatural": false,
+                            "jointype": {
+                              "#": "JoinType",
+                              "name": "JOIN_LEFT"
+                            },
+                            "larg": {
+                              "@": "RangeVar",
+                              "alias": {
+                                "@": "Alias",
+                                "aliasname": "base"
+                              },
+                              "inh": true,
+                              "relname": "v_memory_fact_visible",
+                              "relpersistence": "p"
+                            },
+                            "quals": {
+                              "@": "BoolExpr",
+                              "args": [
+                                {
+                                  "@": "A_Expr",
+                                  "kind": {
+                                    "#": "A_Expr_Kind",
+                                    "name": "AEXPR_OP"
+                                  },
+                                  "lexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "base"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "fact_kind"
+                                      }
+                                    ]
+                                  },
+                                  "name": [
+                                    {
+                                      "@": "String",
+                                      "sval": "="
+                                    }
+                                  ],
+                                  "rexpr": {
+                                    "@": "A_Const",
+                                    "isnull": false,
+                                    "val": {
+                                      "@": "String",
+                                      "sval": "relation"
+                                    }
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
+                                },
+                                {
+                                  "@": "A_Expr",
+                                  "kind": {
+                                    "#": "A_Expr_Kind",
+                                    "name": "AEXPR_OP"
+                                  },
+                                  "lexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "relation"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "deployment_id"
+                                      }
+                                    ]
+                                  },
+                                  "name": [
+                                    {
+                                      "@": "String",
+                                      "sval": "="
+                                    }
+                                  ],
+                                  "rexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "base"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "deployment_id"
+                                      }
+                                    ]
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
+                                },
+                                {
+                                  "@": "A_Expr",
+                                  "kind": {
+                                    "#": "A_Expr_Kind",
+                                    "name": "AEXPR_OP"
+                                  },
+                                  "lexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "relation"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "relation_id"
+                                      }
+                                    ]
+                                  },
+                                  "name": [
+                                    {
+                                      "@": "String",
+                                      "sval": "="
+                                    }
+                                  ],
+                                  "rexpr": {
+                                    "@": "ColumnRef",
+                                    "fields": [
+                                      {
+                                        "@": "String",
+                                        "sval": "base"
+                                      },
+                                      {
+                                        "@": "String",
+                                        "sval": "fact_id"
+                                      }
+                                    ]
+                                  },
+                                  "rexpr_list_end": 0,
+                                  "rexpr_list_start": 0
+                                }
+                              ],
+                              "boolop": {
+                                "#": "BoolExprType",
+                                "name": "AND_EXPR"
+                              }
+                            },
+                            "rarg": {
+                              "@": "RangeVar",
+                              "alias": {
+                                "@": "Alias",
+                                "aliasname": "relation"
+                              },
+                              "inh": true,
+                              "relname": "relations",
+                              "relpersistence": "p"
+                            },
+                            "rtindex": 0
+                          },
+                          "quals": {
+                            "@": "BoolExpr",
+                            "args": [
+                              {
+                                "@": "A_Expr",
+                                "kind": {
+                                  "#": "A_Expr_Kind",
+                                  "name": "AEXPR_OP"
+                                },
+                                "lexpr": {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "base"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "fact_kind"
+                                    }
+                                  ]
+                                },
+                                "name": [
+                                  {
+                                    "@": "String",
+                                    "sval": "="
+                                  }
+                                ],
+                                "rexpr": {
+                                  "@": "A_Const",
+                                  "isnull": false,
+                                  "val": {
+                                    "@": "String",
+                                    "sval": "observation"
+                                  }
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
+                              },
+                              {
+                                "@": "A_Expr",
+                                "kind": {
+                                  "#": "A_Expr_Kind",
+                                  "name": "AEXPR_OP"
+                                },
+                                "lexpr": {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "observation"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "deployment_id"
+                                    }
+                                  ]
+                                },
+                                "name": [
+                                  {
+                                    "@": "String",
+                                    "sval": "="
+                                  }
+                                ],
+                                "rexpr": {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "base"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "deployment_id"
+                                    }
+                                  ]
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
+                              },
+                              {
+                                "@": "A_Expr",
+                                "kind": {
+                                  "#": "A_Expr_Kind",
+                                  "name": "AEXPR_OP"
+                                },
+                                "lexpr": {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "observation"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "observation_id"
+                                    }
+                                  ]
+                                },
+                                "name": [
+                                  {
+                                    "@": "String",
+                                    "sval": "="
+                                  }
+                                ],
+                                "rexpr": {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "base"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "fact_id"
+                                    }
+                                  ]
+                                },
+                                "rexpr_list_end": 0,
+                                "rexpr_list_start": 0
+                              }
+                            ],
+                            "boolop": {
+                              "#": "BoolExprType",
+                              "name": "AND_EXPR"
+                            }
+                          },
+                          "rarg": {
+                            "@": "RangeVar",
+                            "alias": {
+                              "@": "Alias",
+                              "aliasname": "observation"
+                            },
+                            "inh": true,
+                            "relname": "observations",
+                            "relpersistence": "p"
+                          },
+                          "rtindex": 0
+                        }
+                      ],
+                      "groupDistinct": false,
+                      "limitOption": {
+                        "#": "LimitOption",
+                        "name": "LIMIT_OPTION_DEFAULT"
+                      },
+                      "op": {
+                        "#": "SetOperation",
+                        "name": "SETOP_NONE"
+                      },
+                      "targetList": [
+                        {
+                          "@": "ResTarget",
+                          "val": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "base"
+                              },
+                              {
+                                "@": "A_Star"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "@": "ResTarget",
+                          "name": "valid_precision",
+                          "val": {
+                            "@": "TypeCast",
+                            "arg": {
+                              "@": "CoalesceExpr",
+                              "args": [
+                                {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "relation"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "valid_precision"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "@": "ColumnRef",
+                                  "fields": [
+                                    {
+                                      "@": "String",
+                                      "sval": "observation"
+                                    },
+                                    {
+                                      "@": "String",
+                                      "sval": "valid_precision"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            "typeName": {
+                              "@": "TypeName",
+                              "names": [
+                                {
+                                  "@": "String",
+                                  "sval": "text"
+                                }
+                              ],
+                              "pct_type": false,
+                              "setof": false,
+                              "typemod": -1
+                            }
+                          }
+                        }
+                      ]
+                    }
                   },
                   "rarg": {
                     "@": "RangeSubselect",
@@ -32512,8 +33109,8 @@
                                       }
                                     }
                                   ],
-                                  "rexpr_list_end": 912,
-                                  "rexpr_list_start": 890
+                                  "rexpr_list_end": 2433,
+                                  "rexpr_list_start": 2411
                                 },
                                 {
                                   "@": "A_Expr",
@@ -32684,6 +33281,22 @@
                         "sval": "current"
                       }
                     }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "fact"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "valid_precision"
+                      }
+                    ]
                   }
                 }
               ]
@@ -40763,5 +41376,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "9eb048be20e661af07aa79b964159cfe4d37ab01dfc86f3d2f8e680b15919b01"
+  "surface_manifest_hash": "497bb97a6f325cc5ad599d398a8748447e140d3d457d0b29fc2c0aeced4ce4e5"
 }

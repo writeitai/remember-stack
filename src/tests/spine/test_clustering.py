@@ -25,6 +25,7 @@ from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.profile_refresher import current_profile_entity_ids
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("c0000000-0000-0000-0000-000000000001")
@@ -79,7 +80,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

@@ -24,11 +24,11 @@ from rememberstack.model import EnqueueWork
 from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
-from rememberstack.model import ObservationAssertion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model.fact_application import AssertionKind
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
@@ -37,16 +37,18 @@ from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
 from rememberstack.spine.entity_registry import EntityRegistry
+from rememberstack.spine.fact_adjudication import FACT_FLUSH_VERSION
+from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
+from rememberstack.spine.fact_adjudication import FactAdjudicator
+from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
+from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
 from rememberstack.spine.fact_catalog import FactCatalog
 from rememberstack.spine.fact_catalog import OTHER_PREDICATE_GRAMMAR
-from rememberstack.spine.observation_adjudication import ObservationAdjudicator
 from rememberstack.spine.resolver import CascadeResolver
-from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.workers.base import ClaimNormalizeBarrier
 from rememberstack.workers.base import EntityObsFlushBarrier
 from rememberstack.workers.base import HandlerOutcome
-from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 
 _logger = logging.getLogger(__name__)
@@ -72,26 +74,10 @@ def _run_profile_refresh(*, action: Callable[[], object], call_key: str) -> None
         )
 
 
-E3_NORMALIZER_VERSION: Final = (
-    "e3-normalize-2026.08e:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
-    "binary-t4-1:document-t0-1"
-)
-"""The normalize sub-worker's component version (D12 idempotency member).
-
-08d: D100 one-call binary, match-biased T4 identity resolution.
-08c: D96 type cut — no registry types, no D86 gate, no D18 signatures.
-08b: WP-I.1 bare-head-noun refusal + source-surface names.
-08a: D86 unknown-entity-type gate; claim-fanout-1: D88 per-claim ledger grain.
-Temperature=0.0 is part of provenance.
-"""
-
-OBS_FLUSH_VERSION: Final = "e3-obs-flush-2026.09b:canonical-bounds-1:temporal-gate-1:claim-fanout-1:entity-fanout-1"
-"""Post-barrier observation flush generation (D88 §5.6; D90 entity fan-out).
-09a/temporal-gate-1: D106 — dated events with disjoint resolved windows never
-collapse, and a dated event never becomes evidence for an undated statement."""
-
+E3_NORMALIZER_VERSION: Final = FACT_NORMALIZER_VERSION
+OBS_FLUSH_VERSION: Final = FACT_FLUSH_VERSION
 OBS_FLUSH_LEGACY_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1"
-"""Pre-D90 version-serial obs flush component version (cutover only)."""
+
 
 _NORMALIZE_PROMPT: Final = """You are the normalizer of a memory system. Turn
 the CLAIM into zero or more of:
@@ -110,7 +96,12 @@ system, card, photo, module, the system) unless the claim qualifies a specific
 referent (FIFA 23, James's Unity strategy game). Prefer dropping the
 relation or observation. When the claim spelling differs from the canonical
 name, set EntityRef.surface to the claim span (App vs Application).
-Time is never a relation object.
+Time is never a relation object. Each output has uses_claim_window: true only
+when the supplied claim world-time window applies to THAT particular assertion.
+False leaves its initial dates unknown. A source timestamp is when the source
+said it, never a fallback date when the assertion happened or held.
+SOURCE TIMESTAMP: {asserted_at}
+CLAIM WORLD WINDOW (inclusive raw source dates): {claim_window}
 
 GOVERNED PREDICATES:
 {predicates}
@@ -137,7 +128,7 @@ class NormalizeRelationsHandler:
         registry: EntityRegistry,
         resolver: CascadeResolver,
         facts: FactCatalog,
-        observation_adjudicator: ObservationAdjudicator,
+        observation_adjudicator: FactAdjudicator,
         profile_refresher: ProfileRefresherPort,
         model_provider: ModelProviderPort,
         settings: E3Settings,
@@ -156,18 +147,15 @@ class NormalizeRelationsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Normalize claims: claim grain (D88) or legacy version serial path."""
-        if work.target_kind is ProcessingTarget.CLAIM:
-            return self._handle_claim(work=work, meter=meter)
-        # Fan-out generation version-level rows are coordinators only (D88 §5.3):
-        # they must not re-run the serial multi-claim loop.
-        if "claim-fanout" in work.component_version:
+        """Accept only the new claim-grain generation after the fenced cutover."""
+        if (
+            work.component_version != E3_NORMALIZER_VERSION
+            or work.target_kind is not ProcessingTarget.CLAIM
+        ):
             raise NonRetryableHandlerError(
-                f"version-level normalize at fan-out generation is coordinator-only; "
-                f"work {work.processing_id} has target_kind=document_version"
+                "obsolete normalization generation; drain or convert before D118"
             )
-        # Legacy document_version serial normalize (pre-claim-fanout versions).
-        return self._handle_version_serial(work=work, meter=meter)
+        return self._handle_claim(work=work, meter=meter)
 
     def _handle_claim(
         self, *, work: ClaimedWork, meter: CostMeterPort
@@ -225,54 +213,17 @@ class NormalizeRelationsHandler:
                 f"claim {claim_id} not in representation {representation_id}"
                 f" version {version_id}"
             )
-        # Always re-run the idempotent claim path on retry. Partial relation
-        # writes or staged observations must not skip remaining outputs (D88).
-        predicates = self._facts.active_predicates(deployment_id=deployment_id)
-        prompt_lines = self._facts.predicate_prompt_lines(deployment_id=deployment_id)
-        staged_observations: list[tuple[UUID, ObservationAssertion]] = []
-        profile_entity_ids: set[UUID] = set()
-        self._normalize_claim(
-            created_relations=[],  # claim grain does not collect for payload
-            observations_by_entity={},
-            staged_observations=staged_observations,
-            profile_entity_ids=profile_entity_ids,
-            deployment_id=deployment_id,
-            claim=claim,
-            predicates=predicates,
-            prompt_lines=prompt_lines,
-            meter=meter,
-        )
-        profile_call_key = f"profile:normalize:{claim_id}"
-        _run_profile_refresh(
-            action=lambda: self._profile_refresher.refresh_many(
-                deployment_id=deployment_id,
-                entity_ids=tuple(profile_entity_ids),
-                meter=meter,
-                call_key=profile_call_key,
-            ),
-            call_key=profile_call_key,
-        )
-        # Stage under every version that currently lists this claim (D56). A
-        # shared claim work row may complete with one payload while siblings
-        # already carry the occurrence and need the same staged assertions.
         stage_versions = self._claim_catalog.version_ids_with_claim_occurrence(
             claim_id=claim_id,
             deployment_id=deployment_id,
             extractor_version=extractor_version,
+        ) or (version_id,)
+        self._normalize_claim(
+            deployment_id=deployment_id,
+            claim=claim,
+            version_ids=stage_versions,
+            meter=meter,
         )
-        if not stage_versions:
-            stage_versions = (version_id,)
-        for subject_entity_id, assertion in staged_observations:
-            for stage_version_id in stage_versions:
-                self._facts.stage_normalize_observation(
-                    deployment_id=deployment_id,
-                    version_id=stage_version_id,
-                    claim_id=assertion.claim_id,
-                    subject_entity_id=subject_entity_id,
-                    statement=assertion.statement,
-                    doc_id=assertion.doc_id,
-                    normalizer_version=E3_NORMALIZER_VERSION,
-                )
         return HandlerOutcome(
             claim_normalize_barrier=ClaimNormalizeBarrier(
                 deployment_id=deployment_id,
@@ -288,240 +239,107 @@ class NormalizeRelationsHandler:
             )
         )
 
-    def _handle_version_serial(
-        self, *, work: ClaimedWork, meter: CostMeterPort
-    ) -> HandlerOutcome:
-        """Pre-D88 serial path for legacy version-level normalize rows only."""
-        source = self._chunk_catalog.chunk_source(
-            representation_id=_payload_uuid(work=work, field="representation_id")
-        )
-        chunks = self._chunk_catalog.chunks_for_embedding(
-            representation_id=source.representation_id,
-            chunker_version=self._chunker_version,
-        )
-        claims = self._claim_catalog.claims_for_chunks(
-            chunk_ids=tuple(chunk.chunk_id for chunk in chunks)
-        )
-        if not claims:
-            return HandlerOutcome(
-                follow_up=self._terminal_branches(
-                    work=work, doc_id=source.doc_id, relation_ids=()
-                )
-            )
-        deployment_id = work.deployment_id
-        predicates = self._facts.active_predicates(deployment_id=deployment_id)
-        prompt_lines = self._facts.predicate_prompt_lines(deployment_id=deployment_id)
-        created_relations: list[str] = []
-        normalized_claim_ids = self._registry.normalized_claim_ids(
-            claim_ids=tuple(claim.claim_id for claim in claims)
-        )
-        observations_by_entity: dict[UUID, list[ObservationAssertion]] = {}
-        profile_entity_ids: set[UUID] = set()
-        for claim in claims:
-            if claim.claim_id in normalized_claim_ids:
-                continue
-            soft_skipped = self._normalize_claim(
-                created_relations=created_relations,
-                observations_by_entity=observations_by_entity,
-                staged_observations=None,
-                profile_entity_ids=profile_entity_ids,
-                deployment_id=deployment_id,
-                claim=claim,
-                predicates=predicates,
-                prompt_lines=prompt_lines,
-                meter=meter,
-            )
-            if soft_skipped:
-                continue
-        for entity_id, assertions in observations_by_entity.items():
-            self._observation_adjudicator.add_observations(
-                deployment_id=deployment_id,
-                subject_entity_id=entity_id,
-                assertions=tuple(assertions),
-                meter=meter,
-                call_key=f"observation:{entity_id}",
-            )
-            profile_entity_ids.add(entity_id)
-        claim_ids = tuple(claim.claim_id for claim in claims)
-        relation_ids = self._facts.relation_ids_for_origin_claims(
-            deployment_id=deployment_id,
-            claim_ids=claim_ids,
-            normalizer_version=E3_NORMALIZER_VERSION,
-        )
-        observation_ids = self._facts.observation_ids_for_origin_claims(
-            deployment_id=deployment_id,
-            claim_ids=claim_ids,
-            normalizer_version=E3_NORMALIZER_VERSION,
-        )
-        profile_call_key = f"profile:normalize:{work.target_id}"
-        _run_profile_refresh(
-            action=lambda: self._profile_refresher.refresh_for_facts(
-                deployment_id=deployment_id,
-                relation_ids=relation_ids,
-                observation_ids=observation_ids,
-                meter=meter,
-                call_key=profile_call_key,
-            ),
-            call_key=profile_call_key,
-        )
-        return HandlerOutcome(
-            follow_up=self._terminal_branches(
-                work=work, doc_id=source.doc_id, relation_ids=tuple(created_relations)
-            )
-        )
-
-    @staticmethod
-    def _terminal_branches(
-        *, work: ClaimedWork, doc_id: UUID, relation_ids: tuple[str, ...]
-    ) -> tuple[EnqueueWork, ...]:
-        """Start the lifecycle and claim-index branches after normalization.
-
-        Fact labeling deliberately does not fan out here. It follows
-        reconciliation, after supersession and lifecycle state have settled,
-        so the P1 facts channel cannot race ahead with a pre-adjudication
-        status. Readiness joins this branch with ``embed_claim``.
-        """
-        return (
-            EnqueueWork(
-                deployment_id=work.deployment_id,
-                target_kind=work.target_kind,
-                target_id=work.target_id,
-                stage=PipelineStage.ADJUDICATE_SUPERSESSION,
-                component_version=ADJUDICATOR_VERSION,
-                content_hash=work.content_hash,
-                lane=work.lane,
-                payload={
-                    **(work.payload or {}),
-                    "doc_id": str(doc_id),
-                    "relation_ids": list(relation_ids),
-                },
-            ),
-            EnqueueWork(
-                deployment_id=work.deployment_id,
-                target_kind=work.target_kind,
-                target_id=work.target_id,
-                stage=PipelineStage.EMBED_CLAIM,
-                component_version=P1_EMBED_CLAIMS_VERSION,
-                content_hash=work.content_hash,
-                lane=work.lane,
-                payload=dict(work.payload or {}),
-            ),
-        )
-
     def _normalize_claim(
         self,
         *,
-        created_relations: list[str],
-        observations_by_entity: dict[UUID, list[ObservationAssertion]],
-        staged_observations: list[tuple[UUID, ObservationAssertion]] | None,
-        profile_entity_ids: set[UUID],
         deployment_id: UUID,
         claim: ClaimForNormalization,
-        predicates: dict[str, str | None],
-        prompt_lines: str,
+        version_ids: tuple[UUID, ...],
         meter: CostMeterPort,
-    ) -> bool:
-        """One claim through the normalizer call and the deterministic gates.
-
-        Returns True when the normalizer generate path soft-skipped the claim
-        (content poison already metered). Returns False after gates run.
-        Resolver and fact writes re-raise; they are never claim-soft.
-
-        When ``staged_observations`` is set (D88 claim grain), observation
-        assertions are collected for post-barrier ordered flush instead of
-        writing into ``observations_by_entity`` for immediate D43.
-        """
-        base_prompt = _NORMALIZE_PROMPT.format(
-            predicates=prompt_lines,
-            is_attributed=claim.is_attributed,
-            claim_text=claim.claim_text,
+    ) -> None:
+        """Freeze outputs, then resolve and stage both fact planes without identity writes."""
+        catalog = self._facts.applications
+        published = catalog.normalization(
+            deployment_id=deployment_id,
+            claim_id=claim.claim_id,
+            normalizer_version=E3_NORMALIZER_VERSION,
         )
-        response = self._generate_normalize_response(
-            claim=claim, base_prompt=base_prompt, meter=meter
-        )
-        if response is None:
-            return True
-        for relation_index, relation in enumerate(response.relations):
-            if _OTHER_PREDICATE.fullmatch(relation.predicate):
-                self._facts.ensure_other_predicate(
-                    deployment_id=deployment_id, predicate=relation.predicate
-                )
-                predicates = {**predicates, relation.predicate: "related_to"}
-            if relation.predicate not in predicates:
-                _logger.warning(
-                    "unknown predicate %r dropped for claim %s (re-derivable)",
-                    relation.predicate,
-                    claim.claim_id,
-                )
-                continue
-            if is_bare_head_noun(name=relation.subject.name) or is_bare_head_noun(
-                name=relation.object.name
-            ):
-                _logger.warning(
-                    "e3.bare_head_noun_dropped claim_id=%s kind=relation "
-                    "subject=%r object=%r",
-                    claim.claim_id,
-                    relation.subject.name,
-                    relation.object.name,
-                )
-                continue
-            subject = self._resolver.resolve(
-                deployment_id=deployment_id,
-                reference=relation.subject,
-                claim=claim,
-                meter=meter,
-                call_key=(
-                    f"resolve:{claim.claim_id}:relation:{relation_index}:subject"
+        if published is None:
+            predicates = self._facts.active_predicates(deployment_id=deployment_id)
+            base_prompt = _NORMALIZE_PROMPT.format(
+                predicates=self._facts.predicate_prompt_lines(
+                    deployment_id=deployment_id
                 ),
+                is_attributed=claim.is_attributed,
+                claim_text=claim.claim_text,
+                asserted_at=claim.asserted_at,
+                claim_window=f"{claim.claim_valid_from} to {claim.claim_valid_until}; {claim.claim_valid_precision}; {claim.claim_valid_kind}",
             )
-            object_ = self._resolver.resolve(
-                deployment_id=deployment_id,
-                reference=relation.object,
-                claim=claim,
-                meter=meter,
-                call_key=f"resolve:{claim.claim_id}:relation:{relation_index}:object",
+            response = self._generate_normalize_response(
+                claim=claim, base_prompt=base_prompt, meter=meter
             )
-            upserted = self._facts.upsert_relation(
+            if response is None:
+                raise NonRetryableHandlerError(
+                    "normalization produced no complete response"
+                )
+            accepted: list[tuple[AssertionKind, int]] = []
+            for ordinal, relation in enumerate(response.relations):
+                if (
+                    relation.predicate not in predicates
+                    and not _OTHER_PREDICATE.fullmatch(relation.predicate)
+                ):
+                    _logger.warning(
+                        "unknown predicate dropped for claim %s: %s",
+                        claim.claim_id,
+                        relation.predicate,
+                    )
+                    continue
+                if is_bare_head_noun(name=relation.subject.name) or is_bare_head_noun(
+                    name=relation.object.name
+                ):
+                    continue
+                accepted.append(("relation", ordinal))
+            for ordinal, observation in enumerate(response.observations):
+                if not is_bare_head_noun(name=observation.subject.name):
+                    accepted.append(("observation", ordinal))
+            published = catalog.publish_normalization(
                 deployment_id=deployment_id,
-                subject_entity_id=subject.entity_id,
-                predicate=relation.predicate,
-                object_entity_id=object_.entity_id,
                 claim_id=claim.claim_id,
-                doc_id=claim.doc_id,
                 normalizer_version=E3_NORMALIZER_VERSION,
+                output=response,
+                accepted=tuple(accepted),
             )
-            if upserted.created:
-                created_relations.append(str(upserted.relation_id))
-            profile_entity_ids.update((subject.entity_id, object_.entity_id))
-        for observation_index, observation in enumerate(response.observations):
-            if is_bare_head_noun(name=observation.subject.name):
-                _logger.warning(
-                    "e3.bare_head_noun_dropped claim_id=%s kind=observation subject=%r",
-                    claim.claim_id,
-                    observation.subject.name,
-                )
-                continue
+        response, accepted_outputs = published
+        for kind, ordinal in accepted_outputs:
+            output = (
+                response.relations[ordinal]
+                if kind == "relation"
+                else response.observations[ordinal]
+            )
             subject = self._resolver.resolve(
                 deployment_id=deployment_id,
-                reference=observation.subject,
+                reference=output.subject,
                 claim=claim,
                 meter=meter,
-                call_key=(
-                    f"resolve:{claim.claim_id}:observation:{observation_index}:subject"
-                ),
+                call_key=f"resolve:{claim.claim_id}:{kind}:{ordinal}:subject",
             )
-            assertion = ObservationAssertion(
-                statement=observation.statement,
+            object_id = None
+            if kind == "relation":
+                relation = response.relations[ordinal]
+                if _OTHER_PREDICATE.fullmatch(relation.predicate):
+                    self._facts.ensure_other_predicate(
+                        deployment_id=deployment_id, predicate=relation.predicate
+                    )
+                object_id = self._resolver.resolve(
+                    deployment_id=deployment_id,
+                    reference=relation.object,
+                    claim=claim,
+                    meter=meter,
+                    call_key=f"resolve:{claim.claim_id}:relation:{ordinal}:object",
+                ).entity_id
+            catalog.stage(
+                deployment_id=deployment_id,
                 claim_id=claim.claim_id,
-                doc_id=claim.doc_id,
+                normalizer_version=E3_NORMALIZER_VERSION,
+                kind=kind,
+                ordinal=ordinal,
+                adjudicator_version=RELATION_APPLICATION_VERSION
+                if kind == "relation"
+                else OBSERVATION_APPLICATION_VERSION,
+                subject_entity_id=subject.entity_id,
+                object_entity_id=object_id,
+                version_ids=version_ids,
             )
-            if staged_observations is not None:
-                staged_observations.append((subject.entity_id, assertion))
-            else:
-                observations_by_entity.setdefault(subject.entity_id, []).append(
-                    assertion
-                )
-        return False
 
     def _generate_normalize_response(
         self, *, claim: ClaimForNormalization, base_prompt: str, meter: CostMeterPort
@@ -578,7 +396,7 @@ class AdjudicateObservationsHandler:
         self,
         *,
         facts: FactCatalog,
-        observation_adjudicator: ObservationAdjudicator,
+        observation_adjudicator: FactAdjudicator,
         profile_refresher: ProfileRefresherPort,
         chunk_catalog: ChunkCatalog,
         claim_catalog: ClaimCatalog,
@@ -593,15 +411,15 @@ class AdjudicateObservationsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Flush observations: D90 entity unit or legacy version-serial path."""
-        if work.target_kind is ProcessingTarget.ENTITY:
-            return self._handle_entity_unit(work=work, meter=meter)
-        if "entity-fanout" in work.component_version:
+        """Drain only current entity units; old generations cannot mutate this store."""
+        if (
+            work.component_version != OBS_FLUSH_VERSION
+            or work.target_kind is not ProcessingTarget.ENTITY
+        ):
             raise NonRetryableHandlerError(
-                f"version-level obs flush at entity-fanout generation is "
-                f"coordinator-only; work {work.processing_id} is document_version"
+                "obsolete fact flush generation; drain or convert before D118"
             )
-        return self._handle_version_serial_legacy(work=work, meter=meter)
+        return self._handle_entity_unit(work=work, meter=meter)
 
     def _handle_entity_unit(
         self, *, work: ClaimedWork, meter: CostMeterPort
@@ -624,7 +442,7 @@ class AdjudicateObservationsHandler:
         extractor_version = str(unit["extractor_version"])
         # D90 §5.5–§5.6: lock entity, then load+apply+retire unapplied staging
         # (entity-global total order). Snapshot-before-lock is forbidden.
-        self._observation_adjudicator.flush_entity_global_staging(
+        self._observation_adjudicator.drain(
             deployment_id=work.deployment_id,
             subject_entity_id=entity_id,
             meter=meter,
@@ -668,130 +486,9 @@ class AdjudicateObservationsHandler:
             ),
         )
 
-    def _handle_version_serial_legacy(
-        self, *, work: ClaimedWork, meter: CostMeterPort
-    ) -> HandlerOutcome:
-        """Pre-D90 version-serial flush (cutover only; no version-wide clear)."""
-        payload = work.payload or {}
-        version_id = payload.get("version_id")
-        representation_id = payload.get("representation_id")
-        normalizer_version = payload.get("normalizer_version") or E3_NORMALIZER_VERSION
-        chunker_version = payload.get("chunker_version") or self._chunker_version
-        if not isinstance(version_id, str) or not isinstance(representation_id, str):
-            raise NonRetryableHandlerError(
-                f"obs flush work {work.processing_id} missing version coordinates"
-            )
-        if not isinstance(normalizer_version, str):
-            normalizer_version = E3_NORMALIZER_VERSION
-        if not isinstance(chunker_version, str):
-            chunker_version = self._chunker_version
-        version_uuid = UUID(version_id)
-        rep_uuid = UUID(representation_id)
-        # Fail closed if D90 membership/state already exists for this version.
-        if self._facts.has_obs_flush_fanout(
-            deployment_id=work.deployment_id,
-            version_id=version_uuid,
-            normalizer_version=normalizer_version,
-        ):
-            raise NonRetryableHandlerError(
-                f"legacy obs flush refused: D90 fan-out already materialized "
-                f"for version {version_uuid} work {work.processing_id}"
-            )
-        staged = self._facts.load_staged_observations(
-            deployment_id=work.deployment_id,
-            version_id=version_uuid,
-            normalizer_version=normalizer_version,
-        )
-        by_entity: dict[UUID, list[ObservationAssertion]] = {}
-        for subject_entity_id, claim_id, statement, doc_id in staged:
-            by_entity.setdefault(subject_entity_id, []).append(
-                ObservationAssertion(
-                    statement=statement, claim_id=claim_id, doc_id=doc_id
-                )
-            )
-        for entity_id, assertions in by_entity.items():
-            self._observation_adjudicator.add_observations(
-                deployment_id=work.deployment_id,
-                subject_entity_id=entity_id,
-                assertions=tuple(assertions),
-                meter=meter,
-                call_key=f"observation_flush:{entity_id}",
-                clear_staging={
-                    "deployment_id": work.deployment_id,
-                    "version_id": version_uuid,
-                    "subject_entity_id": entity_id,
-                    "normalizer_version": normalizer_version,
-                },
-            )
-        # D90: do not version-wide clear (would wipe peer entity progress under
-        # mixed cutover). Residual rows remain for ops / entity units.
-        chunks = self._chunk_catalog.chunks_for_embedding(
-            representation_id=rep_uuid, chunker_version=chunker_version
-        )
-        claims = self._claim_catalog.claims_for_chunks(
-            chunk_ids=tuple(chunk.chunk_id for chunk in chunks)
-        )
-        relation_ids = self._facts.relation_ids_for_origin_claims(
-            deployment_id=work.deployment_id,
-            claim_ids=tuple(claim.claim_id for claim in claims),
-            normalizer_version=normalizer_version,
-        )
-        observation_ids = self._facts.observation_ids_for_origin_claims(
-            deployment_id=work.deployment_id,
-            claim_ids=tuple(claim.claim_id for claim in claims),
-            normalizer_version=normalizer_version,
-        )
-        profile_call_key = f"profile:observation_flush:{version_uuid}"
-        _run_profile_refresh(
-            action=lambda: self._profile_refresher.refresh_for_facts(
-                deployment_id=work.deployment_id,
-                relation_ids=relation_ids,
-                observation_ids=observation_ids,
-                meter=meter,
-                call_key=profile_call_key,
-            ),
-            call_key=profile_call_key,
-        )
-        doc_id = payload.get("doc_id")
-        if doc_id is None and claims:
-            doc_id = str(claims[0].doc_id)
-        return HandlerOutcome(
-            follow_up=(
-                EnqueueWork(
-                    deployment_id=work.deployment_id,
-                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                    target_id=work.target_id,
-                    stage=PipelineStage.ADJUDICATE_SUPERSESSION,
-                    component_version=ADJUDICATOR_VERSION,
-                    content_hash=work.content_hash,
-                    lane=work.lane,
-                    payload={
-                        "version_id": version_id,
-                        "representation_id": representation_id,
-                        "doc_id": doc_id,
-                        "relation_ids": [str(rid) for rid in relation_ids],
-                        "normalizer_version": normalizer_version,
-                    },
-                ),
-                EnqueueWork(
-                    deployment_id=work.deployment_id,
-                    target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                    target_id=work.target_id,
-                    stage=PipelineStage.EMBED_CLAIM,
-                    component_version=P1_EMBED_CLAIMS_VERSION,
-                    content_hash=work.content_hash,
-                    lane=work.lane,
-                    payload={
-                        "version_id": version_id,
-                        "representation_id": representation_id,
-                    },
-                ),
-            )
-        )
-
 
 class AdjudicateSupersessionHandler:
-    """The adjudication stage: each newly-created relation through the cascade."""
+    """Existing downstream stage retained as receipt/projection and lifecycle follow-up."""
 
     def __init__(
         self,
@@ -856,15 +553,6 @@ class AdjudicateSupersessionHandler:
                 relation_ids = [str(rid) for rid in loaded]
         stable_relation_ids = tuple(UUID(str(raw)) for raw in relation_ids)
         affected_relation_ids = set(stable_relation_ids)
-        for relation_id in stable_relation_ids:
-            affected_relation_ids.update(
-                self._adjudicator.adjudicate_new_relation(
-                    deployment_id=work.deployment_id,
-                    relation_id=relation_id,
-                    meter=meter,
-                    call_key=f"supersession:{relation_id}",
-                )
-            )
         stable_affected_ids = tuple(sorted(affected_relation_ids, key=str))
         profile_call_key = f"profile:supersession:{work.target_id}"
         _run_profile_refresh(

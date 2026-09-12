@@ -29,15 +29,15 @@
 > and fingerprints change; earlier protocol scores are directional comparisons.
 > Binding extraction semantics: `temporal_clocks_design.md` §6.
 
-> **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
-> two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
-> about), and the fact-grain `validity` fields with their bases and occurrence
-> window. Each D107 work package that changes ingestion provenance or the
-> assured surface rolls this protocol; the sequencing is
-> `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
+> **D118 amendment (2026-09-07; effective when merged).** Future fact-time
+> inputs use one chosen window, precision and source timestamps, with explicit
+> current/history selection and unknown-date disclosure. Full-v24 and all current
+> evaluator variants remain unchanged by this design-only amendment. Roll the
+> protocol when replacement semantics ship; see
+> [D118](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
 
-> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
-> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
+> `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,
 > tools, budgets, prompts, scoring, and ingest component versions. The query
 > space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
 > `examples.claims_as_of` overlaps the half-open canonical window and counts
@@ -147,7 +147,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v26
+protocol                RS-LoCoMo-Full-v27
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -495,7 +495,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v26-codex-subscription` is an additive evaluator-provider variant for
+`full-v27-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -794,7 +794,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v26 requires to be
+- the non-secret `document_binding_generation`, which Full-v27 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -943,12 +943,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26 \
+  --protocol full-v27 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v26`; the
-explicit `full-v26-gemma-vertex` and `full-v26-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v27`; the
+explicit `full-v27-gemma-vertex` and `full-v27-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

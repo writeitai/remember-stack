@@ -320,11 +320,42 @@ jobs:
             worker-extract-claims worker-normalize-relations \
             worker-adjudicate-observations worker-adjudicate-supersession \
             worker-embed-claim worker-reconcile worker-label-relation
-          docker compose --env-file .env.example run --rm --no-deps \
-            --entrypoint alembic setup downgrade p7_02_0016
+          # Build an empty prior-generation fixture. D118 intentionally refuses
+          # lossy downgrade; retained-fact conversion has its own integration proof.
+          docker compose --env-file .env.example run --rm --no-deps -T \
+            --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
+            --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'
+          from alembic import command
+          from alembic.config import Config
+          from sqlalchemy import create_engine, text
+          from rememberstack.model import DeploymentBootstrapInput
+          from rememberstack.spine import DeploymentBootstrapper
+          from rememberstack.spine.settings import load_database_settings
+          from database_reset import reset_database
+
+          database_url = load_database_settings().sqlalchemy_url()
+          engine = create_engine(database_url)
+          with engine.connect() as connection:
+              row = connection.execute(text(
+                  "SELECT deployment_id,slug,name,description,default_language,"
+                  "raw_bucket,artifacts_bucket,corpusfs_bucket,knowledge_repo_uri "
+                  "FROM deployments"
+              )).mappings().one()
+              deployment = DeploymentBootstrapInput.model_validate(dict(row))
+          engine.dispose()
+          config = Config("alembic.ini")
+          config.set_main_option("sqlalchemy.url", database_url)
+          reset_database(config=config)
+          command.upgrade(config=config, revision="p9_29_0050")
+          engine = create_engine(database_url)
+          DeploymentBootstrapper(engine=engine).bootstrap_deployment(
+              deployment_input=deployment
+          )
+          engine.dispose()
+          PY
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p7_02_0016'
+            'SELECT version_num FROM alembic_version')" = 'p9_29_0050'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
@@ -364,14 +395,14 @@ jobs:
             | grep -E '^(api|worker-(convert|structure|chunk|embed-chunk|extract-claims|normalize-relations|adjudicate-observations|adjudicate-supersession|embed-claim|reconcile|label-relation))$' || true)"
           test "$(docker compose "${compose_args[@]}" exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p7_02_0016'
+            'SELECT version_num FROM alembic_version')" = 'p9_29_0050'
 
           release_gate
           wait "$compose_pid"
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_29_0050'
+            'SELECT version_num FROM alembic_version')" = 'p9_30_0051'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

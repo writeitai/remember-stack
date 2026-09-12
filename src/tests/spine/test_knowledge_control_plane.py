@@ -93,6 +93,7 @@ from rememberstack.workers import KnowledgeRoutingDriver
 from rememberstack.workers import KnowledgeWriterError
 from rememberstack.workers import KnowledgeWriterSettings
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("61000000-0000-0000-0000-000000000001")
@@ -108,7 +109,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real Plane-K proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -383,8 +384,8 @@ class _Corpus:
                 text(
                     "INSERT INTO relations (relation_id, deployment_id,"
                     " subject_entity_id, predicate, object_entity_id,"
-                    " normalizer_version, evidence_count, ingested_at)"
-                    " VALUES (:r, :d, :s, :p, :o, 'normalizer-test', :count, :at)"
+                    " normalizer_version, evidence_count, ingested_at, valid_from, valid_precision, window_claim_ids)"
+                    " VALUES (:r, :d, :s, :p, :o, 'normalizer-test', :count, :at, '2020-01-01Z', 'open', ARRAY[:witness]::uuid[])"
                 ),
                 {
                     "r": relation_id,
@@ -394,6 +395,7 @@ class _Corpus:
                     "o": object_id,
                     "count": count,
                     "at": _NOW,
+                    "witness": self.claims["drive"],
                 },
             )
         for observation_id, entity_id, statement in (
@@ -404,8 +406,8 @@ class _Corpus:
                 text(
                     "INSERT INTO observations (observation_id, deployment_id,"
                     " subject_entity_id, statement, normalizer_version,"
-                    " evidence_count, ingested_at) VALUES (:o, :d, :e, :body,"
-                    " 'normalizer-test', 1, :at)"
+                    " evidence_count, ingested_at, valid_from, valid_precision, window_claim_ids) VALUES (:o, :d, :e, :body,"
+                    " 'normalizer-test', 1, :at, '2020-01-01Z', 'open', ARRAY[:witness]::uuid[])"
                 ),
                 {
                     "o": observation_id,
@@ -413,6 +415,7 @@ class _Corpus:
                     "e": entity_id,
                     "body": statement,
                     "at": _NOW,
+                    "witness": self.claims["drive"],
                 },
             )
         connection.execute(
@@ -812,7 +815,7 @@ def test_stale_set_is_exact_and_claim_reextraction_is_stable(corpus: _Corpus) ->
     with corpus.engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE observations SET valid_until = '2026-07-19+00'"
+                "UPDATE observations SET valid_until = '2026-07-19+00', valid_precision='day'"
                 " WHERE observation_id = :o"
             ),
             {"o": corpus.observations["root"]},
@@ -851,14 +854,15 @@ def test_subtree_membership_rematerializes_before_routing(corpus: _Corpus) -> No
             text(
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
-                " normalizer_version, evidence_count) VALUES"
-                " (:r, :d, :s, 'part_of', :o, 'normalizer-test', 1)"
+                " normalizer_version, evidence_count, valid_from, valid_precision, window_claim_ids) VALUES"
+                " (:r, :d, :s, 'part_of', :o, 'normalizer-test', 1, '2020-01-01Z', 'open', ARRAY[:witness]::uuid[])"
             ),
             {
                 "r": membership,
                 "d": _DEPLOYMENT_ID,
                 "s": grandchild,
                 "o": corpus.entities["child"],
+                "witness": corpus.claims["drive"],
             },
         )
         connection.execute(
@@ -936,7 +940,7 @@ def test_fact_sheet_compiler_renders_exact_rule_candidates(corpus: _Corpus) -> N
         connection.execute(
             text(
                 "UPDATE relations SET fact_label = 'Root formerly worked for Acme',"
-                " valid_from = '2024-01-01+00', valid_until = '2025-01-01+00'"
+                " valid_from = '2024-01-01+00', valid_until = '2025-01-01+00', valid_precision='year'"
                 " WHERE relation_id = :relation_id"
             ),
             {"relation_id": corpus.relations["root"]},
@@ -944,7 +948,7 @@ def test_fact_sheet_compiler_renders_exact_rule_candidates(corpus: _Corpus) -> N
         connection.execute(
             text(
                 "UPDATE observations SET obs_label = 'Root was active',"
-                " valid_from = '2024-01-01+00', valid_until = '2025-01-01+00'"
+                " valid_from = '2024-01-01+00', valid_until = '2025-01-01+00', valid_precision='year'"
                 " WHERE observation_id = :observation_id"
             ),
             {"observation_id": corpus.observations["root"]},
@@ -959,10 +963,10 @@ def test_fact_sheet_compiler_renders_exact_rule_candidates(corpus: _Corpus) -> N
                     "INSERT INTO observations (observation_id, deployment_id,"
                     " subject_entity_id, statement, obs_label, valid_from,"
                     " ingested_at, normalizer_version, evidence_count,"
-                    " contradict_count, contradiction_group) VALUES"
+                    " contradict_count, contradiction_group, valid_precision, window_claim_ids) VALUES"
                     " (:observation_id, :deployment_id, :entity_id, :label, :label,"
                     " '2025-01-02+00', :ingested_at, 'normalizer-test', 1, 1,"
-                    " :contradiction_group)"
+                    " :contradiction_group, 'open', ARRAY[:witness]::uuid[])"
                 ),
                 {
                     "observation_id": observation_id,
@@ -971,6 +975,7 @@ def test_fact_sheet_compiler_renders_exact_rule_candidates(corpus: _Corpus) -> N
                     "label": label,
                     "ingested_at": _NOW,
                     "contradiction_group": contradiction_group,
+                    "witness": corpus.claims["drive"],
                 },
             )
         connection.execute(
@@ -1025,9 +1030,9 @@ def test_fact_sheet_compiler_renders_exact_rule_candidates(corpus: _Corpus) -> N
         markdown=output.markdown
     )
     assert f"relation:{corpus.relations['part_of']}" in output.markdown
-    assert f"relation:{corpus.relations['root']}" not in output.markdown
+    assert f"relation:{corpus.relations['root']}" in output.markdown
     assert "Root was active" in output.markdown
-    assert "| ended |" in output.markdown
+    assert "| after window |" in output.markdown
     assert "Retracted root estimate" in output.markdown
     assert "| invalidated |" in output.markdown
     assert f"`{contradiction_group}`" in output.markdown

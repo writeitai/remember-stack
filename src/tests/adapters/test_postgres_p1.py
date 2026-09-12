@@ -35,6 +35,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import FactCatalog
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -275,7 +276,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D94 adapter proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -645,11 +646,13 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time"
+                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time,"
+                " valid_precision='instant', window_claim_ids=ARRAY[:claim]::uuid[]"
                 " WHERE relation_id = :fact"
             ),
             {
                 "fact": seeded["two_anchor_fact"],
+                "claim": seeded["both_claim"],
                 "from_time": _NOW - timedelta(days=10),
                 "to_time": _NOW - timedelta(days=2),
             },
@@ -679,7 +682,8 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
         with database_engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE relations SET valid_from = NULL, valid_until = NULL"
+                    "UPDATE relations SET valid_from = NULL, valid_until = NULL,"
+                    " valid_precision='unknown', window_claim_ids='{}'"
                     " WHERE relation_id = :fact"
                 ),
                 {"fact": seeded["two_anchor_fact"]},
@@ -794,7 +798,7 @@ def test_ranked_search_never_crosses_deployments(
                     "UPDATE entities SET profile_summary = :summary,"
                     " embedding = CAST(:embedding AS vector),"
                     " embedding_model = :model,"
-                    " embedding_input_policy_version = 'entity-profile-v2',"
+                    " embedding_input_policy_version = 'entity-profile-v3:dated-history',"
                     " embedding_text_hash = 'search-scope-proof'"
                     " WHERE deployment_id = :deployment AND entity_id = :entity"
                 ),

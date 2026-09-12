@@ -1,3 +1,8 @@
+-- WITHDRAWN BY D118: historical design appendix, not normative or executable upgrade guidance.
+-- Replacement authority: mutable_fact_windows_design.md, especially sections 4, 7, 8 and 10.
+-- This appendix is no longer incorporated by postgres_schema_design.md.
+-- Original DDL follows only to preserve the reasoning behind the superseded design.
+
 -- D110 temporal write/lifecycle schema amendment.
 -- Binding with temporal_write_and_lifecycle_design.md; not an automatic data converter.
 -- Baseline: D107 T.0b structural head on main. Keep serving/legacy writes fenced
