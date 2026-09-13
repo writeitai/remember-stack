@@ -213,12 +213,13 @@ class HardForgetHandler:
             refresh_profiles=False,
         )
         self._catalog.scrub_postgres(manifest=manifest)
-        self._profile_refresher.refresh_many(
-            deployment_id=manifest.deployment_id,
-            entity_ids=manifest.resolved_entity_ids,
-            meter=meter,
-            call_key=f"profile:hard_forget:{manifest.forget_id}",
-        )
+        for entity_ids in self._catalog.profile_repair_batches(manifest=manifest):
+            self._profile_refresher.refresh_many(
+                deployment_id=manifest.deployment_id,
+                entity_ids=entity_ids,
+                meter=meter,
+                call_key=f"profile:hard_forget:{manifest.forget_id}",
+            )
         checkpoint_prefixes = conversion_checkpoint_prefixes(
             doc_id=manifest.doc_id, content_hashes=manifest.content_hashes
         )

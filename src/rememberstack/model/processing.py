@@ -21,6 +21,7 @@ class ProcessingTarget(StrEnum):
     DOCUMENT_SECTION = "document_section"
     CHUNK = "chunk"
     CLAIM = "claim"
+    FACT_APPLICATION = "fact_application"
     RELATION = "relation"
     OBSERVATION = "observation"
     ENTITY = "entity"

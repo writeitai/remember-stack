@@ -1,39 +1,135 @@
-# Temporal clocks — sequencing (D107)
+# Temporal work — simplify the design, then implement coherent changes
 
-**Status:** implementation sequence under D107/D110; design acceptance and
-implementation completion are separate gates.
+**Status:** revised 2026-09-07 for D118. PR #384 is a design correction and
+withdrawal of an incomplete, unshipped implementation. It does not implement
+D118 runtime behavior. Explicit user approval is required before merge/release.
 
-**Binding designs:** `plan/designs/temporal_clocks_design.md` and
-`plan/designs/temporal_write_and_lifecycle_design.md` (D110).
+**Binding target:** [mutable facts with one world-time window](../designs/mutable_fact_windows_design.md).
+**Reasoning:** [audit and alternatives](../analysis/lean_mutable_fact_windows.md).
 
-**Analysis:** `plan/analysis/time_handling_audit.md`
+## Change plan for PR #384
 
-Order follows dependency and answer impact: the shared canonical-bounds
-function first (everything compares through it), then the fact model and
-cutover (it makes the documented `valid_at` promise true), then the prompts
-that decide supersession and identity, then retrieval keys and envelopes,
-then consumer labels. Extraction vocabulary (T.4) is independent and runs beside
-the design amendments, ahead of T.1 when ready. Each package rolls the
-generations it touches, rolls the LoCoMo protocol whenever its observable
-result semantics change (even with an unchanged JSON shape), and lands with
-tests that assert the *clock*, not only the outcome.
+1. Preserve the old draft checkpoint `7a64e34d` in Git history and local branch
+   `archive/temporal-fact-framework-7a64e34d`. Do not rewrite the PR's history.
+2. Replace fixed fact categories, two fact windows, immutable seed authority,
+   dedicated temporal corrections and current-only cache machinery with D118.
+   Mark superseded documents and SQL so future implementers cannot mistake them
+   for binding instructions. Keep original reasoning accessible.
+3. Remove the draft-only runtime, migrations, tests and protocol roll built for
+   the superseded framework. Restore those paths to current main `c0f5c010`.
+   Preserve already merged canonical SQL (#375), extraction vocabulary, and all
+   evaluator providers, including the Codex subscription evaluator (#382).
+4. Update the design index, numbered decision log, affected authority pointers,
+   project status and PR description. Remove instructions for the abandoned
+   experimental upgrade. Do not claim that main already supports D118.
+5. Verify that runtime, tests, CI and benchmark pins match main exactly. Check
+   local document links, supersession pointers and whitespace. Runtime acceptance
+   of the removed implementation does not transfer to its replacement.
+6. Have Antigravity and Grok independently review the resulting diff and design,
+   fix findings, and record their actual conclusions. Keep the PR draft and
+   unmerged for the user's explanation and approval.
 
-| WP | Scope | Audit findings closed | Generations / surfaces rolled | Acceptance |
-| --- | --- | --- | --- | --- |
-| **WP-T.0a — canonical bounds, engine-internal** | `canonical_bounds` in Python (`core/temporal.py`) and as the public SQL twins `claim_canonical_start` / `claim_canonical_end` (migration `p9_26_0047`, IMMUTABLE, with an expression index): both ends truncated to the unit in UTC; instants as non-empty points; inclusive request conversion; used by the `claims_as_of` candidate scan and by D106's block lateral and `_windows_disjoint` (half-open) | 4.13 | observation adjudicator + obs flush generations; LoCoMo protocol (result semantics change) | an intraday `claims_as_of` window finds a day-precision claim; `claims_as_of(t, t)` is a point query; a year stored 2022-01-01…12-31 canonicalises to `[2022-01-01, 2023-01-01)`; a day whose stored start is noon canonicalises to the calendar day; an `instant` overlaps itself; adjacent day windows do not overlap; a day and an instant inside it overlap in the adjudicator; the SQL twins equal the Python function row by row |
-| **WP-T.0b — canonical bounds in the query space** | `memory_v1.canonical_bounds` wrapping the public functions, the `claims_canonical` view (`canon_start`/`canon_end` beside the raw columns) with catalog declaration, fixtures and deletion-matrix cells; the shipped `claims_as_of` example rewritten over the view with its `unknown` count fixed; open-query prose and catalog metadata | 4.21 | query-space manifest and surface manifest; LoCoMo protocol | the example's `unknown` count is non-zero on a corpus with unstamped claims; an open-SQL overlap over `claims_canonical` matches the engine's `claims_as_of` result set |
-| **WP-T.1 — fact model, matching, closing, cutover** | **gated on D110 landing on main with its full schema: #365 ordered assertion staging, #366 autonomous corrections, #367 checked cache freshness, #368 sanitized forget replay (program #364);** migration: `temporal_kind`, `valid_from_basis`, `valid_until_basis`, `occurs_from`/`occurs_until`/`occurs_precision`, `seed_claim_id`, populating the existing `relation_adjudications.triggering_claim_id` on `add`, the `migrate`/`migration` adjudication enum values, the non-empty state check, `EXCLUDE` partial on states (an unknown-bounds state slice is one unbounded range under it), `fact_expiry_schedule`, the D110 typed temporal operation/support/checkpoint stores and `erased` basis; seed once by kind with the seed recorded atomically on both planes; nomination as today with verdicts bounded by temporal relation, two candidate sets (state-ending includes finite-ended states), and the staged, idempotent relation write (§4.2); autonomous temporal correction/compensation operations with invariants, the documented reversal exception, and replay (§4.3); succession by any successor-supplied world-time instant incl. ending occurrences, the chronological guard on every cap source incl. D55, else contradict/coexist + discrepancy (§4.4); D55 by temporal kind with belief-time closes from the persisted reconciliation instant; D90 re-split by occurrence start (§4.5); the full containment current predicate with D110 erased-bound uncertainty disclosure on every current read incl. aggregate/absence, with D110 future-candidate/structural dependencies, checked certificates and existing-ledger activation/expiry work; occurrence windows over all attached evidence (D55 history retained); in-place conversion with migration adjudications, the `legacy` basis for unrecoverable seeds, legacy-cap recomputation, `legacy_unknown_boundary` diagnostics, and the readiness gate (§9) | 4.2, 4.4, 4.10, 4.11, 4.17, 4.20, 4.22 | normaliser, both adjudicators, obs flush component; schema head; fact-layer generation in readiness; LoCoMo protocol | `lookup_relations(valid_at=2010)` returns the 2010 employer and excludes the 2024 one; a fact starting in 2030 is not current in 2026 and its profile activates when it starts; a January and an October visit are two occurrence relations, two same-day visits judged `new` coexist, a disjoint pair the ladder judges one disputed occurrence contradicts, and a union expansion bridging two occurrences merges nothing; a same-triple occurrence claim is held unattached until its verdict and a retried claim replays it; the same ingest replayed on different days yields byte-identical windows; both adjudicators orient one undated/dated pair identically (coexist); a dated resignation caps an undated "is CEO" state and a 2027 resignation shortens "CEO 2025–2030"; a purported cap at or before a known start routes to contradict/coexist plus a temporal discrepancy; a `state` with `valid_until = valid_from` is rejected by the schema; an autonomous correction applies, is reversed by a compensating verdict, and replays idempotently; the staggered D90 case with said-on and is-about reversed yields world-ordered slices; a withdrawn state with unknown or guard-refused source time preserves its existing end/basis (including a finite cap) and always sets `invalidated_at` to the recorded reconciliation instant (no zombie fact), and a withdrawn occurrence keeps its `occurs_*`; an expired relation no longer counts in `aggregate` nor blocks `predicate_absence`; a state with a future end is current today and its profile refreshes when the end passes, including after a restart; conversion keeps every fact id and every D55 historical fact, converts a legacy relation under basis `legacy` with a migration adjudication, recomputes a recoverable legacy cap at its successor's world-time start, removes a cap from a converted occurrence, turns a D55 fallback cap into a belief-time close, raises `legacy_unknown_boundary` for the rest, and readiness refuses an unconverted store and reports the open item count |
-| **WP-T.2 — two clocks in every temporal prompt** | relation supersession prompt and laterals show `said on` / `is about`; T4 candidate salient facts carry occurrence windows and kinds and rank by evidence then occurrence recency; K writer claims carry `asserted_at` + D41 fields; answer-agent prompt names the envelope fields | 4.3, 4.6, 4.8, 4.16 | relation adjudicator, resolver, K writer; LoCoMo protocol | a 2024 retrospective spell does not supersede a 2023 current fact in the supersession proofs; T4 sees windows and kinds in its candidate JSON; the answer prompt fixture contains the two-clock paragraph |
-| **WP-T.3 — retrieval keys, envelopes, skill** | dedupe on the full D41 tuple (or `asserted_at` when unknown) with `grouped_members`; `Validity`, `GraphEdge`, the K fact model and `memory_v1` fact views gain bases, kind and occurrence; `resolve_entity@2`, `claims_and_sources_context@2`, `facts_context@3`, `combined_context@4`; open-query confirmation returns the full D41 tuple and fact bases/occurrence; P1 is-about claim filters and the `occurs` fact mode; timeline by occurrence with an `undated` bucket; consumption skill teaches the three clocks and two fact kinds and defines `claims_as_of` over world-time | 4.1, 4.9, 4.12, 4.18, 4.19 | assured operation versions, surface manifest hash, query-space manifest, generated OpenAPI/SDK; LoCoMo protocol | identical text on two dates is two evidence rows in `claims_and_sources_context`, and a grouped row lists every member's times; a 2015–2020 archive imported today produces 2015–2020 timeline buckets; the regenerated skill text contains the corrected `claims_as_of` definition; an open-query claim row carries precision and kind |
-| **WP-T.4 — extraction vocabulary and anchor** | all four D41 kinds and `open` taught with examples and field descriptions; full-timestamp header | 4.14, 4.15 | extractor; LoCoMo protocol | "has been CEO since 2019" extracts as `proposition_validity` / `open`; "three hours ago" in a source stamped 19:30 resolves to an `instant` at 16:30 of that day, and the same words in a second same-day source stamped 22:00 resolve to a different instant |
-| **WP-T.5 — dated labels and consumer surfaces** | labels derived from statement + occurrence window (obs label, `FactResult.label`, profile lines); K fact sheet columns by basis with `about` and `legacy` handling; observation history by `occurs_from` | 4.5, 4.7 | P1 labels and selection, K page generation; LoCoMo protocol (answer inputs change) | an observation minted from "last week" carries the resolved date in its label but not its statement; a sheet never prints a said-on date under a world-time heading |
+The PR change plan above is complete. [Review and validation record](../implementation_evals/temporal_simplification_review_20260907.md) records both independent verdicts,
+resolved findings and the exact design-only acceptance limits.
 
-Dependencies: T.0a first; T.0b may follow at any time. T.1 depends on T.0a and the merged D110 amendment; run its full conversion,
-concurrency, cache and forget acceptance before the consumer packages. T.2, T.3 and T.5 depend on
-T.1's columns and cutover. T.4 is independent and may run in parallel.
-Packages released together roll the protocol once. D110 implementation must cover all participating writers/readers and the new
-field forget inventory together; a schema-only migration or timer-only cache
-refresh cannot satisfy T.1. Every package updates the
-same-PR documentation the CLAUDE.md rule requires (concepts and API pages for
-`valid_at`, the benchmark README when the protocol rolls) and the
-project-status page.
+## Replacement implementation sequence
+
+These are separately reviewable implementation packages, not alternate designs.
+A package cannot claim readiness until its named behavior and dependencies work.
+
+Implementation checkpoint (2026-09-07): branch
+`feat/mutable-fact-windows-implementation` carries the reviewed application
+contract, typed single-window decisions, guarded relation/observation writer,
+worker staging/barriers, and initial retrieval/profile/K changes. Antigravity and
+Grok approved the concrete contract for implementation in round 2; that is not
+runtime or release approval. The private PostgreSQL writer probe verifies atomic
+correction, stale-source rejection and rollback. The focused pure suite passes
+37 tests; the first broader unit run reports 1510 passed, 18 failed, 6 skipped.
+Remaining work includes supported PostgreSQL migration/concurrency/erasure tests,
+projection recovery, consumer/generation cutover and
+final independent runtime reviews. Serving populated stores remains fenced.
+No merge or release has been performed. Existing stores are recreated rather than
+converted (decided 2026-09-11); the [watch list](../analysis/mutable_fact_windows_watch_list.md)
+names what to observe once real corpora run through the replacement runtime.
+
+### A. Concrete storage and application contract
+
+Before replacement write-path code, publish the exact narrow preparation/receipt
+schema, adjudication output models, application identity, lock order, stale-input
+check, deletion inventory and recovery procedure required by D118 §§3–4,7–8.
+Implement D118 §2's shape table with fact-specific CHECK constraints; do not copy
+claim CHECKs or canonicalize incomplete/already-canonical fact windows. Specify
+D118 §5's per-result `temporal_match: confirmed | possible` in the exact versioned
+response schema; existing closed envelopes cannot accept an unversioned extra
+field. Define the unique application key/index using deployment, normalized
+assertion identity (including its normalization generation) and adjudicator
+generation. Text, triple or interval equality is not a retry key.
+Show why each new durable field is needed; reuse the existing ledger, transcripts
+and source lifecycle wherever possible. Independent review must cover concurrent
+helpers, late inference replies, identity changes and forget before code lands.
+The withdrawn D110/D113 SQL is not a shortcut through this gate.
+
+### B. Ordinary mutable-fact adjudication
+
+Implement both relation and observation paths together with their workers,
+barriers, readiness, source withdrawal and forget participation. Stage relations
+before identity, include historical candidates, remove hard kind/date/exact-text
+identity vetoes, and replace the entire chosen window through ordinary decisions.
+Support explicit history splits/evidence assignments with atomic result receipts.
+Remove the same-triple overlap exclusion without allowing retry duplicates.
+
+Stores populated before this contract are recreated, not converted (D118 §8,
+decided 2026-09-11); the migration refuses a database that already holds claims.
+
+Required tests: same-event date corrected earlier and later; extended/reopened
+end; dated/undated contextual identity; distinct same-day same-triple events;
+no source/ingestion-clock fallback; late A→B→A with explicit support assignments;
+concurrent/retried application; rollback; changed inputs during inference; forget
+followed by retry and rebuild without resurrection. Run supported PostgreSQL,
+full migration, worker, surface and Compose checks for the integrated change.
+
+### C. Retrieval, profiles and consumer cutover
+
+**Release blocker:** do not enable B's serving cutover without
+C's historical/achievement caller routing, prompts and versioned response changes.
+Every served consumer must use the compatible contract; unsupported legacy
+generations must be upgraded or refused at the cutover. Completed events must not
+vanish behind a caller still using the current default for a historical question.
+Reuse current/at/overlap/history, add honest precision
+and unknown-date handling, update P1 and final SQL confirmation consistently, and
+preserve dated evidence through deduplication. Assured historical and bounded
+queries must include relevant unknown-date candidates with explicit uncertainty.
+Exact counts must distinguish confirmed matches, possible matches and truncation.
+
+Make profiles date-qualified historical summaries and K pages dated/snapshot
+content; refresh on mutations. Update graph/routing predicates that currently use
+only `valid_until IS NULL`. Do not introduce timer/certificate stores for this
+content. Update API/CLI/MCP/consumption skill, schemas, examples and website docs
+with the behavior they actually ship.
+
+Required tests: 2022 win retrievable in 2026 history and 2022 overlap; historical
+and current CEO at a half-open transition; undated extra win not counted as a
+confirmed 2022 match; truncation not reported as complete; future and historical
+profile lines date-qualified; date correction and forget invalidate derived text;
+no clock-only change makes dated prose assert something new as current.
+
+### D. Evaluation and release evidence
+
+Roll only generations whose behavior changes. Roll the LoCoMo protocol for the
+integrated observable semantic change and retain every evaluator-provider variant.
+Compare like-for-like stores and record measured cost/quality, without claiming a
+benchmark gain from design acceptance. Run full supported acceptance and request
+user review of the concrete implementation before merge/release.
+
+## Already merged and independent work
+
+T.0a canonical arithmetic, T.0b published canonical SQL and T.4 extraction
+vocabulary/full source timestamp are retained. The query-role sandbox remains
+unchanged. Main's Full-v24 protocol is restored when withdrawing the unshipped
+Full-v25 framework; this is not a rollback of a released protocol.
+
+The former #365–#368 topics remain useful questions, with revised answers:
+ordering belongs to ordinary application; date correction belongs to ordinary
+adjudication; profiles use stable dated content; forget covers the smaller actual
+storage inventory. Their old framework specifications no longer gate code; the
+concrete D118 contracts and acceptance above do.

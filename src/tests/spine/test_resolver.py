@@ -35,6 +35,7 @@ from rememberstack.spine.document_bindings import DocumentBindingRebuilder
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate as _match_first_router
 from tests.t4_test_doubles import t4_candidates as _t4_candidates
 from tests.workers.e3_test_doubles import _handler
@@ -96,7 +97,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -1338,8 +1339,13 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     prompt = provider.generated_prompts[-1]
     candidate = _t4_candidates(prompt)[0]
     assert candidate["aliases"] == ["KB Bank"]
-    assert candidate["profile_description"] == "KB Bank is a bank licensed by CNB"
-    assert candidate["salient_facts"] == ["KB Bank is a bank licensed by CNB"]
+    assert (
+        candidate["profile_description"]
+        == "KB Bank is a bank licensed by CNB [world time: world date unknown]"
+    )
+    assert candidate["salient_facts"] == [
+        "KB Bank is a bank licensed by CNB [world time: world date unknown]"
+    ]
     assert candidate["t3_gate"] == "scored"
     assert "Prefer an existing compatible candidate." in prompt
     assert "Missing overlap and different topics" in prompt
@@ -1362,7 +1368,9 @@ def test_t3_and_t4_receive_profile_and_salient_fact_evidence(
     stale_candidate = _t4_candidates(stale_prompt)[0]
     assert len(provider.embedded_texts) == embedded_before
     assert stale_candidate["profile_description"] is None
-    assert stale_candidate["salient_facts"] == ["KB Bank is based in Prague"]
+    assert stale_candidate["salient_facts"] == [
+        "KB Bank is based in Prague [world time: world date unknown]"
+    ]
     assert stale_candidate["t3_gate"] == "profile_stale"
 
 
@@ -1923,16 +1931,10 @@ def _normalize_through_shipped_resolver(
     handler: NormalizeRelationsHandler = _handler(
         provider=provider, resolver=resolver, facts=facts
     )
-    created: list[str] = []
     handler._normalize_claim(
-        created_relations=created,
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
+        version_ids=(uuid4(),),
         deployment_id=_DEPLOYMENT_ID,
         claim=_claim(claim_text=claim_text),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
         meter=NoopCostMeter(),
     )
     return resolver

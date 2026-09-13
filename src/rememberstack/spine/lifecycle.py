@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import CurrencyTransition
 from rememberstack.model import ReconciliationDelta
+from rememberstack.spine.fact_applications import application_fence
 
 CURRENCY_CACHE_MISMATCH_SQL = """
     SELECT cl.claim_id,
@@ -295,7 +296,19 @@ class LifecycleCatalog:
                 for transition in transitions
             }.items()
         ]
-        with self._engine.begin() as connection:
+        with (
+            self._engine.begin() as connection,
+            application_fence(connection=connection, deployment_id=deployment_id),
+        ):
+            connection.execute(
+                text(
+                    "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND claim_id=ANY(:ids) ORDER BY claim_id FOR UPDATE"
+                ),
+                {
+                    "deployment_id": deployment_id,
+                    "ids": sorted({transition.claim_id for transition in transitions}),
+                },
+            ).all()
             applied = connection.execute(
                 _INSERT_CURRENCY_EVENTS,
                 {
@@ -341,6 +354,18 @@ class LifecycleCatalog:
         stale nothing, so only changed facts belong in the emitted delta.
         """
         with self._engine.begin() as connection:
+            connection.execute(
+                text(
+                    "SELECT relation_id FROM relations WHERE relation_id=ANY(:ids) ORDER BY relation_id FOR UPDATE"
+                ),
+                {"ids": sorted(relation_ids)},
+            ).all()
+            connection.execute(
+                text(
+                    "SELECT observation_id FROM observations WHERE observation_id=ANY(:ids) ORDER BY observation_id FOR UPDATE"
+                ),
+                {"ids": sorted(observation_ids)},
+            ).all()
             changed_relation_ids = (
                 frozenset(
                     connection.execute(
@@ -409,19 +434,13 @@ class LifecycleCatalog:
         boundary: object,
         reconciliation_id: UUID,
     ) -> tuple[UUID, ...]:
-        """Close solely-supported relations per shape (§4 source-acted rule).
-
-        A relation is a stated world-time window: `valid_until` caps at the
-        boundary (the withdrawing version's source-modified time) and an
-        append-only `retracted_source_removal` adjudication records why —
-        loud, attributed, reversible; `invalidated_at` stays NULL (the fact
-        was believed while supported; retraction is not "learned wrong").
-        """
+        """Withdraw system belief at zero support without inventing a world-time end."""
         closed: list[UUID] = []
         with self._engine.begin() as connection:
-            for relation_id in relation_ids:
+            for relation_id in sorted(relation_ids):
                 capped = connection.execute(
-                    _CAP_RELATION, {"relation_id": relation_id, "boundary": boundary}
+                    _INVALIDATE_RELATION,
+                    {"relation_id": relation_id, "deployment_id": deployment_id},
                 ).scalar_one_or_none()
                 if capped is None:
                     continue  # already closed by an earlier attempt
@@ -451,7 +470,7 @@ class LifecycleCatalog:
         """
         closed: list[UUID] = []
         with self._engine.begin() as connection:
-            for observation_id in observation_ids:
+            for observation_id in sorted(observation_ids):
                 marked = connection.execute(
                     _INVALIDATE_OBSERVATION, {"observation_id": observation_id}
                 ).scalar_one_or_none()
@@ -894,7 +913,6 @@ _SELECT_ZERO_RELATIONS = text(
       AND relation_id = ANY(:relation_ids)
       AND evidence_count = 0
       AND invalidated_at IS NULL
-      AND valid_until IS NULL
       AND NOT EXISTS (
           -- a fact under an open support_withdrawn review is the
           -- transcription-only branch: a reviewer decides, never mechanics
@@ -926,13 +944,12 @@ _SELECT_ZERO_OBSERVATIONS = text(
     """
 )
 
-_CAP_RELATION = text(
+_INVALIDATE_RELATION = text(
     """
     UPDATE relations
-    SET valid_until = coalesce(CAST(:boundary AS timestamptz), now())
-    WHERE relation_id = :relation_id
-      AND valid_until IS NULL
-      AND invalidated_at IS NULL
+    SET invalidated_at = now(), updated_at=now()
+    WHERE deployment_id=:deployment_id AND relation_id = :relation_id
+      AND evidence_count=0 AND invalidated_at IS NULL
     RETURNING relation_id
     """
 )
@@ -941,7 +958,7 @@ _INVALIDATE_OBSERVATION = text(
     """
     UPDATE observations
     SET invalidated_at = now()
-    WHERE observation_id = :observation_id AND invalidated_at IS NULL
+    WHERE observation_id = :observation_id AND evidence_count=0 AND invalidated_at IS NULL
     RETURNING observation_id
     """
 )

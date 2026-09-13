@@ -14,7 +14,9 @@ from sqlalchemy.sql.elements import TextClause
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.entity_profile_input import entity_profile_embedding_input
 from rememberstack.core.fact_label import deterministic_fact_label
+from rememberstack.core.fact_windows import describe_fact_window
 from rememberstack.model import EmbeddingRequest
+from rememberstack.model.fact_windows import FactWindow
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
@@ -533,7 +535,8 @@ def _locked_profile_state(
         )
     entity = (
         connection.execute(
-            _SELECT_ENTITY, {"deployment_id": deployment_id, "entity_id": entity_id}
+            _SELECT_ENTITY_FOR_UPDATE,
+            {"deployment_id": deployment_id, "entity_id": entity_id},
         )
         .mappings()
         .one_or_none()
@@ -675,7 +678,17 @@ def _load_salient_facts_many(
         },
     ).all()
     unique: dict[UUID, list[str]] = {}
-    for entity_id, kind, statement, subject, predicate, object_name in rows:
+    for (
+        entity_id,
+        kind,
+        statement,
+        subject,
+        predicate,
+        object_name,
+        start,
+        end,
+        precision,
+    ) in rows:
         statements = unique.setdefault(entity_id, [])
         value = (
             deterministic_fact_label(
@@ -686,7 +699,12 @@ def _load_salient_facts_many(
             if kind == "relation"
             else str(statement)
         )
-        normalized = " ".join(value.split())
+        window = FactWindow(
+            valid_from=start, valid_until=end, valid_precision=precision
+        )
+        normalized = " ".join(
+            f"{value} [world time: {describe_fact_window(window=window)}]".split()
+        )
         if normalized and normalized not in statements:
             statements.append(normalized)
     return {
@@ -730,6 +748,8 @@ _SELECT_ENTITY = text(
     WHERE deployment_id = :deployment_id AND entity_id = :entity_id
     """
 )
+
+_SELECT_ENTITY_FOR_UPDATE = text(str(_SELECT_ENTITY) + " FOR UPDATE")
 
 _SELECT_ACTIVE_ENTITIES = text(
     """
@@ -824,18 +844,16 @@ _SELECT_SALIENT_FACTS = text(
              observation.statement, NULL::uuid AS subject_entity_id,
              NULL::text AS predicate, NULL::uuid AS object_entity_id,
              observation.evidence_count, observation.updated_at,
-             observation.observation_id AS fact_id
+             observation.observation_id AS fact_id,
+             observation.valid_from, observation.valid_until, observation.valid_precision
       FROM identity_members members
       CROSS JOIN LATERAL (
-        SELECT o.observation_id, o.statement, o.evidence_count, o.updated_at
+        SELECT o.observation_id, o.statement, o.evidence_count, o.updated_at,
+               o.valid_from, o.valid_until, o.valid_precision
         FROM observations o
         WHERE o.deployment_id = :deployment_id
           AND o.subject_entity_id = members.member_entity_id
           AND o.invalidated_at IS NULL
-          -- Profiles deliberately admit only open-ended facts. Including a
-          -- future cap would make the exact input hash expire as wall time
-          -- passes without an evidence mutation capable of scheduling refresh.
-          AND o.valid_until IS NULL
           AND o.evidence_count > 0
         ORDER BY o.evidence_count DESC, o.updated_at DESC, o.observation_id
         LIMIT :limit
@@ -845,31 +863,33 @@ _SELECT_SALIENT_FACTS = text(
              NULL::text AS statement, relation.subject_entity_id,
              relation.predicate, relation.object_entity_id,
              relation.evidence_count, relation.updated_at,
-             relation.relation_id AS fact_id
+             relation.relation_id AS fact_id,
+             relation.valid_from, relation.valid_until, relation.valid_precision
       FROM identity_members members
       CROSS JOIN LATERAL (
         SELECT direction.relation_id, direction.subject_entity_id,
                direction.predicate, direction.object_entity_id,
-               direction.evidence_count, direction.updated_at
+               direction.evidence_count, direction.updated_at,
+               direction.valid_from, direction.valid_until, direction.valid_precision
         FROM (
           (SELECT r.relation_id, r.subject_entity_id, r.predicate,
-                  r.object_entity_id, r.evidence_count, r.updated_at
+                  r.object_entity_id, r.evidence_count, r.updated_at,
+                  r.valid_from, r.valid_until, r.valid_precision
            FROM relations r
            WHERE r.deployment_id = :deployment_id
              AND r.subject_entity_id = members.member_entity_id
              AND r.invalidated_at IS NULL
-             AND r.valid_until IS NULL
              AND r.evidence_count > 0
            ORDER BY r.evidence_count DESC, r.updated_at DESC, r.relation_id
            LIMIT :limit)
           UNION ALL
           (SELECT r.relation_id, r.subject_entity_id, r.predicate,
-                  r.object_entity_id, r.evidence_count, r.updated_at
+                  r.object_entity_id, r.evidence_count, r.updated_at,
+                  r.valid_from, r.valid_until, r.valid_precision
            FROM relations r
            WHERE r.deployment_id = :deployment_id
              AND r.object_entity_id = members.member_entity_id
              AND r.invalidated_at IS NULL
-             AND r.valid_until IS NULL
              AND r.evidence_count > 0
            ORDER BY r.evidence_count DESC, r.updated_at DESC, r.relation_id
            LIMIT :limit)
@@ -883,7 +903,7 @@ _SELECT_SALIENT_FACTS = text(
       SELECT * FROM relation_candidates
     ), ranked AS (
       SELECT profile_entity_id, kind, statement, subject_entity_id, predicate,
-             object_entity_id,
+             object_entity_id, valid_from, valid_until, valid_precision,
              row_number() OVER (
                PARTITION BY profile_entity_id
                ORDER BY evidence_count DESC, updated_at DESC, kind, fact_id
@@ -901,7 +921,8 @@ _SELECT_SALIENT_FACTS = text(
            CASE WHEN object_member.member_entity_id IS NOT NULL
                 THEN profile.canonical_name
                 WHEN profile.status = 'merged' THEN object_raw.canonical_name
-                ELSE object.canonical_name END
+                ELSE object.canonical_name END,
+           selected.valid_from, selected.valid_until, selected.valid_precision::text
     FROM selected
     JOIN entities profile
       ON profile.deployment_id = :deployment_id

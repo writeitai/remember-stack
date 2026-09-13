@@ -34,6 +34,7 @@ from rememberstack.surfaces.query_sandbox.nomination import (
     CHUNK_TEXT_BYTES_PER_INVOCATION,
 )
 from rememberstack.surfaces.query_sandbox.nomination import validate_filters
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).parents[3]
 _DEPLOYMENT = UUID("5c000000-0000-0000-0000-00000000000c")
@@ -72,7 +73,7 @@ def seeded() -> Iterator[tuple[str, UUID]]:
     database_url = _database_url()
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
 
     engine = create_engine(database_url)

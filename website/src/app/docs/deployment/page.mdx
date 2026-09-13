@@ -162,3 +162,14 @@ docker compose down --volumes
 The second command is destructive. It is appropriate only for this disposable
 quickstart deployment—not for backup or restore. Production portability uses
 native store tools and preserves the hard-forget manifest root first.
+
+
+## Fact stores created before chosen world dates
+
+Migration `p9_30_0051` changes the meaning of fact dates: a missing end no longer
+means "still true", and dates are world time chosen by adjudication rather than
+copied from source time. Earlier stores are not converted in place. The migration
+refuses to run against a database that already holds claims, and it refuses
+downgrade because that would drop the application receipts and restore the old
+meaning. Recreate the deployment and ingest its sources again. Disposable
+quickstart deployments use `docker compose down --volumes` above.

@@ -6,10 +6,12 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 
+from rememberstack.core.fact_windows import describe_fact_window
 from rememberstack.model import KnowledgeFactSheetFact
 from rememberstack.model import KnowledgeFactSheetSnapshot
 from rememberstack.model import KnowledgeRenderedFactSheet
 from rememberstack.model import UTCDateTime
+from rememberstack.model.fact_windows import FactWindow
 
 _UTC_ADAPTER = TypeAdapter(UTCDateTime)
 
@@ -17,10 +19,11 @@ _UTC_ADAPTER = TypeAdapter(UTCDateTime)
 class KnowledgeFactLifecycle(StrEnum):
     """A fact's literal state at the fixed evidence snapshot timestamp."""
 
-    CURRENT = "current"
-    ENDED = "ended"
+    CURRENT = "within window"
+    POSSIBLE = "date incomplete"
+    ENDED = "after window"
     INVALIDATED = "invalidated"
-    NOT_YET_VALID = "not yet valid"
+    NOT_YET_VALID = "before window"
 
 
 def render_knowledge_fact_sheet(
@@ -30,21 +33,15 @@ def render_knowledge_fact_sheet(
     citation_count: int,
     candidate_count: int | None = None,
 ) -> KnowledgeRenderedFactSheet:
-    """Render exact current relations, observation history, and open tensions."""
+    """Render dated fact history and belief status at an explicit fixed snapshot."""
     if citation_count < 0:
         raise ValueError("citation_count must be non-negative")
     if candidate_count is not None and candidate_count < 0:
         raise ValueError("candidate_count must be non-negative")
     compiled_at = _UTC_ADAPTER.validate_python(compiled_at)
-    current_relations = tuple(
+    relations = tuple(
         sorted(
-            (
-                fact
-                for fact in snapshot.facts
-                if fact.kind == "relation"
-                and _lifecycle(fact=fact, evidence_as_of=snapshot.evidence_as_of)
-                is KnowledgeFactLifecycle.CURRENT
-            ),
+            (fact for fact in snapshot.facts if fact.kind == "relation"),
             key=lambda fact: (
                 -fact.evidence_count,
                 fact.label.casefold(),
@@ -67,39 +64,41 @@ def render_knowledge_fact_sheet(
     lines = [
         "## Fact sheet (generated)",
         "",
-        "### Current relations",
+        f"_Status evaluated at {_timestamp(snapshot.evidence_as_of)}; this is a saved snapshot._",
         "",
-        "| fact | valid since | evidence | reference |",
-        "|---|---|---:|---|",
+        "### Relation history",
+        "",
+        "| fact | world time | status at snapshot | evidence | reference |",
+        "|---|---|---|---:|---|",
     ]
-    if current_relations:
+    if relations:
         lines.extend(
-            f"| {_cell(fact.label)} | {_timestamp(fact.valid_from)} | "
+            f"| {_cell(fact.label)} | {_cell(_world_time(fact=fact))} | "
+            f"{_lifecycle(fact=fact, evidence_as_of=snapshot.evidence_as_of).value} | "
             f"{fact.evidence_count} docs | `relation:{fact.fact_id}` |"
-            for fact in current_relations
+            for fact in relations
         )
     else:
-        lines.append("| _None._ | — | 0 docs | — |")
+        lines.append("| _None._ | — | — | 0 docs | — |")
 
     lines.extend(
         (
             "",
             "### Observation history",
             "",
-            "| observation | valid from | valid until | state | evidence | reference |",
-            "|---|---|---|---|---:|---|",
+            "| observation | world time | status at snapshot | evidence | reference |",
+            "|---|---|---|---:|---|",
         )
     )
     if observations:
         lines.extend(
-            f"| {_cell(fact.label)} | {_timestamp(fact.valid_from)} | "
-            f"{_timestamp(fact.valid_until)} | "
+            f"| {_cell(fact.label)} | {_cell(_world_time(fact=fact))} | "
             f"{_lifecycle(fact=fact, evidence_as_of=snapshot.evidence_as_of).value} | "
             f"{fact.evidence_count} docs | `observation:{fact.fact_id}` |"
             for fact in observations
         )
     else:
-        lines.append("| _None._ | — | — | — | 0 docs | — |")
+        lines.append("| _None._ | — | — | 0 docs | — |")
 
     lines.extend(("", "### Open contradictions", ""))
     if contradiction_groups:
@@ -135,7 +134,7 @@ def render_knowledge_fact_sheet(
     )
     return KnowledgeRenderedFactSheet(
         markdown="\n".join(lines),
-        current_relation_count=len(current_relations),
+        relation_count=len(relations),
         observation_count=len(observations),
         contradiction_group_count=len(contradiction_groups),
     )
@@ -163,7 +162,27 @@ def _lifecycle(
         return KnowledgeFactLifecycle.NOT_YET_VALID
     if fact.valid_until is not None and fact.valid_until <= evidence_as_of:
         return KnowledgeFactLifecycle.ENDED
-    return KnowledgeFactLifecycle.CURRENT
+    window = FactWindow(
+        valid_from=fact.valid_from,
+        valid_until=fact.valid_until,
+        valid_precision=fact.valid_precision,
+    )
+    return (
+        KnowledgeFactLifecycle.CURRENT
+        if window.is_complete
+        else KnowledgeFactLifecycle.POSSIBLE
+    )
+
+
+def _world_time(*, fact: KnowledgeFactSheetFact) -> str:
+    """Display the chosen world window without inventing unknown endpoints."""
+    return describe_fact_window(
+        window=FactWindow(
+            valid_from=fact.valid_from,
+            valid_until=fact.valid_until,
+            valid_precision=fact.valid_precision,
+        )
+    )
 
 
 def _open_contradiction_groups(

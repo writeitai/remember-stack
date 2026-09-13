@@ -57,6 +57,7 @@ from rememberstack.spine.query_space.source_definitions import (
     AUTHORIZATION_HELPER_VIEWS,
 )
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-0000000000a1")
@@ -82,7 +83,7 @@ def database_engine(database_url: str) -> Iterator[Engine]:
     """Apply the real structural head so the query space is the shipped one."""
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -764,10 +765,10 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id, subject_entity_id,"
                 " predicate, object_entity_id, valid_from, valid_until, ingested_at,"
                 " invalidated_at, confidence, contradiction_group, fact_label,"
-                " normalizer_version)"
+                " normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:relation, :deployment, :subject, :predicate, :object,"
                 " :valid_from, :valid_until, :ingested, :invalidated, 0.8, :group,"
-                " :label, 'normalizer-1')"
+                " :label, 'normalizer-1', CAST(:precision AS claim_valid_precision), ARRAY[:witness]::uuid[])"
             ),
             {
                 "relation": relation_id,
@@ -781,6 +782,8 @@ class _Corpus:
                 "invalidated": invalidated_at,
                 "group": contradiction_group,
                 "label": f"Alice {predicate} {object_key}",
+                "precision": "open" if valid_until is None else "instant",
+                "witness": self.claim["a"],
             },
         )
 
@@ -841,7 +844,7 @@ class _Corpus:
             key="open_ended",
             predicate="knows",
             object_key="globex",
-            valid_from=None,
+            valid_from=_PAST,
             valid_until=None,
             ingested_at=_PAST,
         )
@@ -932,13 +935,14 @@ class _Corpus:
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
                 " subject_entity_id, statement, valid_from, valid_until, ingested_at,"
-                " confidence, obs_label, normalizer_version)"
+                " confidence, obs_label, normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:observation, :deployment, :subject,"
                 " 'Alice holds the title VP of Engineering.', :valid_from, NULL, :at,"
-                " 0.7, 'Alice is VP of Engineering.', 'normalizer-1')"
+                " 0.7, 'Alice is VP of Engineering.', 'normalizer-1', 'open', ARRAY[:witness]::uuid[])"
             ),
             {
                 "observation": observation_id,
+                "witness": self.claim["a"],
                 "deployment": _DEPLOYMENT_ID,
                 "subject": self.entity["alice"],
                 "valid_from": _PAST,
@@ -1332,7 +1336,7 @@ def _fixture_cases(corpus: _Corpus) -> dict[str, tuple[str, dict[str, Any]]]:
         ),
         "facts_current.open_window_fact_present": (
             f"SELECT EXISTS (SELECT 1 FROM {schema}.facts_current"
-            " WHERE fact_id = :fact AND valid_from IS NULL AND valid_until IS NULL)",
+            " WHERE fact_id = :fact AND valid_from IS NOT NULL AND valid_until IS NULL AND valid_precision='open')",
             {"fact": corpus.fact["open_ended"]},
         ),
         "facts_current.ended_window_fact_absent": (
@@ -1565,6 +1569,7 @@ def test_query_space_exposes_no_undocumented_grants(corpus: _Corpus) -> None:
             "predicate",
             "valid_from",
             "valid_until",
+            "valid_precision",
             "ingested_at",
             "invalidated_at",
         )
@@ -3001,8 +3006,8 @@ _CURRENT_AT = (
     "SELECT coalesce(array_agg(h.fact_id ORDER BY h.fact_id), '{}'::uuid[])"
     " FROM memory_v1.facts_visible_history AS h"
     " WHERE h.ingested_at <= :at AND h.invalidated_at IS NULL"
-    " AND (h.valid_from IS NULL OR h.valid_from <= :at)"
-    " AND (h.valid_until IS NULL OR h.valid_until > :at)"
+    " AND h.valid_from <= :at"
+    " AND (h.valid_precision='open' OR h.valid_until > :at)"
 )
 
 #: The §3.3 bitemporal as-of predicate, with the two instants kept separate.
@@ -3011,13 +3016,14 @@ _AS_OF = (
     " FROM memory_v1.facts_visible_history AS h"
     " WHERE h.ingested_at <= :believed_at"
     " AND (h.invalidated_at IS NULL OR h.invalidated_at > :believed_at)"
-    " AND (h.valid_from IS NULL OR h.valid_from <= :valid_at)"
-    " AND (h.valid_until IS NULL OR h.valid_until > :valid_at)"
+    " AND h.valid_from <= :valid_at"
+    " AND (h.valid_precision='open' OR h.valid_until > :valid_at)"
 )
 
 
+@pytest.mark.parametrize("incomplete_precision", ["unknown", "day"])
 def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
-    corpus: _Corpus,
+    corpus: _Corpus, incomplete_precision: str
 ) -> None:
     """The view is the predicate, evaluated once per statement.
 
@@ -3026,6 +3032,20 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
     `evaluated_at`; any divergence is a difference in the predicate itself.
     """
     with corpus.engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET valid_precision=CAST(:precision AS public.claim_valid_precision),"
+                " valid_from=CASE WHEN :precision='unknown' THEN NULL ELSE :start END,"
+                " valid_until=NULL, window_claim_ids=CASE WHEN :precision='unknown' THEN '{}'::uuid[] ELSE ARRAY[:claim]::uuid[] END"
+                " WHERE relation_id=:fact"
+            ),
+            {
+                "precision": incomplete_precision,
+                "start": _PAST,
+                "claim": corpus.claim["a"],
+                "fact": corpus.fact["open_ended"],
+            },
+        )
         row = _rows(
             connection=connection,
             sql=(
@@ -3035,9 +3055,8 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
                 " FROM memory_v1.facts_visible_history AS h"
                 " WHERE h.ingested_at <= statement_timestamp()"
                 " AND h.invalidated_at IS NULL"
-                " AND (h.valid_from IS NULL"
-                "      OR h.valid_from <= statement_timestamp())"
-                " AND (h.valid_until IS NULL"
+                " AND h.valid_from <= statement_timestamp()"
+                " AND (h.valid_precision='open'"
                 "      OR h.valid_until > statement_timestamp())) AS predicate_ids,"
                 " (SELECT min(evaluated_at) = max(evaluated_at)"
                 " FROM memory_v1.facts_current) AS one_instant"
@@ -3047,6 +3066,7 @@ def test_facts_current_is_exactly_the_d41_predicate_at_its_own_instant(
     assert row["view_ids"] == row["predicate_ids"]
     assert row["one_instant"] is True
     assert corpus.fact["current"] in row["view_ids"]
+    assert corpus.fact["open_ended"] not in row["view_ids"]
 
 
 def test_valid_from_is_inclusive_and_valid_until_is_exclusive(corpus: _Corpus) -> None:
@@ -3064,17 +3084,19 @@ def test_valid_from_is_inclusive_and_valid_until_is_exclusive(corpus: _Corpus) -
     assert corpus.fact["ended"] not in at_end, "valid_until is exclusive"
 
 
-def test_null_endpoints_are_open_and_future_ingestion_is_not_yet_believed(
+def test_open_end_and_future_ingestion_keep_their_separate_clocks(
     corpus: _Corpus,
 ) -> None:
-    """A null endpoint is unbounded; a fact is not current before it was learned."""
+    """An explicitly open end is unbounded; belief still starts when learned."""
     with corpus.engine.connect() as connection:
         long_ago = _scalar(connection=connection, sql=_CURRENT_AT, at=_ANCIENT)
         later = _scalar(connection=connection, sql=_CURRENT_AT, at=_MID)
         far_future = _scalar(connection=connection, sql=_CURRENT_AT, at=_FUTURE)
 
     assert list(long_ago) == [], "nothing had been ingested yet at that instant"
-    assert corpus.fact["open_ended"] in later, "a null valid_from is unbounded before"
+    assert corpus.fact["open_ended"] in later, (
+        "the known open window covers this instant"
+    )
     assert corpus.fact["open_ended"] in far_future, "a null valid_until never expires"
     assert corpus.fact["ended"] in later
     assert corpus.fact["ended"] not in far_future
@@ -3465,15 +3487,16 @@ def test_withdrawal_is_bound_to_fact_kind_when_uuids_collide(corpus: _Corpus) ->
             text(
                 "INSERT INTO observations (observation_id, deployment_id,"
                 " subject_entity_id, statement, valid_from, ingested_at,"
-                " confidence, obs_label, normalizer_version)"
+                " confidence, obs_label, normalizer_version, valid_precision, window_claim_ids)"
                 " VALUES (:fact, :deployment, :subject, 'Colliding observation',"
-                " :at, :at, 0.7, 'Colliding observation', 'normalizer-1')"
+                " :at, :at, 0.7, 'Colliding observation', 'normalizer-1', 'open', ARRAY[:claim]::uuid[])"
             ),
             {
                 "fact": fact_id,
                 "deployment": _DEPLOYMENT_ID,
                 "subject": corpus.entity["alice"],
                 "at": _PAST,
+                "claim": corpus.claim["a"],
             },
         )
         connection.execute(

@@ -1,7 +1,9 @@
 """PostgreSQL materialization, admission, and inventory for D74."""
 
+from collections.abc import Iterator
 from datetime import datetime
 import json
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -465,6 +467,9 @@ class ForgetCatalog:
             "content_hashes": list(manifest.content_hashes),
         }
         with self._engine.begin() as connection:
+            connection.execute(
+                _LOCK_DEPLOYMENT, {"deployment_id": manifest.deployment_id}
+            )
             row = (
                 connection.execute(
                     _SELECT_BY_ID_FOR_UPDATE,
@@ -481,8 +486,32 @@ class ForgetCatalog:
                     f"forget_id {manifest.forget_id} does not exist"
                 )
             _require_same_manifest(row=row, manifest=manifest)
+            _scrub_mutable_fact_payloads(connection=connection, parameters=parameters)
             for statement in _POSTGRES_SCRUB:
                 connection.execute(statement, parameters)
+
+    def profile_repair_batches(
+        self, *, manifest: ForgetManifest
+    ) -> Iterator[tuple[UUID, ...]]:
+        """Find cleared caches by existing hash state, including old-manifest retries."""
+        cursor: UUID | None = None
+        while True:
+            with self._engine.connect() as connection:
+                ids = tuple(
+                    connection.execute(
+                        text("""SELECT entity_id FROM entities
+                  WHERE deployment_id=:dep AND status IN ('active','merged')
+                    AND embedding_text_hash IS NULL
+                    AND (CAST(:cursor AS uuid) IS NULL OR entity_id>:cursor)
+                  ORDER BY entity_id LIMIT 100
+                """),
+                        {"dep": manifest.deployment_id, "cursor": cursor},
+                    ).scalars()
+                )
+            if not ids:
+                return
+            yield ids
+            cursor = ids[-1]
 
     def verify_postgres_scrubbed(self, *, manifest: ForgetManifest) -> None:
         """Raise visibly if any nominated source-bearing PostgreSQL row remains."""
@@ -552,6 +581,121 @@ class ForgetCatalog:
             raise ForgottenSourceError(
                 f"ingest matches irreversible forget_id {forget_id}"
             )
+
+
+def _scrub_mutable_fact_payloads(
+    *, connection: Connection, parameters: dict[str, Any]
+) -> None:
+    """Erase consumed source payloads before source cascades remove their inventory."""
+    source_ids = (
+        connection.execute(
+            text(
+                "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND doc_id=:doc_id"
+            ),
+            parameters,
+        )
+        .scalars()
+        .all()
+    )
+    parameters["claim_ids"] = sorted(set(parameters["claim_ids"]) | set(source_ids))
+    connection.execute(
+        text("""UPDATE fact_applications SET
+      prepared=NULL, decision=NULL, attempt_id=NULL, input_hash=NULL,
+      input_claim_ids=ARRAY(SELECT id FROM unnest(input_claim_ids) id WHERE NOT id=ANY(:claim_ids) ORDER BY id)
+      WHERE deployment_id=:deployment_id AND input_claim_ids && CAST(:claim_ids AS uuid[])
+    """),
+        parameters,
+    )
+    # Re-evaluate exclusivity for portable manifests authored before D118.
+    # Counterevidence cannot preserve the forgotten assertion's source wording.
+    exclusive = connection.execute(_EXCLUSIVE_FACT_IDS, parameters).scalars().all()
+    parameters["fact_ids"] = sorted(set(parameters["fact_ids"]) | set(exclusive))
+    connection.execute(
+        text("""WITH replacements AS (
+      SELECT f.observation_id, replacement.statement
+      FROM observations f
+      CROSS JOIN LATERAL (
+        SELECT coalesce(n.output->'observations'->a.output_ordinal->>'statement', c.claim_text) AS statement
+        FROM observation_evidence e
+        JOIN claims c ON c.deployment_id=e.deployment_id AND c.claim_id=e.claim_id
+        JOIN documents d ON d.deployment_id=e.deployment_id AND d.doc_id=e.doc_id
+        LEFT JOIN fact_applications a ON a.deployment_id=e.deployment_id AND a.claim_id=e.claim_id
+          AND a.support_observation_id=e.observation_id AND a.applied_at IS NOT NULL AND a.support_stance='supports'
+        LEFT JOIN normalization_outputs n ON n.deployment_id=a.deployment_id AND n.claim_id=a.claim_id
+          AND n.normalizer_version=a.normalizer_version
+        WHERE e.deployment_id=f.deployment_id AND e.observation_id=f.observation_id
+          AND e.stance='supports' AND c.is_current_testimony AND d.deleted_at IS NULL
+          AND e.doc_id<>:doc_id AND NOT e.claim_id=ANY(:claim_ids)
+        ORDER BY (a.application_id IS NULL),c.asserted_at NULLS LAST,c.claim_id,a.application_id
+        LIMIT 1
+      ) replacement
+      WHERE f.deployment_id=:deployment_id AND NOT f.observation_id=ANY(:fact_ids)
+        AND EXISTS(SELECT 1 FROM observation_evidence e WHERE e.deployment_id=f.deployment_id
+          AND e.observation_id=f.observation_id AND (e.doc_id=:doc_id OR e.claim_id=ANY(:claim_ids)))
+    ) UPDATE observations f SET statement=replacements.statement,obs_label=NULL,
+      embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,embedding_text_hash=NULL,
+      updated_at=now() FROM replacements
+      WHERE f.deployment_id=:deployment_id AND f.observation_id=replacements.observation_id
+    """),
+        parameters,
+    )
+    affected = set(parameters["resolved_entity_ids"])
+    for kind, table in (("relation", "relations"), ("observation", "observations")):
+        object_column = ", f.object_entity_id" if kind == "relation" else ""
+        rows = connection.execute(
+            text(f"""SELECT f.{kind}_id, f.subject_entity_id{object_column}
+          FROM {table} f WHERE f.deployment_id=:deployment_id AND
+          (f.window_claim_ids && CAST(:claim_ids AS uuid[]) OR EXISTS(
+            SELECT 1 FROM {kind}_evidence e WHERE e.deployment_id=f.deployment_id
+            AND e.{kind}_id=f.{kind}_id AND (e.doc_id=:doc_id OR e.claim_id=ANY(:claim_ids))))
+        """),
+            parameters,
+        ).all()
+        for row in rows:
+            affected.update(row[1:])
+        label_clear = (
+            "fact_label=NULL,fact_label_version=NULL,"
+            if kind == "relation"
+            else "obs_label=NULL,"
+        )
+        connection.execute(
+            text(f"""UPDATE {table} SET
+          valid_from=NULL,valid_until=NULL,valid_precision='unknown',window_claim_ids='{{}}'
+          WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
+        """),
+            parameters,
+        )
+        connection.execute(
+            text(f"""UPDATE {table} SET {label_clear}
+          embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,
+          embedding_text_hash=NULL,updated_at=now()
+          WHERE deployment_id=:deployment_id AND {kind}_id=ANY(:affected_fact_ids)
+        """),
+            {**parameters, "affected_fact_ids": [row[0] for row in rows]},
+        )
+        connection.execute(
+            text(f"""UPDATE {kind}_adjudications SET
+          triggering_claim_id=NULL, features=NULL, consumed_claim_ids='{{}}'
+          WHERE deployment_id=:deployment_id AND
+            (consumed_claim_ids && CAST(:claim_ids AS uuid[]) OR triggering_claim_id=ANY(:claim_ids))
+        """),
+            parameters,
+        )
+    # Old portable manifests predate window witnesses. Recompute the redirect
+    # closure now; NULL input hashes also let retry repair discover these caches.
+    parameters["resolved_entity_ids"] = sorted(affected)
+    connection.execute(
+        text("""WITH RECURSIVE affected(entity_id) AS (
+      SELECT entity_id FROM entities WHERE deployment_id=:deployment_id AND entity_id=ANY(:resolved_entity_ids)
+      UNION
+      SELECT e.merged_into FROM entities e JOIN affected a USING(entity_id)
+      WHERE e.deployment_id=:deployment_id AND e.merged_into IS NOT NULL
+    ) UPDATE entities SET profile_summary=NULL,embedding=NULL,embedding_model=NULL,
+      embedding_input_policy_version=NULL,embedding_text_hash=NULL,updated_at=now()
+      WHERE deployment_id=:deployment_id AND entity_id IN (SELECT entity_id FROM affected)
+    """),
+        parameters,
+    )
 
 
 def _record(*, row: RowMapping) -> ForgetManifestRecord:
@@ -782,6 +926,7 @@ _EXCLUSIVE_FACT_IDS = text(
               WHERE other.deployment_id = :deployment_id
                 AND other.relation_id = relation.relation_id
                 AND other.doc_id <> :doc_id
+                AND other.stance = 'supports'
                 AND claim.is_current_testimony
                 AND document.deleted_at IS NULL
           )
@@ -807,6 +952,7 @@ _EXCLUSIVE_FACT_IDS = text(
               WHERE other.deployment_id = :deployment_id
                 AND other.observation_id = observation.observation_id
                 AND other.doc_id <> :doc_id
+                AND other.stance = 'supports'
                 AND claim.is_current_testimony
                 AND document.deleted_at IS NULL
           )
@@ -1039,6 +1185,12 @@ _MARK_ACCEPTED = text(
 )
 
 _POSTGRES_SCRUB = (
+    text(
+        "DELETE FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)"
+    ),
+    text(
+        "DELETE FROM normalization_outputs WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)"
+    ),
     text(
         """
         UPDATE documents
@@ -1529,6 +1681,20 @@ _VERIFY_POSTGRES_SCRUB = text(
     """
     SELECT count(*)
     FROM (
+        SELECT 1 FROM normalization_outputs WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
+        UNION ALL
+        SELECT 1 FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
+        UNION ALL
+        SELECT 1 FROM fact_applications WHERE deployment_id=:deployment_id AND input_claim_ids && CAST(:claim_ids AS uuid[])
+        UNION ALL
+        SELECT 1 FROM relations WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
+        UNION ALL
+        SELECT 1 FROM observations WHERE deployment_id=:deployment_id AND window_claim_ids && CAST(:claim_ids AS uuid[])
+        UNION ALL
+        SELECT 1 FROM relation_adjudications WHERE deployment_id=:deployment_id AND consumed_claim_ids && CAST(:claim_ids AS uuid[])
+        UNION ALL
+        SELECT 1 FROM observation_adjudications WHERE deployment_id=:deployment_id AND consumed_claim_ids && CAST(:claim_ids AS uuid[])
+        UNION ALL
         SELECT 1 FROM documents
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
           AND (source_ref IS NOT NULL OR source_uri IS NOT NULL OR title IS NOT NULL

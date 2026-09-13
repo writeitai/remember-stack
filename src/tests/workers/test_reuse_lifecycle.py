@@ -60,6 +60,7 @@ from rememberstack.workers import StructureHandler
 from rememberstack.workers import SummarySettings
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("d4000000-0000-0000-0000-000000000001")
@@ -131,7 +132,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -146,7 +147,7 @@ def bootstrapped_deployment(database_engine: Engine) -> None:
     with database_engine.begin() as connection:
         connection.execute(statement=text("TRUNCATE TABLE deployments CASCADE"))
         for table in ("chunks", "chunk_claims", "claims", "claim_extraction_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table}"))
+            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,

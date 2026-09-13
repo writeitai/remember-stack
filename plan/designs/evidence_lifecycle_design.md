@@ -1,7 +1,8 @@
 # Evidence Lifecycle — Document Versions, Testimony Currency, and the Counting Rule (Design)
 
-> **Binding D110 amendment (2026-09-07).** D110 §4 amends D55 guard refusal: preserve the existing world-time end/basis, including a finite independent cap, while closing belief time at the persisted reconciliation instant. All currency/evidence changes participate in the common block/fact revision and cache invalidation protocol.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D118 amendment (2026-09-07; effective when merged).** Withdrawal changes evidence currency and system belief, not world-time endpoints (§7). Use ordinary write coordination; the D110 temporal revision/cache framework is withdrawn.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D98 amendment (2026-08-27).** Normal deletion updates PostgreSQL
 > authority and its live graph views in the same committed lifecycle; there is

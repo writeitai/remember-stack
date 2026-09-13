@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
+from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.eval import OPERATIONAL_SCALE_VERSION
 from rememberstack.eval import record_operational_scale_report
 from rememberstack.model import CurrencyTransition
@@ -35,17 +36,23 @@ from rememberstack.model import ObservationAssertion
 from rememberstack.model import OperationalScaleMeasurement
 from rememberstack.model import OperationalScaleReport
 from rememberstack.model import P1ChunkText
+from rememberstack.model.relations import NormalizationResponse
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.catalog_contract import CatalogInventory
 from rememberstack.spine.catalog_contract import EXPECTED_HASH_PARENTS
 from rememberstack.spine.catalog_contract import EXPECTED_RANGE_PARENTS
 from rememberstack.spine.catalog_contract import verify_schema
+from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
+from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
+from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.lifecycle import LifecycleCatalog
-from rememberstack.spine.observation_adjudication import ObservationAdjudicator
-from rememberstack.spine.observation_adjudication import ObservationSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_engine import INTERACTIVE_HYDRATION_BATCH_SIZE
+from tests.database_reset import reset_database
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("72000000-0000-0000-0000-000000000001")
@@ -144,7 +151,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for operational scale runs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -639,7 +646,7 @@ def _hub_lineage_recount(
         passed=(
             len(changed_relations) == len(relation_ids)
             and len(changed_observations) == len(observation_ids)
-            and len(probe.statements) == 2
+            and len(probe.statements) == 4
             and probe.transactions == 1
             and nonzero == 0
         ),
@@ -679,17 +686,69 @@ def _provider_neutral_batching(
         )
         for claim_id in claim_ids[: _SETTINGS.entity_batch_assertions]
     )
-    adjudicator = ObservationAdjudicator(
+    catalog = FactApplicationCatalog(engine=engine)
+    version = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text("""INSERT INTO obs_flush_entity_units(
+            unit_id,deployment_id,version_id,representation_id,subject_entity_id,content_hash,
+            normalizer_version,chunker_version,extractor_version)
+            VALUES(:unit,:dep,:version,:rep,:entity,'scale',:normalizer,'scale','scale')"""),
+            {
+                "unit": uuid4(),
+                "dep": _DEPLOYMENT_ID,
+                "version": version,
+                "rep": uuid4(),
+                "entity": _BATCH_ENTITY_ID,
+                "normalizer": FACT_NORMALIZER_VERSION,
+            },
+        )
+    for assertion in assertions:
+        catalog.publish_normalization(
+            deployment_id=_DEPLOYMENT_ID,
+            claim_id=assertion.claim_id,
+            normalizer_version=FACT_NORMALIZER_VERSION,
+            output=NormalizationResponse.model_validate(
+                {
+                    "observations": [
+                        {
+                            "subject": {"name": "Batch Subject"},
+                            "statement": assertion.statement,
+                        }
+                    ]
+                }
+            ),
+            accepted=(("observation", 0),),
+        )
+        catalog.stage(
+            deployment_id=_DEPLOYMENT_ID,
+            claim_id=assertion.claim_id,
+            normalizer_version=FACT_NORMALIZER_VERSION,
+            kind="observation",
+            ordinal=0,
+            adjudicator_version=OBSERVATION_APPLICATION_VERSION,
+            subject_entity_id=_BATCH_ENTITY_ID,
+            object_entity_id=None,
+            version_ids=(version,),
+        )
+
+    def answer(prompt: str, type_name: str) -> dict[str, object]:
+        """Explicit fixture judgment for repeated statements in the scale sample."""
+        assert type_name == "FactApplicationDecision"
+        return same_fact_application_answer(prompt=prompt)
+
+    adjudicator = FactAdjudicator(
         engine=engine,
-        model_provider=FakeModelProvider(),
-        settings=ObservationSettings(),
+        model_provider=FakeModelProvider(generate_router=answer),
+        settings=FactAdjudicationSettings(),
     )
     observation_ids, observation_ms, observation_probe = _measure(
         engine=engine,
-        operation=lambda: adjudicator.add_observations(
+        operation=lambda: adjudicator.drain(
             deployment_id=_DEPLOYMENT_ID,
             subject_entity_id=_BATCH_ENTITY_ID,
-            assertions=assertions,
+            meter=NoopCostMeter(),
+            call_key="scale:fact-application",
         ),
     )
 
@@ -755,7 +814,7 @@ def _provider_neutral_batching(
         },
         limitations=(
             "Injected latency is a portable model input on the real SQLAlchemy engine, not a provider or region commitment.",
-            "Timing values are measurements only; query and transaction counts are the acceptance gates.",
+            "Hydration/currency batching retains its SQL gates. Fact applications use separate prepare/apply transactions so model calls hold no transaction; their measured cost replaces the retired one-transaction entity-batch gate.",
         ),
         passed=(
             len(confirmed) == len(claim_ids)
@@ -763,11 +822,8 @@ def _provider_neutral_batching(
             and len(hydration_probe.statements) == expected_hydration_statements
             and hydration_probe.transactions == 1
             and len(set(observation_ids)) == 1
-            and observation_probe.transactions == 1
-            and block_reads == 1
-            and timestamp_reads == 1
             and applied == len(transitions)
-            and len(currency_probe.statements) == 2
+            and len(currency_probe.statements) == 5
             and currency_probe.transactions == 1
         ),
     )

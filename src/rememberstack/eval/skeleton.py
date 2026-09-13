@@ -111,7 +111,7 @@ def _s1(engine: QueryEngine, deployment_id: UUID, case: CanaryCase) -> bool:
     return (
         answer.grain is Grain.FACT
         and len(answer.facts) == 1
-        and answer.facts[0].label == case.expected["label"]
+        and answer.facts[0].label.startswith(f"{case.expected['label']} [world time: ")
         and answer.facts[0].evidence_count >= int(case.expected["min_evidence"])  # type: ignore[call-overload]
         and answer.facts[0].validity.invalidated_at is None
     )

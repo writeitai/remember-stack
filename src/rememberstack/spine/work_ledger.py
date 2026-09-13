@@ -48,6 +48,12 @@ from rememberstack.model import WorkNotFoundError
 from rememberstack.model import WorkNotRunningError
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.catalog_contract import lane_is_valid
+from rememberstack.spine.fact_adjudication import FACT_FLUSH_VERSION
+from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
+from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
+from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
+from rememberstack.spine.fact_applications import register_version_applications_on
+from rememberstack.spine.fact_applications import version_applications_ready_on
 
 
 class WorkLedgerSettings(BaseSettings):
@@ -1065,6 +1071,27 @@ def _enqueue_entity_obs_flush_fanout(
     if existing is not None:
         return []
 
+    if (
+        normalize_component_version != FACT_NORMALIZER_VERSION
+        or obs_flush_component_version != FACT_FLUSH_VERSION
+    ):
+        raise ValueError(
+            "obsolete fact application generation cannot open the D118 barrier"
+        )
+    register_version_applications_on(
+        connection=connection,
+        parameters={
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+            "normalizer_version": normalize_component_version,
+            "relation_version": RELATION_APPLICATION_VERSION,
+            "observation_version": OBSERVATION_APPLICATION_VERSION,
+        },
+    )
+
     entity_rows = (
         connection.execute(
             _SELECT_STAGING_ENTITIES_FOR_FANOUT,
@@ -1227,7 +1254,39 @@ def _entity_obs_flush_barrier_ready(
             "obs_flush_version": obs_flush_version,
         },
     ).scalar_one()
-    return int(ready) == int(expected)
+    if (
+        int(ready) != int(expected)
+        or normalizer_version != FACT_NORMALIZER_VERSION
+        or obs_flush_version != FACT_FLUSH_VERSION
+    ):
+        return False
+    state = (
+        connection.execute(
+            text("""SELECT representation_id,chunker_version,extractor_version
+        FROM obs_flush_version_state WHERE deployment_id=:deployment_id AND version_id=:version_id
+          AND normalizer_version=:normalizer_version"""),
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "normalizer_version": normalizer_version,
+            },
+        )
+        .mappings()
+        .one()
+    )
+    return version_applications_ready_on(
+        connection=connection,
+        parameters={
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalizer_version,
+            "representation_id": state["representation_id"],
+            "chunker_version": state["chunker_version"],
+            "extractor_version": state["extractor_version"],
+            "relation_version": RELATION_APPLICATION_VERSION,
+            "observation_version": OBSERVATION_APPLICATION_VERSION,
+        },
+    )
 
 
 def _normalize_claim_barrier_ready(

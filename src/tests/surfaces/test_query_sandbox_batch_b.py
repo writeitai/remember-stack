@@ -37,6 +37,7 @@ from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).parents[3]
 _DEPLOYMENT = UUID("5b000000-0000-0000-0000-00000000000b")
@@ -56,7 +57,7 @@ def migrated(request: pytest.FixtureRequest) -> Iterator[str]:
     database_url = _database_url()
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     with psycopg.connect(_psycopg_url(database_url), autocommit=True) as connection:
         role = _query_role(database_url)

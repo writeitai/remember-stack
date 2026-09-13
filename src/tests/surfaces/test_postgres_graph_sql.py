@@ -96,11 +96,14 @@ def test_guard_refusal_never_executes_the_pgq_statement(
 
 def test_history_pgq_has_both_half_open_clocks_on_its_pattern_edge() -> None:
     """The one-hop PGQ edge carries both bitemporal axes."""
-    for clock_column in ("ingested_at", "invalidated_at", "valid_from", "valid_until"):
+    for clock_column in ("ingested_at", "invalidated_at"):
         assert HISTORY_NEIGHBORHOOD_PGQ.count(f"r.{clock_column}") == 2
-    assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 1
-    for clock_column in ("ingested_at", "invalidated_at", "valid_from", "valid_until"):
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 4
+    for clock_column in ("valid_from", "valid_until", "valid_precision"):
+        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"r.{clock_column}") == 1
+        assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 2
+    assert "valid_from IS NULL" not in HISTORY_NEIGHBORHOOD_PGQ
+    assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 1
 
 
 def test_temporal_template_marker_drift_fails_loudly() -> None:

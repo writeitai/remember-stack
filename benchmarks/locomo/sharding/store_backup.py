@@ -44,10 +44,9 @@ MODEL_BINDING_ENVIRONMENT = {
     "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
     "claim_extraction": "REMEMBERSTACK_E2_EXTRACT_MODEL",
     "context_prefix": "REMEMBERSTACK_E1_PREFIX_MODEL",
-    "entity_observation_embedding": "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
     "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
-    "observation_frontier": "REMEMBERSTACK_OBS_FRONTIER_MODEL",
-    "observation_small": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "entity_resolution": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "fact_adjudication": "REMEMBERSTACK_FACT_MODEL",
     "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",
     "openrouter_embedding_provider_order": (
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER"
@@ -65,8 +64,6 @@ MODEL_BINDING_ENVIRONMENT = {
     "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
     "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
     "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
-    "supersession_frontier": "REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL",
-    "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
 }
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",

@@ -305,6 +305,9 @@ class PostgresP1Index:
                   updated_at = now()
                 WHERE deployment_id = :deployment_id
                   AND relation_id = :fact_id AND fact_label = :label
+                  AND valid_from IS NOT DISTINCT FROM CAST(:valid_from AS timestamptz)
+                  AND valid_until IS NOT DISTINCT FROM CAST(:valid_until AS timestamptz)
+                  AND valid_precision::text=:valid_precision
                 """
             ),
             "observation": text(
@@ -318,6 +321,9 @@ class PostgresP1Index:
                 WHERE deployment_id = :deployment_id
                   AND observation_id = :fact_id
                   AND coalesce(obs_label, statement) = :label
+                  AND valid_from IS NOT DISTINCT FROM CAST(:valid_from AS timestamptz)
+                  AND valid_until IS NOT DISTINCT FROM CAST(:valid_until AS timestamptz)
+                  AND valid_precision::text=:valid_precision
                 """
             ),
         }
@@ -339,9 +345,15 @@ class PostgresP1Index:
                         "deployment_id": row.deployment_id,
                         "fact_id": row.fact_id,
                         "label": row.label,
+                        "valid_from": row.valid_from,
+                        "valid_until": row.valid_until,
+                        "valid_precision": row.valid_precision.value,
                     },
                 )
-                _require_updated(result.rowcount, target=row.kind, item_id=row.fact_id)
+                # A newer application owns repair for changed inputs; a forgotten
+                # row must stay absent. Keep the other already-paid vectors.
+                if result.rowcount == 0:
+                    continue
 
     def claim_vectors(
         self, *, deployment_id: str, claim_ids: tuple[str, ...]

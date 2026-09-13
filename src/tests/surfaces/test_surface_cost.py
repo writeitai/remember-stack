@@ -29,6 +29,7 @@ from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
 from rememberstack.surfaces.query_engine import QueryEngine
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -43,7 +44,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for surface-cost proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

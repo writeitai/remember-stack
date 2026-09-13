@@ -15,6 +15,7 @@ from pydantic import field_validator
 from pydantic import JsonValue
 from pydantic import model_validator
 
+from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.mounts import PublishedMounts
 from rememberstack.model.queue import UTCDateTime
 
@@ -437,6 +438,7 @@ class KnowledgeFactFingerprint(BaseModel):
     fact_id: UUID
     valid_from: UTCDateTime | None = None
     valid_until: UTCDateTime | None = None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     invalidated_at: UTCDateTime | None = None
     evidence_count: int = Field(ge=0)
     contradict_count: int = Field(ge=0)
@@ -486,6 +488,7 @@ class KnowledgeFactSheetFact(BaseModel):
     label: str = Field(min_length=1)
     valid_from: UTCDateTime | None = None
     valid_until: UTCDateTime | None = None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None = None
     evidence_count: int = Field(ge=0)
@@ -511,7 +514,7 @@ class KnowledgeRenderedFactSheet(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     markdown: str
-    current_relation_count: int = Field(ge=0)
+    relation_count: int = Field(ge=0)
     observation_count: int = Field(ge=0)
     contradiction_group_count: int = Field(ge=0)
 

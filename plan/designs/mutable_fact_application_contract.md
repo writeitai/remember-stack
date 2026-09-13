@@ -1,0 +1,303 @@
+# D118 application contract: normalized assertions, decisions and support
+
+**Status:** implementation contract under D118; Antigravity and Grok approved
+the application contract after round-2 review on 2026-09-07. Runtime activation remains subject to the delivery gates.
+**Date:** 2026-09-07.
+**Authority:** [one mutable window](mutable_fact_windows_design.md).
+**Analysis:** [storage alternatives and existing mechanisms](../analysis/mutable_fact_application_storage.md).
+**DDL:** [application storage](mutable_fact_application_schema.sql).
+
+## 1. Scope and storage
+
+A normalization response turns a source claim into zero or more relation or
+observation assertions. An application decides what one resolved assertion means
+for the fact store. Both planes use the existing entity flush work units: relations
+also wait there instead of being upserted before adjudication. Historical internal
+names containing `obs_flush` do not imply a separate relation queue is required.
+The old downstream relation supersession step becomes receipt/projection follow-up;
+it must not adjudicate those assertions a second time.
+
+Two new internal tables have distinct purposes:
+
+- `normalization_outputs`: the complete first published response for
+  `(deployment, claim, normalizer generation)`. Publish before resolving/applying
+  its outputs. The same publication freezes `accepted_outputs`, a sorted list of
+  `{kind, ordinal}` pairs surviving the normalizer's deterministic gates. Retrying
+  uses the same response and dispositions, including empty responses; later
+  predicate changes cannot silently change which outputs that receipt admitted.
+- `fact_applications`: one resolved output's staging, prepared inference and
+  completion receipt. The natural unique key is deployment, claim, normalizer
+  generation, output shape (relation/observation), zero-based output ordinal and
+  adjudicator generation. A UUID application ID addresses the row; text, triples
+  and dates never establish retry identity.
+
+The only new fact data are `valid_precision` and `window_claim_ids`: the latter
+records the evidence grounding the current complete window, not a seed or an
+endpoint owner. It changes whenever that window changes. Every evidence link is
+an aggregate over application support pointers; there is no second provenance
+for links that predate applications, because stores that predate this contract
+are recreated rather than converted (design §8). No temporal operation,
+discrepancy, checkpoint or cache-certificate store is introduced.
+
+The ordinal indexes the original frozen `output.relations` or
+`output.observations` array, never a compacted accepted-only array.
+The complete normalizer output remains unmodified. Each application stores resolved
+entity IDs and obtains the statement from its output ordinal. `uses_claim_window`
+on each normalized output explicitly says the claim's world window applies to
+that assertion; false means initial dates are unknown. The normalizer sees the
+source timestamp, claimed dates and source text. This reuses its existing call;
+it cannot propagate one claim date indiscriminately to every extracted assertion.
+
+## 2. Admission and work completion
+
+Keep existing claim/version barriers and entity units. Extend
+`normalize_observation_staging` with `application_id` and use
+`(deployment_id, version_id, application_id)` as its primary key; retain its
+existing routing columns. Stage every accepted resolved output, including
+relations. Filtering invalid/bare-head-noun outputs happens before registration
+and is frozen in the publication's accepted-output list, with ordinary processing
+audit for the rejection reasons. Completion checks this frozen list exactly.
+A source normalization work item cannot complete until every accepted output and
+all its currently known version memberships have been staged.
+
+Under the canonical entity lock, admit a finite set of eligible unadmitted
+applications. Eligibility uses the existing materialized entity-unit join and
+excludes dead-letter units. Order by source `asserted_at NULLS LAST`, claim UUID,
+output shape, output ordinal and application UUID. Assign increasing
+`admission_sequence` values using the dedicated sequence in that order; admit
+later arrivals only after previously admitted work. The sequence supplies durable
+work order, not a world-time or seed authority. Sequence gaps are harmless.
+
+Each helper processes the least admitted, unapplied application for that canonical
+entity. It cannot skip an unfinished head because a model call is slow. Independent
+entities proceed concurrently. The composed entity flush generation pins the
+normalizer and both fact adjudication contracts. An old or mixed generation cannot
+complete the new version barrier. Completion counts application IDs, not statement
+strings, and verifies every member's applied receipt before terminal follow-ups.
+Each application's adjudicator version is the version for its own fact plane;
+the entity-unit generation composes both versions and the normalizer version.
+
+This replaces D90's requirement to hold the entity lock across inference: only
+the least admitted unapplied row in the canonical subject's stream may have a
+live attempt. A concurrent helper reuses or replaces that same head's attempt;
+it may not prepare or apply a later row. Admission, preparation and application
+check the head under the entity lock. Head selection includes the full reverse
+redirect closure, including applications stored under absorbed subject IDs.
+Application subjects are not rewritten on merge; unmerge restores the appropriate
+stream. No additional scheduler or lease table is required.
+
+Application completion retires every staged membership for that application in
+the same transaction. The receipt remains for later memberships and retry. Acquire
+version-barrier locks only after releasing application locks. Reused source chunks
+can add new version memberships to an already applied assertion; those memberships
+retire by verifying its receipt, without relinking evidence.
+
+## 3. Preparation and application locks
+
+Use READ COMMITTED transactions with this acquisition order:
+
+1. Shared transaction advisory lock on `hard-forget:<deployment UUID>`; verify the
+   existing forget/availability fence while holding it. Forget preparation takes
+   this lock exclusively. No payload publication bypasses this check.
+2. Shared identity lock `<deployment UUID>:identity-epoch`. Merge/unmerge retain
+   their existing exclusive form. Resolve subject and object redirects before choosing
+   canonical blocks; release/retry if the required subject set changes.
+3. Existing entity block locks `<deployment UUID>:obs:<canonical entity UUID>`,
+   sorted by UUID if an operation has several subjects.
+4. Consumed claims sorted by UUID, then relation rows sorted by UUID, then
+   observation rows sorted by UUID, using `FOR UPDATE`; finally application rows
+   sorted by UUID. An evidence update must hold its fact lock first.
+
+Preparation selects candidates from both current and completed world intervals
+of the relevant fact plane, without kind or overlap gates. Semantic ranking may
+bound model inputs; exact text/triple equality is nomination only. Record the
+bound and truncation, and reject operations involving unseen facts or evidence.
+Fingerprint canonical JSON of: generation and resolved identity; normalized
+assertion; source claims' text, timestamps, D41 fields and currency; supplied fact
+values, system intervals, chosen windows/witnesses, contradiction groups and
+support links; and the complete block candidate-ID membership. Canonical JSON
+sorts keys and all set-like lists; it uses normalized UTC timestamp strings.
+Candidate membership may be streamed for hashing without copying all source text.
+
+A fresh attempt UUID identifies this exact snapshot. Store its fingerprint and
+bounded inputs before releasing locks for remote inference. First complete answer
+wins via `UPDATE ... WHERE attempt_id = :attempt AND decision IS NULL`. Publication
+checks the forget fence and surviving input claims. A late reply cannot overwrite
+a replacement attempt or recreate an erased row.
+
+Application reacquires the same locks, then re-reads and recomputes the snapshot.
+It never applies a snapshot read before a lock wait. Any changed consumed input or
+candidate membership rejects the output without fact effects; replace the attempt
+and infer from the new input. Equal complete domain inputs permit reuse; there is
+no new per-endpoint ownership or operation-sequence authority. All fact-creation,
+identity/support movement and legacy direct-write entry points use this block
+protocol. Lifecycle currency updates lock claims; its fact changes and evidence
+recounts lock fact rows and cannot bypass the guarded re-read. Forget drains
+ordinary work and holds its existing fence through scrubbing/recovery.
+
+Source withdrawal changes testimony currency and system belief only. Remove
+`lifecycle._CAP_RELATION`: zero-support relations use `invalidated_at`, like
+observations; neither source timestamps nor `now()` may assign `valid_until`.
+Currency updates explicitly lock claim rows in UUID order before batch updates;
+sorting JSON input alone does not determine PostgreSQL's row-lock order.
+
+The writer cutover inventory is closed: `FactCatalog.upsert_relation`, old
+observation identity/date gates and timing aggregation, and relation supersession
+identity writes cease to run. The supersession handler becomes non-adjudicating
+follow-up. Human review (`spine/review.py`) uses this lock order; lifecycle
+currency/recount/closure uses the ordered row locks; merge/unmerge keeps the
+exclusive identity lock before any fact/support mutation. All public/internal
+wrappers either route to the new writer or reject the old generation.
+
+The accepted answer, facts, support assignments, evidence aggregates, ordinary
+transcripts and completion receipt commit together. Injected failure at any step
+rolls back all of them. Successful retry returns the original result and checks
+current support; it does not replay old date or support writes.
+
+## 4. Ordinary decision shape and validation
+
+The closed typed decision has these fields (all arrays default empty):
+
+| Field | Exact content |
+| --- | --- |
+| `target` | `{fact_id: UUID|null, new_handle: string|null}`; exactly one is present |
+| `stance` | `supports` (default) or `contradicts`, the existing evidence vocabulary for the incoming assertion’s target link |
+| `new_facts` | `{handle: nonempty string, assertion_application_id: UUID}` entries; the supplied original assertion defines subject, predicate/object or statement |
+| `window` | `GroundedFactWindow|null` for the identity target; contains the complete canonical window and nonempty cited claim IDs |
+| `updates` | `{target: same fact reference, window: GroundedFactWindow}` entries |
+| `support_moves` | `{application_id: UUID, expected_fact_id: UUID, target: same fact reference}` entries |
+| `contradict_with` | UUIDs of supplied existing facts incompatible with the target |
+| `confidence` | number from 0 through 1 |
+| `rationale` | nonempty string |
+
+Handles, update targets and moved applications cannot repeat. The identity
+window target cannot also appear in `updates`. References must
+resolve to supplied existing facts or this answer's new-fact handles. Every new handle must receive an incoming or moved evidence assignment; an update
+alone cannot create an unsupported fact. The initial
+target is the incoming assertion's evidence destination. `stance` permits contrary
+testimony on the same identity without a new date-dispute state. All targets and moved
+assertions stay in the incoming fact plane and canonical entity block; relation
+predicate identity is taken from the retained normalized output. Identity across
+relation/observation representations is not inferred by this date change.
+ New fact handles are local names converted to stable UUIDs derived
+by UUIDv5 in a fixed namespace over the versioned tuple
+`["fact-v1", application_id, handle]`; a replay cannot mint different IDs. An absent
+window replacement preserves dates; a supplied all-unknown window clears them.
+
+Every window is already canonical `FactWindow`. Claim windows are canonicalized
+once at input construction; partial raw endpoints use the D118 unit rules without
+filling missing sides. Initial creation uses the claim window only when the
+normalizer established that it applies. Every later replacement and every
+additional cap/update requires a nonempty rationale and cited admissible claims
+present in the prepared input. Each participant belongs to the deployment,
+canonical subject and supplied candidate set. Distinct identities may overlap.
+
+Do not mechanically min/max testimony, orient succession by publication order,
+override identity by date mismatch, or limit changes to earlier starts/shorter
+ends. A same named event with a corrected date can remain one fact. A proposed
+empty interval is invalid. Below the existing confidence threshold, preserve
+coexistence and record why rather than apply destructive updates or support moves.
+
+Support moves identify the original application and its expected current target.
+Its retained normalized assertion must be supplied to the adjudicator. Update its
+current support pointer; preserve its immutable original result. Recount the
+source and destination evidence links from all surviving applications, with
+`supports` dominating `contradicts` for a fact/claim pair.
+Statements and their support cannot be silently reconstructed from a different
+fact's display label. All affected participants commit atomically.
+
+The existing adjudication tables record decision, before/after windows, cited
+claims and application ID in `features`. A first-class `consumed_claim_ids uuid[]`
+with a GIN index on each existing transcript table inventories every consumed
+claim; before-images and rationale are scrubbed by that inventory. Relation
+outcomes retain add/noop/supersede/contradict; both fact planes gain the generic
+`update` transcript value when existing fact values change. This is a readable
+audit label, not a new worker, correction workflow or temporal operation store. On success, NULL `prepared`, `decision`, `attempt_id` and `input_hash`;
+retain `input_claim_ids`, structural original result and current support pointers.
+`result` is closed to `fact_id`, `created_fact_ids`, `changed_fact_ids`, and `application_id`;
+`changed_fact_ids` retains the full affected set for durable projection repair, including
+predecessors and support-move sources that cannot be reconstructed from the target alone;
+no rationale, text, dates or foreign payload is copied there.
+
+## 5. Retrieval and derived data
+
+Versioned `FactResult.validity` adds `valid_precision`; fact results add
+`temporal_match: confirmed | possible`. It is a query-specific classification.
+The query engine and P1 use the same predicates. Known boundaries that disprove
+a match exclude it. An incomplete window that may match is conservatively
+`possible`; confirmed requires a complete finite or explicitly open window.
+History excludes known future starts and includes completed windows. Unknown and
+partial facts remain possible candidates. Strict primitives and counts include
+only confirmed matches and report possible coverage separately; top-k retrieval
+never certifies an exact complete count. The published `facts_current`,
+`facts_as_of`, entity-profile and graph predicates use the same rule: confirmed
+at an instant requires a known start no later than the instant and either a
+known later end or precision `open`. A NULL end alone never confirms a match.
+
+Date-qualified profiles and K snapshots consume the chosen window and its
+precision. Open and unknown-end wording differ. Fact/date/evidence changes enqueue
+existing projection repair; no clock-driven profile timer is introduced. Generated
+labels and vectors are invalidated when dates change so stale derived text cannot
+survive a correct database update. Publish with existing input revalidation.
+
+## 6. Erasure inventory and recovery
+
+Normalization outputs and source-owned applications cascade when their claim is
+forgotten. For surviving applications whose `input_claim_ids` overlap the purge,
+clear prepared inputs, fingerprint, attempt and answer before removal, under the
+fence. Applied structural receipts remain applied and cannot restore anything.
+Scrub ordinary transcript features whose complete consumed-claim inventory
+intersects the purge, including before-images and rationale; existing triggering-
+claim-only scrubbing is insufficient for these new multi-source decisions.
+
+A current whole-window witness intersecting erased claims loses its chosen dates:
+set endpoints NULL, precision unknown and witness array empty, and invalidate all
+labels/vectors/profile/K inputs derived from it. This conservative action does not
+claim the surviving evidence is false. Retain shared fact identity and independent
+support according to D74; erase source-derived statement text through its existing
+purge/reconstruction contract as well. Positive current support from a surviving
+lineage is required to retain a shared source-derived assertion; a contradiction
+alone cannot preserve the forgotten wording. Reconstruct a shared observation
+from a surviving supporting original normalization output. Never adopt counterevidence as the
+fact's replacement statement. Recompute exclusivity for older portable manifests
+without changing their bytes. Existing NULL profile input hashes permit bounded
+repair discovery on retry. Evidence aggregates must agree with remaining
+application pointers. No prepared fingerprint, cited UUID array,
+cache or restored backup may reintroduce erased content. Verification includes
+pending replies, retries, partial purge failure and restored older manifests.
+
+## 7. Existing stores and the schema migration
+
+Stores that predate this contract are not converted (design §8). The migration
+takes the same maintenance lock the old cutover took, then refuses when any
+claim exists in the database or any ordinary work is still pending; the operator
+recreates the deployment. On an empty store it adds the two application tables,
+the precision and witness columns with their NOT NULL defaults, the transcript
+claim inventories, the `update` outcome, the application-aware staging key, and
+the D118 shape checks, drops the old same-triple exclusion and `>=` date checks,
+and rebuilds the published views, the `facts_as_of` function and the live graphs.
+No readiness column, serving fence, replay seeder or verifier exists; a freshly
+migrated or bootstrapped deployment serves immediately.
+
+Experimental archived D110 schema heads are not ancestors of this migration and
+fail with an explicit recovery requirement. Downgrade raises rather than dropping
+application receipts and restoring source-time date semantics; disposable test
+databases are recreated instead.
+
+## 8. Candidate nomination and the deterministic empty case
+
+Preparation nominates candidate facts on the canonical subject in two tiers.
+Exact matches come first: relations with the same predicate whose object
+resolves to the same canonical entity as the incoming assertion, and observations
+with an identical statement. Full-text relevance to the incoming assertion fills
+the remainder up to the fact limit. Exact matches are nomination only: they
+guarantee the most likely identity candidates are visible to the model even on
+an entity with many similarly worded facts, and they impose no identity rule.
+
+When the nominated set is empty the answer is fixed: there is nothing to compare,
+so the only valid decision is a new fact carrying the incoming assertion, dated
+from the claim window when the normalizer said it applies. Preparation records
+that decision itself under the same attempt, fingerprint and application checks,
+and no model call is made. The transcript records this outcome with the existing
+`novelty_gate` method so cost and audit can distinguish it from a model decision.
+Every non-empty candidate set still goes to the model.

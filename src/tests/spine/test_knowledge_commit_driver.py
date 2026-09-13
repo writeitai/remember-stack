@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.selfhost import LocalGitRepository
 from rememberstack.core import knowledge_content_hash
 from rememberstack.core import KnowledgeAuthoredDeclarationError
 from rememberstack.core import KnowledgePageValidationError
@@ -35,6 +36,7 @@ from rememberstack.model import KnowledgePlanRunWrite
 from rememberstack.model import KnowledgePlanTrigger
 from rememberstack.model import KRevision
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import KnowledgeCommitBusyError
 from rememberstack.spine import KnowledgeCompilationError
 from rememberstack.spine import KnowledgeControlPlane
@@ -42,6 +44,10 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import KnowledgeAuthoredSynchronizer
 from rememberstack.workers import KnowledgeCommitDriver
 from rememberstack.workers import KnowledgeCommitSettings
+from tests.adapters.test_selfhost_git import _commit
+from tests.adapters.test_selfhost_git import _git
+from tests.adapters.test_selfhost_git import _output
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("62000000-0000-0000-0000-000000000002")
@@ -56,7 +62,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real Plane-K proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -874,3 +880,71 @@ def test_driver_reconciles_move_and_stamps_its_single_git_revision(
             {"artifact": graph.child, "decision": result.decision_id},
         ).one()
     assert row == ("work/moved-child.md", "work/moved-child.md.curation.md", "head-1")
+
+
+@pytest.mark.parametrize("retired", [False, True])
+def test_forget_purge_erases_history_without_restoring_absent_bodies(
+    graph: _CompileGraph, tmp_path: Path, retired: bool
+) -> None:
+    """History erasure re-adds only surviving bytes; a page an ordinary K cycle
+    already removed or rewrote must not come back through the purge commit."""
+    repository = tmp_path / "truth"
+    _git("init", "--quiet", "-b", "main", str(repository))
+    _git("-C", str(repository), "config", "user.name", "Fixture")
+    _git("-C", str(repository), "config", "user.email", "fixture@example.test")
+    for path, content in graph.old_files.items():
+        target = repository / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    affected = repository / graph.paths_by_id[graph.child]
+    affected.write_text("UNIQUE_FORGET_TOKEN\n", encoding="utf-8")
+    _commit(repository=repository, message="generated page with retained source")
+    # The ordinary K cycle runs before the purge: it either recompiles the page
+    # without the forgotten source or retires it entirely.
+    if retired:
+        affected.unlink()
+        with graph.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE knowledge_artifacts SET status='tombstoned' WHERE artifact_id=:id"
+                ),
+                {"id": graph.child},
+            )
+        _commit(repository=repository, message="cycle retired the page")
+    else:
+        affected.write_text("sanitized body\n", encoding="utf-8")
+        _commit(repository=repository, message="cycle recompiled the page")
+    remote = LocalGitRepository(
+        repository=repository,
+        path_catalog=ForgetCatalog(engine=graph.engine),
+        author_name="Fixture",
+        author_email="fixture@example.test",
+    )
+    forget_id = uuid4()
+    for _ in range(2):
+        remote.purge_artifacts(
+            deployment_id=_DEPLOYMENT_ID,
+            forget_id=forget_id,
+            artifact_ids=(graph.child,),
+        )
+        remote.verify_artifacts_purged(
+            deployment_id=_DEPLOYMENT_ID,
+            forget_id=forget_id,
+            artifact_ids=(graph.child,),
+        )
+        assert affected.exists() is (not retired)
+        assert (
+            _output(
+                "-C",
+                str(repository),
+                "log",
+                "--all",
+                "-S",
+                "UNIQUE_FORGET_TOKEN",
+                "--format=%H",
+            )
+            == ""
+        )
+        assert (repository / graph.paths_by_id[graph.parent]).read_text(
+            encoding="utf-8"
+        ) == graph.old_files[graph.paths_by_id[graph.parent]]
