@@ -153,7 +153,7 @@ class NormalizeRelationsHandler:
             or work.target_kind is not ProcessingTarget.CLAIM
         ):
             raise NonRetryableHandlerError(
-                "obsolete normalization generation; drain or convert before D118"
+                "obsolete normalization generation; recreate the deployment and ingest its sources again"
             )
         return self._handle_claim(work=work, meter=meter)
 

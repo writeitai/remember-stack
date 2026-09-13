@@ -73,6 +73,14 @@ def test_succession_caps_at_evidenced_world_start_and_keeps_system_belief(
         }
     )
     old = case.apply(app=old_app)["fact_id"]
+    table = "relations" if kind == "relation" else "observations"
+    with database_engine.connect() as connection:
+        assert connection.execute(
+            text(
+                f"SELECT valid_from,valid_until,valid_precision FROM {table} WHERE {kind}_id=CAST(:id AS uuid)"
+            ),
+            {"id": old},
+        ).one() == (datetime(2022, 5, 10, tzinfo=timezone.utc), None, "open")
     claim, app = case.stage(day=12, kind=kind)
     with database_engine.begin() as connection:
         connection.execute(
@@ -101,7 +109,6 @@ def test_succession_caps_at_evidenced_world_start_and_keeps_system_belief(
         }
     )
     new = case.apply(app=app)["fact_id"]
-    table = "relations" if kind == "relation" else "observations"
     with database_engine.connect() as connection:
         assert connection.execute(
             text(

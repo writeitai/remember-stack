@@ -42,8 +42,45 @@ refused an injected model window. The fixture now supplies an explicitly ongoing
 claim window before application, then tests an ordinary successor decision. It
 still checks the evidenced world-time cap and preservation of belief history.
 
-Final validation and follow-up reviews are recorded below when complete. No merge,
-release, contributor-agreement assent, or production data reset is authorized.
+### Final review and validation evidence
+
+Both requested reviewers inspected implementation commit `abb35783` in separate
+read-only detached checkouts, comparing the previous approval `9eadcd4c`, the
+rebased follow-up and main `a3943035`. Commands used:
+
+- `cursor-agent --yolo --model cursor-grok-4.6-high -p ...`
+- `agy --dangerously-skip-permissions --print-timeout 180m0s -p ...`
+
+Both reported **no blockers**. Cursor verified that extractor/grounding files
+match #399 and the lock/CAS/forget files match the prior approved implementation.
+Both checked the four simplifications and generated contract pins. Their reviews
+are code/static verification, not substitutes for the independently run suites.
+
+Cursor's final optional findings were resolved where they improve this change:
+normalize now uses the same recreate-and-re-ingest wording as flush; the succession
+test also asserts the predecessor has the source-derived open window before the
+successor caps it. The offline observation evaluator remains used by evaluation;
+nomination scan cost remains a measurement item in the watch list. Neither calls
+for new runtime machinery here.
+
+Validation checkpoints (overlapping runs, not additive coverage):
+
+- Local benchmark protocol/runner/store-backup suite: **151 passed**.
+- Local PostgreSQL writer/succession suite: **24 passed**.
+- After Cursor's pre-cap assertion: succession suite **8 passed** on a separate
+  disposable PostgreSQL database.
+- At `abb35783`, all technical CI checks passed: quality, unit, contract smoke,
+  worker/surface/adapter integration, Compose quickstart, three client versions,
+  and docs build. The worker/spine lane reported **623 passed**, including the
+  two previously failing succession variants
+  ([CI run](https://github.com/writeitai/remember-stack/actions/runs/34781526239)).
+- Local Ruff/format, Pyright (zero errors), test inventory, five import-boundary
+  contracts, offline OpenAPI equality and the website production build passed.
+
+The PR checks are the authority for subsequent commit results. The contributor
+agreement check remains unsuccessful because the author has not checked assent;
+no agent has signed it. No production migration, paid benchmark, release or merge
+was performed. User approval before merge remains required.
 
 ## Historical September 7 checkpoint
 
