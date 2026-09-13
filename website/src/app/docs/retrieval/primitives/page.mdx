@@ -52,6 +52,11 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 | **Out** | scalar records |
 | **Job** | Direct spine reads |
 
+Relation and observation lookups include facts whose incomplete world dates might
+match the requested time, marked `temporal_match: possible`. These are useful
+evidence, but do not establish a confirmed temporal count. The strict
+`memory_v1.facts_current` view and live graph exclude possible matches.
+
 ### `search`
 
 | | |

@@ -1,5 +1,14 @@
 # LoCoMo full-system benchmark design
 
+> **Binding v28 amendment (2026-09-12).** The protocol pins the D118 fact
+> contract ([design](mutable_fact_windows_design.md)): the mutable-window
+> normalizer and adjudicator generations, the re-pinned query-space manifest
+> hash, and consumption skill 4.0.0. Facts carry one chosen world-time window
+> with precision; assured fact results carry `temporal_match`; history mode
+> returns completed intervals. Adapter version, protocol identities, and
+> fingerprints roll to v28; v27 stores must be re-ingested. Dataset, models,
+> budgets, judge rubric, and scoring are unchanged from v27.
+
 > **Binding v27 amendment (2026-09-11).** The protocol pins extractor
 > generation `temporal-anchor-4`: E2 writes a resolved relative date into
 > claim text as an ISO value and grounds it by the claim's own valid-time
@@ -160,7 +169,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v27
+protocol                RS-LoCoMo-Full-v28
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -508,7 +517,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v27-codex-subscription` is an additive evaluator-provider variant for
+`full-v28-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -544,11 +553,11 @@ accounting becomes a material requirement.
 
 The provider controls force a distinct protocol. Codex does not expose
 temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
-reasoning effort `high`, rather than v27's OpenRouter-specific `none`. The v27
+reasoning effort `high`, rather than v28's OpenRouter-specific `none`. The v28
 prompt is the same object used by the OpenRouter and Gemma variants; schemas,
 budgets, catalog, and judge rubric remain aligned.
 These runs are useful for smoke/development comparison but are not canonical
-v27 publication results. The SDK's synchronous turn currently has no
+v28 publication results. The SDK's synchronous turn currently has no
 benchmark-enforced deadline, so this variant is not the default unattended
 publication path.
 
@@ -807,7 +816,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v27 requires to be
+- the non-secret `document_binding_generation`, which Full-v28 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -956,12 +965,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v27 \
+  --protocol full-v28 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v27`; the
-explicit `full-v27-gemma-vertex` and `full-v27-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v28`; the
+explicit `full-v28-gemma-vertex` and `full-v28-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

@@ -16,24 +16,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 
 ADJUDICATOR_VERSION: Final = "fact-followup-2026.09:mutable-window-1"
-"""The supersession adjudicator generation (D12; replayed on rebuild, D7).
-07b pins temperature=0.0 — generation parameters are part of provenance."""
-
-_ADJUDICATION_PROMPT: Final = """You adjudicate fact supersession for a memory
-system. Two believed facts share a subject and a change-prone predicate:
-
-EXISTING: {existing_label}
-  evidence: {existing_evidence!r} (asserted {existing_asserted})
-NEW: {new_label}
-  evidence: {new_evidence!r} (asserted {new_asserted})
-
-Decide:
-- supersede: the world changed — the NEW fact replaces the EXISTING one
-  (e.g. a job change); the existing fact's validity window should close.
-- coexist: both hold simultaneously (e.g. dual employment). When unsure,
-  prefer coexist — a wrong supersession silently hides a true fact.
-- contradict: the sources describe the SAME period incompatibly; both must
-  stand, surfaced together."""
+"""Generation of the profile-refresh and lifecycle follow-up work."""
 
 
 class SupersessionSettings(BaseSettings):

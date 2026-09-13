@@ -417,7 +417,7 @@ class AdjudicateObservationsHandler:
             or work.target_kind is not ProcessingTarget.ENTITY
         ):
             raise NonRetryableHandlerError(
-                "obsolete fact flush generation; drain or convert before D118"
+                "obsolete fact flush generation; recreate the deployment and ingest its sources again"
             )
         return self._handle_entity_unit(work=work, meter=meter)
 

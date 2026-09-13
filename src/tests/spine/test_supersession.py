@@ -65,18 +65,11 @@ def test_succession_caps_at_evidenced_world_start_and_keeps_system_belief(
 ) -> None:
     """A job change closes the prior world interval, without withdrawing its history."""
     case = WriterCase(engine=database_engine)
-    old_claim, old_app = case.stage(day=10, kind=kind)
+    _, old_app = case.stage(day=10, kind=kind, precision="open")
     case.decide(
         decision={
             "target": {"new_handle": "old"},
             "new_facts": [{"handle": "old", "assertion_application_id": str(old_app)}],
-            "window": {
-                "window": {
-                    "valid_from": "2022-05-10T00:00:00Z",
-                    "valid_precision": "open",
-                },
-                "supporting_claim_ids": [str(old_claim)],
-            },
         }
     )
     old = case.apply(app=old_app)["fact_id"]

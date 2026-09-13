@@ -1,9 +1,7 @@
-"""The E3 fact catalog: relation/observation upserts, evidence, D54 counting.
+"""Fact projections and application staging over the E3 catalog.
 
-Redundancy collapses here (D2): the same fact from many claims is one row plus
-evidence links, and `evidence_count` is the number of DISTINCT DOCUMENT
-LINEAGES with current-testimony support — re-extraction generations, document
-versions, and within-document repetition never inflate it (D54).
+FactAdjudicator owns identity and evidence writes. This catalog supplies labeling,
+embedding and existing work-unit access; retired direct writers reject callers.
 """
 
 from collections.abc import Iterator
@@ -12,8 +10,6 @@ import re
 from typing import Final
 from uuid import UUID
 
-from sqlalchemy import bindparam
-from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -31,7 +27,7 @@ OTHER_PREDICATE_GRAMMAR: Final = re.compile(r"other:[a-z][a-z0-9_]{1,40}")
 
 
 class FactCatalog:
-    """Relation and observation writes over an explicitly composed engine."""
+    """Fact projection and staging access over an explicitly composed engine."""
 
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
@@ -468,118 +464,6 @@ class FactCatalog:
             ).all()
         return tuple(row[0] for row in rows)
 
-
-_LOCK_FACT = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
-
-_SELECT_RELATION = text(
-    """
-    SELECT relation_id FROM relations
-    WHERE deployment_id = :deployment_id
-      AND subject_entity_id = :subject_entity_id
-      AND predicate = :predicate
-      AND object_entity_id = :object_entity_id
-      AND invalidated_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now())
-    """
-)
-
-_INSERT_RELATION = text(
-    """
-    INSERT INTO relations (
-        relation_id, deployment_id, subject_entity_id, predicate,
-        object_entity_id, valid_from, normalizer_version
-    ) VALUES (
-        :relation_id, :deployment_id, :subject_entity_id, :predicate,
-        :object_entity_id, :valid_from, :normalizer_version
-    )
-    """
-)
-
-_INSERT_RELATION_EVIDENCE = text(
-    """
-    INSERT INTO relation_evidence (
-        deployment_id, relation_id, claim_id, doc_id, stance, normalizer_version
-    ) VALUES (
-        :deployment_id, :relation_id, :claim_id, :doc_id, 'supports',
-        :normalizer_version
-    )
-    ON CONFLICT (relation_id, claim_id) DO NOTHING
-    """
-)
-
-_RECOUNT_RELATION = text(
-    """
-    UPDATE relations SET evidence_count = (
-        SELECT count(DISTINCT evidence.doc_id)
-        FROM relation_evidence evidence
-        JOIN claims ON claims.claim_id = evidence.claim_id
-        WHERE evidence.relation_id = :relation_id
-          AND evidence.stance = 'supports'
-          AND claims.is_current_testimony
-    ), updated_at = now()
-    WHERE relation_id = :relation_id
-    """
-)
-
-_SELECT_OBSERVATION = text(
-    """
-    SELECT observation_id FROM observations
-    WHERE deployment_id = :deployment_id
-      AND subject_entity_id = :subject_entity_id
-      AND statement = :statement
-      AND invalidated_at IS NULL
-    """
-)
-
-_INSERT_OBSERVATION = text(
-    """
-    INSERT INTO observations (
-        observation_id, deployment_id, subject_entity_id, statement,
-        obs_label, normalizer_version
-    ) VALUES (
-        :observation_id, :deployment_id, :subject_entity_id, :statement,
-        :statement, :normalizer_version
-    )
-    """
-)
-
-_INSERT_OBS_ADJUDICATION = text(
-    """
-    INSERT INTO observation_adjudications (
-        adjudication_id, deployment_id, observation_id, outcome, method,
-        confidence, triggering_claim_id, features, adjudicator_version
-    ) VALUES (
-        :adjudication_id, :deployment_id, :observation_id, 'add', 'novelty_gate',
-        1.0, :triggering_claim_id, :features, :adjudicator_version
-    )
-    """
-).bindparams(bindparam("features", type_=JSON))
-
-_INSERT_OBS_EVIDENCE = text(
-    """
-    INSERT INTO observation_evidence (
-        deployment_id, observation_id, claim_id, doc_id, stance, normalizer_version
-    ) VALUES (
-        :deployment_id, :observation_id, :claim_id, :doc_id, 'supports',
-        :normalizer_version
-    )
-    ON CONFLICT (observation_id, claim_id) DO NOTHING
-    """
-)
-
-_RECOUNT_OBSERVATION = text(
-    """
-    UPDATE observations SET evidence_count = (
-        SELECT count(DISTINCT evidence.doc_id)
-        FROM observation_evidence evidence
-        JOIN claims ON claims.claim_id = evidence.claim_id
-        WHERE evidence.observation_id = :observation_id
-          AND evidence.stance = 'supports'
-          AND claims.is_current_testimony
-    ), updated_at = now()
-    WHERE observation_id = :observation_id
-    """
-)
 
 _SELECT_PREDICATES = text(
     """

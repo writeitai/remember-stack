@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from datetime import timezone
+from typing import Literal
 from uuid import UUID
 from uuid import uuid4
 
@@ -90,11 +91,13 @@ class WriterCase:
         kind: AssertionKind = "observation",
         predicate: str = "related_to",
         uses_claim_window: bool = True,
+        precision: Literal["day", "open"] = "day",
     ) -> tuple[UUID, UUID]:
         """Freeze one dated source assertion and stage its original output ordinal.
 
         ``uses_claim_window=False`` models a normalizer that did not attribute
         the claim's dates to this assertion, so a new fact starts undated.
+        ``precision="open"`` supplies an explicitly ongoing source window.
         """
         claim = uuid4()
         instant = datetime(2022, 5, day, tzinfo=timezone.utc)
@@ -104,13 +107,18 @@ class WriterCase:
                 char_start,char_end,anchor_ok,window_membership_ok,extractor_version,asserted_at,
                 claim_valid_from,claim_valid_until,claim_valid_precision,claim_valid_kind)
                 VALUES(:claim,:dep,:doc,:chunk,'Nate won the Riverside final','Nate won the Riverside final',
-                0,28,true,true,'test',:at,:at,:at,'day','event_time')"""),
+                0,28,true,true,'test',:at,:at,:end,:precision,:kind)"""),
                 {
                     "claim": claim,
                     "dep": self.dep,
                     "doc": uuid4(),
                     "chunk": uuid4(),
                     "at": instant,
+                    "end": None if precision == "open" else instant,
+                    "precision": precision,
+                    "kind": "proposition_validity"
+                    if precision == "open"
+                    else "event_time",
                 },
             )
         item: dict[str, object] = {

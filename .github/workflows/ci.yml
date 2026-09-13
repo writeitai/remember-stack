@@ -321,7 +321,7 @@ jobs:
             worker-adjudicate-observations worker-adjudicate-supersession \
             worker-embed-claim worker-reconcile worker-label-relation
           # Build an empty prior-generation fixture. D118 intentionally refuses
-          # lossy downgrade; retained-fact conversion has its own integration proof.
+          # lossy downgrade and requires populated stores to be recreated.
           docker compose --env-file .env.example run --rm --no-deps -T \
             --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
             --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'

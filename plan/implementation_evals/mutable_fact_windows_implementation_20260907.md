@@ -1,12 +1,51 @@
 # Mutable fact windows: implementation and independent review
 
-Date: 2026-09-07. Implementation PR: [#393](https://github.com/writeitai/remember-stack/pull/393).
+Initial checkpoint: 2026-09-07. Implementation PR: [#393](https://github.com/writeitai/remember-stack/pull/393).
 Base inspected: main `0125daaf`. This record covers implementation of
 [D118](../designs/mutable_fact_windows_design.md) and its
 [application contract](../designs/mutable_fact_application_contract.md).
 The earlier [#384](https://github.com/writeitai/remember-stack/pull/384) is a
 separate design-only draft; this implementation includes that revised design.
 Neither PR has been authorized for merge or release.
+
+## Current scope after the September 11 simplification
+
+The September 7 evidence below is historical: retained-store conversion, readiness
+fences and legacy evidence support were subsequently removed by user-approved
+scope change. Populated pre-D118 deployments must be recreated and re-ingested;
+the migration refuses them. Hard-forget coverage of the new stores remains.
+The binding authority is mutable fact windows design §8 and application contract
+§§7–8; the rationale and observation plan are in
+[application storage analysis](../analysis/mutable_fact_application_storage.md#no-existing-store-conversion-2026-09-11)
+and the [watch list](../analysis/mutable_fact_windows_watch_list.md).
+
+Empty candidate sets now create a fact without model inference. Exact triples
+and statements take priority within the existing twenty-candidate limit; equality
+still does not decide identity. Direct lookups return flagged possible temporal
+matches. Inference remains outside locks with the existing revalidation protocol.
+
+## September 13 integration checkpoint
+
+The branch is rebased onto main `a3943035`, including #399. Its absolute-date
+claim extraction and `temporal-anchor-4` generation remain intact. The combined
+fact contract advances LoCoMo to Full-v28 and regenerates the surface manifest
+hash; this version identifies changed behavior, not measured benchmark quality.
+
+Cursor and Antigravity reviewed the prior pushed head `9eadcd4c` and reported no
+blockers. Cursor identified unused retired writer SQL and a supersession prompt,
+stale conversion wording, and thin lookup documentation. Those leftovers are now
+removed or clarified; the diagnostic observation evaluator remains in use.
+
+That head's worker CI had 612 passing tests and two succession fixture failures.
+The first assertion had no candidates, so the new deterministic path correctly
+refused an injected model window. The fixture now supplies an explicitly ongoing
+claim window before application, then tests an ordinary successor decision. It
+still checks the evidenced world-time cap and preservation of belief history.
+
+Final validation and follow-up reviews are recorded below when complete. No merge,
+release, contributor-agreement assent, or production data reset is authorized.
+
+## Historical September 7 checkpoint
 
 ## What changed, and why the remaining machinery exists
 
@@ -79,7 +118,7 @@ policy fixtures were updated, and the upgrade test now creates an empty previous
 schema instead of invoking a deliberately forbidden downgrade. The PR carries the
 current CI results; this checkpoint record does not turn a pending run green.
 
-No paid LoCoMo run or improved benchmark score is claimed. Full-v27 identifies
+No paid LoCoMo run or improved benchmark score is claimed. Full-v28 identifies
 the changed protocol, not measured quality. Candidate/evidence payloads are
 bounded by row counts and are not an exhaustive identity search. Populated-store
 conversion requires stopped old workers and ordinary model/embedding spend;

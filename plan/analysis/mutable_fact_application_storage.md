@@ -243,7 +243,8 @@ include this already-reviewed repair inventory.
 Main acquired D114–D117 and migrations through `p9_29_0050` during this work.
 The mutable-fact decision is now D118 and its migration is `p9_30_0051`.
 Main's renamed context operations remain intact; the new date contract advances
-LoCoMo from main's Full-v26 to Full-v27. Model-binding provenance names the actual
+LoCoMo from main's Full-v27 (the absolute-dates extractor generation, #399) to
+Full-v28. Model-binding provenance names the actual
 fact adjudicator rather than the retired observation/supersession ladders.
 
 Grok round 3 closed the earlier premature-cutover findings: current-generation
