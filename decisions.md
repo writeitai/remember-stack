@@ -5903,3 +5903,31 @@ evidence. Expanded candidates can add cost; D121 supplies independent compaction
 [analysis](plan/analysis/lean_processing_contracts.md),
 [delivery](plan/plans/lean_processing_delivery.md). Grouped application is only
 an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).
+
+## D124. Compare local P3 and the OSS MCP surface without reprocessing
+
+**Status:** accepted 2026-09-14, binding when merged. Add an explicitly
+experimental, resumable answer-and-judge runner over one already-processed
+LoCoMo sample. Its four profiles are native Codex with local P3, native Codex
+with local P3 plus RememberStack MCP, a provider-neutral agent with the OSS MCP
+read surface, and that agent with three P3-like MCP tools. P3 is an ordinary
+local directory restored or copied through existing OSS workflows; UMC,
+RememberFS and FUSE are out of scope.
+
+Use a read-only form of the actual remote OSS MCP composition authority, and
+show models only MCP names, descriptions and input schemas. Keep canonical
+source state untouched; bind the source/runner revisions, source fingerprint
+and P3 version; pin Luna/high across answer arms and the canonical Full-v30
+judge; and label results non-publication. Only the within-runtime pairs are
+causal access comparisons. Native Codex gets the owner-selected simple
+instruction-and-audit policy rather than a hard filesystem/network boundary:
+commands and the one allowed MCP server are recorded under the eight-action
+ceiling, other action types fail, and a reviewer invalidates any command that
+writes, leaves the corpus or uses the Internet. This does not claim prompt
+instructions are a security boundary.
+
+Four fresh full protocols were rejected because repeated ingestion would
+confound the retrieval comparison. Replacing Full-v30 before evidence and
+building a managed mount/download service were also rejected. Full contract:
+[design](plan/designs/locomo_retrieval_ablation_design.md). Analysis:
+[retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).

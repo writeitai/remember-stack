@@ -85,9 +85,11 @@ class _RemoteMemoryWriteBackend:
 class RemoteOperationMcpServer:
     """Render remote writes, assured operations, and open-query tools."""
 
-    def __init__(self, *, client: MemoryClient) -> None:
+    def __init__(self, *, client: MemoryClient, read_only: bool = False) -> None:
+        """Bind one remote client, optionally omitting and refusing write tools."""
         self._client = client
         self._write_backend = _RemoteMemoryWriteBackend(client=client)
+        self._read_only = read_only
 
     def list_tools(self) -> dict[str, object]:
         """List remote write tools, assured operations, then open-query tools.
@@ -97,7 +99,9 @@ class RemoteOperationMcpServer:
         deployment mounts the open facade (same composition gate as local MCP
         and HTTP).
         """
-        tools: list[dict[str, object]] = list(memory_write_tool_descriptors())
+        tools: list[dict[str, object]] = []
+        if not self._read_only:
+            tools.extend(memory_write_tool_descriptors())
         tools.extend(
             {
                 "name": descriptor.name,
@@ -115,19 +119,27 @@ class RemoteOperationMcpServer:
     ) -> dict[str, object]:
         """The MCP ``tools/call`` result containing one JSON text block."""
         if name in MEMORY_WRITE_TOOL_NAMES:
+            if self._read_only:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"write tool {name!r} is disabled on this read-only MCP server",
+                        }
+                    ],
+                    "isError": True,
+                }
             return handle_memory_write_tool(
                 name=name, arguments=arguments, backend=self._write_backend
             )
         if name in OPEN_QUERY_TOOL_NAMES:
             try:
                 payload = self._client.call_open_query(name=name, arguments=arguments)
-            except (
-                MemoryApiError,
-                SandboxRejection,
-                ValueError,
-                TypeError,
-                KeyError,
-            ) as error:
+            except MemoryApiError as error:
+                return _memory_api_error_result(error=error)
+            except SandboxRejection as error:
+                return _sandbox_error_result(error=error)
+            except (ValueError, TypeError, KeyError) as error:
                 return {
                     "content": [{"type": "text", "text": str(error)}],
                     "isError": True,
@@ -138,7 +150,9 @@ class RemoteOperationMcpServer:
             }
         try:
             result = self._client.run_operation(name=name, arguments=arguments)
-        except (MemoryApiError, ValueError) as error:
+        except MemoryApiError as error:
+            return _memory_api_error_result(error=error)
+        except ValueError as error:
             return {"content": [{"type": "text", "text": str(error)}], "isError": True}
         return {
             "content": [{"type": "text", "text": result.model_dump_json()}],
@@ -175,6 +189,47 @@ class RemoteOperationMcpServer:
         except MemoryApiError:
             return False
         return _is_authoritative_open_query_discovery(payload)
+
+
+def _memory_api_error_result(*, error: MemoryApiError) -> dict[str, object]:
+    """Preserve typed remote failure metadata inside an MCP error result."""
+    public_error: dict[str, object] = {
+        "status_code": error.status_code,
+        "detail": error.detail,
+    }
+    if error.code is not None:
+        public_error["code"] = error.code
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps({"error": public_error}, sort_keys=True),
+            }
+        ],
+        "isError": True,
+    }
+
+
+def _sandbox_error_result(*, error: SandboxRejection) -> dict[str, object]:
+    """Preserve a public query rejection code inside an MCP error result."""
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "error": {
+                            "status_code": None,
+                            "detail": error.message,
+                            "code": error.code.value,
+                        }
+                    },
+                    sort_keys=True,
+                ),
+            }
+        ],
+        "isError": True,
+    }
 
 
 def _is_authoritative_open_query_discovery(payload: object) -> bool:

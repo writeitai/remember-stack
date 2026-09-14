@@ -197,6 +197,68 @@ def test_unknown_after_identity_only_forces_one_content_read() -> None:
     ]
 
 
+def test_ablation_guard_requires_content_before_a_substantive_answer() -> None:
+    """The optional experiment guard cannot score identity-only retrieval."""
+    calls = 0
+
+    def decide(prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal calls
+        assert type_name == "AnswerAgentStep"
+        calls += 1
+        if calls == 1:
+            return {
+                "action": "tool",
+                "tool_name": "resolve_entity",
+                "arguments_json": '{"name":"Caroline"}',
+                "answer": None,
+            }
+        if calls == 2:
+            return {
+                "action": "answer",
+                "tool_name": None,
+                "arguments_json": "{}",
+                "answer": "Prague",
+            }
+        if calls == 3:
+            assert "GUARD FEEDBACK" in prompt
+            return {
+                "action": "tool",
+                "tool_name": "claims_and_sources_context",
+                "arguments_json": '{"query":"Caroline Prague"}',
+                "answer": None,
+            }
+        return {
+            "action": "answer",
+            "tool_name": None,
+            "arguments_json": "{}",
+            "answer": "Prague",
+        }
+
+    client, raw_client = _memory_client()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(_identity_tool(), _tool()),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            require_content_before_answer=True,
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer == "Prague"
+    assert answer.agent_call_count == 4
+    assert answer.unknown_guard_retries == 0
+    assert [call.name for call in answer.tool_calls] == [
+        "resolve_entity",
+        "claims_and_sources_context",
+    ]
+
+
 def test_unknown_guard_respects_the_ordinary_agent_call_cap() -> None:
     """A final guarded Unknown is retained when no ordinary call remains."""
     calls = 0

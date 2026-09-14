@@ -20,6 +20,7 @@ src/tests/adapters/test_telemetry.py
 src/tests/adapters/test_vertex.py
 src/tests/benchmarks/test_beam_answer_agent.py
 src/tests/benchmarks/test_beam_official_score.py
+src/tests/benchmarks/test_locomo_ablation.py
 src/tests/benchmarks/test_locomo_dataset.py
 src/tests/benchmarks/test_locomo_protocol.py
 src/tests/benchmarks/test_locomo_retrieval.py

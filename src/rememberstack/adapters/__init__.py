@@ -4,8 +4,13 @@ from typing import TYPE_CHECKING
 
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.adapters.codex_subscription import CodexSubscriptionAccessError
+from rememberstack.adapters.codex_subscription import CodexSubscriptionAuditError
+from rememberstack.adapters.codex_subscription import (
+    CodexSubscriptionInfrastructureError,
+)
 from rememberstack.adapters.codex_subscription import CodexSubscriptionModelProvider
 from rememberstack.adapters.codex_subscription import CodexSubscriptionProviderError
+from rememberstack.adapters.codex_subscription import CodexTurnPolicy
 from rememberstack.adapters.codex_writer import CodexAgentAdapterSettings
 from rememberstack.adapters.codex_writer import CodexCLIAgentAdapter
 from rememberstack.adapters.codex_writer import CodexCLIWriterAdapter
@@ -42,8 +47,11 @@ __all__ = (
     "CodexCLIWriterAdapter",
     "CodexAgentAdapterSettings",
     "CodexSubscriptionAccessError",
+    "CodexSubscriptionAuditError",
+    "CodexSubscriptionInfrastructureError",
     "CodexSubscriptionModelProvider",
     "CodexSubscriptionProviderError",
+    "CodexTurnPolicy",
     "CodexWriterAdapterSettings",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",

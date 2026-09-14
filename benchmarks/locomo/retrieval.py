@@ -108,6 +108,11 @@ def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
     return tools
 
 
+def p3_tool_catalog() -> tuple[ToolDescriptor, ...]:
+    """Return the benchmark's three bounded P3 read descriptors."""
+    return _p3_tool_descriptors()
+
+
 def tool_catalog_sha256() -> str:
     """Hash the canonical JSON representation of the complete answer catalog."""
     payload = [tool.model_dump(mode="json") for tool in answer_tool_catalog()]
@@ -246,6 +251,11 @@ class P3Mount:
     def version(self) -> str:
         """Return the immutable P3 snapshot version served by this adapter."""
         return self._version
+
+    @property
+    def root(self) -> Path:
+        """Return the validated snapshot root for an audited native reader."""
+        return self._root
 
     def call(self, *, name: str, arguments: Mapping[str, object]) -> dict[str, object]:
         """Validate and execute one of the three P3 filesystem motions."""
@@ -1034,6 +1044,7 @@ __all__ = (
     "RetrievalInfrastructureError",
     "RetrievalToolError",
     "answer_tool_catalog",
+    "p3_tool_catalog",
     "assured_tool_catalog",
     "dispatch_answer_tool",
     "is_correctable_query_error",

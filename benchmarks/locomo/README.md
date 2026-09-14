@@ -206,6 +206,82 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
+## Retrieval-access ablations (development only)
+
+The additive D124 runner reuses one completely processed Full-v31 sample and
+compares four answer routes without re-ingesting it:
+
+| Profile | Answer runtime | Available evidence |
+| --- | --- | --- |
+| `codex-p3` | native Codex subscription | local P3 filesystem only |
+| `codex-p3-mcp` | native Codex subscription | local P3 plus read-only OSS MCP |
+| `mcp` | OpenRouter Luna | read-only OSS MCP only |
+| `mcp-p3` | OpenRouter Luna | read-only OSS MCP plus bounded P3-like tools |
+
+This starts with OSS artifacts only. P3 is already an ordinary published
+directory, so copy it from the benchmark host or restore it with the existing
+OSS backup workflow; no UMC, RememberFS, FUSE mount, or new download service is
+involved. For example, a normal copy preserves the required marker:
+
+```bash
+rsync -a bench-host:/absolute/published/mount/p3/ /local/conv-42-p3/
+test -s /local/conv-42-p3/.snapshot-version
+```
+
+Run one profile into its own empty output directory. The P3 argument is required
+only for profile names containing `p3`:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo retrieval-ablation \
+  --run /local/source-run \
+  --sample conv-42 \
+  --profile codex-p3 \
+  --output /local/ablations/conv-42-codex-p3 \
+  --p3-root /local/conv-42-p3 \
+  --max-questions 20 \
+  --max-agent-calls 40 \
+  --max-judge-calls 40 \
+  --max-evaluator-cost-usd 20 \
+  --execute
+```
+
+Use the same command with a distinct output and another profile. The MCP
+profiles need a worst-case nine answer-model calls per question, so use at least
+`--max-agent-calls 200` for a 20-question run with interrupt headroom. These
+ceilings are run-absolute authorizations, not first-N selectors; leave headroom
+if you want an identical command to resume after an interrupted paid call.
+Those profiles require the source deployment to be running and reachable
+through the normal `REMEMBERSTACK_*` client environment. `mcp-*` answer calls
+and every judge call use OpenRouter. `codex-*` answer calls use the operator's
+existing `codex login` ChatGPT subscription and write a result-free action audit to
+`codex-runtime-answer.jsonl`.
+
+Native Codex is deliberately governed by the owner-selected instruction and
+audit policy, not a hard filesystem/network security boundary. Inspect the
+audit for parent traversal, writes, network use, or attempts to find evaluator
+artifacts, then record its status:
+
+```bash
+uv run --extra benchmark python -m benchmarks.locomo \
+  retrieval-ablation-review \
+  --output /local/ablations/conv-42-codex-p3 \
+  --status clean \
+  --note "Reviewed every command and MCP action"
+```
+
+Run both Codex profiles under the same stable operator Codex configuration.
+The current Codex SDK overlays the experiment MCP server but has no public
+reset-to-empty option, so unrelated ambient tool schemas can remain visible;
+any out-of-profile action fails the question and appears in the audit. The
+runner does not copy or link ChatGPT subscription credentials into a separate
+Codex home merely to hide those schemas.
+
+Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
+access changes. Cross-runtime scores are directional because native Codex has
+its own agent loop and shell semantics. A Codex result with `audit_status`
+`pending` or `invalid` is not comparable. The canonical Full-v31 protocol and
+its source state are never modified by this command.
+
 ## Gemma 4 on Vertex as the answer agent (`full-v31-gemma-vertex`)
 
 `full-v31-gemma-vertex` is a *reader-only variant* of `full-v31`, not a new

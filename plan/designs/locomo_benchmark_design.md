@@ -1,5 +1,14 @@
 # LoCoMo full-system benchmark design
 
+> **Binding D124 retrieval-ablation amendment (2026-09-14).** An additive,
+> answer-and-judge-only development runner compares four access profiles over
+> one already-processed run: native Codex with local P3, native Codex with P3
+> plus the official OSS MCP server, a provider-neutral agent with the OSS MCP
+> read surface, and that agent with three P3-like MCP tools. Results and state
+> are separate from the canonical run and are not publication scores. The
+> Full-v31 protocol is unchanged. Binding contract:
+> [`locomo_retrieval_ablation_design.md`](locomo_retrieval_ablation_design.md).
+
 > **D119–D123 processing amendments (2026-09-14).** Full-v29 identifies
 > [D119 coherent multi-span extraction](multi_span_claim_extraction_design.md)
 > with version reuse. Full-v30 adds [clear processing instructions](processing_prompt_clarity_design.md)
