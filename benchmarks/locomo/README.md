@@ -1,10 +1,13 @@
-# RS-LoCoMo-Full-v29 setup
+# RS-LoCoMo-Full-v30 setup
 
-v29 (2026-09-14) pins coherent multi-span claim extraction (D119), including
-complete occurrence evidence and mandatory document-version reuse. The extractor
-generation is `e2-extract-2026.09:d119-multi-span-1:…`; the schema fingerprint
-also changes. Earlier stores require fresh processing. Model bindings, dataset,
-answer/judge instructions, budgets and scoring stay unchanged.
+v30 (2026-09-14) combines D119 multi-span extraction with D120/D121 clear
+processing instructions and compact adjudication input. Extractor generation
+includes `assertion-clarity-4`, normalizer `assertion-clarity-3`, and adjudicators
+use `concise-handles-5`.
+The surface manifest includes D119 occurrence evidence. Stores ingested under
+v28 or v29 are not comparable and must be re-ingested for this protocol.
+Dataset, provider defaults, answer/judge behavior and scoring are unchanged.
+The changed pins do not establish improved quality or lower cost.
 
 v28 (2026-09-12) pins the D118 fact contract: normalizer generation
 `e3-normalize-2026.09f:…:mutable-window-1`, the relation and observation
@@ -40,12 +43,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v29 \
+  --protocol full-v30 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v29` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v30` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -192,9 +195,9 @@ Pass the resulting
 with `--p3-root`. The runner rejects a mount whose `.snapshot-version` differs
 from readiness.
 
-## Gemma 4 on Vertex as the answer agent (`full-v29-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v30-gemma-vertex`)
 
-`full-v29-gemma-vertex` is a *variant* of `full-v29`, not a new benchmark
+`full-v30-gemma-vertex` is a *variant* of `full-v30`, not a new benchmark
 identity: every pin is identical -- ingestion bindings, prompts, tool catalog,
 budgets, temperature, and the frozen Luna judge -- except that the answer
 agent is `google/gemma-4-26b-a4b-it-maas`, Google's managed Gemma 4 26B-A4B
@@ -223,7 +226,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v29-gemma-vertex \
+  --protocol full-v30-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 
@@ -265,7 +268,7 @@ any upload.
 
 ## Codex ChatGPT subscription for answer and judge
 
-`full-v29-codex-subscription` runs both evaluator seats through the official
+`full-v30-codex-subscription` runs both evaluator seats through the official
 local Codex app-server and the operator's existing ChatGPT login. It does not
 read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
 ChatGPT response route directly. Run `codex login` once, then prepare the
@@ -275,14 +278,14 @@ separately fingerprinted protocol:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v29-codex-subscription \
+  --protocol full-v30-codex-subscription \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 
-The v29 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+The v30 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
 the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
 effort `high`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v29 score.
+provider variant, not a canonical v30 score.
 
 Each model call uses a fresh ephemeral thread, an empty temporary directory,
 read-only/no-network sandboxing, and deny-all approvals. It receives no custom

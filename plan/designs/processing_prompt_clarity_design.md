@@ -32,7 +32,8 @@ stored categories or an extra classification call.
 | Took first place in the same tournament | Won that tournament | Compatible paraphrase can share the winning fact |
 | Won that tournament | Enjoyed that tournament | Keep winning separately |
 | Won that tournament | Participated in that tournament | Do not lose the stronger winning assertion |
-| Corrects the same win's date from 5 November to 6 November | Won on 5 November | Reconsider that fact's window with cited evidence |
+| Participated in / enjoyed that tournament | Won that tournament | Compatible surrounding context, not positive evidence of the win; keep the weaker assertion separate |
+| Corrects the same win's date from 5 November to 6 November | Won that tournament, chosen window 5 November | Attach and replace the chosen window with cited evidence. The candidate proposition is date-neutral; the writer cannot rewrite the stored statement |
 | Won another tournament | Won the earlier tournament | Distinct winning fact even if wording/dates match |
 | Source says Nate claimed to win | Nate won | Preserve attribution; the statement of a claim is not automatically an unqualified win |
 | Lost the same tournament | Won that tournament | Handle contrary testimony explicitly using supported contradiction/correction operations |

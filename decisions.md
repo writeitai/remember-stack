@@ -5837,11 +5837,14 @@ unchanged sources must not multiply claim identities or provider calls.
 not a shared proposition. Processing prompts explain claims, assertions, facts,
 source times and world dates plainly, with contrasting repetition, correction,
 attribution and distinct-assertion examples. Preserve winning information when
-the candidate says only participation or enjoyment. Keep existing writer
-operations; no semantic checker call, new temporal class or human prompt-exam
-ceremony. Roll affected inference generations and validate both false merges
-and unnecessary duplication. Confidence thresholds alone were rejected because
-the audited wrong assignment was already highly confident.
+the candidate says only participation or enjoyment, and do not treat
+participation or enjoyment as positive evidence of an existing win. Date
+corrections revise the chosen window of a date-neutral proposition; the writer
+does not rewrite the stored statement. Keep existing writer operations; no
+semantic checker call, new temporal class or human prompt-exam ceremony. Roll
+affected inference generations and validate both false merges and unnecessary
+duplication. Confidence thresholds alone were rejected because the audited
+wrong assignment was already highly confident.
 
 **Authority:** [design](plan/designs/processing_prompt_clarity_design.md),
 [analysis](plan/analysis/lean_processing_contracts.md),
@@ -5855,9 +5858,12 @@ attempt-local handles and factored repeated text. Translate a closed model-facin
 response through that exact attempt's typed mapping into the existing writer.
 Retain hashes, ownership and generation bookkeeping internally. Preserve witness
 membership, source distinctions, snapshot checks, source deletion and inference
-outside locks. A smaller evidence set and a model-generated summary were rejected
-as unnecessary correctness/cost risks. Measure input/schema/output tokens without
-promising a fixed saving.
+outside locks. This change adds no context-only fact payload, editable flags,
+checker, or mapping registry; D123 does not produce one. Stale replies fail
+attempt/CAS/fingerprint checks, not the handle spelling F1. A smaller evidence
+set and a model-generated summary were rejected as unnecessary correctness/cost
+risks. Measure input/schema bytes and a labeled tokenizer proxy without
+promising billed tokens or a fixed saving.
 
 **Authority:** [design](plan/designs/concise_adjudication_inputs_design.md),
 [analysis](plan/analysis/lean_processing_contracts.md),

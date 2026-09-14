@@ -734,7 +734,7 @@ def _provider_neutral_batching(
 
     def answer(prompt: str, type_name: str) -> dict[str, object]:
         """Explicit fixture judgment for repeated statements in the scale sample."""
-        assert type_name == "FactApplicationDecision"
+        assert type_name == "PromptFactDecision"
         return same_fact_application_answer(prompt=prompt)
 
     adjudicator = FactAdjudicator(

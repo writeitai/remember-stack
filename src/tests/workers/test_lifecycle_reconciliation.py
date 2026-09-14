@@ -136,7 +136,7 @@ _TABLES = (
 
 def _canned(prompt: str, type_name: str) -> dict[str, object]:
     """Deterministic model behavior for every seat the chain touches."""
-    if type_name == "FactApplicationDecision":
+    if type_name == "PromptFactDecision":
         return same_fact_application_answer(prompt=prompt)
     if type_name == "ContextPrefix":
         return {"prefix": "Sits in the staffing file."}

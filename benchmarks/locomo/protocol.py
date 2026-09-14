@@ -35,9 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29"
-DEFAULT_PROTOCOL_KEY: Final = "full-v29"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-multi-span-v29"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30"
+DEFAULT_PROTOCOL_KEY: Final = "full-v30"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-concise-adjudication-v30"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -73,14 +73,16 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "extract_claims": (
             "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
             "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
-            "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
+            "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
+            "assertion-clarity-4"
         ),
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
-            "no-types-1:binary-t4-1:document-t0-1:mutable-window-1"
+            "no-types-1:binary-t4-1:document-t0-1:mutable-window-1:"
+            "assertion-clarity-3"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:relation-adjudicator-2026.09c:mutable-window-1:obs-adjudicator-2026.09c:mutable-window-1"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:relation-adjudicator-2026.09d:concise-handles-5:obs-adjudicator-2026.09d:concise-handles-5"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -116,12 +118,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v29-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v30-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v29 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v30 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -129,8 +131,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v29-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v30-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -267,7 +269,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v29",
+    key="full-v30",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,

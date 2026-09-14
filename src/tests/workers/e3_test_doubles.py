@@ -181,21 +181,19 @@ def same_fact_application_answer(*, prompt: str) -> dict[str, object]:
 
     This is test input, not an identity heuristic in the engine. Contextual split
     and correction decisions have separate PostgreSQL writer acceptance cases.
+    The adjudicator now asks for attempt-local handles, not store UUIDs.
     """
     snapshot = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
     if snapshot["facts"]:
         return {
-            "target": {"fact_id": snapshot["facts"][0]["fact_id"]},
+            "target": snapshot["facts"][0]["handle"],
             "confidence": 0.9,
             "rationale": "Fixture reports the same fact.",
         }
     return {
-        "target": {"new_handle": "fixture"},
+        "target": "fixture",
         "new_facts": [
-            {
-                "handle": "fixture",
-                "assertion_application_id": snapshot["application_id"],
-            }
+            {"handle": "fixture", "assertion": snapshot["incoming_assertion"]}
         ],
         "confidence": 0.9,
         "rationale": "First fixture assertion.",

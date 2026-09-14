@@ -148,19 +148,19 @@ _PAYLOADS: dict[str, dict[str, object]] = {
 
 def _provider_response(prompt: str, type_name: str) -> dict[str, object]:
     """Serve canned chain payloads and a dynamic valid T4 selection."""
-    if type_name == "FactApplicationDecision":
+    if type_name == "PromptFactDecision":
         answer = same_fact_application_answer(prompt=prompt)
         inputs = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
         incoming = next(
             item
             for item in inputs["assertions"]
-            if item["application_id"] == inputs["application_id"]
+            if item["handle"] == inputs["incoming_assertion"]
         )
         # This retrieval fixture gives the writer an explicit chosen open window;
         # claim raw-date tests below remain independent of fact interpretation.
         answer["window"] = {
             "window": {"valid_from": "2024-01-01T00:00:00Z", "valid_precision": "open"},
-            "supporting_claim_ids": [incoming["claim_id"]],
+            "supporting_claims": [incoming["claim"]],
         }
         return answer
     if type_name == "T4Selection":
