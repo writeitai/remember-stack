@@ -35,6 +35,9 @@ from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.workers import E2Settings
 from rememberstack.workers.e2 import ExtractClaimsHandler
+from tests.workers.e2_test_doubles import SelectionMemory
+from tests.workers.e2_test_doubles import SingleChunkCatalog
+from tests.workers.e2_test_doubles import with_ground_claims
 
 _DEPLOYMENT = UUID("84000000-0000-0000-0000-000000000001")
 _DOC = UUID("84000000-0000-0000-0000-000000000002")
@@ -81,6 +84,7 @@ class _RecordingCatalog:
     """Captures extraction and reuse writes without a database."""
 
     def __init__(self) -> None:
+        self.selections = SelectionMemory()
         self.claims: tuple[ClaimRecord, ...] = ()
         self.decisions: tuple[DecisionRecord, ...] = ()
         self.occurrences: dict[UUID, OccurrenceProvenance] | None = None
@@ -102,7 +106,10 @@ class _RecordingCatalog:
         doc_id: UUID,
         version_id: UUID,
         extraction_input_hash: str,
+        claimify_input_hash: str | None = None,
     ) -> UUID | None:
+        del deployment_id, doc_id, version_id, extraction_input_hash
+        del claimify_input_hash
         return self.prior
 
     def claims_for_occurrence_reuse(
@@ -118,7 +125,9 @@ class _RecordingCatalog:
         prior_chunk_id: UUID,
         occurrences: dict[UUID, OccurrenceProvenance] | None = None,
         evidence_spans: object = None,
+        claimify_input_hash: str | None = None,
     ) -> int:
+        del deployment_id, evidence_spans, claimify_input_hash
         self.attached = (chunk_id, prior_chunk_id)
         self.reuse_occurrences = occurrences
         return 0 if not self.anchors else len(self.anchors)
@@ -132,30 +141,13 @@ class _RecordingCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: dict[UUID, OccurrenceProvenance] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
+        del claimify_input_hash
         self.record_calls += 1
         self.claims = claims
         self.decisions = decisions
         self.occurrences = occurrences
-
-
-class _ChunkCatalogStub:
-    """Returns a fixed source and the target chunk window."""
-
-    def __init__(self, *, source: ChunkSource, chunk: ChunkForEmbedding) -> None:
-        self.source = source
-        self.chunk = chunk
-
-    def chunk_source(self, *, representation_id: UUID) -> ChunkSource:
-        return self.source
-
-    def representation_id_for_chunk(self, *, chunk_id: UUID) -> UUID | None:
-        return self.source.representation_id
-
-    def chunks_for_extract(
-        self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
-    ) -> tuple[ChunkForEmbedding, ...]:
-        return (self.chunk.model_copy(update={"chunk_id": chunk_id}),)
 
 
 def _source(*, conversion_uri: str | None = _CONVERSION_URI) -> ChunkSource:
@@ -301,7 +293,7 @@ def _handler(
     return ExtractClaimsHandler(
         catalog=cast("ClaimCatalog", catalog),
         chunk_catalog=cast(
-            "ChunkCatalog", _ChunkCatalogStub(source=source, chunk=chunk)
+            "ChunkCatalog", SingleChunkCatalog(source=source, chunk=chunk)
         ),
         artifact_store=cast("ObjectStorePort", store),
         model_provider=FakeModelProvider(generate_router=_payloads),
@@ -325,7 +317,10 @@ def test_fresh_extract_stamps_ocr_and_description_separately() -> None:
     )
     catalog = _RecordingCatalog()
     handler = _handler(catalog=catalog, store=store, source=_source())
-    handler.handle(work=_work(), meter=NoopCostMeter())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert catalog.record_calls == 0
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 1
     assert catalog.occurrences is not None
     by_span = {
@@ -355,8 +350,10 @@ def test_missing_conversion_manifest_does_not_persist_claims() -> None:
         objects=_with_blocks({_MARKDOWN_URI: _DOCUMENT.encode("utf-8")})
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="conversion manifest"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.claims == ()
 
@@ -370,8 +367,10 @@ def test_corrupt_conversion_manifest_is_terminal_and_persists_nothing() -> None:
         )
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(NonRetryableHandlerError, match="corrupt"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -387,8 +386,10 @@ def test_missing_referenced_source_map_does_not_persist_claims() -> None:
         )
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="source map"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -419,7 +420,11 @@ def test_reuse_resolves_against_target_chunk_not_prior_coordinates() -> None:
         ),
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
-    handler.handle(work=_work(), meter=NoopCostMeter())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert catalog.record_calls == 0
+    assert catalog.attached is None
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.attached == (_CHUNK, _PRIOR)
     assert catalog.reuse_occurrences is not None

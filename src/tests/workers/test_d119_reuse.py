@@ -18,13 +18,18 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import SectionSpan
+from rememberstack.model import SelectionResponse
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
+from rememberstack.spine.selection_catalog import FrozenSelection
 from rememberstack.workers import E2Settings
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e2 import ExtractClaimsHandler
+from tests.workers.e2_test_doubles import SelectionMemory
+from tests.workers.e2_test_doubles import SingleChunkCatalog
+from tests.workers.e2_test_doubles import with_ground_claims
 
 _DEPLOYMENT = UUID("11910000-0000-0000-0000-000000000001")
 _DOC = UUID("11910000-0000-0000-0000-000000000002")
@@ -70,6 +75,16 @@ class _RecordingCatalog:
         self.attached = 0
         self.record_calls = 0
         self.reuse_spans: object = None
+        self.selections = SelectionMemory(
+            prior=FrozenSelection(
+                chunk_id=_PRIOR,
+                input_hash="sha256:same-inputs",
+                selection=SelectionResponse(candidates=()),
+                cards=(),
+                diagnostics=(),
+                truncated=False,
+            )
+        )
 
     def chunk_already_extracted(
         self, *, chunk_id: UUID, extractor_version: str
@@ -92,7 +107,9 @@ class _RecordingCatalog:
         prior_chunk_id: UUID,
         occurrences: object = None,
         evidence_spans: object = None,
+        claimify_input_hash: str | None = None,
     ) -> int:
+        del deployment_id, occurrences, claimify_input_hash
         self.attached += 1
         self.reuse_spans = evidence_spans
         return len(self.anchors)
@@ -106,25 +123,10 @@ class _RecordingCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: object = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
+        del claims, decisions, occurrences, claimify_input_hash
         self.record_calls += 1
-
-
-class _ChunkCatalogStub:
-    def __init__(self, *, source: ChunkSource, chunk: ChunkForEmbedding) -> None:
-        self.source = source
-        self.chunk = chunk
-
-    def chunk_source(self, *, representation_id: UUID) -> ChunkSource:
-        return self.source
-
-    def representation_id_for_chunk(self, *, chunk_id: UUID) -> UUID | None:
-        return self.source.representation_id
-
-    def chunks_for_extract(
-        self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
-    ) -> tuple[ChunkForEmbedding, ...]:
-        return (self.chunk.model_copy(update={"chunk_id": chunk_id}),)
 
 
 def test_reuse_hit_does_not_call_extractor() -> None:
@@ -170,7 +172,7 @@ def test_reuse_hit_does_not_call_extractor() -> None:
     handler = ExtractClaimsHandler(
         catalog=cast("ClaimCatalog", catalog),
         chunk_catalog=cast(
-            "ChunkCatalog", _ChunkCatalogStub(source=source, chunk=chunk)
+            "ChunkCatalog", SingleChunkCatalog(source=source, chunk=chunk)
         ),
         artifact_store=cast(
             "ObjectStorePort",
@@ -185,21 +187,22 @@ def test_reuse_hit_does_not_call_extractor() -> None:
         settings=E2Settings(),
         chunker_version="test-chunker",
     )
-    handler.handle(
-        work=ClaimedWork(
-            processing_id=uuid4(),
-            deployment_id=_DEPLOYMENT,
-            target_kind=ProcessingTarget.CHUNK,
-            target_id=_CHUNK,
-            stage=PipelineStage.EXTRACT_CLAIMS,
-            component_version=E2_EXTRACTOR_VERSION,
-            content_hash="hash",
-            lane=ProcessingLane.STEADY,
-            attempt=1,
-            payload={"representation_id": str(_REPR), "version_id": str(_VERSION)},
-        ),
-        meter=NoopCostMeter(),
+    work = ClaimedWork(
+        processing_id=uuid4(),
+        deployment_id=_DEPLOYMENT,
+        target_kind=ProcessingTarget.CHUNK,
+        target_id=_CHUNK,
+        stage=PipelineStage.EXTRACT_CLAIMS,
+        component_version=E2_EXTRACTOR_VERSION,
+        content_hash="hash",
+        lane=ProcessingLane.STEADY,
+        attempt=1,
+        payload={"representation_id": str(_REPR), "version_id": str(_VERSION)},
     )
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert catalog.record_calls == 0
+    assert catalog.attached == 0
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.attached == 1
     spans = catalog.reuse_spans
