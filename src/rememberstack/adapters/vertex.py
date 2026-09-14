@@ -70,7 +70,9 @@ Experimental. Google currently contradicts itself about thinking support; this
 adapter deliberately does not send provider-specific thinking controls.
 """
 CLOUD_PLATFORM_SCOPE: Final = "https://www.googleapis.com/auth/cloud-platform"
-_DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 4_096
+# Published global Gemma maximum, verified 2026-09-14 against the model card
+# linked above. This is provider capacity, not a per-task spend allowance.
+_DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 128_000
 _DEFAULT_THROTTLE_RETRY_DELAYS_S: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0)
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
@@ -113,10 +115,13 @@ class VertexSettings(BaseSettings):
     """Google Cloud project that holds the model entitlement and is billed."""
     location: str = Field(default="global", min_length=1)
     """``global`` for the global endpoint; otherwise a regional location id."""
-    timeout_s: float = Field(default=120.0, gt=0)
+    timeout_s: float | None = Field(default=None, gt=0)
+    """Optional operator deadline; by default slow generations are allowed to finish."""
     max_completion_tokens: int = Field(default=_DEFAULT_MAX_COMPLETION_TOKENS, ge=1)
-    """Output budget sent as ``max_tokens``; kept small because every
-    structured benchmark step is short and the cap bounds per-call spend."""
+    """Output allowance sent as ``max_tokens``. Defaults to the documented Gemma
+    maximum, so processing is not truncated by a guessed short-response budget.
+    Operators can explicitly override this for a different managed model.
+    """
     price_table_usd_per_million: dict[str, VertexModelPrice] = Field(
         default_factory=lambda: dict(DEFAULT_PRICE_TABLE_USD_PER_MILLION)
     )
