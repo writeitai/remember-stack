@@ -832,7 +832,7 @@ def _prompt_schema_size_report(
         report["new_prompt_plus_schema_tiktoken_cl100k_proxy"] = len(
             encoder.encode(new_prompt + new_schema)
         )
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         pass
     return report
 
