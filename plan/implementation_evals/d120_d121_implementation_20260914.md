@@ -7,12 +7,20 @@
 [D121](../designs/concise_adjudication_inputs_design.md), commit `4a803c1d`
 (PR #401, merged).
 **PR:** https://github.com/writeitai/remember-stack/pull/402 (draft)
-**Measurement revision:** the parent clarity commit containing this document,
-following `ef17559a1616c8c276ea5934658aedf5b5029d6d` (lean-prompt checkpoint).
-Previous Antigravity-reviewed head was `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
-This checkpoint is not D119-integrated and is not merge-ready.
-**Parent owns** integration, merge, and release. User authorized the checked
-CLA text.
+**Final integration:** rebased onto D119 `d808164b`, including the origin
+evidence-coordinate fixes, final 500-version test and Full-v29 naming. This
+branch is Full-v30. The parent owns final prompt wording, integration and merge.
+The earlier checkpoint history below is retained as measurement/review evidence;
+it does not describe the current dependency state.
+
+Extractor and normalizer use `assertion-clarity-3`; adjudicators use
+`concise-handles-5`. Final integration passed 63 concise/protocol checks, the
+regenerated serialized-summary check, and 11 PostgreSQL E2/concise-adjudication
+checks. No fact-application or locking logic changed in this final integration.
+Antigravity's integrated prompt review at `ecedaabe` approved with nits, all
+addressed below. The remaining integration delta is limited to the reviewed
+D119 dependency and protocol/doc consistency; it receives final parent review
+and CI before merge.
 
 ## What actually ships
 

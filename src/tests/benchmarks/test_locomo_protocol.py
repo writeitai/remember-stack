@@ -253,7 +253,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v29_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v30_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
     assert PROTOCOL_NAME == "RS-LoCoMo-Full-v30"
     assert DEFAULT_PROTOCOL_KEY == "full-v30"
@@ -483,7 +483,7 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v29 pins, so its scores are
+    """The variant is a provider swap over identical v30 pins, so its scores are
     an answer-agent comparison rather than a new benchmark identity."""
     base = PROTOCOL_REGISTRY["full-v30"]
     variant = PROTOCOL_REGISTRY["full-v30-gemma-vertex"]

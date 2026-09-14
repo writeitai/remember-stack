@@ -1704,7 +1704,7 @@ def test_ingest_refuses_model_binding_drift_before_upload(
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full-v29 cannot silently process with document-local T0 disabled."""
+    """Full-v30 cannot silently process with document-local T0 disabled."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
