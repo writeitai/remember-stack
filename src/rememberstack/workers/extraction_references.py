@@ -84,11 +84,6 @@ def collect_eligible_cards(
     return tuple(cards)
 
 
-def card_passage_texts(*, cards: tuple[GroundedCard, ...]) -> tuple[str, ...]:
-    """Verbatim supporting passage text admitted into D32 layer-2 membership."""
-    return tuple(passage.text for card in cards for passage in card.passages)
-
-
 def render_selection_passages(*, catalog: PassageCatalog, document_md: str) -> str:
     """Engine-built local labels Selection may cite; not Claimify origin rules."""
     if not catalog.passages:

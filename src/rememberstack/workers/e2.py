@@ -241,17 +241,17 @@ For each claim return:
   The first label is the origin: a TARGET passage marked origin-eligible that
   contains the kept proposition. This means it overlaps a Selection keep.
   Further labels supply support from the target, permitted same-section
-  neighbours, or cited source-reference-card supporting passages. Cite all
+  neighbours, or quoted passages under EARLIER REFERENCES. Cite all
   required support, not just the origin. A larger passage may also contain
   dropped statements; citing it does not authorize extracting those
   statements. Never invent a label or character offset.
 - added_context: each substring added from outside the TARGET CHUNK. Text
   already in the target needs no entry. Each addition must occur verbatim in
   the DOCUMENT HEADER, permitted PREVIOUS/NEXT CHUNK, typed LOCATION elements,
-  or cited source-reference-card supporting passages, except resolved dates
-  under the rules below. Card names are orientation only and cannot ground an
-  addition. Mark its origin with header|neighbour|prefix; the tag is advisory
-  and does not establish support.
+  or quoted passages under EARLIER REFERENCES that this claim cites, except
+  resolved dates under the rules below. Reference names help you navigate;
+  only their quoted source text can support an addition. Mark its origin with
+  header|neighbour|prefix; the tag is advisory and does not establish support.
 - entailment_self_verdict: whether the source and permitted context actually
   support the whole claim, rather than merely containing the same words.
 - is_attributed: whether the claim records someone's statement or stance.
@@ -358,9 +358,11 @@ Examples (DOCUMENT HEADER date → structured output):
 
 {passages}
 
-SOURCE REFERENCE CARDS (names are orientation only; never treat a generated
-name as evidence. Cite the supporting SOURCE PASSAGES labels. A card cannot
-resurrect a dropped proposition or replace the TARGET origin rule):
+EARLIER REFERENCES:
+Each entry names something discussed earlier in this document and quotes the
+source passages that identify it. Use these passages only to clarify a KEPT
+proposition. Cite their S labels when needed. Names above the quotes are navigation
+hints, not evidence. The claim must still start from an eligible TARGET passage.
 {cards}
 
 KEPT PROPOSITIONS:

@@ -685,7 +685,7 @@ class SelfHostProfile:
         raw_store: MinIOObjectStore,
         artifact_store: MinIOObjectStore,
         corpusfs_store: MinIOObjectStore,
-        model_provider: OpenRouterModelProvider,
+        model_provider: ModelProviderPort,
         error_telemetry: TelemetryPort | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process."""
