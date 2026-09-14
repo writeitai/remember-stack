@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 from uuid import uuid4
 
 from rememberstack.adapters.testing import FakeModelProvider
@@ -40,7 +41,7 @@ class RecordingCostMeter:
 class RecordingResolver:
     """Resolver that records resolve calls."""
 
-    def __init__(self, *, identities: dict[str, object] | None = None) -> None:
+    def __init__(self, *, identities: dict[str, UUID] | None = None) -> None:
         """Start with an empty call log and optional exact-name identities."""
         self.calls: list[EntityRef] = []
         self.identities = dict(identities or {})

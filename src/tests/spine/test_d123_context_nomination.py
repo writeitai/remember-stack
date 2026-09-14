@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -55,7 +56,7 @@ def _tournament(*, engine: Engine, case: WriterCase) -> UUID:
     return entity_id
 
 
-def _snapshot(*, engine: Engine, case: WriterCase, app: UUID) -> dict[str, object]:
+def _snapshot(*, engine: Engine, case: WriterCase, app: UUID) -> dict[str, Any]:
     """Re-read nomination inputs under the ordinary application lock."""
     with engine.begin() as connection:
         with application_block(

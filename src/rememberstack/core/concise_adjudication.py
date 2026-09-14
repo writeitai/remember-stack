@@ -185,7 +185,7 @@ def project_concise_inputs(
     """
     fact_rows = list(snapshot.get("facts", ()))
     claim_rows = list(snapshot.get("claims", ()))
-    assertion_rows = list(snapshot.get("assertions", ()))
+    assertion_rows: list[dict[str, Any]] = list(snapshot.get("assertions", ()))
     facts = {
         _handle("F", index): _as_id(row["fact_id"])
         for index, row in enumerate(fact_rows)

@@ -185,3 +185,35 @@ Existing worker fixtures and Full-v31 benchmark pins are being updated in
 bounded Grok tasks. Final Antigravity review, exact-head CI, main rebase and
 parent merge review remain outstanding. No live processing quality/cost result
 is claimed before the authorized Gemma/Vertex conv-42 run.
+
+## Final integration checks before main rebase
+
+Grok completed and pushed the worker fixtures (`93f3acfc`) and Full-v31 pins
+(`c275d724`). The worker lane passed46 PostgreSQL-free tests and30 PostgreSQL
+chain/reuse cases (28 initially, the remaining2 after updating the explicit
+Selection-reuse versus full-Claimify-reuse expectations). The protocol lane
+passed184 benchmark unit tests, Ruff and Pyright. Its serialized synthetic
+prepare fingerprint is
+`ee7d277f10e9b7d486f75f5221a7a174386248c3b5fc79c60815bcb7be1700b3`.
+This fingerprint is not a live processing run.
+
+[Antigravity's runtime review](d122_d123_agy_review_2c547937.md) found no runtime
+or design blocker, but required two type annotation fixes. Parent applied
+explicit assertion-row typing and aligned the test snapshot annotation with
+the existing dynamic snapshot API. The full type pass additionally identified
+an overly broad UUID annotation in an E3 test double; that was narrowed to UUID.
+The remaining protocol suffix note is resolved by the Full31 pin commit.
+
+Parent's further PostgreSQL context and hard-forget suite passed15 tests
+(54.52 seconds). It proves both new source stores are scrubbed while independent
+control data survives, repeated scrubs remain idempotent, and the actual
+Selection and Claimify publication APIs reject a late response after forget
+starts. The59 core/profile unit tests passed (34.58 seconds). Repository test
+inventory and all five import-boundary contracts pass.
+
+The final wording names the earlier evidence block “EARLIER REFERENCES” and
+explains what its names, quotes and citations mean. SelfHostProfile's injectable
+provider is typed as its existing ModelProviderPort; its convenience constructor
+and production defaults are unchanged. This lets an isolated experiment compose
+existing providers honestly without pretending a reader-only Gemma variant
+configures processing.
