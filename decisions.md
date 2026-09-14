@@ -5742,6 +5742,10 @@ absence-based closures indefinitely.
 
 ## D118. Immutable claims, mutable facts, one world-time window
 
+> Processing amendments D120–D123 clarify assertion identity, project concise
+> model inputs and add source-backed context nomination. D118's one world window,
+> ordered application and validation/forget authority remain in force.
+
 **Status:** accepted when merged; replacement runtime is not implemented by this
 amendment. **Date:** 2026-09-07.
 
@@ -5787,3 +5791,70 @@ withdraws PR #384's incompatible unshipped framework and gates replacement code
 on concrete storage, consumer and deletion contracts. Already merged canonical
 SQL, extraction vocabulary and all evaluator variants remain intact. No schema
 upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
+
+## D120. Clear processing prompts preserve the assertion being made
+
+**Status:** accepted 2026-09-14, binding when merged. A shared person/event is
+not a shared proposition. Processing prompts explain claims, assertions, facts,
+source times and world dates plainly, with contrasting repetition, correction,
+attribution and distinct-assertion examples. Preserve winning information when
+the candidate says only participation or enjoyment. Keep existing writer
+operations; no semantic checker call, new temporal class or human prompt-exam
+ceremony. Roll affected inference generations and validate both false merges
+and unnecessary duplication. Confidence thresholds alone were rejected because
+the audited wrong assignment was already highly confident.
+
+**Authority:** [design](plan/designs/processing_prompt_clarity_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D121. Present concise evidence while retaining full database validation
+
+**Status:** accepted 2026-09-14, binding when merged. Deterministically project
+the prepared adjudication snapshot into complete semantic evidence with short
+attempt-local handles and factored repeated text. Translate a closed model-facing
+response through that exact attempt's typed mapping into the existing writer.
+Retain hashes, ownership and generation bookkeeping internally. Preserve witness
+membership, source distinctions, snapshot checks, source deletion and inference
+outside locks. A smaller evidence set and a model-generated summary were rejected
+as unnecessary correctness/cost risks. Measure input/schema/output tokens without
+promising a fixed saving.
+
+**Authority:** [design](plan/designs/concise_adjudication_inputs_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D122. Share frozen source reference context between extraction chunks
+
+**Status:** accepted 2026-09-14, binding when merged. Extend the existing
+Selection response with exact-source-backed reference cards, freeze/reuse it,
+then run Claimify after an idempotent representation Selection barrier. Supply
+bounded preceding source context with explicit positive and negative reuse
+dependencies. This amends D119 local context, D56 reuse inputs and D84 scheduling;
+it preserves D119 occurrence spans, same-claim-ID reuse and existing entity
+resolution authority. No new extraction model call or mutable alias registry.
+A durable Selection intermediate and barrier are accepted costs. Timing-dependent
+live hints, ungrounded summary inventories and whole-document prompt lists were
+rejected; E3-only reuse would not help extraction understand distant introductions.
+
+**Authority:** [design](plan/designs/document_reference_context_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D123. Use source-backed entity context to nominate fact candidates
+
+**Status:** accepted 2026-09-14, binding when merged. Existing normalization
+emits bounded generic context references; existing resolution produces immutable
+source-owned application bindings. Derive fact context from current supporting
+applications. Preserve the baseline same-subject/same-plane nomination and union
+bounded additional shared-context candidates. Context improves reach but never
+proves fact identity or absence of matches. Keep attributed subjects, dates on
+ordinary facts, profiles as derived descriptions, and D118 order/locking/forget.
+No event table/type, fact event column, profile neighborhood retrieval or extra
+model call. An event-only filter or smaller fallback was rejected without recall
+evidence. Expanded candidates can add cost; D121 supplies independent compaction.
+
+**Authority:** [design](plan/designs/contextual_fact_nomination_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md). Grouped application is only
+an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).

@@ -13,6 +13,9 @@ lost in chat.
 
 Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 
+Processing: [D120–D123 design and delivery map](../plan/plans/lean_processing_delivery.md).
+Unchosen efficiency alternative: [grouped fact adjudication](proposals/grouped_fact_adjudication.md).
+
 ## PostgreSQL 19 live-graph review evidence
 
 - [Design review round 1](reviews/postgres19_live_graph_design_review_round1.md)
