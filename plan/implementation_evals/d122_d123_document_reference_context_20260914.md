@@ -243,3 +243,10 @@ new GROUND_CLAIMS stage, so its corpus never reached Claimify or normalization.
 Parent added the same extraction handler for GROUND_CLAIMS and included that
 stage in its drain loop. The direct retrieval suite is being rerun against
 PostgreSQL; this change does not alter runtime retrieval behavior.
+
+The corrected retrieval suite passed all 14 tests against PostgreSQL in 622.06
+seconds. [Final Antigravity review](d122_d123_agy_review_e7553a1a.md) approved
+the runtime without material findings and independently passed 81 PostgreSQL
+tests across context, deletion, Selection, E2, readiness, migration, reuse, E3
+and lifecycle suites. The later fixture corrections do not change the reviewed
+runtime. Final exact-head CI is the remaining merge gate.
