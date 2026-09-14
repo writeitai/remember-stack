@@ -56,7 +56,8 @@ _PREFIX = "Sits in the Project Atlas launch report."
 
 _SOURCE = (
     "Project Atlas launched in 2024 in three markets.\n\n"
-    "The team considers it a runaway success. You should try it yourself.\n"
+    "The team considers it a runaway success.\n\n"
+    "You should try it yourself.\n"
 )
 
 _SELECTION_PAYLOAD: dict[str, object] = {
@@ -78,7 +79,7 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
     "claims": [
         {
             "claim_text": "Project Atlas launched in 2024.",
-            "source_span": "Project Atlas launched in 2024",
+            "source_refs": ["S1"],
             "entailment_self_verdict": True,
             "valid_kind": "event_time",
             "valid_from_iso": "2024-01-01",
@@ -89,25 +90,25 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
             "claim_text": (
                 "The Project Atlas team considers Project Atlas a runaway success."
             ),
-            "source_span": "The team considers it a runaway success.",
+            "source_refs": ["S2"],
             "added_context": [{"text": "Project Atlas", "source_kind": "prefix"}],
             "entailment_self_verdict": True,
             "is_attributed": True,
         },
         {
             "claim_text": "Project Atlas launched in San Francisco.",
-            "source_span": "Project Atlas launched in 2024",
+            "source_refs": ["S1"],
             "added_context": [{"text": "in San Francisco", "source_kind": "neighbour"}],
             "entailment_self_verdict": True,
         },
         {
             "claim_text": "Atlas was cancelled.",
-            "source_span": "Atlas was cancelled in March",  # not in the chunk
+            "source_refs": ["S99"],
             "entailment_self_verdict": True,
         },
         {
             "claim_text": "You should try Project Atlas.",
-            "source_span": "You should try it yourself.",  # Selection DROPPED this
+            "source_refs": ["S3"],
             "entailment_self_verdict": True,
         },
     ]
@@ -393,15 +394,12 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
         )
     assert by_kind["selection_keep_flagged"]["claim_id"] == flagged_claim
     # three silent deaths become three named gate rejections (#161):
-    assert [row["source_span"] for row in rejections] == [
-        "Atlas was cancelled in March",
-        "Project Atlas launched in 2024",
-        "You should try it yourself.",
-    ]
-    gates = {row["source_span"]: row["edit_detail"]["gate"] for row in rejections}
-    assert gates["Atlas was cancelled in March"] == "span_not_found"
-    assert gates["Project Atlas launched in 2024"] == "added_context_unverified"
-    assert gates["You should try it yourself."] == "outside_kept_ranges"
+    gates = {row["edit_detail"]["gate"] for row in rejections}
+    assert gates == {
+        "unknown_source_ref",
+        "added_context_unverified",
+        "origin_not_eligible",
+    }
     # both keeps produced accepted claims — no claimify_omitted rows:
     assert "claimify_omitted" not in by_kind
 

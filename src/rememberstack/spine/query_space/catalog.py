@@ -618,6 +618,7 @@ VIEW_CONTRACTS: Final = (
                 "doc_id",
                 "version_id",
                 "representation_id",
+                "evidence_spans",
                 "attached_at",
             }
         ),
@@ -633,6 +634,7 @@ VIEW_CONTRACTS: Final = (
             "section_id": "uuid",
             "evidence_mode": "text",
             "source_locators": "jsonb",
+            "evidence_spans": "jsonb",
             "attached_at": "timestamp with time zone",
         },
         indexes_used=("ix_chunkclaims_claim", "chunk_claims_pkey"),

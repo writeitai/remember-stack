@@ -828,7 +828,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -943,6 +943,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
                   "grouped_claim_ids": {
                     "default": [],
                     "items": {
@@ -989,6 +997,28 @@
                   "is_current_testimony"
                 ],
                 "title": "EvidenceResult",
+                "type": "object"
+              },
+              "EvidenceSpan": {
+                "additionalProperties": false,
+                "description": "One half-open character range in a single immutable representation (D119).",
+                "properties": {
+                  "char_end": {
+                    "minimum": 0,
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "minimum": 0,
+                    "title": "Char Start",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "EvidenceSpan",
                 "type": "object"
               },
               "EvidenceTotal": {
@@ -2938,7 +2968,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -3053,6 +3083,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
                   "grouped_claim_ids": {
                     "default": [],
                     "items": {
@@ -3099,6 +3137,28 @@
                   "is_current_testimony"
                 ],
                 "title": "EvidenceResult",
+                "type": "object"
+              },
+              "EvidenceSpan": {
+                "additionalProperties": false,
+                "description": "One half-open character range in a single immutable representation (D119).",
+                "properties": {
+                  "char_end": {
+                    "minimum": 0,
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "minimum": 0,
+                    "title": "Char Start",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "EvidenceSpan",
                 "type": "object"
               },
               "EvidenceTotal": {
@@ -4688,7 +4748,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -4803,6 +4863,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
                   "grouped_claim_ids": {
                     "default": [],
                     "items": {
@@ -4849,6 +4917,28 @@
                   "is_current_testimony"
                 ],
                 "title": "EvidenceResult",
+                "type": "object"
+              },
+              "EvidenceSpan": {
+                "additionalProperties": false,
+                "description": "One half-open character range in a single immutable representation (D119).",
+                "properties": {
+                  "char_end": {
+                    "minimum": 0,
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "minimum": 0,
+                    "title": "Char Start",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "EvidenceSpan",
                 "type": "object"
               },
               "EvidenceTotal": {
@@ -6504,7 +6594,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -6619,6 +6709,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
                   "grouped_claim_ids": {
                     "default": [],
                     "items": {
@@ -6665,6 +6763,28 @@
                   "is_current_testimony"
                 ],
                 "title": "EvidenceResult",
+                "type": "object"
+              },
+              "EvidenceSpan": {
+                "additionalProperties": false,
+                "description": "One half-open character range in a single immutable representation (D119).",
+                "properties": {
+                  "char_end": {
+                    "minimum": 0,
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "minimum": 0,
+                    "title": "Char Start",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "EvidenceSpan",
                 "type": "object"
               },
               "EvidenceTotal": {
@@ -18194,9 +18314,16 @@
               "name": "attached_at",
               "nullable": false,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The complete ordered list of supporting body ranges for this occurrence, origin first, as {char_start, char_end} objects in the carrying representation.",
+              "enum_values": null,
+              "name": "evidence_spans",
+              "nullable": false,
+              "type": "jsonb"
             }
           ],
-          "comment": "One row per current claim occurrence, keyed by (deployment_id, claim_id, chunk_id, derivation_kind) with null derivation kinds treated as equal, and joined to claims_visible_history on (deployment_id, claim_id) and to chunks_live on (deployment_id, chunk_id). It is the explicit association answering which current chunk, version, representation, and section carry a claim, which a re-attachment of the same claim to the same chunk under the same derivation does not duplicate: repeated attachments collapse to the earliest, so attached_at is the first time the occurrence was recorded. Occurrences in superseded versions, non-ready readings, and forgotten lineages are absent. Source locators are provenance, not evidence text; the view carries no counts and no validity clocks.",
+          "comment": "One row per current claim occurrence, keyed by (deployment_id, claim_id, chunk_id, derivation_kind) with null derivation kinds treated as equal, and joined to claims_visible_history on (deployment_id, claim_id) and to chunks_live on (deployment_id, chunk_id). It is the explicit association answering which current chunk, version, representation, and section carry a claim, and evidence_spans is the complete body support for that occurrence. Repeated attachments collapse to the earliest, so attached_at is the first time the occurrence was recorded. Occurrences in superseded versions, non-ready readings, and forgotten lineages are absent. Claim char_start/char_end remain the immutable origin; they are not the complete evidence list. The view carries no counts and no validity clocks.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -18239,6 +18366,10 @@
               {
                 "@": "String",
                 "sval": "source_locators"
+              },
+              {
+                "@": "String",
+                "sval": "evidence_spans"
               },
               {
                 "@": "String",
@@ -18904,6 +19035,22 @@
                       },
                       {
                         "@": "String",
+                        "sval": "evidence_spans"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "cc"
+                      },
+                      {
+                        "@": "String",
                         "sval": "created_at"
                       }
                     ]
@@ -18911,7 +19058,7 @@
                 }
               ]
             },
-            "replace": true,
+            "replace": false,
             "view": {
               "@": "RangeVar",
               "inh": true,
@@ -41396,5 +41543,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "0eb7a004e97e0d03753bd03af6081486dd041171ccef038318b7b4cca0a51b41"
+  "surface_manifest_hash": "fa665f47ade37dc1d1899ce164165cea42ac3ae91cc36673cd393554a4f70bdd"
 }

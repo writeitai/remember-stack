@@ -98,6 +98,14 @@ class ChunkCatalog:
             for row in rows
         )
 
+    def representation_id_for_chunk(self, *, chunk_id: UUID) -> UUID | None:
+        """The representation that owns this chunk row, if it still exists."""
+        with self._engine.connect() as connection:
+            value = connection.execute(
+                _SELECT_CHUNK_REPRESENTATION, {"chunk_id": chunk_id}
+            ).scalar_one_or_none()
+        return None if value is None else UUID(str(value))
+
     def chunks_for_extract(
         self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
     ) -> tuple[ChunkForEmbedding, ...]:
@@ -267,6 +275,12 @@ _SELECT_FOR_EMBEDDING = text(
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
     ORDER BY c.ordinal
+    """
+)
+
+_SELECT_CHUNK_REPRESENTATION = text(
+    """
+    SELECT representation_id FROM chunks WHERE chunk_id = :chunk_id
     """
 )
 

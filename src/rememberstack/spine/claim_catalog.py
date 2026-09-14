@@ -14,10 +14,14 @@ from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.source_passages import origin_span_from_record
+from rememberstack.core.source_passages import spans_as_json
+from rememberstack.core.source_passages import spans_from_json
 from rememberstack.model import ClaimForEmbedding
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
+from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
@@ -83,10 +87,10 @@ class ClaimCatalog:
     def claims_for_occurrence_reuse(
         self, *, chunk_id: UUID
     ) -> tuple[ReusedClaimAnchor, ...]:
-        """Prior occurrence identities and verbatim spans for target re-anchoring.
+        """Prior occurrence identities and evidence spans for window remapping.
 
-        ``source_span`` is the immutable claim text slice; prior char offsets
-        belong to the prior document.md and are deliberately not returned.
+        Prior absolute offsets belong to the prior document.md and must be
+        translated through content-identical extraction windows, never copied.
         """
         with self._engine.connect() as connection:
             rows = (
@@ -96,7 +100,12 @@ class ClaimCatalog:
                 .mappings()
                 .all()
             )
-        return tuple(ReusedClaimAnchor.model_validate(dict(row)) for row in rows)
+        anchors: list[ReusedClaimAnchor] = []
+        for row in rows:
+            payload = dict(row)
+            payload["evidence_spans"] = spans_from_json(payload.get("evidence_spans"))
+            anchors.append(ReusedClaimAnchor.model_validate(payload))
+        return tuple(anchors)
 
     def attach_reused_claims(
         self,
@@ -105,6 +114,7 @@ class ClaimCatalog:
         chunk_id: UUID,
         prior_chunk_id: UUID,
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
+        evidence_spans: Mapping[UUID, tuple[EvidenceSpan, ...]] | None = None,
     ) -> int:
         """Re-attach a prior chunk's claims to a new version's chunk (D56/F4).
 
@@ -133,6 +143,15 @@ class ClaimCatalog:
                     provenance = (
                         None if occurrences is None else occurrences.get(claim_uuid)
                     )
+                    spans = (
+                        None
+                        if evidence_spans is None
+                        else evidence_spans.get(claim_uuid)
+                    )
+                    if not spans:
+                        raise ValueError(
+                            f"reused claim {claim_uuid} has no remapped evidence spans"
+                        )
                     connection.execute(
                         _INSERT_CHUNK_CLAIM,
                         _chunk_claim_params(
@@ -140,6 +159,7 @@ class ClaimCatalog:
                             chunk_id=chunk_id,
                             claim_id=claim_uuid,
                             provenance=provenance,
+                            evidence_spans=spans,
                         ),
                     )
         return prior_links
@@ -275,6 +295,10 @@ class ClaimCatalog:
                         chunk_id=claim.chunk_id,
                         claim_id=claim.claim_id,
                         provenance=provenance,
+                        evidence_spans=claim.evidence_spans
+                        or origin_span_from_record(
+                            char_start=claim.char_start, char_end=claim.char_end
+                        ),
                     ),
                 )
             for decision in decisions:
@@ -334,11 +358,11 @@ _SELECT_DISTINCT_CHUNK_CLAIM_IDS = text(
 
 _SELECT_CLAIMS_FOR_OCCURRENCE_REUSE = text(
     """
-    SELECT DISTINCT cl.claim_id, cl.source_span
+    SELECT DISTINCT ON (cl.claim_id) cl.claim_id, cc.evidence_spans
     FROM claims cl
     JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
     WHERE cc.chunk_id = :chunk_id
-    ORDER BY cl.claim_id
+    ORDER BY cl.claim_id, cc.created_at
     """
 )
 
@@ -366,17 +390,20 @@ _INSERT_CHUNK_CLAIM = text(
     """
     INSERT INTO chunk_claims (
         deployment_id, chunk_id, claim_id,
-        derivation_kind, evidence_mode, source_locators
+        derivation_kind, evidence_mode, source_locators, evidence_spans
     )
     SELECT :deployment_id, :chunk_id, :claim_id,
-           :derivation_kind, :evidence_mode, :source_locators
+           :derivation_kind, :evidence_mode, :source_locators, :evidence_spans
     WHERE NOT EXISTS (
         SELECT 1 FROM chunk_claims existing
         WHERE existing.chunk_id = :chunk_id
           AND existing.claim_id = :claim_id
     )
     """
-).bindparams(bindparam("source_locators", type_=JSON(none_as_null=True)))
+).bindparams(
+    bindparam("source_locators", type_=JSON(none_as_null=True)),
+    bindparam("evidence_spans", type_=JSON),
+)
 
 _INSERT_DECISION = text(
     """
@@ -477,6 +504,7 @@ def _chunk_claim_params(
     chunk_id: UUID,
     claim_id: UUID,
     provenance: OccurrenceProvenance | None,
+    evidence_spans: tuple[EvidenceSpan, ...],
 ) -> dict[str, object]:
     """Bind occurrence columns; absent provenance stays SQL NULL, not passthrough."""
     locators: list[dict[str, object]] | None = None
@@ -484,6 +512,8 @@ def _chunk_claim_params(
         locators = [
             locator.model_dump(mode="json") for locator in provenance.source_locators
         ]
+    if not evidence_spans:
+        raise ValueError("occurrence evidence_spans must be nonempty")
     return {
         "deployment_id": deployment_id,
         "chunk_id": chunk_id,
@@ -491,4 +521,5 @@ def _chunk_claim_params(
         "derivation_kind": None if provenance is None else provenance.derivation_kind,
         "evidence_mode": None if provenance is None else provenance.evidence_mode,
         "source_locators": locators,
+        "evidence_spans": spans_as_json(evidence_spans),
     }

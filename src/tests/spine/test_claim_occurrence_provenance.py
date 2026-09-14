@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimRecord
+from rememberstack.model import EvidenceSpan
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import NormalizedRegion
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
@@ -69,6 +70,9 @@ def _claim(*, chunk_id: UUID, source_span: str, char_start: int) -> ClaimRecord:
         source_span=source_span,
         char_start=char_start,
         char_end=char_start + len(source_span),
+        evidence_spans=(
+            EvidenceSpan(char_start=char_start, char_end=char_start + len(source_span)),
+        ),
         added_context=(),
         is_attributed=False,
         entailment_self_verdict=True,
@@ -165,11 +169,13 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         evidence_mode="model_observation",
         source_locators=(_WHOLE_IMAGE,),
     )
+    remapped = (EvidenceSpan(char_start=4, char_end=4 + len("the red valve")),)
     attached = catalog.attach_reused_claims(
         deployment_id=_DEPLOYMENT_ID,
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
         occurrences={claim.claim_id: target_provenance},
+        evidence_spans={claim.claim_id: remapped},
     )
     assert attached == 1
     # Idempotent: a retry must not invent a second occurrence row.
@@ -178,11 +184,14 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
         occurrences={claim.claim_id: target_provenance},
+        evidence_spans={claim.claim_id: remapped},
     )
     anchors = catalog.claims_for_occurrence_reuse(chunk_id=prior_chunk)
     assert len(anchors) == 1
     assert anchors[0].claim_id == claim.claim_id
-    assert anchors[0].source_span == "the red valve"
+    assert anchors[0].evidence_spans == (
+        EvidenceSpan(char_start=0, char_end=len("the red valve")),
+    )
     with database_engine.connect() as connection:
         rows = (
             connection.execute(

@@ -3885,6 +3885,7 @@ _CURRENT_FACT_EVIDENCE = text(
                ) AS stance_rank,
                claim.claim_id, claim.doc_id, claim.chunk_id, claim.claim_text,
                claim.source_span, claim.char_start, claim.char_end,
+               COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
                claim.is_attributed, true AS is_current_testimony,
                claim.asserted_at, claim.claim_valid_from,
                claim.claim_valid_until,
@@ -3908,10 +3909,18 @@ _CURRENT_FACT_EVIDENCE = text(
         JOIN memory_v1.documents_live AS document
           ON document.deployment_id = claim.deployment_id
          AND document.doc_id = claim.doc_id
+        LEFT JOIN LATERAL (
+            SELECT occurrence.evidence_spans
+            FROM memory_v1.claim_occurrences_live AS occurrence
+            WHERE occurrence.deployment_id = claim.deployment_id
+              AND occurrence.claim_id = claim.claim_id
+            ORDER BY occurrence.chunk_id
+            LIMIT 1
+        ) AS occ ON true
     )
     SELECT fact_id, kind, stance, evidence_total, stance_rank,
            claim_id, doc_id, chunk_id, claim_text, source_span,
-           char_start, char_end, is_attributed, is_current_testimony,
+           char_start, char_end, evidence_spans, is_attributed, is_current_testimony,
            asserted_at, claim_valid_from, claim_valid_until,
            claim_valid_precision, claim_valid_kind, document_title, source_kind
     FROM representative
@@ -3941,7 +3950,9 @@ _CONFIRM_OBSERVATIONS = text(
 _CONFIRM_CLAIMS_CURRENT = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
            TRUE AS is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
@@ -3949,6 +3960,14 @@ _CONFIRM_CLAIMS_CURRENT = text(
     FROM memory_v1.claims_live c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT occurrence.evidence_spans
+        FROM memory_v1.claim_occurrences_live AS occurrence
+        WHERE occurrence.deployment_id = c.deployment_id
+          AND occurrence.claim_id = c.claim_id
+        ORDER BY occurrence.chunk_id
+        LIMIT 1
+    ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
     """
@@ -3957,7 +3976,9 @@ _CONFIRM_CLAIMS_CURRENT = text(
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
            TRUE AS is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
@@ -3965,6 +3986,14 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     FROM memory_v1.claims_live c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT occurrence.evidence_spans
+        FROM memory_v1.claim_occurrences_live AS occurrence
+        WHERE occurrence.deployment_id = c.deployment_id
+          AND occurrence.claim_id = c.claim_id
+        ORDER BY occurrence.chunk_id
+        LIMIT 1
+    ) AS occ ON true
     JOIN LATERAL (
         SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
         FROM memory_v1.mentions_live AS mention
@@ -3980,13 +4009,25 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
 _CONFIRM_CLAIMS_HISTORY = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed, c.is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
            d.title AS document_title, d.source_kind
     FROM memory_v1.claims_visible_history c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        JOIN chunks ch ON ch.chunk_id = cc.chunk_id
+        WHERE cc.claim_id = c.claim_id
+          AND cc.deployment_id = c.deployment_id
+          AND ch.version_id = c.version_id
+        ORDER BY cc.created_at
+        LIMIT 1
+    ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
     """
@@ -4051,7 +4092,9 @@ _HYDRATE_RELATION = text(
 _HYDRATE_EVIDENCE_CLAIMS = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed, c.is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision::text, c.claim_valid_kind::text,
            d.title AS document_title, d.source_kind
@@ -4061,6 +4104,14 @@ _HYDRATE_EVIDENCE_CLAIMS = text(
                  AND c.doc_id = e.doc_id
     LEFT JOIN documents d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.claim_id = c.claim_id
+          AND cc.deployment_id = c.deployment_id
+        ORDER BY cc.created_at DESC
+        LIMIT 1
+    ) AS occ ON true
     WHERE e.deployment_id = :deployment_id
       AND e.relation_id = :relation_id
       AND e.stance = 'supports'

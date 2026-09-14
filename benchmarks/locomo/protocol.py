@@ -46,7 +46,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "0eb7a004e97e0d03753bd03af6081486dd041171ccef038318b7b4cca0a51b41"
+    "fa665f47ade37dc1d1899ce164165cea42ac3ae91cc36673cd393554a4f70bdd"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -71,7 +71,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         ),
         "embed_chunk": "e1-embed-2026.08-d80",
         "extract_claims": (
-            "e2-extract-2026.08a:d80-location-elements-1:"
+            "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
             "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),

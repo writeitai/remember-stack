@@ -21,6 +21,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import ValidationError
 
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import SourceLocator
 from rememberstack.model.conversion import SourceMapEntry
@@ -112,16 +113,17 @@ class OccurrenceProvenance(BaseModel):
 
 
 class ReusedClaimAnchor(BaseModel):
-    """A prior occurrence's identity and verbatim span, for target re-anchoring.
+    """A prior occurrence's identity and evidence spans, for window remapping.
 
-    Prior ``char_start``/``char_end`` belong to the prior document.md and
-    must not be copied. The span is re-found inside the target chunk.
+    Prior offsets belong to the prior document.md and must not be copied.
+    Each span is translated through the matching content-identical extraction
+    window (target or same-section neighbour) in the new representation.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     claim_id: UUID
-    source_span: NonEmptyString
+    evidence_spans: tuple[EvidenceSpan, ...]
 
 
 def parse_persisted_conversion_manifest(
@@ -167,6 +169,37 @@ def find_span_intervals(
         found.append((at, at + len(span)))
         cursor = at + 1
     return tuple(found)
+
+
+def resolve_spans_occurrence_provenance(
+    *,
+    spans: tuple[EvidenceSpan, ...],
+    ranges: tuple[DerivationRange, ...],
+    source_map: tuple[SourceMapEntry, ...] | None,
+) -> OccurrenceProvenance:
+    """Stamp every supporting span, then union locators and most-mediated labels.
+
+    Gaps between the spans are not part of the occurrence. A mixed OCR-and-
+    description claim keeps the more-mediated label; locators are the union of
+    converter hits, never a bounding box across unrelated intervals. If any
+    supporting span has no derivation label, the occurrence is not wholly
+    ``source_expression`` (or any other complete mode): labels stay unknown
+    and locators remain the union of hits. That is stricter than the
+    single-span overlap contract, where one interval intersecting a labeled
+    range still takes that range's labels.
+    """
+    if not spans:
+        return OccurrenceProvenance()
+    resolved = tuple(
+        resolve_occurrence_provenance(
+            char_start=span.char_start,
+            char_end=span.char_end,
+            ranges=ranges,
+            source_map=source_map,
+        )
+        for span in spans
+    )
+    return _merge_span_provenances(resolved=resolved)
 
 
 def resolve_occurrence_provenance(
@@ -298,6 +331,51 @@ def _locators_from_map(
         ):
             continue
         for locator in entry.locators:
+            key = _locator_key(locator=locator)
+            if key in seen:
+                continue
+            seen.add(key)
+            locators.append(locator)
+    if not locators:
+        return None
+    return tuple(locators)
+
+
+def _merge_span_provenances(
+    *, resolved: tuple[OccurrenceProvenance, ...]
+) -> OccurrenceProvenance:
+    """Most-mediated labels only when every span is labeled.
+
+    An unlabeled supporting span means part of the occurrence has unknown
+    derivation, so the occurrence cannot be disclosed as complete
+    ``source_expression``. Locators are still the union of converter hits.
+    """
+    locators = _locator_union(groups=tuple(item.source_locators for item in resolved))
+    if any(
+        item.evidence_mode is None or item.derivation_kind is None for item in resolved
+    ):
+        return OccurrenceProvenance(source_locators=locators)
+    winning = max(resolved, key=lambda item: _MODE_RANK[_required_mode(item=item)])
+    mode = _required_mode(item=winning)
+    winners = tuple(item for item in resolved if item.evidence_mode == mode)
+    chosen = min(winners, key=lambda item: item.derivation_kind or "")
+    return OccurrenceProvenance(
+        derivation_kind=chosen.derivation_kind,
+        evidence_mode=mode,
+        source_locators=locators,
+    )
+
+
+def _locator_union(
+    *, groups: tuple[tuple[SourceLocator, ...] | None, ...]
+) -> tuple[SourceLocator, ...] | None:
+    """Deduplicated locators from every span; empty groups contribute nothing."""
+    locators: list[SourceLocator] = []
+    seen: set[str] = set()
+    for group in groups:
+        if group is None:
+            continue
+        for locator in group:
             key = _locator_key(locator=locator)
             if key in seen:
                 continue

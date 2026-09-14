@@ -937,7 +937,7 @@
       },
       "EvidenceResult": {
         "additionalProperties": false,
-        "description": "One evidence-grain record: a claim with its provenance anchors.",
+        "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
         "properties": {
           "asserted_at": {
             "anyOf": [
@@ -1046,6 +1046,14 @@
             ],
             "title": "Document Title"
           },
+          "evidence_spans": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceSpan"
+            },
+            "title": "Evidence Spans",
+            "type": "array"
+          },
           "grouped_claim_ids": {
             "default": [],
             "items": {
@@ -1091,6 +1099,28 @@
           "is_current_testimony"
         ],
         "title": "EvidenceResult",
+        "type": "object"
+      },
+      "EvidenceSpan": {
+        "additionalProperties": false,
+        "description": "One half-open character range in a single immutable representation (D119).",
+        "properties": {
+          "char_end": {
+            "minimum": 0.0,
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "minimum": 0.0,
+            "title": "Char Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "char_start",
+          "char_end"
+        ],
+        "title": "EvidenceSpan",
         "type": "object"
       },
       "EvidenceTotal": {

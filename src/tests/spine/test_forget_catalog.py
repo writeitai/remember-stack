@@ -657,14 +657,15 @@ def _seed_evidence(*, connection: Connection) -> None:
         connection.execute(
             text(
                 "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
-                " source_locators, created_at) VALUES (:d, :chunk, :claim,"
-                " :locators, :at)"
+                " source_locators, evidence_spans, created_at)"
+                " VALUES (:d, :chunk, :claim, :locators, CAST(:spans AS jsonb), :at)"
             ),
             {
                 "d": _DEPLOYMENT_ID,
                 "chunk": chunk_id,
                 "claim": claim_id,
                 "locators": f'[{{"marker":"{body}"}}]',
+                "spans": '[{"char_start": 0, "char_end": 1}]',
                 "at": _NOW,
             },
         )

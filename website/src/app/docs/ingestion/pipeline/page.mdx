@@ -110,12 +110,12 @@ Why blocks exist: section trees snap to a stable grid; chunk packing becomes edi
 
 ### Extraction
 
-**Job:** decompose chunks into **atomic, verifiable natural-language assertions**.
+**Job:** extract **coherent, verifiable natural-language assertions** from chunks.
 
 Each claim carries:
 
 - Immutable text identity (assertion-by-a-source)
-- Grounding to character spans (and through them to page/region/time locators)
+- An origin span on the claim row, plus the complete list of supporting body ranges on the selected occurrence (and through those ranges to page/region/time locators)
 - Source-asserted validity interval when the source states one (`asserted` validity — testimony, not system verdict)
 - Extractor / representation / structure generation coordinates (basis)
 

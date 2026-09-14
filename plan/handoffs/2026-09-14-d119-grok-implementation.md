@@ -90,3 +90,20 @@ PR URL/head SHA; files/behavior changed; how version reuse works; test commands 
 results; cost/quality evidence actually obtained; both review verdicts and fixes;
 remaining risks and follow-ups. Explicitly distinguish mocked processing tests
 from paid/model semantic evidence. The parent reviews this final output and diff.
+
+## Parent integration update, 2026-09-14
+
+The user has authorized parent final merges/releases and CLA assent. Parent
+checked this PR's CLA. You still finish with a reviewed PR; do not merge yourself.
+Design PR #401 is now merged as `4a803c1d` on main. It accepts subsequent D120–D123
+work, but does not expand this D119 implementation: finish its original bounded
+multi-span scope. The later lanes integrate your completed result.
+
+Before final checks/review, read `/tmp/ugm-processing-supervision.md` and the
+parent's preliminary draft observations at
+`/tmp/ugm-d119-grok-20260914/parent-review-notes.md`. Recheck those observations
+against your finished code; they are not a demand to preserve unfinished code.
+Docker Desktop is available with a cached PostgreSQL 19beta3 CI image. Use an
+isolated DB/container and preserve other lanes. Keep the authorized CLA checkbox
+when rewriting the PR body. Rebase on main and resolve decision-log ordering so
+D119 precedes D120–D123, preserving all decisions.

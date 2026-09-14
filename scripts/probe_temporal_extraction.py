@@ -10,6 +10,9 @@ from uuid import UUID
 
 from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterSettings
+from rememberstack.core.blockizer import blockize
+from rememberstack.core.source_passages import build_passage_catalog
+from rememberstack.core.source_passages import render_passage_catalog
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
@@ -76,6 +79,14 @@ def _gate_verdict(
     """Run the real D32 grounding gate on one live model claim."""
     chunk_source = _probe_source(source_timestamp=source_timestamp)
     chunk = _probe_chunk(source=source)
+    kept_ranges = ((0, len(source)),)
+    catalog = build_passage_catalog(
+        blocks=blockize(document_md=source),
+        target=chunk,
+        previous=None,
+        following=None,
+        kept_ranges=kept_ranges,
+    )
     result = _grounded_claim(
         candidate=claim,
         source=chunk_source,
@@ -84,7 +95,8 @@ def _gate_verdict(
         index=0,
         document_md=source,
         flagged_spans=set(),
-        kept_ranges=((0, len(source)),),
+        kept_ranges=kept_ranges,
+        catalog=catalog,
     )
     if isinstance(result, GroundingRejection):
         return {
@@ -133,7 +145,20 @@ def run_probe(*, cases_path: Path, output_path: Path, model: str) -> int:
             request=ModelRequest(
                 model=model,
                 temperature=0.0,
-                prompt=_CLAIMIFY_PROMPT.format(keeps=f"- {source}", bundle=bundle),
+                prompt=_CLAIMIFY_PROMPT.format(
+                    keeps=f"- {source}",
+                    bundle=bundle,
+                    passages=render_passage_catalog(
+                        catalog=build_passage_catalog(
+                            blocks=blockize(document_md=source),
+                            target=_probe_chunk(source=source),
+                            previous=None,
+                            following=None,
+                            kept_ranges=((0, len(source)),),
+                        ),
+                        document_md=source,
+                    ),
+                ),
             ),
             response_type=ClaimifyResponse,
         )

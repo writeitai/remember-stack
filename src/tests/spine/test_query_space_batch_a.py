@@ -609,15 +609,18 @@ class _Corpus:
             connection.execute(
                 text(
                     "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
-                    " derivation_kind, evidence_mode, source_locators, created_at)"
+                    " derivation_kind, evidence_mode, source_locators,"
+                    " evidence_spans, created_at)"
                     " VALUES (:deployment, :chunk, :claim, :derivation,"
-                    " 'source_expression', '[]'::jsonb, :at)"
+                    " 'source_expression', '[]'::jsonb,"
+                    " CAST(:spans AS jsonb), :at)"
                 ),
                 {
                     "deployment": _DEPLOYMENT_ID,
                     "chunk": self.chunk[chunk_key],
                     "claim": self.claim[claim_key],
                     "derivation": derivation,
+                    "spans": '[{"char_start": 0, "char_end": 1}]',
                     "at": at,
                 },
             )

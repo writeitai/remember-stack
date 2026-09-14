@@ -524,6 +524,20 @@ class FactResult(BaseModel):
     support: FactSupport = FactSupport.CURRENT
 
 
+class EvidenceSpan(BaseModel):
+    """One half-open supporting range on the selected occurrence (D119)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    char_start: int = Field(ge=0)
+    char_end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Self:
+        if self.char_end <= self.char_start:
+            raise ValueError("char_end must be greater than char_start")
+        return self
+
+
 class EvidenceResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     claim_id: UUID
@@ -533,6 +547,7 @@ class EvidenceResult(BaseModel):
     source_span: str
     char_start: int
     char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     is_attributed: bool
     is_current_testimony: bool
     asserted_at: UTCDateTime | None = None

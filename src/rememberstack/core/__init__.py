@@ -67,6 +67,13 @@ from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.section_snap import SECTION_ROLES
 from rememberstack.core.section_snap import snap_sections
+from rememberstack.core.source_passages import build_passage_catalog
+from rememberstack.core.source_passages import canonicalize_spans
+from rememberstack.core.source_passages import EvidenceSpan
+from rememberstack.core.source_passages import MAX_EVIDENCE_SPANS
+from rememberstack.core.source_passages import PassageCatalog
+from rememberstack.core.source_passages import remap_evidence_spans
+from rememberstack.core.source_passages import resolve_source_refs
 from rememberstack.core.storage_routing import HOT_MIME_PREFIXES
 from rememberstack.core.storage_routing import storage_class_for
 from rememberstack.core.structure_skeleton import analyze_skeleton
@@ -123,6 +130,13 @@ __all__ = (
     "source_identity_hash",
     "SECTION_ROLES",
     "snap_sections",
+    "EvidenceSpan",
+    "MAX_EVIDENCE_SPANS",
+    "PassageCatalog",
+    "build_passage_catalog",
+    "canonicalize_spans",
+    "remap_evidence_spans",
+    "resolve_source_refs",
     "analyze_skeleton",
     "deterministic_section_role",
     "LONG_TITLE",

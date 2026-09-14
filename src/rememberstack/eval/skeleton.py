@@ -165,6 +165,7 @@ def _s5(engine: QueryEngine, deployment_id: UUID, case: CanaryCase) -> bool:
         and all(
             claim.char_end - claim.char_start == len(claim.source_span)
             and claim.doc_id in source_docs
+            and all(span.char_end > span.char_start for span in claim.evidence_spans)
             for claim in hydrated.evidence
         )
     )

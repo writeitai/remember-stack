@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import NormalizedRegion
@@ -16,6 +17,9 @@ from rememberstack.model.occurrence_provenance import ProvenanceMetadataCorruptE
 from rememberstack.model.occurrence_provenance import resolve_occurrence_provenance
 from rememberstack.model.occurrence_provenance import (
     resolve_reused_occurrence_provenance,
+)
+from rememberstack.model.occurrence_provenance import (
+    resolve_spans_occurrence_provenance,
 )
 
 _OCR_REGION = ImageRegionLocator(
@@ -123,6 +127,36 @@ def test_same_mode_kind_tie_is_deterministic() -> None:
     )
     assert resolved.evidence_mode == "source_expression"
     assert resolved.derivation_kind == "ocr"
+
+
+def test_disjoint_spans_union_locators_without_filling_the_gap() -> None:
+    """Two supporting ranges union locators; the unlabeled gap does not vote."""
+    resolved = resolve_spans_occurrence_provenance(
+        spans=(
+            EvidenceSpan(char_start=4, char_end=16),
+            EvidenceSpan(char_start=42, char_end=55),
+        ),
+        ranges=_RANGES,
+        source_map=_MAP,
+    )
+    assert resolved.evidence_mode == "model_interpretation"
+    assert resolved.derivation_kind == "vlm_description"
+    assert resolved.source_locators == (_OCR_REGION, _WHOLE_IMAGE)
+
+
+def test_mixed_known_and_unknown_spans_are_not_source_expression() -> None:
+    """An unlabeled supporting span is not wholly direct source testimony."""
+    resolved = resolve_spans_occurrence_provenance(
+        spans=(
+            EvidenceSpan(char_start=4, char_end=16),
+            EvidenceSpan(char_start=80, char_end=90),
+        ),
+        ranges=_RANGES,
+        source_map=_MAP,
+    )
+    assert resolved.evidence_mode is None
+    assert resolved.derivation_kind is None
+    assert resolved.source_locators == (_OCR_REGION,)
 
 
 def test_reused_unique_span_reanchors_to_target_offsets() -> None:
