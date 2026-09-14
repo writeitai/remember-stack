@@ -137,7 +137,7 @@ eight contextual nomination PostgreSQL tests passed. A ninth test initially
 failed because its call used the wrong keyword for the existing snapshot-hash
 helper; the test was corrected and its final result is recorded subsequently.
 Changed storage, ledger and profile modules passed Pyright. Grok replaced the
-temporary passage type with D119's actual SourcePassage and passed15 core tests,
+temporary passage type with D119's actual SourcePassage and passed 15 core tests,
 ruff and Pyright. Both minor earlier review nits are now addressed.
 
 The handler split and complete source-reference/reuse wiring are still being
@@ -189,10 +189,10 @@ is claimed before the authorized Gemma/Vertex conv-42 run.
 ## Final integration checks before main rebase
 
 Grok completed and pushed the worker fixtures (`93f3acfc`) and Full-v31 pins
-(`c275d724`). The worker lane passed46 PostgreSQL-free tests and30 PostgreSQL
-chain/reuse cases (28 initially, the remaining2 after updating the explicit
+(`c275d724`). The worker lane passed 46 PostgreSQL-free tests and 30 PostgreSQL
+chain/reuse cases (28 initially, the remaining 2 after updating the explicit
 Selection-reuse versus full-Claimify-reuse expectations). The protocol lane
-passed184 benchmark unit tests, Ruff and Pyright. Its serialized synthetic
+passed 184 benchmark unit tests, Ruff and Pyright. Its serialized synthetic
 prepare fingerprint is
 `ee7d277f10e9b7d486f75f5221a7a174386248c3b5fc79c60815bcb7be1700b3`.
 This fingerprint is not a live processing run.
@@ -204,11 +204,11 @@ the existing dynamic snapshot API. The full type pass additionally identified
 an overly broad UUID annotation in an E3 test double; that was narrowed to UUID.
 The remaining protocol suffix note is resolved by the Full31 pin commit.
 
-Parent's further PostgreSQL context and hard-forget suite passed15 tests
+Parent's further PostgreSQL context and hard-forget suite passed 15 tests
 (54.52 seconds). It proves both new source stores are scrubbed while independent
 control data survives, repeated scrubs remain idempotent, and the actual
 Selection and Claimify publication APIs reject a late response after forget
-starts. The59 core/profile unit tests passed (34.58 seconds). Repository test
+starts. The 59 core/profile unit tests passed (34.58 seconds). Repository test
 inventory and all five import-boundary contracts pass.
 
 The final wording names the earlier evidence block “EARLIER REFERENCES” and
@@ -218,8 +218,8 @@ and production defaults are unchanged. This lets an isolated experiment compose
 existing providers honestly without pretending a reader-only Gemma variant
 configures processing.
 
-The integrated actual500-version proof completed successfully in1,258.64 seconds
-(20m58s). It retained the same two-span claim identity across the500 occurrences,
+The integrated actual 500-version proof completed successfully in 1,258.64 seconds
+(20m58s). It retained the same two-span claim identity across the 500 occurrences,
 avoided repeated target extraction calls, and verified the actual fact evidence
 recount remained one source lineage. No model-quality inference follows from
 these canned responses.
@@ -229,6 +229,17 @@ the two conflicts were generation pins, resolved to the combined Full31 values.
 CI on runtime head `e7553a1a` passed Quality (including the full type checker),
 docs build, adapters, Compose quickstart and contract smoke. Its unit lane had
 1,666 passes and two old temporal-prompt fixtures missing the new `cards` format
-argument. Parent supplied an empty reference block; all19 temporal tests then
+argument. Parent supplied an empty reference block; all 19 temporal tests then
 passed. This is a fixture update, not a runtime change. Final integration lanes
 and Antigravity final review are being collected before merge.
+
+
+## CI retrieval fixture correction
+
+CI on `1554e6e6` passed unit, worker integration, adapter integration, Quality,
+contract smoke and Compose quickstart. The surfaces lane exposed one stale
+shared retrieval fixture: it registered and drained Selection but omitted the
+new GROUND_CLAIMS stage, so its corpus never reached Claimify or normalization.
+Parent added the same extraction handler for GROUND_CLAIMS and included that
+stage in its drain loop. The direct retrieval suite is being rerun against
+PostgreSQL; this change does not alter runtime retrieval behavior.

@@ -288,17 +288,16 @@ class _ApiRig:
                 params=_PARAMS,
             ),
         )
-        registry.register(
-            stage=PipelineStage.EXTRACT_CLAIMS,
-            handler=ExtractClaimsHandler(
-                catalog=claim_catalog,
-                chunk_catalog=chunk_catalog,
-                artifact_store=artifact_store,
-                model_provider=self.provider,
-                settings=E2Settings(),
-                chunker_version=generation,
-            ),
+        extraction = ExtractClaimsHandler(
+            catalog=claim_catalog,
+            chunk_catalog=chunk_catalog,
+            artifact_store=artifact_store,
+            model_provider=self.provider,
+            settings=E2Settings(),
+            chunker_version=generation,
         )
+        registry.register(stage=PipelineStage.EXTRACT_CLAIMS, handler=extraction)
+        registry.register(stage=PipelineStage.GROUND_CLAIMS, handler=extraction)
         facts = FactCatalog(engine=engine)
         profile_refresher = EntityProfileRefresher(
             engine=engine,
@@ -417,6 +416,7 @@ class _ApiRig:
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
