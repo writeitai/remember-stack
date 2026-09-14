@@ -91,6 +91,7 @@ assertion. People and events are entities, not the proposition. "Nate won
 Tournament A", "Nate participated in Tournament A", and "Nate enjoyed
 Tournament A" share entities but must become different assertions: a win may
 imply participation, but recording only participation loses the result.
+Participation or enjoyment of that tournament is not a win assertion.
 An attributed stance ("X said / believes / opposes Y") is an assertion about
 X's testimony, not an unqualified fact about Y.
 SOURCE TIMESTAMP is when the source spoke, never a fallback for when the
@@ -125,6 +126,7 @@ assertions.
 
 EXAMPLES
 - "Nate won Tournament A" → keep a winning assertion, not only participation.
+- "Nate participated in Tournament A" → participation, not a win.
 - "Nate enjoyed Tournament A" → a different assertion from winning.
 - "Nate said he won Tournament A" → attributed stance on Nate, not an
   unqualified win.

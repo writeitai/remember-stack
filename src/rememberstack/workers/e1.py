@@ -64,7 +64,7 @@ E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
-    f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-1"
+    f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-2"
 )
 """Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
 coherent claims cite engine-labeled source passages; occurrence rows store

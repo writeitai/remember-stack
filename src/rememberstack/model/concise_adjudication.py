@@ -83,8 +83,10 @@ class PromptSupportMove(BaseModel):
 class PromptFactDecision(BaseModel):
     """Identity, date changes and support assignments using this attempt's names.
 
-    The engine translates these names through the exact prepared attempt. A name
-    from another attempt, even the same spelling F1, is invalid.
+    The engine translates these names through the exact prepared attempt's
+    mapping. The same spelling F1 on a later attempt names that later attempt's
+    first fact. A reply for an older attempt is rejected by compare-and-swap
+    on attempt identity and input fingerprint, not by the handle spelling.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

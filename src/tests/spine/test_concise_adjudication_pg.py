@@ -237,6 +237,47 @@ def test_deleted_source_cannot_publish_translated_decision(
     )
 
 
+def test_stale_attempt_is_rejected_by_cas_not_f1_spelling(
+    database_engine: Engine,
+) -> None:
+    """F1 still translates on a later mapping; CAS rejects the older attempt."""
+    case = WriterCase(engine=database_engine)
+    first_claim, _, fact = case.first()
+    case.stage(day=12)
+    first = case.writer.prepare(deployment_id=case.dep, subject_entity_id=case.subject)
+    assert first is not None and first.decision is None
+    _presentation, first_mapping = project_concise_inputs(snapshot=first.inputs)
+    stale = translate_prompt_decision(
+        response=PromptFactDecision.model_validate(
+            {"target": "F1", "confidence": 0.9, "rationale": "Same win."}
+        ),
+        mapping=first_mapping,
+    )
+    assert stale.target.fact_id == fact
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE claims SET is_current_testimony=false WHERE claim_id=:id"),
+            {"id": first_claim},
+        )
+    second = case.writer.prepare(deployment_id=case.dep, subject_entity_id=case.subject)
+    assert second is not None
+    assert second.attempt_id != first.attempt_id
+    assert not case.catalog.publish_decision(
+        deployment_id=case.dep, prepared=first, decision=stale
+    )
+    _presentation, second_mapping = project_concise_inputs(snapshot=second.inputs)
+    later = translate_prompt_decision(
+        response=PromptFactDecision.model_validate(
+            {"target": "F1", "confidence": 0.9, "rationale": "Same win."}
+        ),
+        mapping=second_mapping,
+    )
+    assert later.target.fact_id == fact
+    assert case.catalog.publish_decision(
+        deployment_id=case.dep, prepared=second, decision=later
+    )
+
+
 def test_unhydrated_window_witness_is_named_but_not_citable(
     database_engine: Engine,
 ) -> None:

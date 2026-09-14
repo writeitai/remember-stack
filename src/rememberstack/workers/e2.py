@@ -175,6 +175,7 @@ attributed to different speakers distinct, even when they share a topic.
 "Nate won Tournament A", "Nate participated in Tournament A" and "Nate enjoyed
 Tournament A" assert different things. Preserve what the source actually says;
 do not replace a win with the weaker statement that Nate participated.
+Do not turn a report of participation or enjoyment into a win.
 
 Drop unattributed opinions, advice, hypotheticals, generic truisms, questions,
 section introductions/conclusions and "we don't know" statements. An attributed
@@ -207,6 +208,7 @@ and connection" when the source clearly connects them. Do not combine unrelated
 events, independently dated events, or statements attributed to different
 speakers. Winning, participating and enjoying the same tournament are distinct
 assertions; preserving only participation would lose an asserted win.
+Participation or enjoyment alone does not establish a win.
 
 For each claim return:
 - claim_text: the standalone assertion.

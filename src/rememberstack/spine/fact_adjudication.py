@@ -30,9 +30,9 @@ from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
-RELATION_APPLICATION_VERSION = "relation-adjudicator-2026.09d:concise-handles-1"
-OBSERVATION_APPLICATION_VERSION = "obs-adjudicator-2026.09d:concise-handles-1"
-FACT_NORMALIZER_VERSION = "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-1"
+RELATION_APPLICATION_VERSION = "relation-adjudicator-2026.09d:concise-handles-2"
+OBSERVATION_APPLICATION_VERSION = "obs-adjudicator-2026.09d:concise-handles-2"
+FACT_NORMALIZER_VERSION = "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-2"
 FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
 
 _FACT_PROMPT = """PURPOSE
@@ -79,6 +79,10 @@ DECISION RULES
   source or the date spelling differs.
 - Keep a stronger assertion separate when the candidate is weaker: a win is not
   merely participation, and a win is not enjoyment.
+- The converse is also true. Participation or enjoyment of the same event is
+  not positive evidence that an existing winning fact holds. Attach only when
+  incoming testimony supports the full stored proposition, not merely
+  compatible surrounding context.
 - Preserve attribution. "Nate claimed to win" is not automatically "Nate won".
 - Equal text, equal entities, or equal dates can still be distinct events
   (another tournament, another tenure). Missing or different dates can still be
@@ -126,9 +130,15 @@ EXAMPLES
   separately.
 - Incoming "won Tournament A"; candidate "participated in Tournament A": do
   not lose the stronger winning assertion.
+- Incoming "participated in Tournament A"; candidate "won Tournament A":
+  compatible surrounding context, not support for the win; keep participation
+  separate.
+- Incoming "enjoyed Tournament A"; candidate "won Tournament A": same event,
+  different proposition; do not attach enjoyment as support for the win.
 - Incoming correction of the same win from 5 November to 6 November; candidate
-  "won on 5 November": attach and replace that fact's chosen window with cited
-  evidence.
+  "won Tournament A" with chosen window 5 November: attach and replace that
+  chosen window with cited C-names. The stored statement stays the date-neutral
+  win; the writer cannot rewrite it.
 - Incoming "won Tournament B"; candidate "won Tournament A": distinct winning
   fact even if the wording or dates look similar.
 - Incoming "Nate claimed to win"; candidate "Nate won": preserve attribution.

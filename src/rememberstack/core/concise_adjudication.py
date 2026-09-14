@@ -514,8 +514,11 @@ def translate_prompt_decision(
 ) -> FactApplicationDecision:
     """Turn one closed handle answer into the existing writer decision.
 
-    Unknown names, wrong kinds, names from another attempt, and unhydrated
-    witness names fail. There is no fuzzy recovery.
+    Unknown names, wrong kinds, and unhydrated witness names fail. There is
+    no fuzzy recovery. Handle spellings such as F1 are rebuilt from this
+    mapping only; they do not prove which attempt produced the reply. A stale
+    answer is rejected by the prepared attempt's compare-and-swap and
+    fingerprint, not by this translator.
     """
     declared = {fact.handle for fact in response.new_facts}
     for handle in declared:

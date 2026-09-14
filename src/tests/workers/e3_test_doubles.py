@@ -193,10 +193,7 @@ def same_fact_application_answer(*, prompt: str) -> dict[str, object]:
     return {
         "target": "fixture",
         "new_facts": [
-            {
-                "handle": "fixture",
-                "assertion": snapshot["incoming_assertion"],
-            }
+            {"handle": "fixture", "assertion": snapshot["incoming_assertion"]}
         ],
         "confidence": 0.9,
         "rationale": "First fixture assertion.",

@@ -24,7 +24,11 @@ distinct from raw world dates; attribution and testimony currency; relevant
 support/contradiction links; window-witness links; and original assertions and
 their current assignment needed for any permitted support move. Preserve input
 limits/truncation disclosures and existing confidence/evidence information that
-can affect the decision. Context-only facts are identified as non-editable.
+can affect the decision. This projection adds no context-only or opposite-plane
+fact payload: D123 does not produce one, and the prepared snapshot contains only
+same-plane candidates. A future context-only payload would need an explicit
+writer and adapter contract. Do not add editable flags, a checker, or a mapping
+registry here.
 
 Remove deployment IDs, generation strings, membership hashes, repeated structural
 keys and database audit timestamps that provide no semantic authority. Do not
@@ -49,7 +53,9 @@ Provide a closed model-facing response schema accepting those handles for every
 existing operation, including window witnesses, support moves and contradictions.
 Translate it through the exact prepared attempt's mapping into the existing
 `FactApplicationDecision` and writer. Unknown handles, wrong kinds, ambiguous
-names and context-only mutation targets fail validation; never recover by guessing.
+names and unhydrated witness names fail validation; never recover by guessing.
+A reply for another attempt is rejected by that attempt's compare-and-swap and
+input fingerprint, not by the spelling F1.
 
 The renderer/response-adapter version is included in the adjudicator generation
 and prepared-input fingerprint; no new registry is required. Deterministically
@@ -75,7 +81,8 @@ apply. No new data store, model call, lock spanning inference or scheduler.
 
 ## Acceptance evidence
 
-- Round-trip every permitted response reference and reject wrong/stale handles.
+- Round-trip every permitted response reference and reject unknown or wrong-kind
+  handles. Stale replies fail the existing attempt/CAS/fingerprint checks.
 - Compare semantic field membership before/after projection, including identical
   text in different sources, attributed/withdrawn claims and correction witnesses.
 - Exercise support moves, new handles, explicit date clearing, contradictions,
