@@ -83,7 +83,7 @@ There is **no** `confidence` field on the shipped fact record.
 | --- | --- |
 | `claim_id`, `doc_id`, `chunk_id` | Anchors |
 | `claim_text`, `source_span`, `char_start`, `char_end` | Text + **origin** grounding (the target-chunk owner) |
-| `evidence_spans` | Complete supporting body ranges for the **selected occurrence** (`{char_start, char_end}` objects). Empty when no occurrence list is selected; origin `char_start`/`char_end` are not substituted as complete support. |
+| `evidence_spans` | Complete supporting body ranges for the **origin occurrence** identified by `chunk_id` (`{char_start, char_end}` objects in that chunk's representation). Empty when that occurrence list is missing; origin scalars are not substituted as complete support. Current-version remapped positions are on `memory_v1.claim_occurrences_live`. |
 | `is_current_testimony` | Currency filter result |
 | `asserted_at`, `claim_valid_*` | When the source made the statement, and when the claim says it happened or was true (source-asserted, not system belief) |
 | `corroboration_count`, `grouped_claim_ids` | Duplicate collapse metadata when present |

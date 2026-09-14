@@ -1536,8 +1536,8 @@ class QueryEngine:
         """The S5 chain: relation → evidence claims → source documents.
 
         Composite grain: the fact, its supporting evidence-grain claims
-        (verbatim spans and offsets against the representation they were cut
-        from), and the ID-addressed document handles. Hydrate-by-ID is the
+        (origin-chunk spans and offsets against the representation they were
+        cut from), and the ID-addressed document handles. Hydrate-by-ID is the
         AUDIT deepening hop: an invalidated relation is returned with its
         invalidation disclosed in `validity` (D48 re-reads and discloses —
         it does not refuse audit access); current-fact questions route
@@ -3910,11 +3910,12 @@ _CURRENT_FACT_EVIDENCE = text(
           ON document.deployment_id = claim.deployment_id
          AND document.doc_id = claim.doc_id
         LEFT JOIN LATERAL (
-            SELECT occurrence.evidence_spans
-            FROM memory_v1.claim_occurrences_live AS occurrence
-            WHERE occurrence.deployment_id = claim.deployment_id
-              AND occurrence.claim_id = claim.claim_id
-            ORDER BY occurrence.chunk_id
+            SELECT cc.evidence_spans
+            FROM chunk_claims cc
+            WHERE cc.deployment_id = claim.deployment_id
+              AND cc.claim_id = claim.claim_id
+              AND cc.chunk_id = claim.chunk_id
+            ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
             LIMIT 1
         ) AS occ ON true
     )
@@ -3961,11 +3962,12 @@ _CONFIRM_CLAIMS_CURRENT = text(
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     LEFT JOIN LATERAL (
-        SELECT occurrence.evidence_spans
-        FROM memory_v1.claim_occurrences_live AS occurrence
-        WHERE occurrence.deployment_id = c.deployment_id
-          AND occurrence.claim_id = c.claim_id
-        ORDER BY occurrence.chunk_id
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.deployment_id = c.deployment_id
+          AND cc.claim_id = c.claim_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
@@ -3987,11 +3989,12 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
     LEFT JOIN LATERAL (
-        SELECT occurrence.evidence_spans
-        FROM memory_v1.claim_occurrences_live AS occurrence
-        WHERE occurrence.deployment_id = c.deployment_id
-          AND occurrence.claim_id = c.claim_id
-        ORDER BY occurrence.chunk_id
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.deployment_id = c.deployment_id
+          AND cc.claim_id = c.claim_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
     JOIN LATERAL (
@@ -4021,11 +4024,10 @@ _CONFIRM_CLAIMS_HISTORY = text(
     LEFT JOIN LATERAL (
         SELECT cc.evidence_spans
         FROM chunk_claims cc
-        JOIN chunks ch ON ch.chunk_id = cc.chunk_id
         WHERE cc.claim_id = c.claim_id
           AND cc.deployment_id = c.deployment_id
-          AND ch.version_id = c.version_id
-        ORDER BY cc.created_at
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
@@ -4109,7 +4111,8 @@ _HYDRATE_EVIDENCE_CLAIMS = text(
         FROM chunk_claims cc
         WHERE cc.claim_id = c.claim_id
           AND cc.deployment_id = c.deployment_id
-        ORDER BY cc.created_at DESC
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
         LIMIT 1
     ) AS occ ON true
     WHERE e.deployment_id = :deployment_id

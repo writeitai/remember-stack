@@ -286,8 +286,10 @@ class EvidenceResult(BaseModel):
     """One evidence-grain record: a claim with its provenance anchors.
 
     ``source_span`` / ``char_start`` / ``char_end`` are the immutable origin
-    of the claim (the target-chunk owner). Complete body support for the
-    selected occurrence is ``evidence_spans``.
+    of the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.
+    ``evidence_spans`` is the complete body support for the same origin
+    occurrence, in that chunk's representation. Current-version remapped
+    positions live on ``memory_v1.claim_occurrences_live``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

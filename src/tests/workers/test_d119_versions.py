@@ -22,6 +22,7 @@ from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
+from rememberstack.model import P1ChunkText
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ResolverConfig
@@ -45,6 +46,7 @@ from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import QueryEngine
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
@@ -68,9 +70,13 @@ from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("11930000-0000-0000-0000-000000000001")
-_PARAMS = ChunkerParams(token_budget=80)
+_PARAMS = ChunkerParams(token_budget=400)
 _VERSION_COUNT = 500
-_NOTES = "Alice Novak joined Acme in 2024."
+_PERSON = "Alice Novak is an engineer at Acme."
+_JOINED = "She joined Acme in 2024."
+_NOTES = f"{_PERSON}\n\n{_JOINED}"
+_CLAIM_TEXT = "Alice Novak joined Acme in 2024."
+_PASSAGE = re.compile(r"\[(S\d+)\] TARGET \(origin-eligible\):\n(.*?)(?:\n\n|\Z)", re.S)
 _E2_STAGES = (
     PipelineStage.CONVERT,
     PipelineStage.STRUCTURE,
@@ -109,18 +115,41 @@ def _route(prompt: str, type_name: str) -> dict[str, object]:
     if type_name == "SelectionResponse":
         match = _TARGET_PATTERN.search(prompt)
         span = match.group(1).strip() if match is not None else ""
-        if _NOTES in span:
-            return {"candidates": [{"source_span": _NOTES, "outcome": "keep"}]}
+        candidates: list[dict[str, object]] = []
+        if _PERSON in span:
+            candidates.append({"source_span": _PERSON, "outcome": "keep"})
+        if _JOINED in span:
+            candidates.append({"source_span": _JOINED, "outcome": "keep"})
+        if candidates:
+            return {"candidates": candidates}
         excerpt = span.split("\n", 1)[0][:80] or "Appendix"
         return {"candidates": [{"source_span": excerpt, "outcome": "drop_no_info"}]}
     if type_name == "ClaimifyResponse":
-        label_match = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\):", prompt)
-        label = label_match.group(1) if label_match is not None else "S1"
+        origin = None
+        support = None
+        for match in _PASSAGE.finditer(prompt):
+            body = match.group(2).strip()
+            if body == _JOINED:
+                origin = match.group(1)
+            elif body == _PERSON:
+                support = match.group(1)
+        if (
+            _JOINED in prompt
+            and _PERSON in prompt
+            and (origin is None or support is None)
+        ):
+            raise AssertionError(
+                f"notes Claimify must cite two origin-eligible labels, got {origin=} {support=}"
+            )
+        if origin is None:
+            fallback = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\):", prompt)
+            origin = fallback.group(1) if fallback is not None else "S1"
+        refs = [origin] if support is None else [origin, support]
         return {
             "claims": [
                 {
-                    "claim_text": _NOTES,
-                    "source_refs": [label],
+                    "claim_text": _CLAIM_TEXT,
+                    "source_refs": refs,
                     "entailment_self_verdict": True,
                 }
             ]
@@ -149,7 +178,53 @@ def _route(prompt: str, type_name: str) -> dict[str, object]:
     raise AssertionError(f"unexpected response type {type_name}")
 
 
-@pytest.fixture(scope="module")
+class _NullSearchIndex:
+    """P1 stub: these proofs hydrate by id and never nominate."""
+
+    def search_claims(self, **_: object) -> tuple[str, ...]:
+        """Return no semantic nominations; the test hydrates known ids."""
+        return ()
+
+    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical nominations."""
+        return ()
+
+    def search_chunks(self, **_: object) -> tuple[str, ...]:
+        """Return no semantic chunk nominations."""
+        return ()
+
+    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+        """Return no lexical chunk nominations."""
+        return ()
+
+    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+        """Supply no search-index text; source coordinates come from the spine."""
+        return {}
+
+    def search_facts(self, **_: object) -> tuple[str, ...]:
+        """Return no fact nominations."""
+        return ()
+
+
+def _span_text(*, document_md: str, span: object) -> str:
+    """Slice one stored {char_start, char_end} object out of document_md."""
+    assert isinstance(span, dict)
+    start = int(span["char_start"])
+    end = int(span["char_end"])
+    return document_md[start:end]
+
+
+def _query_engine(*, engine: Engine) -> QueryEngine:
+    """Hydration surface over the same spine as the version rig."""
+    return QueryEngine(
+        engine=engine,
+        search_index=_NullSearchIndex(),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+
+
+@pytest.fixture
 def database_engine() -> Iterator[Engine]:
     """Apply structural head for the 500-version lineage proof."""
     try:
@@ -378,12 +453,8 @@ class _VersionRig:
         return count
 
 
-def test_500_versions_reuse_handler_remap_and_lineage_facts(
-    database_engine: Engine, tmp_path: Path
-) -> None:
-    """Unchanged notes reuse the same claim IDs; facts stay one lineage."""
-    with database_engine.begin() as connection:
-        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+def _bootstrap(database_engine: Engine) -> None:
+    """Fresh deployment for a version-reuse proof."""
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=_DEPLOYMENT_ID,
@@ -395,6 +466,80 @@ def test_500_versions_reuse_handler_remap_and_lineage_facts(
             corpusfs_bucket="mem://corpusfs",
         )
     )
+
+
+def test_envelope_origin_spans_match_identified_chunk_after_reuse(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """After an offset shift, API spans still belong to the origin chunk."""
+    _bootstrap(database_engine)
+    rig = _VersionRig(engine=database_engine, root=tmp_path)
+    rig.observe(extra="x")
+    rig.drain(stages=_E2_STAGES + _E3_STAGES)
+    rig.observe(extra="xx")
+    rig.drain(stages=_E2_STAGES)
+    origin_md = _document(extra="x")
+    shifted_md = _document(extra="xx")
+    with database_engine.connect() as connection:
+        claim = (
+            connection.execute(
+                text("SELECT claim_id, chunk_id FROM claims WHERE claim_text = :text"),
+                {"text": _CLAIM_TEXT},
+            )
+            .mappings()
+            .one()
+        )
+        relation_id = connection.execute(
+            text("SELECT relation_id FROM relations")
+        ).scalar_one()
+    query = _query_engine(engine=database_engine)
+    hydrated = query.hydrate_relation(
+        deployment_id=_DEPLOYMENT_ID, relation_id=relation_id
+    )
+    current, _, _ = query._confirm_claims(
+        deployment_id=_DEPLOYMENT_ID, claim_ids=(claim["claim_id"],)
+    )
+    history, _, _ = query._confirm_claims(
+        deployment_id=_DEPLOYMENT_ID, claim_ids=(claim["claim_id"],), current_only=False
+    )
+    for evidence in (*hydrated.evidence, *current, *history):
+        assert evidence.chunk_id == claim["chunk_id"]
+        assert len(evidence.evidence_spans) == 2
+        origin_text = origin_md[
+            evidence.evidence_spans[0].char_start : evidence.evidence_spans[0].char_end
+        ]
+        support_text = origin_md[
+            evidence.evidence_spans[1].char_start : evidence.evidence_spans[1].char_end
+        ]
+        assert origin_text == _JOINED
+        assert support_text == _PERSON
+        shifted = shifted_md[
+            evidence.evidence_spans[0].char_start : evidence.evidence_spans[0].char_end
+        ]
+        assert shifted != _JOINED
+    with database_engine.connect() as connection:
+        live = (
+            connection.execute(
+                text(
+                    "SELECT occ.evidence_spans FROM memory_v1.claim_occurrences_live occ"
+                    " JOIN claims c ON c.claim_id = occ.claim_id"
+                    " WHERE c.claim_text = :text AND occ.chunk_id <> c.chunk_id"
+                ),
+                {"text": _CLAIM_TEXT},
+            )
+            .mappings()
+            .one()
+        )
+    live_spans = live["evidence_spans"]
+    assert _span_text(document_md=shifted_md, span=live_spans[0]) == _JOINED
+    assert _span_text(document_md=shifted_md, span=live_spans[1]) == _PERSON
+
+
+def test_500_versions_reuse_handler_remap_and_lineage_facts(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """Unchanged two-span notes reuse the same claim IDs; recount stays one lineage."""
+    _bootstrap(database_engine)
     rig = _VersionRig(engine=database_engine, root=tmp_path)
     rig.observe(extra="x")
     rig.drain(stages=_E2_STAGES + _E3_STAGES)
@@ -407,38 +552,45 @@ def test_500_versions_reuse_handler_remap_and_lineage_facts(
     with database_engine.connect() as connection:
         unique_claims = connection.execute(
             text("SELECT count(*) FROM claims WHERE claim_text = :text"),
-            {"text": _NOTES},
+            {"text": _CLAIM_TEXT},
         ).scalar_one()
-        occurrences = connection.execute(
-            text(
-                "SELECT count(*) FROM chunk_claims cc"
-                " JOIN claims c ON c.claim_id = cc.claim_id"
-                " WHERE c.claim_text = :text"
-            ),
-            {"text": _NOTES},
-        ).scalar_one()
-        span_row = (
+        occurrence_rows = (
             connection.execute(
                 text(
-                    "SELECT cc.evidence_spans"
-                    " FROM chunk_claims cc"
+                    "SELECT cc.evidence_spans FROM chunk_claims cc"
                     " JOIN claims c ON c.claim_id = cc.claim_id"
+                    " JOIN chunks ch ON ch.chunk_id = cc.chunk_id"
+                    " JOIN document_versions dv ON dv.version_id = ch.version_id"
                     " WHERE c.claim_text = :text"
-                    " ORDER BY cc.created_at DESC, cc.chunk_id"
-                    " LIMIT 1"
+                    " ORDER BY dv.version_no, cc.chunk_id"
                 ),
-                {"text": _NOTES},
+                {"text": _CLAIM_TEXT},
             )
             .mappings()
-            .one()
+            .all()
         )
+        relation_id = connection.execute(
+            text("SELECT relation_id FROM relations")
+        ).scalar_one()
+    assert unique_claims == 1
+    assert len(occurrence_rows) == _VERSION_COUNT
+    for index, row in enumerate(occurrence_rows, start=1):
+        document_md = _document(extra="x" * index)
+        spans = row["evidence_spans"]
+        assert isinstance(spans, list) and len(spans) == 2
+        assert _span_text(document_md=document_md, span=spans[0]) == _JOINED
+        assert _span_text(document_md=document_md, span=spans[1]) == _PERSON
+    LifecycleCatalog(engine=database_engine).recount(
+        relation_ids=(relation_id,), observation_ids=()
+    )
+    with database_engine.connect() as connection:
         fact_lineages = connection.execute(
             text(
                 "SELECT count(*) FROM memory_v1.evidence_lineage e"
                 " JOIN claims c ON c.claim_id = e.representative_claim_id"
                 " WHERE c.claim_text = :text"
             ),
-            {"text": _NOTES},
+            {"text": _CLAIM_TEXT},
         ).scalar_one()
         fact_evidence = connection.execute(
             text(
@@ -446,20 +598,12 @@ def test_500_versions_reuse_handler_remap_and_lineage_facts(
                 " JOIN claims c ON c.claim_id = e.claim_id"
                 " WHERE c.claim_text = :text"
             ),
-            {"text": _NOTES},
+            {"text": _CLAIM_TEXT},
         ).scalar_one()
         evidence_count = connection.execute(
-            text("SELECT evidence_count FROM relations")
+            text("SELECT evidence_count FROM relations WHERE relation_id = :id"),
+            {"id": relation_id},
         ).scalar_one()
-    assert unique_claims == 1
-    assert occurrences == _VERSION_COUNT
-    latest_spans = span_row["evidence_spans"]
-    latest_md = _document(extra="x" * _VERSION_COUNT)
-    assert isinstance(latest_spans, list) and latest_spans
-    start = int(latest_spans[0]["char_start"])
-    end = int(latest_spans[0]["char_end"])
-    assert latest_md[start:end] == _NOTES
-    assert start == latest_md.find(_NOTES)
     assert fact_lineages == 1
     assert fact_evidence == 1
     assert evidence_count == 1
