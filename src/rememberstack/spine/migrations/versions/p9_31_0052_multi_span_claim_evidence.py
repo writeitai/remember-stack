@@ -31,8 +31,8 @@ CREATE VIEW memory_v1.claim_occurrences_live (
   section_id,          -- The section containing the carrying chunk, null when the chunk has no section in the current structure generation.
   evidence_mode,       -- How mediated this occurrence is, such as source_expression or model_observation; null when the reading recorded no mode.
   source_locators,     -- The resolved source locator set for this occurrence, null when the reading resolved none.
-  evidence_spans,      -- The complete ordered list of supporting body ranges for this occurrence, origin first, as {char_start, char_end} objects in the carrying representation.
-  attached_at          -- When this occurrence was first recorded, which is a processing instant rather than a world-time clock.
+  attached_at,         -- When this occurrence was first recorded, which is a processing instant rather than a world-time clock.
+  evidence_spans       -- The complete ordered list of supporting body ranges for this occurrence, origin first, as {char_start, char_end} objects in the carrying representation.
 ) AS
 SELECT DISTINCT ON (cc.deployment_id, cc.claim_id, cc.chunk_id, cc.derivation_kind)
   cc.deployment_id,
@@ -45,8 +45,8 @@ SELECT DISTINCT ON (cc.deployment_id, cc.claim_id, cc.chunk_id, cc.derivation_ki
   cl.section_id,
   cc.evidence_mode,
   cc.source_locators,
-  cc.evidence_spans,
-  cc.created_at
+  cc.created_at,
+  cc.evidence_spans
 FROM chunk_claims AS cc
 JOIN memory_v1.chunks_live AS cl
   ON cl.deployment_id = cc.deployment_id

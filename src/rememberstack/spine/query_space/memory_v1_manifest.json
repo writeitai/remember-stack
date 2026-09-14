@@ -18369,11 +18369,11 @@
               },
               {
                 "@": "String",
-                "sval": "evidence_spans"
+                "sval": "attached_at"
               },
               {
                 "@": "String",
-                "sval": "attached_at"
+                "sval": "evidence_spans"
               }
             ],
             "query": {
@@ -19035,7 +19035,7 @@
                       },
                       {
                         "@": "String",
-                        "sval": "evidence_spans"
+                        "sval": "created_at"
                       }
                     ]
                   }
@@ -19051,7 +19051,7 @@
                       },
                       {
                         "@": "String",
-                        "sval": "created_at"
+                        "sval": "evidence_spans"
                       }
                     ]
                   }
@@ -41543,5 +41543,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "fa665f47ade37dc1d1899ce164165cea42ac3ae91cc36673cd393554a4f70bdd"
+  "surface_manifest_hash": "21090d439f0ea178120eebadc49d36fc37058e365d4753ea5edf2f1a3b3974cb"
 }
