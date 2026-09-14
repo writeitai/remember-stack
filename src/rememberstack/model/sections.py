@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
+from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -46,7 +47,11 @@ class FallbackAnchor(BaseModel):
 
     anchor: str = Field(min_length=1)
     occurrence_index: int = Field(ge=0)
-    children: tuple[FallbackAnchor, ...] = Field(default=(), alias="subsections")
+    children: tuple[FallbackAnchor, ...] = Field(
+        default=(),
+        validation_alias=AliasChoices("subsections", "children"),
+        serialization_alias="subsections",
+    )
 
 
 class FallbackStructureResponse(BaseModel):

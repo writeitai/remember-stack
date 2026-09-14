@@ -62,18 +62,14 @@ def test_nested_subsections_json_preserves_indices_and_internal_children() -> No
 
 def test_internal_children_construction_still_works() -> None:
     """Python callers keep the existing children attribute."""
-    nested = FallbackAnchor(
-        anchor="Child marker",
-        occurrence_index=0,
-        children=(),
-    )
+    nested = FallbackAnchor(anchor="Child marker", occurrence_index=0, children=())
     parent = FallbackAnchor(
-        anchor="Parent marker",
-        occurrence_index=2,
-        children=(nested,),
+        anchor="Parent marker", occurrence_index=2, children=(nested,)
     )
     assert parent.children[0] is nested
-    assert parent.model_dump(by_alias=True)["subsections"][0]["anchor"] == "Child marker"
+    assert (
+        parent.model_dump(by_alias=True)["subsections"][0]["anchor"] == "Child marker"
+    )
 
 
 def test_fallback_prompt_names_subsections() -> None:
