@@ -221,6 +221,10 @@ A tool the registry has no active row for, a call missing a required
 argument, or an open-query call with invalid argument types is a protocol
 **error result** (`isError: true`) with the reason in the text block — never
 an exception across the wire. The client re-plans against a stated failure.
+Remote read-tool API failures encode their public `status_code`, `detail`, and
+optional `code` below an `error` key in that JSON text. This preserves a typed
+503 or query-rejection code for hosts that need to stop or re-plan while still
+using the ordinary MCP error-result envelope.
 
 ## What the tools return
 

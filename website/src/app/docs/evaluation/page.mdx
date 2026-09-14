@@ -84,6 +84,20 @@ Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember
 - Primary metric: judge accuracy; secondary: official LoCoMo F1; diagnostic:
   session-grain recall from envelope evidence only (not turn Recall@k).
 
+### Development retrieval-access ablations
+
+The D124 answer-only runner can reuse one processed Full-v31 sample across four
+OSS-only access profiles: native Codex with a locally copied P3 directory,
+native Codex with P3 plus the read-only RememberStack MCP server, an OpenRouter
+Luna agent with only that MCP surface, and the same provider-neutral loop with
+three bounded P3 list/search/read tools. It does not require UMC, RememberFS or
+FUSE and it never changes the source run.
+
+Treat only the within-runtime pairs as causal comparisons. Native Codex uses an
+instruction-and-audit policy rather than a hard security sandbox, and its score
+is not comparable until an operator has reviewed its action log and marked it
+`clean`. Full commands and recovery rules are in the adapter README.
+
 ### Safe first command (no API spend)
 
 ```bash
@@ -97,7 +111,7 @@ uv run --extra benchmark python -m benchmarks.locomo prepare \
 
 Do not run remote stages until you have read the adapter README and accepted cost/isolation gates.
 
-V16 also prevents an identity-only lookup from becoming a terminal `Unknown`:
+Full-v30 also prevents an identity-only lookup from becoming a terminal `Unknown`:
 the answer harness requires one ordinary content-bearing testimony, fact,
 context, primitive, row-returning query, or P3 search/read attempt first. It
 uses the existing call and cost budgets and records `unknown_guard_retries`.

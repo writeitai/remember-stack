@@ -621,6 +621,81 @@ def test_remote_mcp_lists_write_tools_when_operations_is_404() -> None:
     assert names == ["ingest", "pipeline_readiness"]
 
 
+def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
+    """A read-only STDIO composition cannot mutate the remote deployment."""
+    requested_paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.url.path == "/operations":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/query/space":
+            return httpx.Response(404, json={"detail": "Not Found"})
+        return httpx.Response(500, json={"detail": "write must not be attempted"})
+
+    transport = httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+    server = RemoteOperationMcpServer(
+        client=MemoryClient(client=transport), read_only=True
+    )
+
+    assert server.list_tools() == {"tools": []}
+    rejected = server.call_tool(
+        name="ingest", arguments={"text": "forbidden", "filename": "x.md"}
+    )
+
+    assert rejected["isError"] is True
+    assert "disabled" in rejected["content"][0]["text"]  # type: ignore[index]
+    requests = StringIO(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "1"},
+                        },
+                    }
+                ),
+                json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "ingest",
+                            "arguments": {"text": "forbidden", "filename": "x.md"},
+                        },
+                    }
+                ),
+                json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            )
+        )
+    )
+    output = StringIO()
+
+    assert (
+        serve_mcp_stdio(server=server, input_stream=requests, output_stream=output) == 0
+    )
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
+    assert responses[1]["result"] == {"tools": []}
+    assert responses[2]["result"]["isError"] is True
+    assert "disabled" in responses[2]["result"]["content"][0]["text"]
+    assert requested_paths == [
+        "/operations",
+        "/query/space",
+        "/operations",
+        "/query/space",
+    ]
+
+
 @pytest.mark.parametrize(
     ("status_code", "detail"),
     ((401, "Unauthorized"), (403, "Forbidden"), (503, "unavailable")),

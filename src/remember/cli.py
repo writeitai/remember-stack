@@ -1295,7 +1295,11 @@ def _run_connectors(args: argparse.Namespace) -> int:
 def _run_mcp(args: argparse.Namespace) -> int:
     """Expose the remote assured operations and open retrieval tools over MCP."""
     with _cli_memory_client(args) as client:
-        return serve_mcp_stdio(server=RemoteOperationMcpServer(client=client))
+        return serve_mcp_stdio(
+            server=RemoteOperationMcpServer(
+                client=client, read_only=bool(args.read_only)
+            )
+        )
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -2392,10 +2396,15 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     status.add_argument("connector_id", type=UUID)
 
-    commands.add_parser(
+    mcp = commands.add_parser(
         "mcp",
         parents=[client_flags],
         help="serve remote retrieval tools over MCP stdio",
+    )
+    mcp.add_argument(
+        "--read-only",
+        action="store_true",
+        help="omit and refuse ingest and pipeline-readiness tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
     login.add_argument("--token-host", default=None)

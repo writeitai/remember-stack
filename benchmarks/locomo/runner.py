@@ -1671,6 +1671,9 @@ def _answer_one(
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
     answer_word_cap: int | None = None,
     answer_schema: AnswerStepSchema = AnswerAgentStep,
+    answer_prompt_template: str | None = None,
+    mcp_tool_shape: bool = False,
+    require_content_before_answer: bool = False,
     p3: P3Mount | None = None,
     p3_error: str | None = None,
     question_trace: QuestionTrace | None = None,
@@ -1713,6 +1716,12 @@ def _answer_one(
             trace=tuple(trace),
             answer_word_cap=answer_word_cap,
             guard_feedback=guard_feedback,
+            template=(
+                answer_prompt_template
+                if answer_prompt_template is not None
+                else protocol_for_name(state.protocol_name).answer_prompt_template
+            ),
+            mcp_tool_shape=mcp_tool_shape,
         )
         agent_observation = (
             None
@@ -1971,11 +1980,12 @@ def _answer_one(
                 )
             answer = step.answer or ""
             guarded_terminal = False
-            if _is_unknown(answer=answer) and not _has_content_bearing_attempt(
-                trace=trace
-            ):
+            unknown_answer = _is_unknown(answer=answer)
+            if (
+                require_content_before_answer or unknown_answer
+            ) and not _has_content_bearing_attempt(trace=trace):
                 reader_attempts += 1
-                unknown_guard_retries += 1
+                unknown_guard_retries += int(unknown_answer)
                 can_continue = (
                     agent_call_count < max_agent_calls_per_question
                     and prior_calls + agent_call_count < max_agent_calls
@@ -1989,12 +1999,39 @@ def _answer_one(
                             outcome="guarded_unknown",
                         )
                     guard_feedback = (
-                        'Terminal "Unknown" was rejected because the trace contains '
+                        "The terminal answer was rejected because the trace contains "
                         "only identity or metadata reads. Call one content-bearing "
-                        "testimony, fact, context, primitive, row-returning query, "
-                        "or P3 search/read operation before answering Unknown."
+                        "testimony, fact, context, row-returning query, or P3 "
+                        "search/read operation before answering."
                     )
                     continue
+                if require_content_before_answer:
+                    if agent_observation is not None:
+                        agent_observation.finish(
+                            usage=response.usage,
+                            latency_ms=call_latency_ms,
+                            outcome="invalid_response",
+                        )
+                    return _failed_answer(
+                        question=question,
+                        kind="invalid_response",
+                        message=(
+                            "answer agent exhausted its call budget without a "
+                            "content-bearing retrieval"
+                        ),
+                        retrieval_latency_ms=tool_latency_ms,
+                        retrieval_succeeded=_trace_succeeded(trace=trace),
+                        agent_call_count=agent_call_count,
+                        reader_attempts=reader_attempts,
+                        first_step_retries=first_step_retries,
+                        unknown_guard_retries=unknown_guard_retries,
+                        reader_latency_ms=agent_latency_ms,
+                        claims=_claims_from_trace(
+                            trace=tuple(trace), doc_sessions=doc_sessions
+                        ),
+                        tool_calls=tuple(trace),
+                        usages=tuple(usages),
+                    )
                 guarded_terminal = True
             if answer_word_cap is not None and len(answer.split()) > answer_word_cap:
                 if agent_observation is not None:

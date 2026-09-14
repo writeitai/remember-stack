@@ -423,13 +423,24 @@ def render_answer_agent_prompt(
     trace: tuple[ToolCallRecord, ...],
     answer_word_cap: int | None = None,
     guard_feedback: str | None = None,
+    template: str = ANSWER_AGENT_PROMPT_TEMPLATE,
+    mcp_tool_shape: bool = False,
 ) -> str:
     """Render the frozen public tool catalog and trace, never gold annotations."""
+    rendered_tools = (
+        [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": tool.input_schema,
+            }
+            for tool in tools
+        ]
+        if mcp_tool_shape
+        else [tool.model_dump(mode="json") for tool in tools]
+    )
     tool_payload = json.dumps(
-        [tool.model_dump(mode="json") for tool in tools],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
+        rendered_tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     trace_payload = json.dumps(
         [_reader_trace_record(record=record) for record in trace],
@@ -437,7 +448,7 @@ def render_answer_agent_prompt(
         sort_keys=True,
         separators=(",", ":"),
     )
-    return ANSWER_AGENT_PROMPT_TEMPLATE.format(
+    return template.format(
         tools=tool_payload,
         trace=trace_payload or "[]",
         guard_feedback=(
