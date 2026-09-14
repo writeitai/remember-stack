@@ -1,16 +1,19 @@
 """Provider-free D122 catalog resolution, distinct cards, and complete support."""
 
+from collections.abc import Mapping
 from uuid import uuid4
 
 from rememberstack.core.selection_references import catalog_by_label
 from rememberstack.core.selection_references import claimify_input_hash
 from rememberstack.core.selection_references import GroundedCard
 from rememberstack.core.selection_references import GroundedPassage
-from rememberstack.core.selection_references import PassageSupport
+from rememberstack.core.selection_references import MAX_CARDS_PER_CLAIMIFY
 from rememberstack.core.selection_references import publish_selection_cards
 from rememberstack.core.selection_references import rank_and_fit_cards
 from rememberstack.core.selection_references import remap_card
 from rememberstack.core.selection_references import render_cards_for_claimify
+from rememberstack.core.source_passages import PassageRegion
+from rememberstack.core.source_passages import SourcePassage
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.model.claims import SourceReferenceCard
 
@@ -31,7 +34,25 @@ def _chunk(*, ordinal: int, start: int, end: int, chunk_id=None) -> ChunkForEmbe
     )
 
 
-def _catalog(*passages: PassageSupport) -> dict[str, PassageSupport]:
+def _passage(
+    *,
+    label: str,
+    char_start: int,
+    char_end: int,
+    region: PassageRegion,
+    origin_eligible: bool,
+) -> SourcePassage:
+    """D119 catalog descriptor; origin_eligible is independent of card publication."""
+    return SourcePassage(
+        label=label,
+        char_start=char_start,
+        char_end=char_end,
+        region=region,
+        origin_eligible=origin_eligible,
+    )
+
+
+def _catalog(*passages: SourcePassage) -> dict[str, SourcePassage]:
     """Engine-supplied label map."""
     return catalog_by_label(passages=passages)
 
@@ -41,7 +62,13 @@ def test_unknown_label_rejects_the_whole_card() -> None:
     document = "Nate won the Riverside Cup today."
     owner = _chunk(ordinal=0, start=0, end=len(document))
     catalog = _catalog(
-        PassageSupport(label="S1", char_start=13, char_end=26, region="target")
+        _passage(
+            label="S1",
+            char_start=13,
+            char_end=26,
+            region="target",
+            origin_eligible=True,
+        )
     )
     published, truncated, diagnostics = publish_selection_cards(
         cards=(
@@ -61,7 +88,13 @@ def test_neighbour_only_support_is_not_published() -> None:
     document = "Earlier the cup was named. Nate won that tournament today."
     owner = _chunk(ordinal=1, start=26, end=len(document))
     catalog = _catalog(
-        PassageSupport(label="S1", char_start=8, char_end=25, region="previous")
+        _passage(
+            label="S1",
+            char_start=8,
+            char_end=25,
+            region="previous",
+            origin_eligible=False,
+        )
     )
     published, _, diagnostics = publish_selection_cards(
         cards=(SourceReferenceCard(name="the cup", source_refs=("S1",)),),
@@ -73,13 +106,49 @@ def test_neighbour_only_support_is_not_published() -> None:
     assert diagnostics[0].gate == "no_target_passage"
 
 
+def test_target_support_publishes_without_keep_eligibility() -> None:
+    """Cards need a target-chunk body passage, not a Selection-kept origin."""
+    document = "Nate won the Riverside Cup today."
+    owner = _chunk(ordinal=0, start=0, end=len(document))
+    catalog = _catalog(
+        _passage(
+            label="S1",
+            char_start=13,
+            char_end=26,
+            region="target",
+            origin_eligible=False,
+        )
+    )
+    published, truncated, diagnostics = publish_selection_cards(
+        cards=(SourceReferenceCard(name="Riverside Cup", source_refs=("S1",)),),
+        catalog=catalog,
+        document_md=document,
+        owner_chunk=owner,
+    )
+    assert truncated is False
+    assert diagnostics == ()
+    assert published[0].name == "Riverside Cup"
+    assert published[0].passages[0].char_start == 13
+    assert published[0].passages[0].char_end == 26
+    assert published[0].passages[0].text == "Riverside Cup"
+    assert published[0].passages[0].region == "target"
+
+
 def test_same_name_distinct_ranges_are_both_published() -> None:
     """Equal names are not identity; two tournaments stay two cards."""
     document = "The Open on Monday. The Open on Friday."
     owner = _chunk(ordinal=0, start=0, end=len(document))
     catalog = _catalog(
-        PassageSupport(label="S1", char_start=0, char_end=18, region="target"),
-        PassageSupport(label="S2", char_start=20, char_end=39, region="target"),
+        _passage(
+            label="S1", char_start=0, char_end=18, region="target", origin_eligible=True
+        ),
+        _passage(
+            label="S2",
+            char_start=20,
+            char_end=39,
+            region="target",
+            origin_eligible=True,
+        ),
     )
     published, truncated, diagnostics = publish_selection_cards(
         cards=(
@@ -94,6 +163,10 @@ def test_same_name_distinct_ranges_are_both_published() -> None:
     assert diagnostics == ()
     assert [card.ordinal for card in published] == [0, 1]
     assert [card.passages[0].char_start for card in published] == [0, 20]
+    assert [card.passages[0].text for card in published] == [
+        document[0:18],
+        document[20:39],
+    ]
 
 
 def test_two_referents_may_share_one_passage() -> None:
@@ -101,7 +174,13 @@ def test_two_referents_may_share_one_passage() -> None:
     document = "Nate won Tournament A today."
     owner = _chunk(ordinal=0, start=0, end=len(document))
     catalog = _catalog(
-        PassageSupport(label="S1", char_start=0, char_end=len(document), region="target")
+        _passage(
+            label="S1",
+            char_start=0,
+            char_end=len(document),
+            region="target",
+            origin_eligible=True,
+        )
     )
     published, truncated, diagnostics = publish_selection_cards(
         cards=(
@@ -125,15 +204,16 @@ def test_cap_keeps_first_four_distinct_cards() -> None:
     document = " ".join(names)
     owner = _chunk(ordinal=0, start=0, end=len(document))
     cursor = 0
-    passages: list[PassageSupport] = []
+    passages: list[SourcePassage] = []
     for index, name in enumerate(names, start=1):
         start = document.find(name, cursor)
         passages.append(
-            PassageSupport(
+            _passage(
                 label=f"S{index}",
                 char_start=start,
                 char_end=start + len(name),
                 region="target",
+                origin_eligible=False,
             )
         )
         cursor = start + len(name)
@@ -294,7 +374,9 @@ def test_remap_rejects_incomplete_or_rescued_mapping() -> None:
         owner_chunk_id=uuid4(),
         owner_ordinal=1,
     )
-    windows = {"target": (second, second + length)}
+    windows: Mapping[PassageRegion, tuple[int, int]] = {
+        "target": (second, second + length)
+    }
     assert (
         remap_card(
             card=card, remapped_spans=None, current_md=document, current_windows=windows
@@ -370,18 +452,98 @@ def test_character_cap_counts_the_rendered_block() -> None:
     rendered = render_cards_for_claimify(cards=(card,))
     assert len(rendered) > len("NateNate")
     chosen, truncated = rank_and_fit_cards(
-        cards=(card,),
-        target_text="Nate",
-        target_ordinal=1,
-        max_chars=len(rendered) - 1,
+        cards=(card,), target_text="Nate", target_ordinal=1, max_chars=len(rendered) - 1
     )
     assert truncated is True
     assert chosen == ()
     kept, kept_truncated = rank_and_fit_cards(
-        cards=(card,),
-        target_text="Nate",
-        target_ordinal=1,
-        max_chars=len(rendered),
+        cards=(card,), target_text="Nate", target_ordinal=1, max_chars=len(rendered)
     )
     assert kept_truncated is False
     assert kept == (card,)
+
+
+def test_resolution_keeps_the_cited_range_not_the_first_match() -> None:
+    """Catalog offsets are the source of truth; the same words may appear twice."""
+    document = "Riverside Cup then Riverside Cup later"
+    second = document.rfind("Riverside Cup")
+    length = len("Riverside Cup")
+    owner = _chunk(ordinal=0, start=0, end=len(document))
+    catalog = _catalog(
+        _passage(
+            label="S1",
+            char_start=second,
+            char_end=second + length,
+            region="target",
+            origin_eligible=False,
+        )
+    )
+    published, truncated, diagnostics = publish_selection_cards(
+        cards=(SourceReferenceCard(name="Riverside Cup", source_refs=("S1",)),),
+        catalog=catalog,
+        document_md=document,
+        owner_chunk=owner,
+    )
+    assert truncated is False
+    assert diagnostics == ()
+    assert published[0].passages[0].char_start == second
+    assert published[0].passages[0].text == "Riverside Cup"
+    assert document.find("Riverside Cup") != second
+
+
+def test_claimify_cap_keeps_eight_whole_cards() -> None:
+    """A ninth eligible card is a recorded cap loss, not a trim."""
+    cards = tuple(
+        GroundedCard(
+            name=f"Name{index}",
+            aliases=(),
+            passages=(
+                GroundedPassage(
+                    label=f"S{index}",
+                    char_start=0,
+                    char_end=1,
+                    region="target",
+                    text="x",
+                ),
+            ),
+            ordinal=index,
+            owner_chunk_id=uuid4(),
+            owner_ordinal=0,
+        )
+        for index in range(MAX_CARDS_PER_CLAIMIFY + 1)
+    )
+    chosen, truncated = rank_and_fit_cards(
+        cards=cards, target_text="x", target_ordinal=1
+    )
+    assert truncated is True
+    assert len(chosen) == MAX_CARDS_PER_CLAIMIFY
+    assert [card.ordinal for card in chosen] == list(range(MAX_CARDS_PER_CLAIMIFY))
+
+
+def test_alias_whitespace_is_stripped_and_name_duplicates_dropped() -> None:
+    """Surrounding whitespace is not a distinct alias of the published name."""
+    document = "Nate, also the kid, won today."
+    owner = _chunk(ordinal=0, start=0, end=len(document))
+    catalog = _catalog(
+        _passage(
+            label="S1",
+            char_start=0,
+            char_end=len(document),
+            region="target",
+            origin_eligible=False,
+        )
+    )
+    published, truncated, diagnostics = publish_selection_cards(
+        cards=(
+            SourceReferenceCard(
+                name=" Nate ", aliases=(" Nate ", "  the kid  "), source_refs=("S1",)
+            ),
+        ),
+        catalog=catalog,
+        document_md=document,
+        owner_chunk=owner,
+    )
+    assert truncated is False
+    assert diagnostics == ()
+    assert published[0].name == "Nate"
+    assert published[0].aliases == ("the kid",)

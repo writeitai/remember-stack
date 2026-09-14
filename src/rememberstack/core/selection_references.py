@@ -15,9 +15,10 @@ from dataclasses import dataclass
 import hashlib
 import re
 from typing import Final
-from typing import Literal
 from uuid import UUID
 
+from rememberstack.core.source_passages import PassageRegion
+from rememberstack.core.source_passages import SourcePassage
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.model.claims import SourceReferenceCard
 
@@ -28,21 +29,6 @@ MAX_CARD_CHARS: Final = 4096
 PRECEDING_CHUNK_LIMIT: Final = 8
 
 _TOKEN_RE: Final = re.compile(r"\w+")
-PassageRegion = Literal["target", "previous", "next"]
-
-
-@dataclass(frozen=True)
-class PassageSupport:
-    """Pre-integration stand-in for D119's engine-supplied source passage.
-
-    Selection cites these labels; it does not search quote strings. Replace
-    this type with the shared D119 catalog descriptor when that PR lands.
-    """
-
-    label: str
-    char_start: int
-    char_end: int
-    region: PassageRegion
 
 
 @dataclass(frozen=True)
@@ -102,8 +88,8 @@ def token_set(*, text: str) -> frozenset[str]:
 
 
 def catalog_by_label(
-    *, passages: tuple[PassageSupport, ...]
-) -> dict[str, PassageSupport]:
+    *, passages: tuple[SourcePassage, ...]
+) -> dict[str, SourcePassage]:
     """Label map; labels are unique by construction in the engine catalog."""
     return {passage.label: passage for passage in passages}
 
@@ -111,7 +97,7 @@ def catalog_by_label(
 def resolve_card(
     *,
     card: SourceReferenceCard,
-    catalog: Mapping[str, PassageSupport],
+    catalog: Mapping[str, SourcePassage],
     document_md: str,
     owner_chunk: ChunkForEmbedding,
     ordinal: int,
@@ -166,14 +152,15 @@ def resolve_card(
             gate="no_target_passage",
             detail="a published card needs at least one target-chunk body passage",
         )
+    name = card.name.strip()
     aliases = tuple(
         alias.strip()
         for alias in card.aliases
-        if alias.strip() and alias.strip() != card.name
+        if alias.strip() and alias.strip() != name
     )
     return (
         GroundedCard(
-            name=card.name.strip(),
+            name=name,
             aliases=aliases,
             passages=tuple(resolved),
             ordinal=ordinal,
@@ -187,7 +174,7 @@ def resolve_card(
 def publish_selection_cards(
     *,
     cards: tuple[SourceReferenceCard, ...],
-    catalog: Mapping[str, PassageSupport],
+    catalog: Mapping[str, SourcePassage],
     document_md: str,
     owner_chunk: ChunkForEmbedding,
 ) -> tuple[tuple[GroundedCard, ...], bool, tuple[CardDiagnostic, ...]]:
