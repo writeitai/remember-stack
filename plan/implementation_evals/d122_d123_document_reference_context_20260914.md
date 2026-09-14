@@ -150,3 +150,38 @@ The user authorized re-processing conv-42 with Gemma on Vertex after all three
 PRs land. Parent must verify every processing-stage binding before those calls,
 then report processing cost, latency and source-linked claim/fact quality.
 Answering/judging remain outside that run.
+
+## Integrated runtime review and acceptance
+
+The E2 split is now implemented. Parent review removed duplicate target-owned
+cards from the earlier-reference set and duplicate rendered evidence. Citation
+labels are assigned before enforcing the actual 4,096-character card limit;
+only admitted cards enter the grounding catalog. An added name/date from earlier
+context must cite that source passage: another admitted but uncited card cannot
+supply its grounding tokens.
+
+Readiness now derives both Selection and Claimify status from their chunk work.
+Connector-cycle finalization also waits for Claimify; Selection success alone
+cannot publish a ready pipeline or finalize a still-processing source cycle.
+The extractor generation rolls with these prompt and scheduling changes.
+
+Completed parent checks on the integrated working tree:
+
+- Five PostgreSQL Selection/barrier/remapping tests passed (80.13 seconds).
+- Three actual E0–E2 cross-section tests passed (52.78 seconds): chunk-2 event and
+  source alias used in chunk 7; same-date distinct tournament contexts retained;
+  attribution and two exact source ranges preserved; omitted earlier citation
+  rejected; changed zero-card producer invalidates Claimify while target
+  Selection is reused. These are canned-model mechanics proofs, not measured
+  coreference quality.
+- Sixteen readiness tests passed (42.90 seconds), including Selection succeeded
+  with Claimify pending, then Claimify succeeded.
+- The additional contextual-name snapshot test passed (12.47 seconds): changing
+  a resolved name invalidates the prepared model presentation.
+- Changed runtime and new acceptance test files passed Pyright and Ruff.
+
+The full actual 500-version test is running against the integrated runtime.
+Existing worker fixtures and Full-v31 benchmark pins are being updated in
+bounded Grok tasks. Final Antigravity review, exact-head CI, main rebase and
+parent merge review remain outstanding. No live processing quality/cost result
+is claimed before the authorized Gemma/Vertex conv-42 run.

@@ -1092,7 +1092,7 @@ _SELECT_READY_CYCLES = text(
             ON w.deployment_id = y.deployment_id
            AND w.target_kind = 'chunk'
            AND w.target_id = c.chunk_id
-           AND w.stage = 'extract_claims'
+           AND w.stage IN ('extract_claims', 'ground_claims')
           WHERE v.sync_cycle_id = y.cycle_id
             AND w.status IN ('pending', 'running', 'failed', 'dead_letter')
       )

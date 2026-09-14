@@ -91,7 +91,6 @@ from rememberstack.workers.base import SelectionChunkBarrier
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.extraction_references import attach_card_passages
-from rememberstack.workers.extraction_references import card_passage_texts
 from rememberstack.workers.extraction_references import collect_eligible_cards
 from rememberstack.workers.extraction_references import MissingSelectionError
 from rememberstack.workers.extraction_references import preceding_producer_ids
@@ -785,12 +784,6 @@ class ExtractClaimsHandler:
                 for keep in keeps
             )
             kept_ranges = tuple(span for span in keep_ranges if span is not None)
-            eligible = collect_eligible_cards(target=target_frozen, preceding=preceding)
-            fitted, claimify_truncated = rank_and_fit_cards(
-                cards=eligible,
-                target_text=document_md[chunk.char_start : chunk.char_end],
-                target_ordinal=chunk.ordinal,
-            )
             previous, following = same_section_neighbours(chunks=chunks, index=index)
             catalog = build_passage_catalog(
                 blocks=_load_blocks(
@@ -803,13 +796,30 @@ class ExtractClaimsHandler:
                 following=following,
                 kept_ranges=kept_ranges,
             )
-            catalog, fitted = attach_card_passages(catalog=catalog, cards=fitted)
+            local_catalog = catalog
+            eligible = collect_eligible_cards(preceding=preceding)
+            catalog, relabeled = attach_card_passages(catalog=catalog, cards=eligible)
+            fitted, claimify_truncated = rank_and_fit_cards(
+                cards=relabeled,
+                target_text=document_md[chunk.char_start : chunk.char_end],
+                target_ordinal=chunk.ordinal,
+            )
+            admitted_labels = {
+                passage.label for card in fitted for passage in card.passages
+            }
+            catalog = PassageCatalog(
+                passages=tuple(
+                    passage
+                    for passage in catalog.passages
+                    if passage in local_catalog.passages
+                    or passage.label in admitted_labels
+                )
+            )
             flagged_spans = {
                 candidate.source_span
                 for candidate in keeps
                 if candidate.verdict is SelectionVerdict.KEEP_FLAGGED
             }
-            grounding_texts = card_passage_texts(cards=fitted)
             response_call = self._model_provider.generate(
                 request=ModelRequest(
                     model=self._settings.extract_model,
@@ -822,7 +832,7 @@ class ExtractClaimsHandler:
                             document_md=document_md,
                         ),
                         passages=render_passage_catalog(
-                            catalog=catalog, document_md=document_md
+                            catalog=local_catalog, document_md=document_md
                         ),
                         cards=render_cards_for_claimify(cards=fitted),
                     ),
@@ -859,7 +869,12 @@ class ExtractClaimsHandler:
                     flagged_spans=flagged_spans,
                     kept_ranges=kept_ranges,
                     catalog=catalog,
-                    card_passage_texts=grounding_texts,
+                    card_passage_texts=tuple(
+                        passage.text
+                        for card in fitted
+                        for passage in card.passages
+                        if passage.label in candidate.source_refs
+                    ),
                 )
                 origin_range = _origin_range_for_accounting(
                     result=result, candidate=candidate, catalog=catalog
@@ -1390,7 +1405,7 @@ def _source_grounding_elements(
 
     Every member is source-derived: the target chunk slice, deterministic
     document header, same-section neighbours, validated D80 LocationElement
-    rows, and verbatim supporting passages of admitted reference cards.
+    rows, and verbatim supporting passages cited by this claim.
     Generated card names, free-form location headers, and section summaries
     are deliberately absent (D79/D80/D122).
     """

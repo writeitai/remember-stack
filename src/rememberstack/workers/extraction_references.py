@@ -16,13 +16,13 @@ from rememberstack.core.selection_references import GroundedCard
 from rememberstack.core.selection_references import GroundedPassage
 from rememberstack.core.selection_references import PRECEDING_CHUNK_LIMIT
 from rememberstack.core.selection_references import remap_card
-from rememberstack.core.source_passages import EvidenceSpan
 from rememberstack.core.source_passages import PassageCatalog
 from rememberstack.core.source_passages import PassageRegion
 from rememberstack.core.source_passages import remap_evidence_spans
 from rememberstack.core.source_passages import same_section_neighbours
 from rememberstack.core.source_passages import SourcePassage
 from rememberstack.core.source_passages import window_bounds
+from rememberstack.model import EvidenceSpan
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.spine.selection_catalog import FrozenSelection
 
@@ -75,10 +75,10 @@ def require_frozen_producers(
 
 
 def collect_eligible_cards(
-    *, target: FrozenSelection, preceding: tuple[FrozenSelection, ...]
+    *, preceding: tuple[FrozenSelection, ...]
 ) -> tuple[GroundedCard, ...]:
-    """Target cards plus every previous-eight producer's published cards."""
-    cards = list(target.cards)
+    """Every previous-eight producer's cards; the target already supplies local text."""
+    cards: list[GroundedCard] = []
     for frozen in preceding:
         cards.extend(frozen.cards)
     return tuple(cards)

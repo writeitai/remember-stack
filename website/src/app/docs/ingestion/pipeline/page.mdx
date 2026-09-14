@@ -13,7 +13,9 @@ Exhaustive stage reference for the per-document evidence chain. Parent overview:
 ```
 ingest → convert → structure → chunk → embed(chunks)
                                       ↓
-                              extract claims → embed(claims)
+                         select propositions and source references
+                                      ↓
+                         ground claims → embed(claims)
                                       ↓
                               normalize / resolve entities
                                       ↓
@@ -118,6 +120,29 @@ Each claim carries:
 - An origin span on the claim row, plus the complete list of supporting body ranges on the selected occurrence (and through those ranges to page/region/time locators)
 - Source-asserted validity interval when the source states one (`asserted` validity — testimony, not system verdict)
 - Extractor / representation / structure generation coordinates (basis)
+
+Extraction has two model calls. **Selection** chooses propositions and identifies
+source-backed people, organizations, works and particular events. Its response
+is saved once, including an empty result. After all chunks finish Selection,
+**Claimify** writes standalone claims using their kept propositions and a bounded
+set of earlier references. A reference can cross a section boundary, but remains
+within the previous eight chunks of the same document representation.
+
+Each earlier reference includes exact source passages. Its descriptive name helps
+orientation; the source passages must support the resulting claim and be cited.
+For example, a tournament introduced in chunk 2 can clarify “that tournament” in
+chunk 7. Two tournaments with the same date remain separate references. The
+engine supplies passage labels and resolves them to exact occurrence ranges.
+
+The initial limits are four published references per Selection response and eight
+references, totaling at most 4,096 characters including evidence, per Claimify
+request. These are bounded context limits, not a guarantee that every distant
+reference is available. No additional extraction model call is introduced.
+
+Version reuse includes the earlier chunks' source inputs even when they produced
+no references. An edit there can introduce a competing referent and must trigger
+rechecking. Unchanged inputs reuse the saved decisions and claim identities,
+remapping all evidence ranges onto the new occurrence.
 
 **Gates:**
 

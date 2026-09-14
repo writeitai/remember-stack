@@ -1,5 +1,6 @@
 """Handler-level D119 500-version reuse: hashes, remapping, lineage fact recount."""
 
+from collections.abc import Callable
 from collections.abc import Iterator
 from pathlib import Path
 import re
@@ -259,14 +260,19 @@ class _VersionRig:
     """E0–E3 chain with a living ingest path and a failing unexpected-extract flag."""
 
     def __init__(
-        self, *, engine: Engine, root: Path, shift_origin: bool = False
+        self,
+        *,
+        engine: Engine,
+        root: Path,
+        shift_origin: bool = False,
+        router: Callable[[str, str], dict[str, object]] = _route,
     ) -> None:
         """Compose catalogs, fake provider, and registered handlers."""
         self.engine = engine
         self.shift_origin = shift_origin
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.provider = FakeModelProvider(generate_router=_route)
+        self.provider = FakeModelProvider(generate_router=router)
         document_catalog = DocumentCatalog(engine=engine)
         chunk_catalog = ChunkCatalog(engine=engine)
         claim_catalog = ClaimCatalog(engine=engine)
@@ -420,7 +426,9 @@ class _VersionRig:
         )
         self.worker = Worker(ledger=ledger, registry=registry)
 
-    def observe(self, *, extra: str, notes: str = _NOTES) -> None:
+    def observe(
+        self, *, extra: str, notes: str = _NOTES, markdown: str | None = None
+    ) -> None:
         """One living observation of the two-section lineage."""
         self.ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
@@ -429,8 +437,12 @@ class _VersionRig:
             upload=DocumentUpload(
                 filename="d119.md",
                 mime="text/markdown",
-                content=_document(
-                    extra=extra, notes=notes, shift_origin=self.shift_origin
+                content=(
+                    markdown
+                    if markdown is not None
+                    else _document(
+                        extra=extra, notes=notes, shift_origin=self.shift_origin
+                    )
                 ).encode("utf-8"),
             ),
             versioning_mode="living",
