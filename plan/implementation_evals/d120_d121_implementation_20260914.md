@@ -226,6 +226,11 @@ Previous reviewed SHA: `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
 Verdict then: **APPROVE WITH NITS**. Full text:
 [`d120_d121_agy_review_5273eee8.md`](d120_d121_agy_review_5273eee8.md).
 
-The lean-prompt checkpoint is a substantive instruction change and needs a
-new read-only Antigravity review of that head. D119-integrated final pins
-still need a later review. This PR is not merge-ready.
+Lean-prompt reviewed SHA: `d84af5a48a0f5af1149a4c6bbd5aaf6b201cd5e6`
+(prompt commit `ef17559a`). Verdict: **APPROVE WITH NITS**. Full text:
+[`d120_d121_agy_review_d84af5a4.md`](d120_d121_agy_review_d84af5a4.md).
+
+Nits were not treated as material: no extra date-qualification example (YAGNI
+until D119 lands) and no extra keyword-freeze assertions for `source_world_` /
+`chosen_`. D119-integrated final pins still need a later review. This PR is
+not merge-ready.
