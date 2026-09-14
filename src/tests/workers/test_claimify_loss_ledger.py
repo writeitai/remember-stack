@@ -16,6 +16,8 @@ import pytest
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.core.blockizer import blockize
+from rememberstack.core.source_passages import build_passage_catalog
 from rememberstack.model import AddedContext
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
@@ -51,9 +53,9 @@ _SECTION = UUID("81000000-0000-0000-0000-000000000006")
 
 # A short document with two keep-worthy spans and one advisory drop target.
 _DOC_MD = (
-    "Project Atlas launched in 2024 in three markets.\n"
-    "The team considers it a runaway success.\n"
-    "You should try it yourself.\n"
+    "Project Atlas launched in 2024 in three markets.\n\n"
+    "The team considers it a runaway success.\n\n"
+    "You should try it yourself.\n\n"
     "Caroline: I went to the launch.\n"
 )
 _KEEP_LAUNCH = "Project Atlas launched in 2024 in three markets."
@@ -124,6 +126,72 @@ def _kept_ranges_for(
     return tuple(ranges)
 
 
+def _catalog_for(
+    *,
+    document_md: str = _DOC_MD,
+    kept_spans: tuple[str, ...] = (_KEEP_LAUNCH, _KEEP_STANCE),
+):
+    """Passage catalog for the fixture document and the given keeps."""
+    chunk = _chunk(document_md=document_md)
+    return build_passage_catalog(
+        blocks=blockize(document_md=document_md),
+        target=chunk,
+        previous=None,
+        following=None,
+        kept_ranges=_kept_ranges_for(*kept_spans, document_md=document_md),
+    )
+
+
+def _refs(
+    *spans: str,
+    document_md: str = _DOC_MD,
+    kept_spans: tuple[str, ...] = (_KEEP_LAUNCH, _KEEP_STANCE),
+) -> tuple[str, ...]:
+    """Map verbatim slices to catalog labels; unknown text becomes S99."""
+    catalog = _catalog_for(document_md=document_md, kept_spans=kept_spans)
+    labels: list[str] = []
+    for span in spans:
+        start = document_md.find(span)
+        if start < 0:
+            labels.append("S99")
+            continue
+        end = start + len(span)
+        exact = next(
+            (
+                passage.label
+                for passage in catalog.passages
+                if passage.char_start == start and passage.char_end == end
+            ),
+            None,
+        )
+        if exact is not None:
+            labels.append(exact)
+            continue
+        covering = next(
+            (
+                passage.label
+                for passage in catalog.passages
+                if passage.char_start <= start and end <= passage.char_end
+            ),
+            None,
+        )
+        labels.append(covering or "S99")
+    return tuple(labels)
+
+
+def _origin_text(
+    span: str,
+    *,
+    document_md: str = _DOC_MD,
+    kept_spans: tuple[str, ...] = (_KEEP_LAUNCH, _KEEP_STANCE),
+) -> str:
+    """Verbatim origin passage text for a cited slice."""
+    catalog = _catalog_for(document_md=document_md, kept_spans=kept_spans)
+    label = _refs(span, document_md=document_md, kept_spans=kept_spans)[0]
+    passage = catalog.by_label()[label]
+    return document_md[passage.char_start : passage.char_end]
+
+
 def _ground(
     *,
     candidate: CandidateClaim,
@@ -132,6 +200,7 @@ def _ground(
 ) -> object:
     """Run the grounding gate against the fixture document and keeps."""
     chunk = _chunk(document_md=document_md)
+    kept_ranges = _kept_ranges_for(*kept_spans, document_md=document_md)
     return _grounded_claim(
         candidate=candidate,
         source=_source(),
@@ -140,64 +209,64 @@ def _ground(
         index=0,
         document_md=document_md,
         flagged_spans=set(),
-        kept_ranges=_kept_ranges_for(*kept_spans, document_md=document_md),
+        kept_ranges=kept_ranges,
+        catalog=_catalog_for(document_md=document_md, kept_spans=kept_spans),
     )
 
 
 def test_gate_span_not_found_writes_grounding_rejected() -> None:
-    """A claim span absent from the chunk is ledgered as span_not_found."""
-    claim_span = "Atlas was cancelled in March"
+    """A cited label that was never provided is ledgered as unknown_source_ref."""
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Atlas was cancelled in March.",
-            source_span=claim_span,
+            source_refs=("S99",),
             entailment_self_verdict=True,
         )
     )
     assert isinstance(result, GroundingRejection)
-    assert result.gate is GroundingGate.SPAN_NOT_FOUND
-    assert result.claim_span == claim_span
+    assert result.gate is GroundingGate.UNKNOWN_SOURCE_REF
+    assert result.claim_span == "S99"
 
     decision = _grounding_rejected_decision(
         source=_source(), chunk=_chunk(), rejection=result
     )
     assert decision.decision_type is DecisionType.GROUNDING_REJECTED
-    assert decision.source_span == claim_span
+    assert decision.source_span == "S99"
     assert decision.claim_id is None
-    assert decision.edit_detail == {"gate": "span_not_found", "claim_span": claim_span}
+    assert decision.edit_detail == {"gate": "unknown_source_ref", "claim_span": "S99"}
 
 
 def test_gate_outside_kept_ranges_writes_grounding_rejected() -> None:
-    """A verbatim span Selection dropped is ledgered as outside_kept_ranges."""
+    """A dropped-only passage cannot be an origin; it is origin_not_eligible."""
     result = _ground(
         candidate=CandidateClaim(
             claim_text="You should try Project Atlas.",
-            source_span=_DROP_ADVICE,
+            source_refs=_refs(_DROP_ADVICE),
             entailment_self_verdict=True,
         )
     )
     assert isinstance(result, GroundingRejection)
-    assert result.gate is GroundingGate.OUTSIDE_KEPT_RANGES
-    assert result.claim_span == _DROP_ADVICE
+    assert result.gate is GroundingGate.ORIGIN_NOT_ELIGIBLE
+    assert result.claim_span == ",".join(_refs(_DROP_ADVICE))
 
     decision = _grounding_rejected_decision(
         source=_source(), chunk=_chunk(), rejection=result
     )
     assert decision.decision_type is DecisionType.GROUNDING_REJECTED
-    assert decision.source_span == _DROP_ADVICE
+    assert decision.source_span == ",".join(_refs(_DROP_ADVICE))
     assert decision.edit_detail == {
-        "gate": "outside_kept_ranges",
-        "claim_span": _DROP_ADVICE,
+        "gate": "origin_not_eligible",
+        "claim_span": ",".join(_refs(_DROP_ADVICE)),
     }
 
 
 def test_gate_added_context_unverified_writes_grounding_rejected() -> None:
     """An invented addition is ledgered with kind and text in edit_detail."""
-    claim_span = "Project Atlas launched in 2024"
+    claim_span = _origin_text("Project Atlas launched in 2024")
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Project Atlas launched in San Francisco.",
-            source_span=claim_span,
+            source_refs=_refs("Project Atlas launched in 2024"),
             added_context=(
                 AddedContext(text="in San Francisco", source_kind="neighbour"),
             ),
@@ -231,7 +300,11 @@ def test_attribution_scaffolding_passes_across_speaker_colon() -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text='Melanie said, "I painted that lake sunrise last year!"',
-            source_span="Yeah, I painted that lake sunrise last year!",
+            source_refs=_refs(
+                "Yeah, I painted that lake sunrise last year!",
+                document_md=document_md,
+                kept_spans=(document_md,),
+            ),
             added_context=(
                 AddedContext(text='Melanie said, "', source_kind="neighbour"),
             ),
@@ -251,7 +324,7 @@ def test_functional_and_possessive_scaffolding_passes(addition: str) -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text=f"{addition} the launch happened.",
-            source_span="I went to the launch.",
+            source_refs=_refs("I went to the launch.", kept_spans=(_KEEP_CAROLINE,)),
             added_context=(AddedContext(text=addition, source_kind="header"),),
             entailment_self_verdict=True,
             is_attributed=True,
@@ -273,7 +346,7 @@ def test_invented_content_tokens_still_fail(
     result = _ground(
         candidate=CandidateClaim(
             claim_text=f"Project Atlas launched {addition}.",
-            source_span="Project Atlas launched in 2024",
+            source_refs=_refs("Project Atlas launched in 2024"),
             added_context=(AddedContext(text=addition, source_kind="neighbour"),),
             entailment_self_verdict=True,
         )
@@ -288,7 +361,7 @@ def test_numeric_token_requires_source_union_membership() -> None:
     """No functional allowance can introduce an absent computed year."""
     candidate = CandidateClaim(
         claim_text="Project Atlas launched in 2022.",
-        source_span="Project Atlas launched in 2024",
+        source_refs=_refs("Project Atlas launched in 2024"),
         added_context=(AddedContext(text="in 2022", source_kind="header"),),
         entailment_self_verdict=True,
     )
@@ -313,7 +386,7 @@ def _dated_candidate(
     """A Caroline claim whose written date must be licensed by its own bounds."""
     return CandidateClaim(
         claim_text=claim_text,
-        source_span=_KEEP_CAROLINE,
+        source_refs=_refs(_KEEP_CAROLINE, kept_spans=(_KEEP_CAROLINE,)),
         added_context=(AddedContext(text=addition, source_kind="header"),),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME
@@ -408,7 +481,7 @@ def test_own_valid_time_strings_follow_precision() -> None:
     day = datetime(2024, 3, 6, tzinfo=UTC)
     candidate = CandidateClaim(
         claim_text="x",
-        source_span=_KEEP_CAROLINE,
+        source_refs=_refs(_KEEP_CAROLINE, kept_spans=(_KEEP_CAROLINE,)),
         entailment_self_verdict=True,
         valid_from_iso="2024-03-06",
         valid_until_iso="2024-03-06",
@@ -456,7 +529,7 @@ def test_empty_added_context_is_a_no_op(addition: AddedContext) -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Project Atlas launched in 2024.",
-            source_span="Project Atlas launched in 2024",
+            source_refs=_refs("Project Atlas launched in 2024"),
             added_context=(addition,),
             entailment_self_verdict=True,
         )
@@ -470,7 +543,7 @@ def test_target_chunk_addition_with_wrong_header_label_is_accepted() -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Caroline went to the launch.",
-            source_span="I went to the launch.",
+            source_refs=_refs("I went to the launch.", kept_spans=(_KEEP_CAROLINE,)),
             added_context=(AddedContext(text="Caroline", source_kind="header"),),
             entailment_self_verdict=True,
             is_attributed=True,
@@ -494,7 +567,7 @@ def test_freeform_prefix_addition_is_rejected_under_d80() -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Melanie considers Project Atlas a runaway success.",
-            source_span=_KEEP_STANCE,
+            source_refs=_refs(_KEEP_STANCE),
             added_context=(AddedContext(text="Melanie", source_kind="neighbour"),),
             entailment_self_verdict=True,
             is_attributed=True,
@@ -510,12 +583,12 @@ def test_accept_path_still_returns_claim_record() -> None:
     result = _ground(
         candidate=CandidateClaim(
             claim_text="Project Atlas launched in 2024.",
-            source_span="Project Atlas launched in 2024",
+            source_refs=_refs("Project Atlas launched in 2024"),
             entailment_self_verdict=True,
         )
     )
     assert isinstance(result, ClaimRecord)
-    assert result.source_span == "Project Atlas launched in 2024"
+    assert result.source_span == _origin_text("Project Atlas launched in 2024")
 
 
 def test_claimify_omitted_row_for_keep_with_no_returned_claim() -> None:
@@ -561,7 +634,10 @@ _SELECTION_BOTH_KEEPS: dict[str, object] = {
 
 
 def _run_extract(
-    *, selection: dict[str, object], claimify: dict[str, object]
+    *,
+    selection: dict[str, object],
+    claimify: dict[str, object],
+    document_md: str = _DOC_MD,
 ) -> _RecordingCatalog:
     """Drive the REAL handler's per-chunk extraction with canned payloads.
 
@@ -583,12 +659,13 @@ def _run_extract(
         settings=E2Settings(),
         chunker_version="test-chunker",
     )
-    chunk = _chunk()
+    chunk = _chunk(document_md=document_md)
     handler._extract_chunk(
         source=_source(),
         chunks=(chunk,),
         index=0,
-        document_md=_DOC_MD,
+        document_md=document_md,
+        blocks=blockize(document_md=document_md),
         meter=NoopCostMeter(),
     )
     return recorder
@@ -634,7 +711,7 @@ def test_handler_rejection_suppresses_omission_only_for_its_keep() -> None:
             "claims": [
                 {
                     "claim_text": "Project Atlas launched in San Francisco.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "added_context": [
                         {"text": "in San Francisco", "source_kind": "neighbour"}
                     ],
@@ -645,7 +722,9 @@ def test_handler_rejection_suppresses_omission_only_for_its_keep() -> None:
     )
     assert recorder.claims == ()
     rows = _loss_rows(recorder)
-    assert rows[DecisionType.GROUNDING_REJECTED] == ["Project Atlas launched in 2024"]
+    assert rows[DecisionType.GROUNDING_REJECTED] == [
+        _origin_text("Project Atlas launched in 2024")
+    ]
     assert rows[DecisionType.CLAIMIFY_OMITTED] == [_KEEP_STANCE]
 
 
@@ -657,7 +736,7 @@ def test_handler_empty_added_context_survives_without_rejection() -> None:
             "claims": [
                 {
                     "claim_text": "Project Atlas launched in 2024.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "added_context": [{"text": "   ", "source_kind": "neighbour"}],
                     "entailment_self_verdict": True,
                 }
@@ -682,7 +761,7 @@ def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
             "claims": [
                 {
                     "claim_text": "Project Orion launched in 2024.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "added_context": [
                         {"text": "Project Orion", "source_kind": "summary"}
                     ],
@@ -700,7 +779,7 @@ def test_handler_rejects_summary_only_added_context_fact_injection() -> None:
     )
     assert rejection.edit_detail == {
         "gate": "added_context_unverified",
-        "claim_span": "Project Atlas launched in 2024",
+        "claim_span": _origin_text("Project Atlas launched in 2024"),
         "kind": "summary",
         "text": "Project Orion",
         "searched_elements": _SEARCHED_SOURCE_ELEMENTS,
@@ -721,12 +800,12 @@ def test_handler_mixed_accept_and_reject_yields_no_omission() -> None:
             "claims": [
                 {
                     "claim_text": "Project Atlas launched in 2024.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "entailment_self_verdict": True,
                 },
                 {
                     "claim_text": "Project Atlas launched in San Francisco.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "added_context": [
                         {"text": "in San Francisco", "source_kind": "neighbour"}
                     ],
@@ -739,8 +818,58 @@ def test_handler_mixed_accept_and_reject_yields_no_omission() -> None:
         "Project Atlas launched in 2024."
     ]
     rows = _loss_rows(recorder)
-    assert rows[DecisionType.GROUNDING_REJECTED] == ["Project Atlas launched in 2024"]
+    assert rows[DecisionType.GROUNDING_REJECTED] == [
+        _origin_text("Project Atlas launched in 2024")
+    ]
     assert rows[DecisionType.CLAIMIFY_OMITTED] == [_KEEP_STANCE]
+
+
+def test_handler_whole_block_origin_does_not_resurrect_drop() -> None:
+    """A covering block origin for a keep cannot extract dropped advice."""
+    document_md = (
+        "Project Atlas launched in 2024 in three markets. You should try it yourself.\n"
+    )
+    catalog = _catalog_for(document_md=document_md, kept_spans=(_KEEP_LAUNCH,))
+    covering = next(
+        passage.label
+        for passage in catalog.passages
+        if passage.origin_eligible
+        and _KEEP_LAUNCH in document_md[passage.char_start : passage.char_end]
+        and _DROP_ADVICE in document_md[passage.char_start : passage.char_end]
+    )
+    recorder = _run_extract(
+        document_md=document_md,
+        selection={
+            "candidates": [
+                {
+                    "source_span": _KEEP_LAUNCH,
+                    "outcome": "keep",
+                    "protected_class": "date",
+                },
+                {"source_span": _DROP_ADVICE, "outcome": "drop_advice"},
+            ]
+        },
+        claimify={
+            "claims": [
+                {
+                    "claim_text": "Project Atlas launched in 2024 in three markets.",
+                    "source_refs": [covering],
+                    "entailment_self_verdict": True,
+                }
+            ]
+        },
+    )
+    assert [claim.claim_text for claim in recorder.claims] == [
+        "Project Atlas launched in 2024 in three markets."
+    ]
+    assert all(_DROP_ADVICE not in claim.claim_text for claim in recorder.claims)
+    rows = _loss_rows(recorder)
+    assert rows[DecisionType.CLAIMIFY_OMITTED] == []
+    assert any(
+        decision.decision_type is DecisionType.SELECTION_DROP
+        and decision.source_span == _DROP_ADVICE
+        for decision in recorder.decisions
+    )
 
 
 def test_handler_orphan_rejection_suppresses_no_omission() -> None:
@@ -752,12 +881,12 @@ def test_handler_orphan_rejection_suppresses_no_omission() -> None:
             "claims": [
                 {
                     "claim_text": "You should try Project Atlas.",
-                    "source_span": _DROP_ADVICE,
+                    "source_refs": list(_refs(_DROP_ADVICE)),
                     "entailment_self_verdict": True,
                 },
                 {
                     "claim_text": "Atlas was cancelled.",
-                    "source_span": "Atlas was cancelled in March",
+                    "source_refs": ["S99"],
                     "entailment_self_verdict": True,
                 },
             ]
@@ -766,7 +895,7 @@ def test_handler_orphan_rejection_suppresses_no_omission() -> None:
     assert recorder.claims == ()
     rows = _loss_rows(recorder)
     assert sorted(str(s) for s in rows[DecisionType.GROUNDING_REJECTED]) == sorted(
-        [_DROP_ADVICE, "Atlas was cancelled in March"]
+        [",".join(_refs(_DROP_ADVICE)), "S99"]
     )
     assert sorted(rows[DecisionType.CLAIMIFY_OMITTED]) == sorted(
         [_KEEP_LAUNCH, _KEEP_STANCE]
@@ -788,7 +917,7 @@ def test_handler_unfindable_keep_always_gets_its_omission_row() -> None:
             "claims": [
                 {
                     "claim_text": "Project Atlas launched in 2024.",
-                    "source_span": "Project Atlas launched in 2024",
+                    "source_refs": list(_refs("Project Atlas launched in 2024")),
                     "entailment_self_verdict": True,
                 }
             ]
@@ -831,7 +960,7 @@ def test_summary_text_fails_membership_under_every_legal_kind() -> None:
             result = _ground(
                 candidate=CandidateClaim(
                     claim_text=f"{text} launched in 2024.",
-                    source_span="Project Atlas launched in 2024",
+                    source_refs=_refs("Project Atlas launched in 2024"),
                     added_context=(AddedContext(text=text, source_kind=kind),),
                     entailment_self_verdict=True,
                 )
@@ -849,14 +978,18 @@ def test_handler_union_grounding_preserves_loss_ledger_balance() -> None:
     returned_claims = [
         {
             "claim_text": "Caroline went to the launch.",
-            "source_span": "I went to the launch.",
+            "source_refs": list(
+                _refs("I went to the launch.", kept_spans=(_KEEP_CAROLINE,))
+            ),
             "added_context": [{"text": "Caroline", "source_kind": "header"}],
             "entailment_self_verdict": True,
             "is_attributed": True,
         },
         {
             "claim_text": "Project Zephyr went to the launch.",
-            "source_span": "I went to the launch.",
+            "source_refs": list(
+                _refs("I went to the launch.", kept_spans=(_KEEP_CAROLINE,))
+            ),
             "added_context": [{"text": "Project Zephyr", "source_kind": "prefix"}],
             "entailment_self_verdict": True,
         },

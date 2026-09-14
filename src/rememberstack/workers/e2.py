@@ -18,6 +18,7 @@ from datetime import datetime
 from datetime import UTC
 from enum import StrEnum
 import hashlib
+import json
 import logging
 import re
 from typing import Final
@@ -28,6 +29,17 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core import blocks_from_sidecar
+from rememberstack.core.source_passages import build_passage_catalog
+from rememberstack.core.source_passages import origin_span_from_record
+from rememberstack.core.source_passages import PassageCatalog
+from rememberstack.core.source_passages import PassageResolutionError
+from rememberstack.core.source_passages import remap_evidence_spans
+from rememberstack.core.source_passages import render_passage_catalog
+from rememberstack.core.source_passages import resolve_source_refs
+from rememberstack.core.source_passages import same_section_neighbours
+from rememberstack.core.source_passages import window_bounds
+from rememberstack.model import Block
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
@@ -39,6 +51,7 @@ from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
 from rememberstack.model import EnqueueWork
+from rememberstack.model import EvidenceSpan
 from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
@@ -57,9 +70,8 @@ from rememberstack.model.occurrence_provenance import parse_persisted_source_map
 from rememberstack.model.occurrence_provenance import ProvenanceMetadataCorruptError
 from rememberstack.model.occurrence_provenance import ProvenanceMetadataMissingError
 from rememberstack.model.occurrence_provenance import RepresentationOccurrenceContext
-from rememberstack.model.occurrence_provenance import resolve_occurrence_provenance
 from rememberstack.model.occurrence_provenance import (
-    resolve_reused_occurrence_provenance,
+    resolve_spans_occurrence_provenance,
 )
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -149,12 +161,16 @@ _ADDED_CONTEXT_FUNCTIONAL_ALLOWLIST: Final = frozenset(
 """Closed non-content vocabulary tolerated by D32 layer-2 token membership."""
 
 _SELECTION_PROMPT: Final = """You are the Selection stage of a claim extractor.
-Judge every proposition in the TARGET CHUNK: keep statements making a specific,
-verifiable proposition (state, event, decision, quantity, policy, relationship).
-Drop unattributed opinions, advice, hypotheticals, generic truisms, questions,
-section intros/conclusions, and "we don't know" statements. An ATTRIBUTED
-stance ("X said/believes/opposes Y") is a KEEP. Never-drop classes even if
-phrased opinionatedly: quantities, dates, named-entity+predicate,
+Judge coherent source-supported propositions in the TARGET CHUNK. Keep a
+statement that makes a specific, verifiable assertion (state, event, decision,
+quantity, policy, relationship). Do not split a single coherent assertion at
+every conjunction: several sentences that together identify one subject, one
+referent and one set of necessary qualifiers are one candidate. Independently
+dated or independently attributed events stay distinct candidates even when
+they share a topic. Drop unattributed opinions, advice, hypotheticals, generic
+truisms, questions, section intros/conclusions, and "we don't know" statements.
+An ATTRIBUTED stance ("X said/believes/opposes Y") is a KEEP. Never-drop
+classes even if phrased opinionatedly: quantities, dates, named-entity+predicate,
 change-of-state. When unsure, prefer keep_flagged over any drop_* outcome.
 Each candidate's
 source_span must be a verbatim substring of the target chunk. Report one
@@ -164,20 +180,31 @@ SECTION SUMMARIES are orientation only and are never quotable source text.
 
 {bundle}"""
 
-_CLAIMIFY_PROMPT: Final = """You are the decontextualize+decompose+ground stage
+_CLAIMIFY_PROMPT: Final = """You are the decontextualize+ground stage
 of a claim extractor. For each KEPT proposition below: resolve every pronoun,
 partial name, and acronym USING ONLY THE BUNDLE (never outside knowledge),
-adding the minimum context needed; split into the simplest standalone claims,
-preserving attribution ("X said Y" stays attributed); if a careful reader
+adding the minimum context needed; write a standalone coherent claim, preserving
+attribution ("X said Y" stays attributed). Do not split a single coherent
+assertion at every conjunction. Independently dated or independently attributed
+events stay distinct claims even when they share a topic. If a careful reader
 could not pick one interpretation from the bundle, omit the candidate. For
-each claim return: claim_text (standalone), source_span (the verbatim chunk
-substring it derives from), added_context (every substring you ADDED that is
+each claim return: claim_text (standalone), source_refs (a nonempty ordered
+list of labels from SOURCE PASSAGES below; the FIRST label is the origin and
+MUST be a TARGET origin-eligible passage that covers the kept proposition;
+further labels are supporting passages in the target or same-section
+neighbours. Origin-eligible means the passage overlaps a Selection keep. A
+larger TARGET block may also contain dropped sentences; those sentences are
+not selected and must not be extracted. Citing that block does not treat
+dropped content as a kept proposition),
+added_context (every substring you ADDED that is
 not already present in the TARGET CHUNK; in-chunk text needs no added_context
-entry). Tag each addition header|neighbour|prefix as a best-effort provenance
+entry). Cite only provided labels; never invent a label or a character offset.
+Tag each addition header|neighbour|prefix as a best-effort provenance
 pointer, but the tag is advisory: every addition must exist verbatim somewhere
 in the bundle's source-derived texts (TARGET CHUNK, DOCUMENT HEADER,
 same-section PREVIOUS/NEXT CHUNK, or typed LOCATION elements). SECTION SUMMARIES
-are orientation only, never quotable and never an added_context source. Also
+are orientation only, never quotable, never an added_context source, and never
+evidence. Also
 return entailment_self_verdict (does chunk+bundle entail the claim) and
 is_attributed.
 
@@ -277,6 +304,8 @@ Examples (DOCUMENT HEADER date → structured output):
   valid_from_iso=null, valid_until_iso=null, valid_precision=unknown
   (unresolved wording stays as spoken; no date is written).
 
+{passages}
+
 KEPT PROPOSITIONS:
 {keeps}
 
@@ -371,17 +400,27 @@ class ExtractClaimsHandler:
             chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
         ):
             occurrence_context = self._load_occurrence_context(source=source)
+            document_md = self._artifact_store.read_bytes(
+                key=ObjectKey(source.markdown_uri)
+            ).decode("utf-8")
             if not self._reuse_prior_extraction(
-                source=source, chunk=chunk, occurrence_context=occurrence_context
+                source=source,
+                chunk=chunk,
+                chunks=chunks,
+                index=index,
+                document_md=document_md,
+                occurrence_context=occurrence_context,
             ):
-                document_md = self._artifact_store.read_bytes(
-                    key=ObjectKey(source.markdown_uri)
-                ).decode("utf-8")
                 self._extract_chunk(
                     source=source,
                     chunks=chunks,
                     index=index,
                     document_md=document_md,
+                    blocks=_load_blocks(
+                        artifact_store=self._artifact_store,
+                        source=source,
+                        document_md=document_md,
+                    ),
                     meter=meter,
                     occurrence_context=occurrence_context,
                 )
@@ -403,6 +442,9 @@ class ExtractClaimsHandler:
         *,
         source: ChunkSource,
         chunk: ChunkForEmbedding,
+        chunks: tuple[ChunkForEmbedding, ...],
+        index: int,
+        document_md: str,
         occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> bool:
         """The D56 chunk-grain reuse rung: re-attach instead of re-extract.
@@ -410,9 +452,12 @@ class ExtractClaimsHandler:
         An unchanged ``extraction_input_hash`` within the lineage means some
         already-extracted chunk read the exact same stable inputs — its
         claims are re-attached to this version's chunk row (occurrence
-        links, F4) and no model is called. A prior extraction that found
-        nothing claim-worthy carries its terminal marker forward the same
-        way. Returns False when the lineage holds no extracted match.
+        links, F4) and no model is called. Every evidence span is remapped
+        through the matching content-identical window. If any span cannot
+        be remapped uniquely, this returns False and ordinary extraction
+        runs. A prior extraction that found nothing claim-worthy carries
+        its terminal marker forward the same way. Returns False when the
+        lineage holds no extracted match.
         """
         prior = self._catalog.prior_extracted_chunk(
             deployment_id=source.deployment_id,
@@ -422,17 +467,25 @@ class ExtractClaimsHandler:
         )
         if prior is None:
             return False
-        occurrences = self._reused_occurrences(
+        remapped = self._remap_reused_spans(
             source=source,
             chunk=chunk,
+            chunks=chunks,
+            index=index,
+            document_md=document_md,
             prior_chunk_id=prior,
-            occurrence_context=occurrence_context,
+        )
+        if remapped is None:
+            return False
+        occurrences = self._reused_occurrences(
+            remapped_spans=remapped, occurrence_context=occurrence_context
         )
         attached = self._catalog.attach_reused_claims(
             deployment_id=source.deployment_id,
             chunk_id=chunk.chunk_id,
             prior_chunk_id=prior,
             occurrences=occurrences,
+            evidence_spans=remapped,
         )
         if attached == 0:
             # the prior chunk carries no claims. Zero claims no longer means
@@ -458,6 +511,7 @@ class ExtractClaimsHandler:
         chunks: tuple[ChunkForEmbedding, ...],
         index: int,
         document_md: str,
+        blocks: tuple[Block, ...],
         meter: CostMeterPort,
         occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> None:
@@ -495,6 +549,14 @@ class ExtractClaimsHandler:
                 for keep in keeps
             )
             kept_ranges = tuple(span for span in keep_ranges if span is not None)
+            previous, following = same_section_neighbours(chunks=chunks, index=index)
+            catalog = build_passage_catalog(
+                blocks=blocks,
+                target=chunk,
+                previous=previous,
+                following=following,
+                kept_ranges=kept_ranges,
+            )
             flagged_spans = {
                 candidate.source_span
                 for candidate in keeps
@@ -506,6 +568,9 @@ class ExtractClaimsHandler:
                     prompt=_CLAIMIFY_PROMPT.format(
                         keeps="\n".join(f"- {keep.source_span}" for keep in keeps),
                         bundle=bundle,
+                        passages=render_passage_catalog(
+                            catalog=catalog, document_md=document_md
+                        ),
                     ),
                     temperature=0.0,
                 ),
@@ -520,12 +585,14 @@ class ExtractClaimsHandler:
             # Per-keep "model tried" marker for claimify_omitted accounting.
             # Attribution is RANGE-OVERLAP ONLY: a returned claim marks
             # exactly the keeps whose anchored ranges its own anchored range
-            # overlaps. Text containment is deliberately not used — it would
-            # let one claim suppress omission rows for unrelated keeps that
-            # merely share text. Consequences, both conservative: a claim
-            # whose span anchors nowhere is an orphan rejection and
-            # suppresses no omission; a keep whose span anchors nowhere can
-            # never be marked tried and always gets its omission row (#161).
+            # overlaps. Drops never enter this list, so a whole-block origin
+            # that also contains dropped text cannot resurrect them. Text
+            # containment is deliberately not used — it would let one claim
+            # suppress omission rows for unrelated keeps that merely share
+            # text. A claim whose span anchors nowhere is an orphan
+            # rejection and suppresses no omission; a keep whose span
+            # anchors nowhere can never be marked tried and always gets its
+            # omission row (#161).
             keep_had_return = [False] * len(keeps)
             for candidate in response.claims:
                 result = _grounded_claim(
@@ -537,14 +604,15 @@ class ExtractClaimsHandler:
                     document_md=document_md,
                     flagged_spans=flagged_spans,
                     kept_ranges=kept_ranges,
+                    catalog=catalog,
                 )
-                claim_range = _span_range(
-                    span=candidate.source_span, chunk=chunk, document_md=document_md
+                origin_range = _origin_range_for_accounting(
+                    result=result, candidate=candidate, catalog=catalog
                 )
-                if claim_range is not None:
+                if origin_range is not None:
                     for index_keep, keep_range in enumerate(keep_ranges):
                         if keep_range is not None and _ranges_overlap(
-                            claim_range, keep_range
+                            origin_range, keep_range
                         ):
                             keep_had_return[index_keep] = True
                 if isinstance(result, GroundingRejection):
@@ -570,7 +638,9 @@ class ExtractClaimsHandler:
                             source=source, chunk=chunk, keep=keep
                         )
                     )
-        decisions = _link_flagged_decisions(decisions=decisions, claims=claims)
+        decisions = _link_flagged_decisions(
+            decisions=decisions, claims=claims, chunk=chunk, document_md=document_md
+        )
         if not claims and not decisions:
             # terminal marker (D7): an extraction that found nothing claim-worthy
             # is DONE — without it, replay would re-call the model.
@@ -632,43 +702,105 @@ class ExtractClaimsHandler:
             derivation_ranges=persisted.derivation_ranges, source_map=source_map_entries
         )
 
-    def _reused_occurrences(
+    def _remap_reused_spans(
         self,
         *,
         source: ChunkSource,
         chunk: ChunkForEmbedding,
+        chunks: tuple[ChunkForEmbedding, ...],
+        index: int,
+        document_md: str,
         prior_chunk_id: UUID,
+    ) -> dict[UUID, tuple[EvidenceSpan, ...]] | None:
+        """Remap every prior occurrence span into this representation's windows."""
+        prior_representation_id = self._chunk_catalog.representation_id_for_chunk(
+            chunk_id=prior_chunk_id
+        )
+        if prior_representation_id is None:
+            return None
+        prior_source = self._chunk_catalog.chunk_source(
+            representation_id=prior_representation_id
+        )
+        prior_chunks = self._chunk_catalog.chunks_for_extract(
+            representation_id=prior_representation_id,
+            chunker_version=self._chunker_version,
+            chunk_id=prior_chunk_id,
+        )
+        prior_index = next(
+            (
+                position
+                for position, item in enumerate(prior_chunks)
+                if item.chunk_id == prior_chunk_id
+            ),
+            None,
+        )
+        if prior_index is None:
+            return None
+        prior_md = self._artifact_store.read_bytes(
+            key=ObjectKey(prior_source.markdown_uri)
+        ).decode("utf-8")
+        prior_previous, prior_following = same_section_neighbours(
+            chunks=prior_chunks, index=prior_index
+        )
+        current_previous, current_following = same_section_neighbours(
+            chunks=chunks, index=index
+        )
+        prior_windows = window_bounds(
+            target=prior_chunks[prior_index],
+            previous=prior_previous,
+            following=prior_following,
+        )
+        current_windows = window_bounds(
+            target=chunk, previous=current_previous, following=current_following
+        )
+        remapped: dict[UUID, tuple[EvidenceSpan, ...]] = {}
+        for anchor in self._catalog.claims_for_occurrence_reuse(
+            chunk_id=prior_chunk_id
+        ):
+            if not anchor.evidence_spans:
+                return None
+            translated = remap_evidence_spans(
+                prior_spans=anchor.evidence_spans,
+                prior_windows=prior_windows,
+                current_windows=current_windows,
+                prior_md=prior_md,
+                current_md=document_md,
+            )
+            if translated is None:
+                return None
+            remapped[anchor.claim_id] = translated
+        return remapped
+
+    def _reused_occurrences(
+        self,
+        *,
+        remapped_spans: dict[UUID, tuple[EvidenceSpan, ...]],
         occurrence_context: RepresentationOccurrenceContext | None,
     ) -> dict[UUID, OccurrenceProvenance] | None:
-        """Resolve prior claim spans against the TARGET chunk and representation."""
+        """Stamp remapped spans against the TARGET representation."""
         context = occurrence_context
-        if context is None and source.conversion_uri is not None:
-            context = self._load_occurrence_context(source=source)
         if context is None:
             return None
-        document_md = self._artifact_store.read_bytes(
-            key=ObjectKey(source.markdown_uri)
-        ).decode("utf-8")
-        anchors = self._catalog.claims_for_occurrence_reuse(chunk_id=prior_chunk_id)
         return {
-            anchor.claim_id: resolve_reused_occurrence_provenance(
-                source_span=anchor.source_span,
-                char_start=chunk.char_start,
-                char_end=chunk.char_end,
-                document_md=document_md,
+            claim_id: resolve_spans_occurrence_provenance(
+                spans=spans,
                 ranges=context.derivation_ranges,
                 source_map=context.source_map,
             )
-            for anchor in anchors
+            for claim_id, spans in remapped_spans.items()
         }
 
 
 class GroundingGate(StrEnum):
-    """Which deterministic D32 gate rejected a Claimify-returned claim (#161)."""
+    """Which deterministic D32/D119 gate rejected a Claimify-returned claim."""
 
     SPAN_NOT_FOUND = "span_not_found"
     OUTSIDE_KEPT_RANGES = "outside_kept_ranges"
     ADDED_CONTEXT_UNVERIFIED = "added_context_unverified"
+    UNKNOWN_SOURCE_REF = "unknown_source_ref"
+    ORIGIN_NOT_ELIGIBLE = "origin_not_eligible"
+    TOO_MANY_SOURCE_REFS = "too_many_source_refs"
+    EMPTY_SOURCE_REFS = "empty_source_refs"
 
 
 @dataclass(frozen=True)
@@ -693,12 +825,13 @@ def _grounded_claim(
     document_md: str,
     flagged_spans: set[str],
     kept_ranges: tuple[tuple[int, int], ...],
+    catalog: PassageCatalog,
 ) -> ClaimRecord | GroundingRejection:
-    """Apply the deterministic grounding gate (D32 layers 1-2).
+    """Apply the deterministic grounding gate (D32 layers 1-2, D119 refs).
 
-    Layer 1 (anchor): the source span must be a real in-bounds slice of the
-    target chunk, and must overlap a span Selection kept — the fused call can
-    never resurrect a dropped proposition. Layer 2 (window membership):
+    Layer 1 (anchor): cited labels must resolve to provided passages; the
+    origin must be a target passage overlapping a Selection keep. Additional
+    refs may name neighbour body text. Layer 2 (window membership):
     tokenize each non-empty addition, then require every content token to
     appear case-insensitively at a word boundary in the source-derived bundle
     union. Only the closed functional allowlist may supply absent scaffolding;
@@ -719,21 +852,26 @@ def _grounded_claim(
     self-verdict is stored advisory, and the sampled independent audit owns the
     honest measurement.
     """
-    claim_span = candidate.source_span
-    anchor_at = document_md.find(claim_span, chunk.char_start, chunk.char_end)
-    if anchor_at < 0:
-        return GroundingRejection(
-            gate=GroundingGate.SPAN_NOT_FOUND, claim_span=claim_span
-        )
-    anchor_end = anchor_at + len(claim_span)
+    try:
+        resolved = resolve_source_refs(refs=candidate.source_refs, catalog=catalog)
+    except PassageResolutionError as error:
+        gate = {
+            "unknown_source_ref": GroundingGate.UNKNOWN_SOURCE_REF,
+            "origin_not_eligible": GroundingGate.ORIGIN_NOT_ELIGIBLE,
+            "too_many_source_refs": GroundingGate.TOO_MANY_SOURCE_REFS,
+            "empty_source_refs": GroundingGate.EMPTY_SOURCE_REFS,
+        }.get(error.gate, GroundingGate.UNKNOWN_SOURCE_REF)
+        return GroundingRejection(gate=gate, claim_span=",".join(candidate.source_refs))
+    origin = resolved.origin
     if not any(
-        anchor_at < kept_end and kept_start < anchor_end
+        origin.char_start < kept_end and kept_start < origin.char_end
         for kept_start, kept_end in kept_ranges
     ):
-        # Selection is enforced, not advisory
         return GroundingRejection(
-            gate=GroundingGate.OUTSIDE_KEPT_RANGES, claim_span=claim_span
+            gate=GroundingGate.OUTSIDE_KEPT_RANGES,
+            claim_span=document_md[origin.char_start : origin.char_end],
         )
+    claim_span = document_md[origin.char_start : origin.char_end]
     grounding_elements = _source_grounding_elements(
         source=source, chunks=chunks, index=index, document_md=document_md
     )
@@ -763,6 +901,7 @@ def _grounded_claim(
                 searched_elements=tuple(name for name, _ in grounding_elements),
                 failed_tokens=failed_tokens,
             )
+    origin_range = (origin.char_start, origin.char_end)
     return ClaimRecord(
         claim_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -771,12 +910,17 @@ def _grounded_claim(
         section_id=None,
         claim_text=candidate.claim_text,
         source_span=claim_span,
-        char_start=anchor_at,
-        char_end=anchor_at + len(claim_span),
+        char_start=origin.char_start,
+        char_end=origin.char_end,
+        evidence_spans=resolved.spans,
         added_context=candidate.added_context,
         is_attributed=candidate.is_attributed,
         entailment_self_verdict=candidate.entailment_self_verdict,
-        kept_flagged=claim_span in flagged_spans,
+        kept_flagged=any(
+            _ranges_overlap(origin_range, (kept_start, kept_end))
+            and document_md[kept_start:kept_end] in flagged_spans
+            for kept_start, kept_end in kept_ranges
+        ),
         extractor_version=E2_EXTRACTOR_VERSION,
         # D41 assertion-event time: when the source spoke (D55 source stamp).
         asserted_at=source.source_modified_at or source.published_at,
@@ -1221,22 +1365,37 @@ def _truncate_for_ledger(text: str) -> str:
 
 
 def _link_flagged_decisions(
-    *, decisions: list[DecisionRecord], claims: list[ClaimRecord]
+    *,
+    decisions: list[DecisionRecord],
+    claims: list[ClaimRecord],
+    chunk: ChunkForEmbedding,
+    document_md: str,
 ) -> list[DecisionRecord]:
     """Pair each keep-flagged ledger row with its grounded claim (schema §8).
 
     The invariant: a kept_flagged claim is the pair (claims row) + (a
-    selection_keep_flagged decision naming it). A flag whose span grounded no
-    claim keeps claim_id NULL — the flag stands, nothing to pair.
+    selection_keep_flagged decision naming it). Matching is origin-range
+    overlap, not string equality, so a block-sized origin still pairs with
+    the keep it covers. A flag whose span grounded no claim keeps claim_id
+    NULL — the flag stands, nothing to pair.
     """
     linked: list[DecisionRecord] = []
     for decision in decisions:
         if decision.decision_type is DecisionType.SELECTION_KEEP_FLAGGED:
+            keep_range = (
+                None
+                if decision.source_span is None
+                else _span_range(
+                    span=decision.source_span, chunk=chunk, document_md=document_md
+                )
+            )
             match = next(
                 (
                     claim
                     for claim in claims
-                    if claim.kept_flagged and claim.source_span == decision.source_span
+                    if claim.kept_flagged
+                    and keep_range is not None
+                    and _ranges_overlap((claim.char_start, claim.char_end), keep_range)
                 ),
                 None,
             )
@@ -1409,15 +1568,47 @@ def _read_provenance_bytes(
 def _occurrences_for_claims(
     *, claims: tuple[ClaimRecord, ...], context: RepresentationOccurrenceContext | None
 ) -> dict[UUID, OccurrenceProvenance] | None:
-    """Resolve each grounded claim interval against the target representation."""
+    """Resolve every supporting span against the target representation."""
     if context is None:
         return None
     return {
-        claim.claim_id: resolve_occurrence_provenance(
-            char_start=claim.char_start,
-            char_end=claim.char_end,
+        claim.claim_id: resolve_spans_occurrence_provenance(
+            spans=claim.evidence_spans
+            or origin_span_from_record(
+                char_start=claim.char_start, char_end=claim.char_end
+            ),
             ranges=context.derivation_ranges,
             source_map=context.source_map,
         )
         for claim in claims
     }
+
+
+def _load_blocks(
+    *, artifact_store: ObjectStorePort, source: ChunkSource, document_md: str
+) -> tuple[Block, ...]:
+    """Load the representation's block map; re-blockize if the sidecar is stale."""
+    payload = json.loads(
+        artifact_store.read_bytes(key=ObjectKey(source.blocks_uri)).decode("utf-8")
+    )
+    if not isinstance(payload, dict):
+        blocks_doc: dict[str, object] = {"blocks": []}
+    else:
+        blocks_doc = {str(key): value for key, value in payload.items()}
+    return blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
+
+
+def _origin_range_for_accounting(
+    *,
+    result: ClaimRecord | GroundingRejection,
+    candidate: CandidateClaim,
+    catalog: PassageCatalog,
+) -> tuple[int, int] | None:
+    """Origin range that can mark a keep as tried; forged labels do not."""
+    if isinstance(result, ClaimRecord):
+        return result.char_start, result.char_end
+    try:
+        resolved = resolve_source_refs(refs=candidate.source_refs, catalog=catalog)
+    except PassageResolutionError:
+        return None
+    return resolved.origin.char_start, resolved.origin.char_end

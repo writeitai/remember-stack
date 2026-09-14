@@ -62,14 +62,17 @@ E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 """Alias: policy generation replaces the retired LLM prefixer version string."""
 
 E2_EXTRACTOR_VERSION: Final = (
-    f"e2-extract-2026.08a:d80-location-elements-1:"
+    f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:{SECTION_ORIENTATION_VERSION}"
 )
-"""Extractor generation in extraction_input_hash (D56). 08a: D80 typed location
-elements replace free-form context_prefix in the bundle/grounding union.
-temporal-anchor-4: a resolved relative date is written into claim_text as its
-ISO value and grounded by the claim's own valid-time fields (D41/D32
-amendments of 2026-09-11)."""
+"""Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
+coherent claims cite engine-labeled source passages; occurrence rows store
+the complete span list; reuse remaps every span through content-identical
+windows whose previous/next slots keep side identity. 08a: D80 typed
+location elements replace free-form context_prefix in the bundle/grounding
+union. temporal-anchor-4: a resolved relative date is written into
+claim_text as its ISO value and grounded by the claim's own valid-time
+fields (D41/D32 amendments of 2026-09-11)."""
 
 _EMBED_BATCH_SIZE: Final = 64
 """Default provider batch size for chunk embeddings (capability starting point)."""
@@ -576,11 +579,17 @@ def _chunk_record(
 ) -> ChunkRecord:
     """Build one chunk row, deriving its D56 reuse key from stable inputs only."""
     chunk = packed[index]
-    neighbor_hashes = tuple(
-        packed[neighbor].chunk_content_hash
-        for neighbor in (index - 1, index + 1)
-        if 0 <= neighbor < len(packed)
+    previous_hash = (
+        packed[index - 1].chunk_content_hash
+        if index > 0 and packed[index - 1].section_id == chunk.section_id
+        else ""
     )
+    next_hash = (
+        packed[index + 1].chunk_content_hash
+        if index + 1 < len(packed) and packed[index + 1].section_id == chunk.section_id
+        else ""
+    )
+    neighbor_hashes = (previous_hash, next_hash)
     header_facts = (
         source.title or "",
         source.source_kind,

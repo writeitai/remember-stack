@@ -1440,11 +1440,12 @@ CREATE TABLE chunk_claims (
   derivation_kind text,                        -- D65 disclosure, resolved from the manifest's labeled ranges: asr | acoustic_events | vlm_description | ocr | shot_notes | passthrough | …
   evidence_mode   text,                        -- D65: source_expression | model_observation | model_interpretation (most-mediated wins on range-crossing spans)
   source_locators jsonb,                       -- D65: resolved locator set for THIS occurrence (SourceLocator[], media_design §4) — the span→source-map intersection, cached
+  evidence_spans  jsonb NOT NULL,              -- D119: complete supporting body ranges for THIS occurrence, origin first: [{char_start, char_end}, …] in the owning chunk's representation
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, claim_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunk_claims IS
-  'Claim occurrences per version-chunk (F4) + occurrence-grain provenance (D65): fresh extraction AND reuse both link here, so one immutable claim attaches to every version-chunk that carries it, each attachment carrying its resolved derivation labels + locators. The exact occurrence record behind claims_as_of on living documents, the (lineage, chunk)-grain K citation keys, and envelope evidence provenance. Monthly-partitioned; logical FKs (D23).';
+  'Claim occurrences per version-chunk (F4) + occurrence-grain provenance (D65) + complete evidence spans (D119): fresh extraction AND reuse both link here, so one immutable claim attaches to every version-chunk that carries it, each attachment carrying remapped body ranges, derivation labels, and locators. claims.char_start/char_end remain the immutable origin only. Monthly-partitioned; logical FKs (D23).';
 CREATE INDEX ix_chunkclaims_claim ON chunk_claims (claim_id);
 ```
 
@@ -2691,6 +2692,7 @@ Labs."*
 | D54 testimony currency + counting rule | `testimony_currency_events` (partitioned ledger + reconciliation idempotency key) + `claims.is_current_testimony` (cache); `evidence_count`/`contradict_count` redefined (distinct current lineages — write-once `doc_id` on evidence rows makes the recount single-table); `review_item_kind = 'support_withdrawn'` |
 | D55 document lineages + versions | `documents` (lineage: `source_kind/source_ref`, `versioning_mode`, three-column current-version FK), `document_versions` (append-only; `source_modified_at` → `asserted_at`; `sync_cycle_id`), `content_objects`; `connector_sync_cycles` (the retract barrier); `adjudication_outcome='retracted_source_removal'` (living removal retracts — no review softener) |
 | D56 content-addressed reuse | `chunks.chunk_content_hash` + `chunks.extraction_input_hash` (+ `ix_chunks_reuse`); `chunk_claims` — the exact claim-occurrence map (fresh + reused attachments) |
+| D119 coherent multi-span claims | `chunk_claims.evidence_spans` — complete occurrence body ranges; `claims.char_start`/`char_end` remain origin only |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |

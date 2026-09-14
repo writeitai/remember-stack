@@ -148,11 +148,13 @@ def _canned(prompt: str, type_name: str) -> dict[str, object]:
             if "DROP EVERYTHING" in span:
                 return {"candidates": []}  # nothing claim-worthy at all
             return {"candidates": [{"source_span": span, "outcome": "keep"}]}
+        label_match = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\):", prompt)
+        label = label_match.group(1) if label_match is not None else "S1"
         return {
             "claims": [
                 {
                     "claim_text": span,
-                    "source_span": span,
+                    "source_refs": [label],
                     "entailment_self_verdict": True,
                 }
             ]

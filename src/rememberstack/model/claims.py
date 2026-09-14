@@ -3,11 +3,13 @@
 from enum import StrEnum
 from typing import Annotated
 from typing import Final
+from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 from rememberstack.model.queue import UTCDateTime
 
@@ -146,19 +148,44 @@ class AddedContext(BaseModel):
     source_ref: str | None = None
 
 
-class CandidateClaim(BaseModel):
-    """One decontextualized, decomposed claim before the deterministic gate.
+class EvidenceSpan(BaseModel):
+    """One half-open character range in a single immutable representation (D119)."""
 
-    Optional D41 valid-time fields are nullable typed scalars only — no free-form
-    objects — so the OpenRouter strict-schema adapter can constrain the model
-    without raising ``StrictSchemaError``. Most claims have no stated world-time;
-    leave ``valid_*`` at null/unknown in that case.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    char_start: int = Field(ge=0)
+    char_end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Self:
+        if self.char_end <= self.char_start:
+            raise ValueError("char_end must be greater than char_start")
+        return self
+
+
+class CandidateClaim(BaseModel):
+    """One decontextualized claim before the deterministic grounding gate.
+
+    The model cites engine-supplied source passage labels in ``source_refs``
+    (first citation is the origin). Optional D41 valid-time fields are nullable
+    typed scalars only — no free-form objects — so the OpenRouter strict-schema
+    adapter can constrain the model without raising ``StrictSchemaError``. Most
+    claims have no stated world-time; leave ``valid_*`` at null/unknown in that
+    case.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     claim_text: _NonEmpty
-    source_span: _NonEmpty
+    source_refs: tuple[_NonEmpty, ...] = Field(
+        min_length=1,
+        max_length=8,
+        description=(
+            "Ordered labels from the provided SOURCE PASSAGES list. The first "
+            "label is the origin and must be a TARGET origin-eligible passage. "
+            "Further labels are supporting passages in the same document version."
+        ),
+    )
     added_context: tuple[AddedContext, ...] = ()
     entailment_self_verdict: bool
     is_attributed: bool = False
@@ -210,6 +237,7 @@ class ClaimRecord(BaseModel):
     source_span: _NonEmpty
     char_start: int = Field(ge=0)
     char_end: int = Field(ge=0)
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     added_context: tuple[AddedContext, ...]
     is_attributed: bool
     entailment_self_verdict: bool

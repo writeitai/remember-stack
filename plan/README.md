@@ -25,3 +25,8 @@ remain applicable. Its other fact-time rules and the D110–D113 framework are
 superseded by D118's explicit authority map. Their documents and SQL remain
 marked as historical artifacts; the [PostgreSQL design](designs/postgres_schema_design.md)
 no longer incorporates the withdrawn DDL.
+
+For coherent claims and distributed source evidence, start with
+[D119 multi-span extraction](designs/multi_span_claim_extraction_design.md).
+The [analysis](analysis/multi_span_claim_extraction.md) explains the LoCoMo
+findings and reuse constraints. Implementation is not implied by design acceptance.

@@ -35,9 +35,9 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v28"
-DEFAULT_PROTOCOL_KEY: Final = "full-v28"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-mutable-windows-v28"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29"
+DEFAULT_PROTOCOL_KEY: Final = "full-v29"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-multi-span-v29"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -46,7 +46,7 @@ API_TIMEOUT_SECONDS: Final = 60.0
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "0eb7a004e97e0d03753bd03af6081486dd041171ccef038318b7b4cca0a51b41"
+    "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -71,7 +71,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         ),
         "embed_chunk": "e1-embed-2026.08-d80",
         "extract_claims": (
-            "e2-extract-2026.08a:d80-location-elements-1:"
+            "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
             "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis"
         ),
@@ -116,12 +116,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v28-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v28-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v29-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v28 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v29 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the
@@ -129,8 +129,8 @@ same decision in a two-branch JSON shape that Vertex's order-enforcing
 decoder completes. Scores are therefore an answer-agent comparison over the
 same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v28-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v28-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v29-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v29-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -267,7 +267,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v28",
+    key="full-v29",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,

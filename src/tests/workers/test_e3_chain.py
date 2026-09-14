@@ -91,12 +91,12 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
     "claims": [
         {
             "claim_text": "Alice Novak joined Acme in 2024.",
-            "source_span": "Alice Novak joined Acme in 2024.",
+            "source_refs": ["S1"],
             "entailment_self_verdict": True,
         },
         {
             "claim_text": "Alice Novak works for Acme.",
-            "source_span": "Alice Novak works for Acme as an engineer.",
+            "source_refs": ["S3"],
             "entailment_self_verdict": True,
         },
     ]

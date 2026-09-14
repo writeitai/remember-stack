@@ -43,6 +43,7 @@ src/tests/core/test_knowledge_hashing.py
 src/tests/core/test_knowledge_planner.py
 src/tests/core/test_knowledge_writer.py
 src/tests/core/test_section_snap.py
+src/tests/core/test_source_passages.py
 src/tests/core/test_structure_skeleton.py
 src/tests/core/test_temporal.py
 src/tests/core/test_text_metering.py
@@ -88,6 +89,7 @@ src/tests/test_smoke.py
 src/tests/workers/test_chunk_level_extract.py
 src/tests/workers/test_claim_valid_time.py
 src/tests/workers/test_claimify_loss_ledger.py
+src/tests/workers/test_d119_reuse.py
 src/tests/workers/test_d79_structure_route.py
 src/tests/workers/test_d79_summaries.py
 src/tests/workers/test_d79_summary_consumption.py

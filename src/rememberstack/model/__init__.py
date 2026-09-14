@@ -42,6 +42,7 @@ from rememberstack.model.claims import ClaimValidKind
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import DecisionRecord
 from rememberstack.model.claims import DecisionType
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.claims import FactForEmbedding
 from rememberstack.model.claims import FactForLabeling
 from rememberstack.model.claims import FactLabelResponse
@@ -469,6 +470,7 @@ __all__ = (
     "EntityCandidate",
     "EntityRef",
     "Envelope",
+    "EvidenceSpan",
     "GraphEdge",
     "GraphNode",
     "GraphPath",

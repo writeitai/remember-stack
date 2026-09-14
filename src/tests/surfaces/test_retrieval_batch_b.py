@@ -327,12 +327,15 @@ class _Corpus:
             connection.execute(
                 text(
                     "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
-                    " created_at) VALUES (:deployment, :chunk, :claim, :at)"
+                    " evidence_spans, created_at)"
+                    " VALUES (:deployment, :chunk, :claim,"
+                    " CAST(:spans AS jsonb), :at)"
                 ),
                 {
                     "deployment": _DEPLOYMENT_ID,
                     "chunk": chunk_id,
                     "claim": claim_id,
+                    "spans": '[{"char_start": 0, "char_end": 1}]',
                     "at": _MENTIONED_AT,
                 },
             )

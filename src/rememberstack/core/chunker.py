@@ -141,9 +141,12 @@ def extraction_input_hash(
     """The D56 reuse key: stable inputs of the E2 bundle, no LLM output.
 
     Own blocks + neighbor blocks + deterministic document metadata + the
-    extractor and structurer versions. Prefixes, summaries, and section paths
-    are carried forward on reuse, never keyed — so an unchanged key within a
-    lineage means the prior claims are re-attached instead of re-extracted.
+    extractor and structurer versions. ``neighbor_block_hashes`` is the
+    previous-then-next pair, using an empty string for an absent same-section
+    neighbour so previous-only text cannot hash the same as next-only text.
+    Prefixes, summaries, and section paths are carried forward on reuse,
+    never keyed — so an unchanged key within a lineage means the prior
+    claims are re-attached instead of re-extracted.
     """
     payload = "\x1e".join(
         (

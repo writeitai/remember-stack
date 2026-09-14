@@ -82,7 +82,8 @@ There is **no** `confidence` field on the shipped fact record.
 | Field | Meaning |
 | --- | --- |
 | `claim_id`, `doc_id`, `chunk_id` | Anchors |
-| `claim_text`, `source_span`, `char_start`, `char_end` | Text + grounding |
+| `claim_text`, `source_span`, `char_start`, `char_end` | Text + **origin** grounding (the target-chunk owner) |
+| `evidence_spans` | Complete supporting body ranges for the **origin occurrence** identified by `chunk_id` (`{char_start, char_end}` objects in that chunk's representation). Empty when that occurrence list is missing; origin scalars are not substituted as complete support. Current-version remapped positions are on `memory_v1.claim_occurrences_live`. |
 | `is_current_testimony` | Currency filter result |
 | `asserted_at`, `claim_valid_*` | When the source made the statement, and when the claim says it happened or was true (source-asserted, not system belief) |
 | `corroboration_count`, `grouped_claim_ids` | Duplicate collapse metadata when present |
@@ -175,7 +176,7 @@ Hard-forgotten content is **not** a separate kind — it is indistinguishable fr
 
 ## Media derivation fields (open query, not envelope)
 
-`derivation_kind` / `evidence_mode` / rich source locators for media are available on the **SQL query-space occurrence views**, not as nested envelope `provenance` objects on `EvidenceResult`. Use [Open query](/docs/retrieval/open-query) for those columns; use claim `source_span` / char offsets on the envelope for grounded text.
+`derivation_kind` / `evidence_mode` / rich source locators for media are available on the **SQL query-space occurrence views**, not as nested envelope `provenance` objects on `EvidenceResult`. Use [Open query](/docs/retrieval/open-query) for those columns and for `claim_occurrences_live.evidence_spans`. Envelope `evidence_spans` is the complete occurrence support; `source_span` / `char_start` / `char_end` remain the immutable origin.
 
 ## Support marker
 

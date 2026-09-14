@@ -13,7 +13,7 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 ### Core memory engine
 
 - Full evidence spine: ingest → convert → structure → chunk → claim extract → entity resolve → fact adjudicate
-- Immutable claims, adjudicated relations and observations, bi-temporal validity, supersession, contradiction groups
+- Immutable claims with occurrence-level multi-span source grounding, adjudicated relations and observations, bi-temporal validity, supersession, contradiction groups
 - Testimony currency and lineage-based evidence counting when documents change or extractors re-run
 - Watched sources and versioned document lineages (including a local directory watcher)
 
@@ -358,7 +358,7 @@ Facts have one chosen world-time window. Ordinary adjudication uses source dates
 and surrounding context to identify repeated events and revise a fact's dates.
 Claims retain the source's original testimony. Historical retrieval and dated
 summaries use the chosen window without a stored state/event taxonomy or separate
-verdict dates. The evaluator generation is Full-v28; this change does not establish
+verdict dates. The evaluator generation is Full-v29; this change does not establish
 a benchmark score improvement.
 
 Stores created before this change are recreated and re-ingested; the migration

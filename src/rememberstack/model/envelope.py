@@ -20,6 +20,7 @@ from pydantic import model_validator
 
 from rememberstack.model.adjudication import TranscriptEntry
 from rememberstack.model.claims import ClaimValidPrecision
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.model.queue import UTCDateTime
 
@@ -282,7 +283,14 @@ class FactResult(BaseModel):
 
 
 class EvidenceResult(BaseModel):
-    """One evidence-grain record: a claim with its provenance anchors."""
+    """One evidence-grain record: a claim with its provenance anchors.
+
+    ``source_span`` / ``char_start`` / ``char_end`` are the immutable origin
+    of the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.
+    ``evidence_spans`` is the complete body support for the same origin
+    occurrence, in that chunk's representation. Current-version remapped
+    positions live on ``memory_v1.claim_occurrences_live``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -293,6 +301,7 @@ class EvidenceResult(BaseModel):
     source_span: str
     char_start: int
     char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     is_attributed: bool
     is_current_testimony: bool
     asserted_at: UTCDateTime | None = Field(

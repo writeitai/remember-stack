@@ -54,3 +54,6 @@ src/tests/workers/test_p3_corpusfs.py
 src/tests/workers/test_reuse_lifecycle.py
 src/tests/workers/test_watch_loop.py
 src/tests/spine/test_claim_occurrence_provenance.py
+src/tests/spine/test_d119_multi_span.py
+src/tests/spine/test_d119_migration.py
+src/tests/workers/test_d119_versions.py
