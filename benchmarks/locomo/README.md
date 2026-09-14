@@ -331,7 +331,8 @@ export GOOGLE_API_CERTIFICATE_CONFIG=/etc/rememberstack/locomo-vertex/certificat
 export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
 export REMEMBERSTACK_VERTEX_PROJECT_ID=<the isolated lab project id>
 # optional: REMEMBERSTACK_VERTEX_LOCATION (default global),
-#           REMEMBERSTACK_VERTEX_MAX_COMPLETION_TOKENS (default 4096),
+#           REMEMBERSTACK_VERTEX_MAX_COMPLETION_TOKENS (default 128000),
+#           REMEMBERSTACK_VERTEX_TIMEOUT_S (default no client deadline),
 #           REMEMBERSTACK_VERTEX_PRICE_TABLE_USD_PER_MILLION (JSON; default pins Gemma 4 26B)
 ```
 
