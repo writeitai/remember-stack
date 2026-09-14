@@ -23,7 +23,7 @@ class PromptNewFact(BaseModel):
     handle: _NonEmpty = Field(
         description=(
             "A new-fact name local to this answer, such as win or N1. It must "
-            "not reuse a supplied F, C, A, E, or S name."
+            "not reuse a supplied F, C, A, E, S, T, or W name."
         )
     )
     assertion: _NonEmpty = Field(

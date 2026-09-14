@@ -79,10 +79,10 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
             "no-types-1:binary-t4-1:document-t0-1:mutable-window-1:"
-            "assertion-clarity-2"
+            "assertion-clarity-3"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-2:relation-adjudicator-2026.09d:concise-handles-4:obs-adjudicator-2026.09d:concise-handles-4"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:relation-adjudicator-2026.09d:concise-handles-5:obs-adjudicator-2026.09d:concise-handles-5"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -123,7 +123,7 @@ GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v30-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v29 pin -- ingestion bindings, prompts,
+The variant protocol keeps every v30 pin -- ingestion bindings, prompts,
 tool catalog, budgets, judge -- and swaps only the answer agent to this model
 on Vertex, with thinking deliberately pinned off and the answer step pinned as
 `DiscriminatedAnswerAgentStep`, the

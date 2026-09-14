@@ -141,22 +141,22 @@ historical snapshots were cleared; every fixture is labeled reconstructed.
 
 | Fixture | What it is | full snapshot | compact input | old prompt+schema | new prompt+schema |
 | --- | --- | ---: | ---: | ---: | ---: |
-| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 10625 |
-| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 14248 |
-| bounded 20 varied | 20 distinct facts, 40 claims, 40 applications; mixed shared spans, cross-source repeats, unhydrated witnesses; first five statements from the local audit, remainder reconstructed | 57142 | 28760 | 64433 | 38053 |
-| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 26373 |
+| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 10631 |
+| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 14254 |
+| bounded 20 varied | 20 distinct facts, 40 claims, 40 applications; mixed shared spans, cross-source repeats, unhydrated witnesses; first five statements from the local audit, remainder reconstructed | 57142 | 28760 | 64433 | 38059 |
+| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 26379 |
 
-Schema alone: previous UUID schema 4462 bytes; handle schema 4704 bytes.
+Schema alone: previous UUID schema 4462 bytes; handle schema 4710 bytes.
 Instruction template after the parent's clarity pass: 4597 UTF-8 bytes
 (previous shortened template 4393; initial long template approximately 7.1 KB).
 
 The 10:55 parent review was right that the first long instruction offset
 compaction on small inputs (then 9345→13142). After combining repeated
 definitions/examples and the parent's clarity edits, the small case is
-9345→10625 (still larger:
+9345→10631 (still larger:
 clearer rules plus handle schema). The 6-fact case now saves. The
 larger reconstructed case is the bounded 20-fact snapshot
-(64433→38053 bytes of prompt+schema). It is not a captured production request.
+(64433→38059 bytes of prompt+schema). It is not a captured production request.
 Best-case exact
 repetition remains the largest drop. No billed-token saving is claimed.
 Whitespace word counts are not reported as model tokens.
@@ -213,7 +213,7 @@ the misleading sentence "a win is not participation": a win can imply
 participation, but storing only participation loses the asserted result.
 Abandoned design categories and date-dispute machinery are no longer discussed
 in the prompt. The extra 204 bytes over the earlier shortened draft are retained
-for clarity. The adjudicator generation is `concise-handles-4`.
+for clarity. The adjudicator generation is `concise-handles-5`.
 Parent validation: 64 concise-presentation, protocol, and serialized-run-summary
 tests passed. This wording still requires review on the final integrated head;
 the earlier Antigravity verdicts do not cover it.
@@ -256,3 +256,21 @@ Nits were not treated as material: no extra date-qualification example (YAGNI
 until D119 lands) and no extra keyword-freeze assertions for `source_world_` /
 `chosen_`. D119-integrated final pins still need a later review. This PR is
 not merge-ready.
+
+
+## Review of the parent-integrated wording
+
+Antigravity reviewed exact `ecedaabe4957760ebd690ffd0f2575c078fa0c70`: approve
+with nits, no code blockers. The [full report](d120_d121_agy_review_ecedaabe.md)
+includes the commands it actually ran. Parent addressed its concrete findings:
+
+- The normalizer now consistently permits zero outputs; its introduction no
+  longer contradicts its rules. Normalizer generation is `assertion-clarity-3`.
+- The model-facing new-fact-name description includes reserved T/W names,
+  matching the existing enforcement and prompt. Adjudicators use
+  `concise-handles-5`; the six extra schema bytes are included above.
+- Setup docs and variant comments name Full-v30 and the current generations.
+
+The 64 concise-input/protocol/serialized-summary checks pass after these edits.
+The changes introduce no new operation or runtime mechanism. Final integration
+with D119 and review of that delta remain required before merge.

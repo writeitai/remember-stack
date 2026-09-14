@@ -80,7 +80,7 @@ OBS_FLUSH_LEGACY_VERSION: Final = "e3-obs-flush-2026.08a:claim-fanout-1"
 
 
 _NORMALIZE_PROMPT: Final = """PURPOSE
-You are the normalizer of a memory system. Turn the CLAIM into one or more
+You are the normalizer of a memory system. Turn the CLAIM into zero or more
 assertions: each assertion is one relation or one observation. Preserve the
 proposition the source made.
 

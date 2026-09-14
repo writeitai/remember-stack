@@ -1,12 +1,12 @@
 # RS-LoCoMo-Full-v30 setup
 
-v29 (2026-09-14) pins D120/D121 processing: assertion-preserving extractor,
-normalizer and adjudicator prompts, plus compact attempt-local adjudication
-handles. Ingest generations append `assertion-clarity-2` and
-`concise-handles-3`. Stores ingested under v28 are not comparable and must be
-re-ingested. Dataset, models, budgets, judge rubric, scoring, and the
-retrieval surface hash are unchanged. No quality or cost claim is made from
-the pin alone.
+v30 (2026-09-14) combines D119 multi-span extraction with D120/D121 clear
+processing instructions and compact adjudication input. Extractor and normalizer
+generations include `assertion-clarity-3`; adjudicators use `concise-handles-5`.
+The surface manifest includes D119 occurrence evidence. Stores ingested under
+v28 or v29 are not comparable and must be re-ingested for this protocol.
+Dataset, provider defaults, answer/judge behavior and scoring are unchanged.
+The changed pins do not establish improved quality or lower cost.
 
 v28 (2026-09-12) pins the D118 fact contract: normalizer generation
 `e3-normalize-2026.09f:…:mutable-window-1`, the relation and observation
