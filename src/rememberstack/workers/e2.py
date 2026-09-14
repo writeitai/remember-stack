@@ -292,7 +292,7 @@ Examples (DOCUMENT HEADER date → structured output):
   valid_kind=event_time, valid_from_iso=2023-05-07,
   valid_until_iso=2023-05-07, valid_precision=day.
   Note the quote form: the resolved date replaces "yesterday" even inside the
-  attributed speech; source_span keeps the verbatim wording.
+  attributed speech; the cited source passages keep the verbatim wording.
 - date 2023-05-08; "painted a lake sunrise last year" →
   claim_text="painted a lake sunrise in 2022",
   added_context=[{{text: "in 2022", source_kind: header}}],

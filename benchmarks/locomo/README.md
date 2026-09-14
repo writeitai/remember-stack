@@ -1,8 +1,9 @@
 # RS-LoCoMo-Full-v30 setup
 
 v30 (2026-09-14) combines D119 multi-span extraction with D120/D121 clear
-processing instructions and compact adjudication input. Extractor and normalizer
-generations include `assertion-clarity-3`; adjudicators use `concise-handles-5`.
+processing instructions and compact adjudication input. Extractor generation
+includes `assertion-clarity-4`, normalizer `assertion-clarity-3`, and adjudicators
+use `concise-handles-5`.
 The surface manifest includes D119 occurrence evidence. Stores ingested under
 v28 or v29 are not comparable and must be re-ingested for this protocol.
 Dataset, provider defaults, answer/judge behavior and scoring are unchanged.

@@ -74,7 +74,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
             "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
             "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
-            "assertion-clarity-3"
+            "assertion-clarity-4"
         ),
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"

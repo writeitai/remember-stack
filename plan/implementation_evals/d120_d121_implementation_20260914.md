@@ -13,7 +13,7 @@ branch is Full-v30. The parent owns final prompt wording, integration and merge.
 The earlier checkpoint history below is retained as measurement/review evidence;
 it does not describe the current dependency state.
 
-Extractor and normalizer use `assertion-clarity-3`; adjudicators use
+Extractor uses `assertion-clarity-4`, normalizer `assertion-clarity-3`; adjudicators use
 `concise-handles-5`. Final integration passed 63 concise/protocol checks, the
 regenerated serialized-summary check, and 11 PostgreSQL E2/concise-adjudication
 checks. No fact-application or locking logic changed in this final integration.
@@ -282,3 +282,14 @@ includes the commands it actually ran. Parent addressed its concrete findings:
 The 64 concise-input/protocol/serialized-summary checks pass after these edits.
 The changes introduce no new operation or runtime mechanism. Final integration
 with D119 and review of that delta remain required before merge.
+
+## Final review and main integration
+
+D119 merged as `4411774b`; this branch is rebased onto that main. Antigravity
+[approved the final integrated runtime](d120_d121_agy_review_b575c556.md) at
+`b575c5567ab87f7225b43fe271ba9b36019ce08f`, with no material findings. Parent
+fixed its single wording nit: an example now says cited source passages preserve
+verbatim text, matching Claimify's multi-span output. This wording-only extraction
+change rolls its clarity suffix to4; normalizer/adjudicator generations stay as
+reviewed. No response schema, operation or locking change. Final CI is required
+after this rebase.
