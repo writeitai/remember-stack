@@ -227,8 +227,10 @@ The extractor generation is `assertion-clarity-3`; LoCoMo is Full-v30 so the
 combined processing contract is distinct from D119's Full-v29.
 
 D119's subsequent coordinate/reuse fixes and final main merge still need to be
-integrated. The final combined head requires PostgreSQL regression checks and
-Antigravity review. Earlier reviews apply only to their recorded SHAs. Parent
+integrated. The combined draft passed the targeted prompt/temporal checks (117 tests);
+after updating its generated protocol fingerprint, the serialized summary
+check and PostgreSQL E2/concise-adjudication checks passed together (12 tests).
+The final combined head still requires Antigravity review. Earlier reviews apply only to their recorded SHAs. Parent
 will also review the additional D122 document-reference instructions when that
 runtime is ready. No final merge-readiness is claimed here.
 
