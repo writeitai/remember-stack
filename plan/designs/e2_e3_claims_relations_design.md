@@ -1,5 +1,11 @@
 # E2 / E3 — Claim Extraction and Relation Normalization (Design)
 
+
+> **D119 amendment (2026-09-14):** [coherent multi-span claim extraction](multi_span_claim_extraction_design.md)
+> governs coherent claim granularity, complete evidence spans and version-specific
+> remapping. D56 claim-ID reuse remains mandatory; single anchors describe origins,
+> not complete multi-span support. Design acceptance is not shipped implementation.
+
 > **D118 amendment (2026-09-07; effective when merged).** Retain all four claim temporal kinds, open precision, full source timestamp and canonical arithmetic. Fact creation and later dates follow D118 §§2–3: one mutable window, no copied fact kind or permanent seed authority.
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.

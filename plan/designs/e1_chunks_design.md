@@ -1,5 +1,11 @@
 # E1 — Blocks, Sections, Chunks (Design)
 
+
+> **D119 amendment (2026-09-14):** [coherent multi-span claim extraction](multi_span_claim_extraction_design.md)
+> governs coherent claim granularity, complete evidence spans and version-specific
+> remapping. D56 claim-ID reuse remains mandatory; single anchors describe origins,
+> not complete multi-span support. Design acceptance is not shipped implementation.
+
 How a converted document becomes the units the system embeds, extracts from, and anchors
 claims to — and how those units survive document edits. Binding design for decisions
 **D57–D58**, building on D94 (PostgreSQL-native P1), D25 (no value gate), D32 (grounding offsets),

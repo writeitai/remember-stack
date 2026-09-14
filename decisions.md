@@ -5792,6 +5792,45 @@ on concrete storage, consumer and deletion contracts. Already merged canonical
 SQL, extraction vocabulary and all evaluator variants remain intact. No schema
 upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
 
+## D119. Coherent claims with multi-span evidence and version reuse
+
+**Status:** accepted by the user (2026-09-14); runtime implementation proceeds
+through a reviewed PR. No benchmark gain or shipped support is claimed here.
+
+**Context.** LoCoMo inspection found expensive over-decomposition into vague
+fragments, while one contiguous evidence anchor constrains coherent statements
+supported across passages. The user explicitly accepted multi-span claim evidence
+and required the version-reuse mechanism to remain operational for hundreds of
+small document revisions.
+
+**Decision.** Extract coherent source-supported claims without splitting every
+conjunction. The engine labels exact source passages; the model selects supplied
+references, and the engine validates their positions. Store bounded lists of
+supporting spans per source occurrence, all within one immutable document version
+and representation. Keep one target-chunk extraction owner, existing bounded
+same-section context, summaries as orientation only, and D31's two extraction calls.
+D56 must reuse the same claim IDs for unchanged extraction inputs and remap all
+evidence spans into each new occurrence. Coordinates and temporary labels are not
+reuse keys; changed supporting context invalidates reuse.
+
+**Rationale and alternatives.** Single-sentence fragments can lose referents and
+multiply downstream work. A document-wide bounding span obscures evidence;
+removing provenance weakens verification; disabling reuse multiplies extraction
+and claims across versions. A short occurrence span array meets the need without
+an evidence graph, wider context search, a new checker model or a fact redesign.
+
+**Consequences.** Exact pointers still do not prove entailment. Grounding,
+Selection accounting, occurrence reuse, media locators, forget, model/surface
+contracts and generation pins require coordinated updates and meaningful tests.
+A 500-version test is required. Existing timestamp-based invalidation remains
+explicit; no silent removal of temporal anchors is permitted. Populated stores
+follow the clean-store/refuse-upgrade policy, never automatic deletion or invented
+provenance backfills. Additional span metadata grows per retained occurrence;
+unchanged sources must not multiply claim identities or provider calls.
+
+**Authority:** [D119 design](plan/designs/multi_span_claim_extraction_design.md).
+**Evidence:** [analysis](plan/analysis/multi_span_claim_extraction.md).
+
 ## D120. Clear processing prompts preserve the assertion being made
 
 **Status:** accepted 2026-09-14, binding when merged. A shared person/event is
