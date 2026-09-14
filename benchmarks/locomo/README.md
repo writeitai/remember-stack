@@ -1,10 +1,12 @@
 # RS-LoCoMo-Full-v29 setup
 
-v29 (2026-09-14) pins coherent multi-span claim extraction (D119), including
-complete occurrence evidence and mandatory document-version reuse. The extractor
-generation is `e2-extract-2026.09:d119-multi-span-1:…`; the schema fingerprint
-also changes. Earlier stores require fresh processing. Model bindings, dataset,
-answer/judge instructions, budgets and scoring stay unchanged.
+v29 (2026-09-14) pins D120/D121 processing: assertion-preserving extractor,
+normalizer and adjudicator prompts, plus compact attempt-local adjudication
+handles. Ingest generations append `assertion-clarity-1` and
+`concise-handles-1`. Stores ingested under v28 are not comparable and must be
+re-ingested. Dataset, models, budgets, judge rubric, scoring, and the
+retrieval surface hash are unchanged. No quality or cost claim is made from
+the pin alone.
 
 v28 (2026-09-12) pins the D118 fact contract: normalizer generation
 `e3-normalize-2026.09f:…:mutable-window-1`, the relation and observation

@@ -19,10 +19,13 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 
 Facts use one mutable chosen world-time window with explicit precision. Contextual
 adjudication handles identity and date corrections together; immutable source
-claims remain available as evidence. Retrieval distinguishes confirmed temporal
-matches from incomplete-date candidates. Entity descriptions and fact labels show
-dated history. Stores created before this change are recreated, not converted;
-see [deployment](/docs/deployment#fact-stores-created-before-chosen-world-dates).
+claims remain available as evidence. Processing prompts treat a shared person or
+event as distinct from the proposition being made, and the adjudicator reads
+compact semantic evidence rather than database bookkeeping. Retrieval
+distinguishes confirmed temporal matches from incomplete-date candidates. Entity
+descriptions and fact labels show dated history. Stores created before chosen
+world dates are recreated, not converted; see
+[deployment](/docs/deployment#fact-stores-created-before-chosen-world-dates).
 
 ### Retrieval and agent surfaces
 

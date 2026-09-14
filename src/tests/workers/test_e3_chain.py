@@ -208,7 +208,7 @@ class _E3Rig:
             """Serve canned chain payloads and a dynamic T4 candidate id."""
             if type_name == "NormalizationResponse":
                 return self.normalization_payload
-            if type_name == "FactApplicationDecision":
+            if type_name == "PromptFactDecision":
                 return same_fact_application_answer(prompt=prompt)
             if type_name == "T4Selection":
                 return match_first_t4_candidate(prompt, type_name)

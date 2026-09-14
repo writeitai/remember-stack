@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.concise_adjudication import PROMPT_RENDERER_VERSION
 from rememberstack.model.fact_application import AssertionKind
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.model.relations import NormalizationResponse
@@ -420,8 +421,17 @@ class FactApplicationCatalog:
 
 
 def snapshot_hash(*, snapshot: Mapping[str, Any]) -> str:
-    """Fingerprint complete domain inputs, excluding attempt and processing timestamps."""
-    return sha256(canonical_json(dict(snapshot)).encode()).hexdigest()
+    """Fingerprint complete domain inputs plus the projector that will render them.
+
+    The renderer version is part of this attempt's identity: a new projector
+    cannot reuse a frozen answer, and a retry of the same attempt rebuilds the
+    same names from the same frozen rows.
+    """
+    return sha256(
+        canonical_json(
+            {"renderer_version": PROMPT_RENDERER_VERSION, "snapshot": dict(snapshot)}
+        ).encode()
+    ).hexdigest()
 
 
 _VERSION_APPLICATIONS = """
