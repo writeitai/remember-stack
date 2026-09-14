@@ -35,15 +35,18 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30"
-DEFAULT_PROTOCOL_KEY: Final = "full-v30"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-concise-adjudication-v30"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31"
+DEFAULT_PROTOCOL_KEY: Final = "full-v31"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v31"
+"""Adapter identity for Full-v31: D122/D123 on the D119–D121 processing contract."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 API_TIMEOUT_SECONDS: Final = 60.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
+EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
+"""Concise adjudication projector/response-adapter generation (D121/D123)."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
     "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2"
@@ -54,12 +57,19 @@ EXPECTED_PIPELINE_STAGES: Final = (
     "chunk",
     "embed_chunk",
     "extract_claims",
+    "ground_claims",
     "normalize_relations",
     "adjudicate_observations",
     "adjudicate_supersession",
     "embed_claim",
     "reconcile",
     "label_relation",
+)
+_E2_EXTRACTOR_GENERATION: Final = (
+    "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
+    "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
+    "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
+    "assertion-clarity-4:d122-source-references-1"
 )
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
@@ -70,19 +80,19 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "blockizer-heading-metadata"
         ),
         "embed_chunk": "e1-embed-2026.08-d80",
-        "extract_claims": (
-            "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
-            "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
-            "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
-            "assertion-clarity-4"
-        ),
+        "extract_claims": _E2_EXTRACTOR_GENERATION,
+        "ground_claims": _E2_EXTRACTOR_GENERATION,
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
             "no-types-1:binary-t4-1:document-t0-1:mutable-window-1:"
-            "assertion-clarity-3:d123-context-refs-1"
+            "assertion-clarity-3:d123-context-refs-2"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-1:relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1:obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:"
+            "claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:"
+            "mutable-window-1:assertion-clarity-3:d123-context-refs-2:"
+            "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+            "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -118,21 +128,22 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v30-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v31-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant protocol keeps every v30 pin -- ingestion bindings, prompts,
-tool catalog, budgets, judge -- and swaps only the answer agent to this model
-on Vertex, with thinking deliberately pinned off and the answer step pinned as
-`DiscriminatedAnswerAgentStep`, the
-same decision in a two-branch JSON shape that Vertex's order-enforcing
-decoder completes. Scores are therefore an answer-agent comparison over the
-same stores, not a new benchmark identity.
+The variant is reader-only. It keeps every canonical v31 ingest pin --
+pipeline stages including ground_claims, component generations, model
+bindings, prompts, tool catalog, budgets, and judge -- and swaps only the
+answer agent to this model on Vertex, with thinking deliberately pinned off
+and the answer step pinned as `DiscriminatedAnswerAgentStep`, the same
+decision in a two-branch JSON shape that Vertex's order-enforcing decoder
+completes. It does not configure processing. Scores are therefore an
+answer-agent comparison over the same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v30-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v30-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v31-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -269,7 +280,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v30",
+    key="full-v31",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
