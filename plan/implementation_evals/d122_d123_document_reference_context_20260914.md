@@ -217,3 +217,18 @@ provider is typed as its existing ModelProviderPort; its convenience constructor
 and production defaults are unchanged. This lets an isolated experiment compose
 existing providers honestly without pretending a reader-only Gemma variant
 configures processing.
+
+The integrated actual500-version proof completed successfully in1,258.64 seconds
+(20m58s). It retained the same two-span claim identity across the500 occurrences,
+avoided repeated target extraction calls, and verified the actual fact evidence
+recount remained one source lineage. No model-quality inference follows from
+these canned responses.
+
+Final rebase onto main `6205fe09` retained the upstream source-passage wording;
+the two conflicts were generation pins, resolved to the combined Full31 values.
+CI on runtime head `e7553a1a` passed Quality (including the full type checker),
+docs build, adapters, Compose quickstart and contract smoke. Its unit lane had
+1,666 passes and two old temporal-prompt fixtures missing the new `cards` format
+argument. Parent supplied an empty reference block; all19 temporal tests then
+passed. This is a fixture update, not a runtime change. Final integration lanes
+and Antigravity final review are being collected before merge.
