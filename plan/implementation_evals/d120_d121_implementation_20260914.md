@@ -7,7 +7,7 @@
 [D121](../designs/concise_adjudication_inputs_design.md), commit `4a803c1d`
 (PR #401, merged).
 **PR:** https://github.com/writeitai/remember-stack/pull/402 (draft)
-**Head:** filled after the commit that contains this report.
+**Head:** `42b26390afefb4dc82b9d63ad3faf9d6bda4a549` (this report's commit; Antigravity SHA filled after review).
 **Parent owns** integration, merge, and release. User authorized the checked
 CLA text.
 
