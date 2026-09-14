@@ -83,6 +83,7 @@ _E2_STAGES = (
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
+    PipelineStage.GROUND_CLAIMS,
 )
 _E3_STAGES = (
     PipelineStage.NORMALIZE_RELATIONS,
@@ -94,9 +95,17 @@ _E3_STAGES = (
 _TARGET_PATTERN = re.compile(r"TARGET CHUNK:\n(.+)", re.S)
 
 
-def _document(*, extra: str, notes: str = _NOTES) -> str:
-    """Two-section source: changing appendix, stable notes body."""
-    return f"# Appendix\n\n{extra}\n\n# Notes\n\n{notes}\n"
+def _document(*, extra: str, notes: str = _NOTES, shift_origin: bool = False) -> str:
+    """Keep version edits outside the bounded preceding reference dependencies."""
+    if shift_origin:
+        # Ten source chunks isolate the offset-changing prefix from the target's
+        # preceding eight Selection producers and their possible neighbors.
+        buffers = "".join(
+            f"# Buffer {index}\n\nStable background paragraph number {index}.\n\n"
+            for index in range(10)
+        )
+        return f"# Appendix\n\n{extra}\n\n{buffers}# Notes\n\n{notes}\n"
+    return f"# Notes\n\n{notes}\n\n# Appendix\n\n{extra}\n"
 
 
 def _route(prompt: str, type_name: str) -> dict[str, object]:
@@ -104,8 +113,10 @@ def _route(prompt: str, type_name: str) -> dict[str, object]:
     if type_name == "FallbackStructureResponse":
         return {
             "sections": [
-                {"anchor": "Appendix", "occurrence_index": 0},
-                {"anchor": "Notes", "occurrence_index": 0},
+                {"anchor": heading, "occurrence_index": 0}
+                for heading in re.findall(
+                    r"(?m)^# (Appendix|Notes|Buffer \d+)\s*$", prompt
+                )
             ]
         }
     if type_name == "RootSummaryPlacementResponse":
@@ -247,9 +258,12 @@ def database_engine() -> Iterator[Engine]:
 class _VersionRig:
     """E0–E3 chain with a living ingest path and a failing unexpected-extract flag."""
 
-    def __init__(self, *, engine: Engine, root: Path) -> None:
+    def __init__(
+        self, *, engine: Engine, root: Path, shift_origin: bool = False
+    ) -> None:
         """Compose catalogs, fake provider, and registered handlers."""
         self.engine = engine
+        self.shift_origin = shift_origin
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.provider = FakeModelProvider(generate_router=_route)
@@ -323,6 +337,10 @@ class _VersionRig:
                 settings=E2Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
             ),
+        )
+        registry.register(
+            stage=PipelineStage.GROUND_CLAIMS,
+            handler=registry.handler_for(stage=PipelineStage.EXTRACT_CLAIMS),
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
@@ -411,7 +429,9 @@ class _VersionRig:
             upload=DocumentUpload(
                 filename="d119.md",
                 mime="text/markdown",
-                content=_document(extra=extra, notes=notes).encode("utf-8"),
+                content=_document(
+                    extra=extra, notes=notes, shift_origin=self.shift_origin
+                ).encode("utf-8"),
             ),
             versioning_mode="living",
             source_modified_at=None,
@@ -473,13 +493,13 @@ def test_envelope_origin_spans_match_identified_chunk_after_reuse(
 ) -> None:
     """After an offset shift, API spans still belong to the origin chunk."""
     _bootstrap(database_engine)
-    rig = _VersionRig(engine=database_engine, root=tmp_path)
+    rig = _VersionRig(engine=database_engine, root=tmp_path, shift_origin=True)
     rig.observe(extra="x")
     rig.drain(stages=_E2_STAGES + _E3_STAGES)
     rig.observe(extra="xx")
     rig.drain(stages=_E2_STAGES)
-    origin_md = _document(extra="x")
-    shifted_md = _document(extra="xx")
+    origin_md = _document(extra="x", shift_origin=True)
+    shifted_md = _document(extra="xx", shift_origin=True)
     with database_engine.connect() as connection:
         claim = (
             connection.execute(

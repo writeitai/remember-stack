@@ -254,3 +254,36 @@ def test_context_extra_does_not_displace_baseline_targets(
     assert win in fact_ids
     assert len(fact_ids) <= 28
     assert len(fact_ids) >= 20
+
+
+def test_context_names_are_frozen_and_invalidate_a_prepared_presentation(
+    database_engine: Engine,
+) -> None:
+    """A changed context name cannot leave an old model presentation applicable."""
+    from rememberstack.core.concise_adjudication import project_concise_inputs
+    from rememberstack.spine.fact_applications import snapshot_hash
+
+    case = WriterCase(engine=database_engine)
+    tournament = _tournament(engine=database_engine, case=case)
+    _, app = case.stage(day=10, context_entities=(tournament,))
+    before = _snapshot(engine=database_engine, case=case, app=app)
+    presentation, mapping = project_concise_inputs(snapshot=before)
+    names = {
+        entity["handle"]: entity.get("name") for entity in presentation["entities"]
+    }
+    incoming = next(
+        item
+        for item in presentation["assertions"]
+        if item["handle"] == mapping.incoming_assertion
+    )
+    assert names[incoming["context"][0]] == "Riverside Cup"
+    assert incoming["claim"] in mapping.claims
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET canonical_name='Riverside May Cup' WHERE entity_id=:id"
+            ),
+            {"id": tournament},
+        )
+    after = _snapshot(engine=database_engine, case=case, app=app)
+    assert snapshot_hash(snapshot=before) != snapshot_hash(snapshot=after)

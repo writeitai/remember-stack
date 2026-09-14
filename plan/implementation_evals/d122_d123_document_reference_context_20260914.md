@@ -13,7 +13,7 @@ Binding designs: [D122](../designs/document_reference_context_design.md),
 Parent owns final integration, review, merge, and release. This branch must
 not be self-merged.
 
-## What this head implements
+## Earlier independent D123 checkpoint
 
 D123's independent path is implemented on this head:
 
@@ -108,3 +108,45 @@ semantic-quality claim.
 - Constraint counts and table inventory must be re-checked after the D119
   migration is inserted.
 - Parent review of #403 is still required before merge.
+
+## Parent integration checkpoint
+
+D119 merged in PR400 as `4411774b`; D120/D121 merged in PR402 as `6205fe09`.
+The document-context branch has incorporated the published combined runtime;
+its final rebase onto these squash merges follows the current shared edits.
+
+Parent has implemented the source-owned Selection catalog, first-publication
+wins (including zero-output responses), late-publication source/forget checks,
+and a representation barrier using the existing work ledger. Selection remains
+`extract_claims`; the existing `ground_claims` stage now runs Claimify, with
+normalization behind its completion barrier. Both stages use the same E2 handler.
+The self-host and Compose worker sets include both phases. No third model call,
+queue, cache or claim-receipt table was introduced. A hash on the existing chunk
+row records Claimify's completed input identity atomically with its output.
+
+Grounded context is now projected into the concise adjudication input as named
+entities linked to the assertion and its claim. Canonical aliases/names are
+frozen with the snapshot and invalidate a prepared answer when changed. The
+full membership checks remain internal. A normalizer instruction now permits
+a particular unnamed event with a descriptive name; it does not invent a
+proper name or require an event type.
+
+Parent checks completed at this checkpoint: four PostgreSQL Selection/barrier/
+source-removal/window proofs passed;36 concise-input/profile tests passed;
+eight contextual nomination PostgreSQL tests passed. A ninth test initially
+failed because its call used the wrong keyword for the existing snapshot-hash
+helper; the test was corrected and its final result is recorded subsequently.
+Changed storage, ledger and profile modules passed Pyright. Grok replaced the
+temporary passage type with D119's actual SourcePassage and passed15 core tests,
+ruff and Pyright. Both minor earlier review nits are now addressed.
+
+The handler split and complete source-reference/reuse wiring are still being
+implemented by Grok in a bounded task while parent owns storage, scheduling,
+combined tests and final wording. Do not treat this checkpoint as complete or
+merge-ready. Final protocol31 pins, full combined tests, Antigravity review and
+parent adjustments remain required. No paid model call has run.
+
+The user authorized re-processing conv-42 with Gemma on Vertex after all three
+PRs land. Parent must verify every processing-stage binding before those calls,
+then report processing cost, latency and source-linked claim/fact quality.
+Answering/judging remain outside that run.

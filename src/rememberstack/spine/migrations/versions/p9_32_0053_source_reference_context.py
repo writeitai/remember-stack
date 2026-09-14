@@ -19,6 +19,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _DDL = r"""
+ALTER TABLE chunks ADD COLUMN claimify_input_hash text;
+CREATE INDEX ix_chunks_claimify_reuse ON chunks (deployment_id,doc_id,claimify_input_hash);
 CREATE TABLE selection_results (
   deployment_id uuid NOT NULL,
   chunk_id uuid NOT NULL,
@@ -64,9 +66,11 @@ CREATE INDEX ix_application_context_entity
 def upgrade() -> None:
     """Refuse a populated store, then add the Selection store and context junction."""
     connection = op.get_bind()
-    if connection.execute(text("SELECT EXISTS(SELECT 1 FROM claims)")).scalar_one():
+    if connection.execute(
+        text("SELECT EXISTS(SELECT 1 FROM claims) OR EXISTS(SELECT 1 FROM chunks)")
+    ).scalar_one():
         raise RuntimeError(
-            "D122/D123 do not convert a store that already holds claims; "
+            "D122/D123 do not convert a store that already holds claims or chunks; "
             "recreate the deployment and ingest its sources again"
         )
     apply_ddl(sql=_DDL)
@@ -74,9 +78,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop additive tables."""
-    drop_tables(
-        table_names=(
-            "application_context_bindings",
-            "selection_results",
-        )
-    )
+    op.execute("ALTER TABLE chunks DROP COLUMN claimify_input_hash")
+    drop_tables(table_names=("application_context_bindings", "selection_results"))

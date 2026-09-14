@@ -59,3 +59,4 @@ src/tests/spine/test_claim_occurrence_provenance.py
 src/tests/spine/test_d119_multi_span.py
 src/tests/spine/test_d119_migration.py
 src/tests/workers/test_d119_versions.py
+src/tests/spine/test_d122_selection.py

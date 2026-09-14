@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from rememberstack.core.context_references import MAX_CONTEXT_REFS
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_entity
 from rememberstack.spine.fact_applications import canonical_json
@@ -392,7 +393,54 @@ def application_snapshot(
     all_assertions = sorted(
         [*incoming, *assertions], key=lambda row: row["application_id"]
     )
+    context_rows = _rows(
+        connection=connection,
+        sql="""
+        WITH RECURSIVE bindings AS (
+          SELECT b.application_id,b.ordinal,e.entity_id,e.canonical_name
+          FROM application_context_bindings b JOIN entities e
+            ON e.deployment_id=b.deployment_id AND e.entity_id=b.entity_id
+          WHERE b.deployment_id=:deployment_id
+            AND b.application_id=ANY(CAST(:application_ids AS uuid[]))
+        ), chain AS (
+          SELECT b.entity_id AS origin,e.entity_id,e.merged_into,e.canonical_name,
+                 ARRAY[e.entity_id] AS path
+          FROM (SELECT DISTINCT entity_id FROM bindings) b JOIN entities e
+            ON e.entity_id=b.entity_id AND e.deployment_id=:deployment_id
+          UNION ALL
+          SELECT c.origin,e.entity_id,e.merged_into,e.canonical_name,c.path || e.entity_id
+          FROM chain c JOIN entities e ON e.entity_id=c.merged_into
+          WHERE e.deployment_id=:deployment_id AND NOT e.entity_id=ANY(c.path)
+        )
+        SELECT b.application_id,b.ordinal,b.entity_id,b.canonical_name AS name,
+               c.entity_id AS canonical_entity_id,c.canonical_name
+        FROM bindings b LEFT JOIN chain c ON c.origin=b.entity_id AND c.merged_into IS NULL
+        ORDER BY b.application_id,b.ordinal
+        """,
+        params={
+            "deployment_id": deployment_id,
+            "application_ids": [row["application_id"] for row in all_assertions],
+        },
+    )
+    contexts_by_application: dict[UUID, list[dict[str, Any]]] = {}
+    for context in context_rows:
+        if context["canonical_entity_id"] is None:
+            raise ApplicationInputChanged(
+                "context entity has no surviving canonical root"
+            )
+        contexts_by_application.setdefault(context["application_id"], []).append(
+            {
+                key: context[key]
+                for key in (
+                    "entity_id",
+                    "name",
+                    "canonical_entity_id",
+                    "canonical_name",
+                )
+            }
+        )
     for row in all_assertions:
+        row["context_entities"] = contexts_by_application.get(row["application_id"], [])
         row["canonical_subject_id"] = canonical_entity(
             connection=connection,
             deployment_id=deployment_id,
@@ -423,7 +471,8 @@ def application_snapshot(
         "support_hash": support_hash,
         "context_hash": context_hash,
         "context_member_ids": [str(entity_id) for entity_id in context_members],
-        "context_truncated": len(assertion.get("context_refs") or []) > 4,
+        "context_truncated": len(assertion.get("context_refs") or [])
+        > MAX_CONTEXT_REFS,
         "limits": {
             "facts": _FACT_LIMIT,
             "context_facts": _CONTEXT_FACT_LIMIT,

@@ -1080,3 +1080,28 @@ def test_prompt_schema_rejects_duplicate_window_replacement() -> None:
                 "rationale": "Two replacements.",
             }
         )
+
+
+def test_resolved_context_has_readable_names_aliases_and_source_claim() -> None:
+    """Context is linked to its assertion's testimony, not an opaque UUID list."""
+    snapshot = _snapshot(context_truncated=True)
+    assertion = snapshot["assertions"][0]
+    assertion["context_entities"] = [
+        {
+            "entity_id": _OBJECT_ALIAS,
+            "name": "the May tournament",
+            "canonical_entity_id": _OBJECT,
+            "canonical_name": "Riverside Cup",
+        }
+    ]
+    assertion["assertion"]["context_refs"] = [{"name": "unresolved discarded hint"}]
+    presentation, mapping = project_concise_inputs(snapshot=snapshot)
+    item = presentation["assertions"][0]
+    entities = {entity["handle"]: entity for entity in presentation["entities"]}
+    alias = entities[item["context"][0]]
+    assert alias["name"] == "the May tournament"
+    assert entities[alias["same_as"]]["name"] == "Riverside Cup"
+    assert item["claim"] in mapping.claims
+    assert "context_refs" not in item["content"]
+    assert presentation["context_truncated"] is True
+    assert str(_OBJECT) not in canonical_json(presentation)

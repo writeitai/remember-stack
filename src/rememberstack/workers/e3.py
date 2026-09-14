@@ -133,8 +133,10 @@ EXAMPLES
   unqualified win.
 
 CONTEXT REFERENCES
-For each assertion, list up to four other named entities the claim itself
-refers to, besides the subject and besides a relation's object. These help
+For each assertion, list up to four other identifiable people, organizations,
+works or particular events explicitly discussed in the claim, besides the
+subject and a relation's object. A particular event may have a descriptive
+name, such as "Nate's May tournament"; do not invent an official name. These help
 later matching; they do not change who the assertion is about.
 "Joanna said Nate won Tournament A" stays an observation about Joanna; Nate
 and Tournament A are context. Equal names can still be different people or
