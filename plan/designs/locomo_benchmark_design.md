@@ -1,5 +1,11 @@
 # LoCoMo full-system benchmark design
 
+> **Binding v29 amendment (2026-09-14).** [D119](multi_span_claim_extraction_design.md)
+> changes extraction and exact occurrence evidence. The protocol and adapter
+> roll to v29 and pin the multi-span extractor and regenerated schema manifest.
+> Earlier stores require fresh processing; no model binding, dataset, answering,
+> judging, budget or scoring change is implied.
+
 > **Binding v28 amendment (2026-09-12).** The protocol pins the D118 fact
 > contract ([design](mutable_fact_windows_design.md)): the mutable-window
 > normalizer and adjudicator generations, the re-pinned query-space manifest
@@ -169,7 +175,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v28
+protocol                RS-LoCoMo-Full-v29
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -517,7 +523,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v28-codex-subscription` is an additive evaluator-provider variant for
+`full-v29-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -816,7 +822,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v28 requires to be
+- the non-secret `document_binding_generation`, which Full-v29 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -965,12 +971,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v28 \
+  --protocol full-v29 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v28`; the
-explicit `full-v28-gemma-vertex` and `full-v28-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v29`; the
+explicit `full-v29-gemma-vertex` and `full-v29-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 
