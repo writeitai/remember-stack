@@ -495,7 +495,7 @@ def test_wrong_kind_and_unknown_handles_fail() -> None:
 
 
 def test_prompts_state_assertion_identity_in_plain_language() -> None:
-    """Prompt-contract wording for human-readable instructions, not model quality."""
+    """Prompt-contract: required semantics are present, not a phrasing freeze."""
     for prompt in (
         _SELECTION_PROMPT,
         _CLAIMIFY_PROMPT,
@@ -505,11 +505,6 @@ def test_prompts_state_assertion_identity_in_plain_language() -> None:
         assert "won Tournament A" in prompt
         assert "participat" in prompt
         assert "enjoy" in prompt
-    assert "PURPOSE" in _FACT_PROMPT
-    assert "INPUTS" in _FACT_PROMPT
-    assert "DECISION RULES" in _FACT_PROMPT
-    assert "EXAMPLES" in _FACT_PROMPT
-    assert "OUTPUT" in _FACT_PROMPT
     assert "source_said_at" in _FACT_PROMPT
     assert (
         "never an unqualified" in _CLAIMIFY_PROMPT
@@ -520,10 +515,13 @@ def test_prompts_state_assertion_identity_in_plain_language() -> None:
     assert "untrusted" in _FACT_PROMPT
     assert "W-names" in _FACT_PROMPT
     assert "same_as" in _FACT_PROMPT
-    assert "not lose the stronger winning assertion" in _FACT_PROMPT
-    assert "not support for the win" in _FACT_PROMPT
-    assert "chosen window 5 November" in _FACT_PROMPT
+    assert "FULL proposition" in _FACT_PROMPT
+    assert "positive evidence of a win" in _FACT_PROMPT
+    assert "won Tournament A" in _FACT_PROMPT
+    assert "5 November" in _FACT_PROMPT and "6 November" in _FACT_PROMPT
     assert "won on 5 November" not in _FACT_PROMPT
+    assert "one-microsecond" in _FACT_PROMPT
+    assert "quarter" in _FACT_PROMPT
     assert "Participation or enjoyment of that tournament is not a win" in (
         _NORMALIZE_PROMPT
     )
@@ -792,6 +790,181 @@ def _best_case_repeated_snapshot() -> dict[str, Any]:
     )
 
 
+def _bounded_varied_snapshot() -> dict[str, Any]:
+    """Reconstructed bounded expensive path: 20 facts, two claims and applications each.
+
+    First five statements reuse local LoCoMo v28 source-linked audit wording.
+    The rest are reconstructed conversational facts of similar length, not a
+    live store dump. Each fact has a second distinct claim/application, some
+    shared source spans, some cross-source repeats, and some unhydrated
+    window witnesses.
+    """
+    shared_span = "It's about loss, identity, and connection."
+    statements = (
+        "Joanna confirms that the work shown is Joanna's third story.",
+        "Joanna says that the story is about identity.",
+        "Joanna says that the story is about loss.",
+        "Joanna says that the story is about connection.",
+        "Nate won Tournament A after a long final in Riverside.",
+        "Nate participated in the Riverside Cup.",
+        "Nate enjoyed the Riverside final.",
+        "Joanna printed a draft of the screenplay.",
+        "Nate said he was proud of Joanna's third story.",
+        "Joanna visited a support group.",
+        "Nate finished painting a lake sunrise.",
+        "Joanna met the organizer on Saturday.",
+        "Nate worked at a cafe in Riverside.",
+        "Joanna has been writing since 2019.",
+        "Nate lost Tournament B the previous year.",
+        "Joanna claimed the judges liked the ending.",
+        "Nate took first place at the county fair.",
+        "Joanna's story mentions a 1990 family founding.",
+        "Nate measured FY2023 cafe revenue as five thousand dollars.",
+        "Joanna and Nate planned a trip after the final.",
+    )
+    paraphrases = (
+        "Joanna said the shown work is her third story.",
+        "Joanna described the story as about identity.",
+        "Joanna described the story as about loss.",
+        "Joanna described the story as about connection.",
+        "Nate took first in Tournament A at Riverside.",
+        "Nate was in the Riverside Cup field.",
+        "Nate liked the Riverside final.",
+        "Joanna printed the screenplay draft.",
+        "Nate told Joanna he was proud of the third story.",
+        "Joanna went to a support group.",
+        "Nate completed a lake sunrise painting.",
+        "Joanna met the organizer Saturday.",
+        "Nate had a cafe job in Riverside.",
+        "Joanna has written since 2019.",
+        "Nate did not win Tournament B last year.",
+        "Joanna said the judges liked the ending.",
+        "Nate placed first at the county fair.",
+        "Joanna's story names a 1990 founding.",
+        "Nate reported FY2023 cafe revenue of $5000.",
+        "Joanna and Nate planned a post-final trip.",
+    )
+    spans = (
+        "Yep!",
+        shared_span,
+        shared_span,
+        shared_span,
+        "Nate won Tournament A after a long final in Riverside.",
+        "I was in the Riverside Cup.",
+        "I really enjoyed that final.",
+        "printed the screenplay draft",
+        "I'm proud of your third story",
+        "went to a support group",
+        "painted a lake sunrise",
+        "met the organizer Saturday",
+        "the cafe in Riverside",
+        "writing since 2019",
+        "lost Tournament B last year",
+        "the judges liked the ending",
+        "first at the county fair",
+        "a 1990 family founding",
+        "FY2023 cafe revenue was $5000",
+        "a trip after the final",
+    )
+    facts, claims, assertions, evidence = [], [], [], []
+    incoming = UUID(int=3000)
+    for index, statement in enumerate(statements):
+        fact_id = UUID(int=1000 + index)
+        claim_a = UUID(int=2000 + index)
+        claim_b = UUID(int=2500 + index)
+        app_a = incoming if index == 0 else UUID(int=3000 + index)
+        app_b = UUID(int=3500 + index)
+        doc_a = _DOC_A if index < 12 else _DOC_B
+        doc_b = _DOC_B if index % 3 == 0 else doc_a
+        witness = UUID(int=9000 + index) if index % 4 == 0 else None
+        window = [claim_a, claim_b] + ([witness] if witness else [])
+        facts.append(
+            {
+                "fact_id": fact_id,
+                "subject_entity_id": _ROOT if index < 10 else _ALIAS,
+                "statement": statement,
+                "valid_from": None
+                if index % 5
+                else datetime(2022, 11, 5, tzinfo=timezone.utc),
+                "valid_until": None
+                if index % 5
+                else datetime(2022, 11, 6, tzinfo=timezone.utc),
+                "valid_precision": "unknown" if index % 5 else "day",
+                "window_claim_ids": window,
+                "ingested_at": _AT,
+                "invalidated_at": None,
+                "contradiction_group": None,
+                "evidence_count": 2,
+                "contradict_count": 0,
+            }
+        )
+        for claim_id, doc_id, text, span, current in (
+            (claim_a, doc_a, statement, spans[index], True),
+            (
+                claim_b,
+                doc_b,
+                statement if index % 3 == 0 else paraphrases[index],
+                spans[index],
+                index % 2 == 0,
+            ),
+        ):
+            claims.append(
+                {
+                    "claim_id": claim_id,
+                    "doc_id": doc_id,
+                    "claim_text": text,
+                    "source_span": span,
+                    "asserted_at": _AT,
+                    "claim_valid_from": None,
+                    "claim_valid_until": None,
+                    "claim_valid_precision": "unknown",
+                    "claim_valid_kind": None,
+                    "is_current_testimony": current,
+                    "is_attributed": "said" in text or "claimed" in text,
+                    "extractor_version": "test",
+                }
+            )
+        for app_id, claim_id, assigned in (
+            (app_a, claim_a, None if index == 0 else fact_id),
+            (app_b, claim_b, fact_id),
+        ):
+            assertions.append(
+                {
+                    "application_id": app_id,
+                    "claim_id": claim_id,
+                    "subject_entity_id": _ROOT if index < 10 else _ALIAS,
+                    "object_entity_id": None,
+                    "canonical_subject_id": _ROOT,
+                    "canonical_object_id": None,
+                    "output_kind": "observation",
+                    "output_ordinal": 0 if app_id == app_a else 1,
+                    "normalizer_version": "test",
+                    "adjudicator_version": "test",
+                    "support_relation_id": None,
+                    "support_observation_id": assigned,
+                    "support_stance": None if assigned is None else "supports",
+                    "assertion": {
+                        "subject": {
+                            "name": "Joanna" if "Joanna" in statement else "Nate"
+                        },
+                        "statement": statement,
+                        "uses_claim_window": False,
+                    },
+                }
+            )
+        evidence.append({"fact_id": fact_id, "claim_id": claim_a, "stance": "supports"})
+        evidence.append({"fact_id": fact_id, "claim_id": claim_b, "stance": "supports"})
+    return _snapshot(
+        application_id=incoming,
+        potentially_truncated=True,
+        facts=facts,
+        claims=claims,
+        assertions=assertions,
+        evidence=evidence,
+        limits={"facts": 20, "claims": 100, "assertions": 100},
+    )
+
+
 def _prompt_schema_size_report(
     *, label: str, snapshot: dict[str, Any]
 ) -> dict[str, Any]:
@@ -848,10 +1021,13 @@ def test_size_report_compares_full_prompt_and_schema_not_billed_tokens() -> None
     varied = _prompt_schema_size_report(
         label="varied_reconstructed", snapshot=_varied_reconstructed_snapshot()
     )
+    bounded = _prompt_schema_size_report(
+        label="bounded_20_varied", snapshot=_bounded_varied_snapshot()
+    )
     best = _prompt_schema_size_report(
         label="best_case_repeated", snapshot=_best_case_repeated_snapshot()
     )
-    for report in (small, varied, best):
+    for report in (small, varied, bounded, best):
         assert report["reconstructed"] is True
         assert report["not_billed_tokens"] is True
         for key in report:
@@ -868,6 +1044,12 @@ def test_size_report_compares_full_prompt_and_schema_not_billed_tokens() -> None
             > report["new_schema_utf8_bytes"]
         )
     assert best["compact_input_utf8_bytes"] < best["full_snapshot_utf8_bytes"]
+    assert bounded["compact_input_utf8_bytes"] < bounded["full_snapshot_utf8_bytes"]
+    presentation, _mapping = project_concise_inputs(snapshot=_bounded_varied_snapshot())
+    assert len(presentation["facts"]) == 20
+    assert len(presentation["claims"]) == 40
+    assert len(presentation["assertions"]) == 40
+    assert any(row.get("window_claims_not_supplied") for row in presentation["facts"])
     compact = canonical_json(
         project_concise_inputs(snapshot=_mostly_unique_snapshot())[0]
     )

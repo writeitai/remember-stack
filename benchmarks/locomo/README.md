@@ -3,7 +3,7 @@
 v29 (2026-09-14) pins D120/D121 processing: assertion-preserving extractor,
 normalizer and adjudicator prompts, plus compact attempt-local adjudication
 handles. Ingest generations append `assertion-clarity-2` and
-`concise-handles-2`. Stores ingested under v28 are not comparable and must be
+`concise-handles-3`. Stores ingested under v28 are not comparable and must be
 re-ingested. Dataset, models, budgets, judge rubric, scoring, and the
 retrieval surface hash are unchanged. No quality or cost claim is made from
 the pin alone.

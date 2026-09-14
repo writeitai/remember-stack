@@ -7,9 +7,9 @@
 [D121](../designs/concise_adjudication_inputs_design.md), commit `4a803c1d`
 (PR #401, merged).
 **PR:** https://github.com/writeitai/remember-stack/pull/402 (draft)
-**Head:** `5273eee8197d8b7c89c5d12c70c9000661d9d902` (Antigravity-reviewed). Follow-up
-commit records this report and the review file; it is not a second runtime
-change.
+**Head:** lean-prompt checkpoint on PR #402; SHA filled after push. Previous
+Antigravity-reviewed head was `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
+This checkpoint is not D119-integrated and is not merge-ready.
 **Parent owns** integration, merge, and release. User authorized the checked
 CLA text.
 
@@ -70,10 +70,10 @@ Kept, renamed, or handled:
 | `evidence[]` | F/C names | support/contradict links; incomplete rows increment `evidence_not_supplied` |
 
 Renderer version `concise-handles-1` is in the prepared-input fingerprint.
-Adjudicator generations are `relation-adjudicator-2026.09d:concise-handles-2`
-and `obs-adjudicator-2026.09d:concise-handles-2`. Extractor/normalizer pins
-append `assertion-clarity-2`. These pins are **draft**: D119 PR #400 must be
-integrated before they are final.
+Adjudicator generations are `relation-adjudicator-2026.09d:concise-handles-3`
+and `obs-adjudicator-2026.09d:concise-handles-3` after the lean-instruction
+checkpoint. Extractor/normalizer pins still append `assertion-clarity-2`.
+These pins are **draft**: D119 PR #400 must be integrated before they are final.
 
 ## Tests and commands
 
@@ -117,10 +117,10 @@ Observed:
 - test inventory: unit=106 integration=57 discovered=163
 - pyright: 0 errors
 - concise unit + claimify + normalizer + protocol + fingerprint: **90 passed**
-- PostgreSQL handle attach / retry / date clearing / support-move / source-delete
-  / unhydrated W-name / **CAS stale-attempt (not F1 spelling)**: **7 passed**
-- existing writer suite: **16 passed** (23 PG tests together)
-- E3 chain + lifecycle on the lane DB: **20 passed**
+  at `5273eee8`; lean-prompt re-run of concise+protocol+bare-noun **70 passed**
+- PostgreSQL handle + writer after lean prompt: **23 passed**
+- E3 chain + lifecycle on the lane DB: **20 passed** (pre-lean; versions for
+  those tests follow `FACT_NORMALIZER_VERSION`, unchanged this checkpoint)
 
 These are mocked-provider proofs of translation, application, retries, and
 invariants. They are not real-model semantic quality. Prompt-contract tests
@@ -140,16 +140,26 @@ historical snapshots were cleared; every fixture is labeled reconstructed.
 
 | Fixture | What it is | full snapshot | compact input | old prompt+schema | new prompt+schema |
 | --- | --- | ---: | ---: | ---: | ---: |
-| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 13142 |
-| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 16765 |
-| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 28890 |
+| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 10421 |
+| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 14044 |
+| bounded 20 varied | 20 distinct facts, 40 claims, 40 applications; mixed shared spans, cross-source repeats, unhydrated witnesses; first five statements from the local audit, remainder reconstructed | 57142 | 28760 | 64433 | 37849 |
+| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 26169 |
 
 Schema alone: previous UUID schema 4462 bytes; handle schema 4704 bytes.
+Lean instruction template: 4393 UTF-8 bytes (parent candidate 4259; prior long
+instruction was ~7.1k of template plus compact JSON).
 
-On a small unique snapshot the clearer instruction is larger than the data
-saving. Varied text is roughly even. Best-case exact repetition is where
-factoring dominates. No fixed saving is claimed. Whitespace word counts are
-not reported as model tokens.
+The 10:55 parent review was right that the first long instruction offset
+compaction on small inputs (then 9345→13142). After combining repeated
+definitions/examples, the small case is 9345→10421 (still slightly larger:
+clearer rules plus handle schema). The 6-fact case now saves. The
+representative expensive path is the bounded 20-fact snapshot
+(64433→37849 bytes of prompt+schema), not six facts. Best-case exact
+repetition remains the largest drop. No billed-token saving is claimed.
+Whitespace word counts are not reported as model tokens.
+
+Pre-tighten numbers at `5273eee8` for the same small/6-fact/best-case
+fixtures were 13142 / 16765 / 28890. Those are superseded.
 
 ## Parent notes addressed
 
@@ -179,6 +189,18 @@ Second review:
 - Measurements include old prompt+schema vs new prompt+schema on small,
   varied, and best-case reconstructed fixtures.
 
+10:55 whole-request review:
+
+- Adjudicator instruction tightened from duplicated PURPOSE/RULES/EXAMPLES
+  prose to one combined text, adapted from
+  `/tmp/ugm-d120-d121-grok-20260914/parent-lean-fact-prompt.txt`. Bidirectional
+  identity, date-neutral correction, handles, windows, support moves, exclusive
+  stored ends, one-microsecond instants, and quarter-aligned calendar bounds
+  remain. Exact-word tests no longer freeze section headings or one-way
+  example sentences.
+- Re-measured with a bounded 20-fact / 40-claim / 40-application reconstructed
+  snapshot in addition to small, 6-fact, and best-case fixtures.
+
 ## Remaining integration
 
 D119 PR #400 is still implementing coherent multi-span extraction. This lane
@@ -200,11 +222,10 @@ Antigravity command (read-only inspection of the exact head):
 agy --dangerously-skip-permissions --print-timeout 180m0s -p "<review prompt>"
 ```
 
-Exact reviewed SHA: `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
-Verdict: **APPROVE WITH NITS**. Full text:
+Previous reviewed SHA: `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
+Verdict then: **APPROVE WITH NITS**. Full text:
 [`d120_d121_agy_review_5273eee8.md`](d120_d121_agy_review_5273eee8.md).
 
-Nits: (1) measurement helper caught bare `Exception` around optional tiktoken —
-narrowed to `ImportError`/`ModuleNotFoundError` after review; not re-reviewed
-because it is a test helper, not a runtime change. (2) unused `_presentation`
-locals already prefixed; no extra helper added (YAGNI).
+The lean-prompt checkpoint is a substantive instruction change and needs a
+new read-only Antigravity review of that head. D119-integrated final pins
+still need a later review. This PR is not merge-ready.
