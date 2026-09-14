@@ -252,6 +252,83 @@ class WorkLedger:
                 enqueue_on(connection=connection, work=work) for work in follow_up
             )
 
+    def complete_chunk_selection(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """Complete Selection and atomically open Claimify after all results exist."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.spine.selection_catalog import require_extraction_sources_on
+        from rememberstack.workers.base import SelectionChunkBarrier
+
+        if not isinstance(barrier, SelectionChunkBarrier):
+            raise TypeError("barrier must be SelectionChunkBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            chunk_id = connection.execute(
+                _SELECT_TARGET_ID, {"processing_id": processing_id}
+            ).scalar_one()
+            require_extraction_sources_on(
+                connection=connection,
+                deployment_id=barrier.deployment_id,
+                chunk_ids=(chunk_id,),
+            )
+            connection.execute(
+                _ADVISORY_LOCK_REPRESENTATION,
+                {"representation_id": barrier.representation_id},
+            )
+            if (
+                connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+                == 0
+            ):
+                raise WorkNotRunningError("Selection work is no longer running")
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            params = {
+                "deployment_id": barrier.deployment_id,
+                "representation_id": barrier.representation_id,
+                "chunker_version": barrier.chunker_version,
+                "extractor_version": barrier.extractor_version,
+            }
+            missing = connection.execute(
+                _SELECTION_BARRIER_MISSING, params
+            ).scalar_one()
+            if missing:
+                return tuple(outcomes)
+            chunk_ids = connection.execute(
+                text("""
+                SELECT chunk_id FROM chunks WHERE representation_id=:representation_id
+                  AND chunker_version=:chunker_version ORDER BY ordinal
+            """),
+                params,
+            ).scalars()
+            for target_id in chunk_ids:
+                outcomes.append(
+                    enqueue_on(
+                        connection=connection,
+                        work=EnqueueWork(
+                            deployment_id=barrier.deployment_id,
+                            target_kind=ProcessingTarget.CHUNK,
+                            target_id=target_id,
+                            stage=PipelineStage.GROUND_CLAIMS,
+                            component_version=barrier.extractor_version,
+                            content_hash=barrier.content_hash,
+                            lane=barrier.lane,
+                            payload={
+                                "version_id": str(barrier.version_id),
+                                "representation_id": str(barrier.representation_id),
+                                "chunk_id": str(target_id),
+                            },
+                        ),
+                    )
+                )
+            return tuple(outcomes)
+
     def complete_chunk_extract(
         self,
         *,
@@ -262,7 +339,7 @@ class WorkLedger:
         """D84: mark one chunk extract succeeded and maybe enqueue normalize.
 
         After this row is succeeded in the same transaction, require every chunk
-        of the representation to have a succeeded extract_claims row at the
+        of the representation to have a succeeded ground_claims row at the
         extractor version **and** claim/decision/occurrence extract evidence.
         Only then enqueue version-level ``normalize_relations`` (idempotent).
         """
@@ -922,7 +999,7 @@ def _extract_barrier_ready(
             "representation_id": representation_id,
             "chunker_version": chunker_version,
             "extractor_version": extractor_version,
-            "stage": PipelineStage.EXTRACT_CLAIMS.value,
+            "stage": PipelineStage.GROUND_CLAIMS.value,
         },
     ).scalar_one()
     return int(ready) == int(expected)
@@ -1832,6 +1909,7 @@ _BARRIER_READY_CHUNKS = text(
      AND p.status = 'succeeded'
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
+      AND c.claimify_input_hash IS NOT NULL
       AND (
             EXISTS (
                 SELECT 1 FROM claims cl
@@ -1967,3 +2045,19 @@ _COUNT_OBS_FLUSH_UNITS_SUCCEEDED = text(
       AND u.normalizer_version = :normalizer_version
     """
 )
+
+
+_SELECTION_BARRIER_MISSING = text("""
+    SELECT EXISTS(
+      SELECT 1 FROM chunks c
+      WHERE c.representation_id=:representation_id AND c.chunker_version=:chunker_version
+        AND (NOT EXISTS(SELECT 1 FROM selection_results s
+                         WHERE s.deployment_id=:deployment_id AND s.chunk_id=c.chunk_id
+                           AND s.extractor_version=:extractor_version
+                           AND s.selection_input_hash=c.extraction_input_hash)
+          OR NOT EXISTS(SELECT 1 FROM processing_state p
+                         WHERE p.deployment_id=:deployment_id AND p.target_kind='chunk'
+                           AND p.target_id=c.chunk_id AND p.stage='extract_claims'
+                           AND p.component_version=:extractor_version AND p.status='succeeded'))
+    )
+""")

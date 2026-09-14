@@ -25,7 +25,7 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v30}
+protocol=${LOCOMO_PROTOCOL:-full-v31}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -40,6 +40,7 @@ backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
 extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}
+ground_claim_workers=${LOCOMO_GROUND_CLAIM_WORKERS:-8}
 normalize_relation_workers=${LOCOMO_NORMALIZE_RELATION_WORKERS:-6}
 adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}
 embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
@@ -59,7 +60,7 @@ backup_python() {
     "$python_bin" "$@"
 }
 
-# RS-LoCoMo-Full-v30's non-secret ingest identity. Override ambient self-host
+# RS-LoCoMo-Full-v31's non-secret ingest identity. Override ambient self-host
 # defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
 export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
 export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
@@ -121,6 +122,7 @@ for value in \
   "$drain_timeout_seconds" \
   "$drain_poll_seconds" \
   "$extract_claim_workers" \
+  "$ground_claim_workers" \
   "$normalize_relation_workers" \
   "$adjudicate_observation_workers" \
   "$embed_claim_workers"; do
@@ -341,6 +343,7 @@ require_verified_final_backup() {
 start_existing_store() {
   "${compose[@]}" up --detach --wait --no-recreate \
     --scale "worker-extract-claims=$extract_claim_workers" \
+    --scale "worker-ground-claims=$ground_claim_workers" \
     --scale "worker-normalize-relations=$normalize_relation_workers" \
     --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
     --scale "worker-embed-claim=$embed_claim_workers"
@@ -474,6 +477,7 @@ for sample_id in "${pending_samples[@]}"; do
     log "sample=$sample_id stage=stack status=starting"
     "${compose[@]}" up --detach --wait \
       --scale "worker-extract-claims=$extract_claim_workers" \
+      --scale "worker-ground-claims=$ground_claim_workers" \
       --scale "worker-normalize-relations=$normalize_relation_workers" \
       --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
       --scale "worker-embed-claim=$embed_claim_workers"

@@ -80,6 +80,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
+    PipelineStage.GROUND_CLAIMS,
     PipelineStage.NORMALIZE_RELATIONS,
     PipelineStage.ADJUDICATE_OBSERVATIONS,
     PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -684,7 +685,7 @@ class SelfHostProfile:
         raw_store: MinIOObjectStore,
         artifact_store: MinIOObjectStore,
         corpusfs_store: MinIOObjectStore,
-        model_provider: OpenRouterModelProvider,
+        model_provider: ModelProviderPort,
         error_telemetry: TelemetryPort | None = None,
     ) -> None:
         """Retain one dependency graph for an API, setup, or worker process."""
@@ -1263,7 +1264,7 @@ class SelfHostProfile:
                 settings=e1_settings,
                 params=params,
             )
-        if stage is PipelineStage.EXTRACT_CLAIMS:
+        if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
             return ExtractClaimsHandler(
                 catalog=claims,
                 chunk_catalog=chunks,
@@ -1516,6 +1517,7 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.CHUNK: E1_CHUNK_VERSION,
         PipelineStage.EMBED_CHUNK: E1_EMBED_VERSION,
         PipelineStage.EXTRACT_CLAIMS: E2_EXTRACTOR_VERSION,
+        PipelineStage.GROUND_CLAIMS: E2_EXTRACTOR_VERSION,
         PipelineStage.NORMALIZE_RELATIONS: E3_NORMALIZER_VERSION,
         PipelineStage.ADJUDICATE_OBSERVATIONS: OBS_FLUSH_VERSION,
         PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,

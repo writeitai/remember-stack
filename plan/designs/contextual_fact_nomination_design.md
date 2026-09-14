@@ -16,12 +16,17 @@ or creative work when it is a source-grounded referent of an assertion.
 Extend the existing normalization response for each assertion with a bounded
 list of ordinary `EntityRef` context references. They must be explicit referents
 in the grounded claim, not entities guessed from unrelated profiles. The existing
-normalizer call emits them; no additional inference stage. Four additional
-references is the initial generation-pinned bound. Deduplicate in emitted order,
-retain the first four and record truncation; auxiliary overflow must not cause
-schema rejection of the whole normalization response, discard an otherwise valid
-assertion or prove novelty. Preserve original reference ordinals and document the
-cap clearly in the provider schema.
+normalizer call emits them. There is no additional dedicated event extractor,
+profile summarizer, or semantic-checker stage. Ordinary entity resolution remains
+authoritative and may invoke its existing model tier for a newly supplied context
+reference; that resolver cost is measured, not bypassed. Four additional
+references is the initial generation-pinned bound. Bound the first four original
+array slots, resolve them normally, then deduplicate and exclude the canonical
+subject or object while keeping those original ordinals. Equal names are not
+identity; aliases of one entity keep the first resolved id. Record truncation
+from the frozen list; auxiliary overflow must not cause schema rejection of the
+whole normalization response, discard an otherwise valid assertion or prove
+novelty. Document the cap clearly in the provider schema.
 
 The subject remains the correct subject. “Joanna said Nate won Tournament A”
 remains attributed to Joanna; Nate and Tournament A can be context. Relations'

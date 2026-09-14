@@ -22,11 +22,15 @@ from rememberstack.model import AddedContext
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
+from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimRecord
 from rememberstack.model import ClaimValidKind
 from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
+from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
+from rememberstack.model import ProcessingTarget
 from rememberstack.model import SectionSpan
 from rememberstack.model import SelectionCandidate
 from rememberstack.model import SelectionOutcome
@@ -38,6 +42,9 @@ from rememberstack.workers.e2 import _own_valid_time_strings
 from rememberstack.workers.e2 import ExtractClaimsHandler
 from rememberstack.workers.e2 import GroundingGate
 from rememberstack.workers.e2 import GroundingRejection
+from tests.workers.e2_test_doubles import SelectionMemory
+from tests.workers.e2_test_doubles import SingleChunkCatalog
+from tests.workers.e2_test_doubles import with_ground_claims
 
 if TYPE_CHECKING:
     from rememberstack.ports.object_store import ObjectStorePort
@@ -605,12 +612,36 @@ def test_claimify_omitted_row_for_keep_with_no_returned_claim() -> None:
     assert decision.protected_class == "date"
 
 
+class _MemoryStore:
+    """In-memory artifact store that raises FileNotFoundError like the adapters."""
+
+    def __init__(self, *, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+
+    def read_bytes(self, *, key: object) -> bytes:
+        root = getattr(key, "root", key)
+        try:
+            return self.objects[str(root)]
+        except KeyError as error:
+            raise FileNotFoundError(str(root)) from error
+
+
 class _RecordingCatalog:
     """Captures record_extraction so handler accounting is directly assertable."""
 
     def __init__(self) -> None:
+        self.selections = SelectionMemory()
         self.claims: tuple[ClaimRecord, ...] = ()
         self.decisions: tuple[DecisionRecord, ...] = ()
+        self.occurrences: object = None
+
+    def chunk_already_extracted(
+        self, *, chunk_id: UUID, extractor_version: str
+    ) -> bool:
+        return False
+
+    def prior_extracted_chunk(self, **_: object) -> UUID | None:
+        return None
 
     def record_extraction(
         self,
@@ -618,7 +649,9 @@ class _RecordingCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: object = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
+        del claimify_input_hash
         self.claims = claims
         self.decisions = decisions
         self.occurrences = occurrences
@@ -639,17 +672,29 @@ def _run_extract(
     claimify: dict[str, object],
     document_md: str = _DOC_MD,
 ) -> _RecordingCatalog:
-    """Drive the REAL handler's per-chunk extraction with canned payloads.
+    """Drive Selection then Claimify through the real handler with canned payloads.
 
     This is the non-vacuous proof Codex asked for: the omission /
-    no-double-count rules are asserted on what ``_extract_chunk`` actually
+    no-double-count rules are asserted on what GROUND_CLAIMS actually
     records, not on hand-rolled reproductions of its loop.
     """
     recorder = _RecordingCatalog()
+    source = _source()
+    chunk = _chunk(document_md=document_md)
     handler = ExtractClaimsHandler(
         catalog=cast("ClaimCatalog", recorder),
-        chunk_catalog=cast("ChunkCatalog", object()),
-        artifact_store=cast("ObjectStorePort", object()),
+        chunk_catalog=cast(
+            "ChunkCatalog", SingleChunkCatalog(source=source, chunk=chunk)
+        ),
+        artifact_store=cast(
+            "ObjectStorePort",
+            _MemoryStore(
+                objects={
+                    source.markdown_uri: document_md.encode("utf-8"),
+                    source.blocks_uri: b'{"blockizer_version": "stale", "blocks": []}',
+                }
+            ),
+        ),
         model_provider=FakeModelProvider(
             generate_payloads={
                 "SelectionResponse": selection,
@@ -659,15 +704,26 @@ def _run_extract(
         settings=E2Settings(),
         chunker_version="test-chunker",
     )
-    chunk = _chunk(document_md=document_md)
-    handler._extract_chunk(
-        source=_source(),
-        chunks=(chunk,),
-        index=0,
-        document_md=document_md,
-        blocks=blockize(document_md=document_md),
-        meter=NoopCostMeter(),
+    work = ClaimedWork(
+        processing_id=chunk.chunk_id,
+        deployment_id=_DEPLOYMENT,
+        target_kind=ProcessingTarget.CHUNK,
+        target_id=chunk.chunk_id,
+        stage=PipelineStage.EXTRACT_CLAIMS,
+        component_version="e2-test",
+        content_hash="hash",
+        lane=ProcessingLane.STEADY,
+        attempt=1,
+        payload={
+            "representation_id": str(_REPR),
+            "version_id": str(_VERSION),
+            "chunk_id": str(chunk.chunk_id),
+        },
     )
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert recorder.claims == ()
+    assert recorder.decisions == ()
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     return recorder
 
 

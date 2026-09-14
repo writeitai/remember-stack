@@ -68,6 +68,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.GROUND_CLAIMS,
         PipelineStage.NORMALIZE_RELATIONS,
         PipelineStage.ADJUDICATE_OBSERVATIONS,
         PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -81,7 +82,6 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
 def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
     """A stage enum is not proof that an independently runnable handler exists."""
     assert {
-        PipelineStage.GROUND_CLAIMS,
         PipelineStage.RESOLVE_ENTITIES,
         PipelineStage.EMBED_RELATION,
         PipelineStage.EMBED_OBSERVATION,

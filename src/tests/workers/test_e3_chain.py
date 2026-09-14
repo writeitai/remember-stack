@@ -307,6 +307,10 @@ class _E3Rig:
             ),
         )
         registry.register(
+            stage=PipelineStage.GROUND_CLAIMS,
+            handler=registry.handler_for(stage=PipelineStage.EXTRACT_CLAIMS),
+        )
+        registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS, handler=self.normalize_handler
         )
         registry.register(
@@ -381,6 +385,7 @@ class _E3Rig:
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -528,6 +533,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.GROUND_CLAIMS,
         PipelineStage.NORMALIZE_RELATIONS,
         PipelineStage.ADJUDICATE_OBSERVATIONS,
         PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -540,6 +546,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         ).outcome
         if stage in (
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             # D90: empty path is durable empty_complete — no document_version
             # adjudicate_observations work row at the entity-fanout generation.

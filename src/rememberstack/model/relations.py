@@ -40,6 +40,7 @@ class RelationCandidate(BaseModel):
     predicate: _NonEmpty
     object: EntityRef
     uses_claim_window: bool = False
+    context_refs: tuple[EntityRef, ...] = ()
 
 
 class ObservationCandidate(BaseModel):
@@ -50,6 +51,7 @@ class ObservationCandidate(BaseModel):
     subject: EntityRef
     statement: _NonEmpty
     uses_claim_window: bool = False
+    context_refs: tuple[EntityRef, ...] = ()
 
 
 class ObservationAssertion(BaseModel):
@@ -97,3 +99,4 @@ class ResolvedEntity(BaseModel):
 
     entity_id: UUID
     created: bool
+    decision_id: UUID | None = None

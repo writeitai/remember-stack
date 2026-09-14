@@ -14,6 +14,7 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 
 - Full evidence spine: ingest → convert → structure → chunk → claim extract → entity resolve → fact adjudicate
 - Immutable claims with occurrence-level multi-span source grounding, adjudicated relations and observations, bi-temporal validity, supersession, contradiction groups
+- Frozen Selection results share bounded, source-backed references with later extraction; version reuse covers all cited ranges and earlier context inputs
 - Testimony currency and lineage-based evidence counting when documents change or extractors re-run
 - Watched sources and versioned document lineages (including a local directory watcher)
 
@@ -361,8 +362,10 @@ Facts have one chosen world-time window. Ordinary adjudication uses source dates
 and surrounding context to identify repeated events and revise a fact's dates.
 Claims retain the source's original testimony. Historical retrieval and dated
 summaries use the chosen window without a stored state/event taxonomy or separate
-verdict dates. The evaluator generation is Full-v30; this change does not establish
-a benchmark score improvement.
+verdict dates. The evaluator generation is Full-v31; this change does not establish
+a benchmark score improvement. Full-v31 additionally requires the `ground_claims`
+ingest stage and pins D122 source-backed references plus D123 contextual
+nomination. Dataset, models, retrieval, budgets, and scoring are unchanged.
 
 Stores created before this change are recreated and re-ingested; the migration
 refuses a populated database rather than converting it

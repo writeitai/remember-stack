@@ -178,7 +178,7 @@ as source-derived data.
 | --- | ---: | --- |
 | `LOCOMO_PYTHON` | `.venv/bin/python` | repository virtual-environment Python |
 | `LOCOMO_TIER` | `publication` | prepared manifest tier |
-| `LOCOMO_PROTOCOL` | `full-v30` | prepare-time protocol key |
+| `LOCOMO_PROTOCOL` | `full-v31` | prepare-time protocol key |
 | `LOCOMO_MOUNT_ROOT` | `$RUN_DIR/.mounts` | host/container-identical P3 mount root |
 | `LOCOMO_MAX_DOCUMENTS` | `100` | per-sample ingest authorization |
 | `LOCOMO_MAX_QUESTIONS` | `1540` | run-absolute answer item authorization |
@@ -193,7 +193,8 @@ as source-derived data.
 | `LOCOMO_BACKUP_TOOL` | `benchmarks/locomo/sharding/store_backup.py` | backup tool path; use an absolute path only when operating a pinned clean campaign checkout with a newer compatible safety runner |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
 | `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
-| `LOCOMO_EXTRACT_CLAIM_WORKERS` | `8` | chunk-level Claimify worker replicas |
+| `LOCOMO_EXTRACT_CLAIM_WORKERS` | `8` | chunk-level Selection worker replicas |
+| `LOCOMO_GROUND_CLAIM_WORKERS` | `8` | chunk-level Claimify worker replicas |
 | `LOCOMO_NORMALIZE_RELATION_WORKERS` | `6` | claim-level E3 normalize worker replicas |
 | `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS` | `4` | post-barrier observation-flush worker replicas |
 | `LOCOMO_EMBED_CLAIM_WORKERS` | `2` | P1 claim/fact embedding worker replicas |

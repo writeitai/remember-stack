@@ -18,13 +18,19 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.model import DecisionRecord
+from rememberstack.model import DecisionType
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import ForgetManifest
 from rememberstack.model import ForgetManifestStatus
+from rememberstack.model import SelectionResponse
 from rememberstack.ports import ForgetManifestPort
+from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine.selection_catalog import SelectionCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
@@ -1447,6 +1453,40 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
                     "phrase": _TOKEN,
                 },
             )
+        for chunk, representation, phrase, app in (
+            (_TARGET_CHUNK_ID, _TARGET_REPRESENTATION_ID, _TOKEN, own),
+            (
+                _CONTROL_CHUNK_ID,
+                _CONTROL_REPRESENTATION_ID,
+                "independent reference",
+                surviving,
+            ),
+        ):
+            connection.execute(
+                text("""INSERT INTO selection_results
+                    (deployment_id,chunk_id,representation_id,extractor_version,
+                     selection_input_hash,output,cards)
+                    VALUES (:dep,:chunk,:rep,'forget-test','hash',
+                      jsonb_build_object('source',CAST(:phrase AS text)),
+                      jsonb_build_array(jsonb_build_object('quote',CAST(:phrase AS text))))"""),
+                {
+                    "dep": _DEPLOYMENT_ID,
+                    "chunk": chunk,
+                    "rep": representation,
+                    "phrase": phrase,
+                },
+            )
+            connection.execute(
+                text("""INSERT INTO application_context_bindings
+                    (deployment_id,application_id,ordinal,entity_id,resolver_decision_id)
+                    VALUES (:dep,:app,0,:entity,:decision)"""),
+                {
+                    "dep": _DEPLOYMENT_ID,
+                    "app": app,
+                    "entity": _SHARED_ENTITY_ID,
+                    "decision": uuid4(),
+                },
+            )
         connection.execute(
             text("""UPDATE observations SET valid_from='2022-01-01Z',
             valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[])
@@ -1465,6 +1505,16 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
             ).scalar_one()
             == 0
         )
+        assert connection.execute(
+            text("SELECT chunk_id FROM selection_results WHERE deployment_id=:dep"),
+            {"dep": _DEPLOYMENT_ID},
+        ).scalars().all() == [_CONTROL_CHUNK_ID]
+        assert connection.execute(
+            text(
+                "SELECT application_id FROM application_context_bindings WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        ).scalars().all() == [surviving]
         row = connection.execute(
             text(
                 "SELECT attempt_id,prepared,decision,input_claim_ids FROM fact_applications WHERE application_id=:id"
@@ -1480,3 +1530,62 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
         ).one()
         assert tuple(row[:4]) == (None, None, "unknown", [])
         assert _TOKEN not in row[4]
+
+
+@pytest.mark.parametrize("phase", ("selection", "claimify"))
+def test_late_extraction_response_cannot_publish_after_forget_starts(
+    seeded_engine: Engine, phase: str
+) -> None:
+    """Both actual publication APIs reject a response after forget was prepared."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    catalog.prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
+    )
+    with pytest.raises(ForgetInProgressError):
+        if phase == "selection":
+            SelectionCatalog(engine=seeded_engine).freeze(
+                deployment_id=_DEPLOYMENT_ID,
+                representation_id=_TARGET_REPRESENTATION_ID,
+                chunk_id=_TARGET_CHUNK_ID,
+                extractor_version="forget-test",
+                input_hash="hash",
+                selection=SelectionResponse(candidates=()),
+                cards=(),
+                diagnostics=(),
+                truncated=False,
+            )
+        else:
+            ClaimCatalog(engine=seeded_engine).record_extraction(
+                claims=(),
+                decisions=(
+                    DecisionRecord(
+                        decision_id=_FORGET_ID,
+                        deployment_id=_DEPLOYMENT_ID,
+                        doc_id=_TARGET_DOC_ID,
+                        chunk_id=_TARGET_CHUNK_ID,
+                        claim_id=None,
+                        decision_type=DecisionType.CLAIMIFY_OMITTED,
+                        source_span=_TOKEN,
+                        reason=None,
+                        edit_detail=None,
+                        protected_class=None,
+                        extractor_version="forget-test",
+                    ),
+                ),
+                claimify_input_hash="hash",
+            )
+    with seeded_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM selection_results")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM claim_extraction_decisions WHERE extractor_version='forget-test'"
+                )
+            ).scalar_one()
+            == 0
+        )

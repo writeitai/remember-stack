@@ -25,6 +25,8 @@ from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.selection_catalog import require_extraction_sources_on
+from rememberstack.spine.selection_catalog import SelectionCatalog
 
 
 class ClaimCatalog:
@@ -33,6 +35,7 @@ class ClaimCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+        self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
         self, *, chunk_id: UUID, extractor_version: str
@@ -60,6 +63,7 @@ class ClaimCatalog:
         doc_id: UUID,
         version_id: UUID,
         extraction_input_hash: str,
+        claimify_input_hash: str | None = None,
     ) -> UUID | None:
         """The D56 reuse lookup: an already-extracted chunk with the same key.
 
@@ -81,6 +85,7 @@ class ClaimCatalog:
                     "doc_id": doc_id,
                     "version_id": version_id,
                     "extraction_input_hash": extraction_input_hash,
+                    "claimify_input_hash": claimify_input_hash,
                 },
             ).scalar_one_or_none()
 
@@ -115,6 +120,7 @@ class ClaimCatalog:
         prior_chunk_id: UUID,
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
         evidence_spans: Mapping[UUID, tuple[EvidenceSpan, ...]] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> int:
         """Re-attach a prior chunk's claims to a new version's chunk (D56/F4).
 
@@ -131,9 +137,26 @@ class ClaimCatalog:
         empty).
         """
         with self._engine.begin() as connection:
+            if claimify_input_hash is not None:
+                require_extraction_sources_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    chunk_ids=(chunk_id, prior_chunk_id),
+                )
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
+            if claimify_input_hash is not None:
+                existing = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
+                    ),
+                    {"chunk_id": chunk_id},
+                ).scalar_one()
+                if existing is not None:
+                    if existing != claimify_input_hash:
+                        raise ValueError("Claimify completion has different inputs")
+                    return prior_links
             if prior_links:
                 claim_ids = connection.execute(
                     _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}
@@ -162,6 +185,18 @@ class ClaimCatalog:
                             evidence_spans=spans,
                         ),
                     )
+            if claimify_input_hash is not None:
+                if not prior_links:
+                    copied = connection.execute(
+                        _COPY_CHUNK_DECISIONS,
+                        {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
+                    ).rowcount
+                    if not copied:
+                        raise ValueError("reused extraction has no terminal evidence")
+                connection.execute(
+                    _STAMP_CLAIMIFY,
+                    {"chunk_id": chunk_id, "input_hash": claimify_input_hash},
+                )
         return prior_links
 
     def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
@@ -268,6 +303,7 @@ class ClaimCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
         """Land one chunk's claims, occurrence links, and decisions atomically.
 
@@ -278,7 +314,25 @@ class ClaimCatalog:
         """
         if not claims and not decisions:
             return
+        owner = claims[0] if claims else decisions[0]
         with self._engine.begin() as connection:
+            if claimify_input_hash is not None:
+                require_extraction_sources_on(
+                    connection=connection,
+                    deployment_id=owner.deployment_id,
+                    chunk_ids=(owner.chunk_id,),
+                )
+                # A retry or concurrent helper cannot publish a second set of claims.
+                existing = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
+                    ),
+                    {"chunk_id": owner.chunk_id},
+                ).scalar_one()
+                if existing is not None:
+                    if existing != claimify_input_hash:
+                        raise ValueError("Claimify completion has different inputs")
+                    return
             for claim in claims:
                 payload = claim.model_dump(mode="json")
                 payload["added_context"] = [
@@ -303,6 +357,11 @@ class ClaimCatalog:
                 )
             for decision in decisions:
                 connection.execute(_INSERT_DECISION, decision.model_dump(mode="json"))
+            if claimify_input_hash is not None:
+                connection.execute(
+                    _STAMP_CLAIMIFY,
+                    {"chunk_id": owner.chunk_id, "input_hash": claimify_input_hash},
+                )
 
 
 _SELECT_EXTRACTED = text(
@@ -331,6 +390,8 @@ _SELECT_PRIOR_EXTRACTED = text(
     WHERE c.deployment_id = :deployment_id
       AND c.doc_id = :doc_id
       AND c.extraction_input_hash = :extraction_input_hash
+      AND (CAST(:claimify_input_hash AS text) IS NULL
+           OR c.claimify_input_hash = :claimify_input_hash)
       AND cv.version_no < (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
@@ -523,3 +584,8 @@ def _chunk_claim_params(
         "source_locators": locators,
         "evidence_spans": spans_as_json(evidence_spans),
     }
+
+
+_STAMP_CLAIMIFY = text(
+    "UPDATE chunks SET claimify_input_hash=:input_hash WHERE chunk_id=:chunk_id"
+)

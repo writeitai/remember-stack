@@ -34,8 +34,7 @@ def reset_database(*, config: Config) -> None:
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one_or_none()
             if (
-                revision == "p9_31_0052"
-                or revision == "p9_30_0051"
+                revision in {"p9_30_0051", "p9_31_0052", "p9_32_0053"}
                 or connection.execute(
                     text("SELECT to_regclass('public.fact_applications') IS NOT NULL")
                 ).scalar_one()

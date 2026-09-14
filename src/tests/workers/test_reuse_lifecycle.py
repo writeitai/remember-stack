@@ -76,6 +76,7 @@ _STAGES = (
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
+    PipelineStage.GROUND_CLAIMS,
 )
 _TARGET_PATTERN = re.compile(r"TARGET CHUNK:\n(.+)")
 
@@ -234,6 +235,10 @@ class _ReuseRig:
                 settings=E2Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
             ),
+        )
+        registry.register(
+            stage=PipelineStage.GROUND_CLAIMS,
+            handler=registry.handler_for(stage=PipelineStage.EXTRACT_CLAIMS),
         )
         self.worker = Worker(
             ledger=WorkLedger(
@@ -400,37 +405,58 @@ def test_summary_change_keeps_hash_and_reuses_unchanged_chunks(rig: _ReuseRig) -
             text("SELECT count(*) FROM chunks WHERE version_id = :version_id"),
             {"version_id": second.version_id},
         ).scalar_one()
-        reused = (
-            connection.execute(
-                text(
-                    "SELECT c2.extraction_input_hash AS second_hash,"
-                    " c1.extraction_input_hash AS first_hash"
-                    " FROM chunks c2"
-                    " JOIN chunks c1"
-                    " ON c1.doc_id = c2.doc_id"
-                    " AND c1.extraction_input_hash = c2.extraction_input_hash"
-                    " WHERE c1.version_id = :first_version"
-                    " AND c2.version_id = :second_version"
-                    " AND EXISTS (SELECT 1 FROM chunk_claims cc"
-                    "             WHERE cc.chunk_id = c2.chunk_id)"
-                    " AND NOT EXISTS (SELECT 1 FROM claims cl"
-                    "                 WHERE cl.chunk_id = c2.chunk_id)"
-                ),
-                {
-                    "first_version": first.version_id,
-                    "second_version": second.version_id,
-                },
-            )
-            .mappings()
-            .all()
-        )
+        versions = {
+            "first_version": first.version_id,
+            "second_version": second.version_id,
+        }
+        hash_new = connection.execute(
+            text(
+                "SELECT count(*) FROM chunks c2 WHERE c2.version_id = :second_version"
+                " AND NOT EXISTS ("
+                "   SELECT 1 FROM chunks c1 WHERE c1.doc_id = c2.doc_id"
+                "     AND c1.version_id = :first_version"
+                "     AND c1.extraction_input_hash = c2.extraction_input_hash)"
+            ),
+            versions,
+        ).scalar_one()
+        claimify_reused = connection.execute(
+            text(
+                "SELECT count(*) FROM chunks c2"
+                " JOIN chunks c1 ON c1.doc_id = c2.doc_id"
+                " AND c1.extraction_input_hash = c2.extraction_input_hash"
+                " WHERE c1.version_id = :first_version"
+                " AND c2.version_id = :second_version"
+                " AND EXISTS (SELECT 1 FROM chunk_claims cc"
+                "             WHERE cc.chunk_id = c2.chunk_id)"
+                " AND NOT EXISTS (SELECT 1 FROM claims cl"
+                "                 WHERE cl.chunk_id = c2.chunk_id)"
+            ),
+            versions,
+        ).scalar_one()
+        claimify_rerun = connection.execute(
+            text(
+                "SELECT count(*) FROM chunks c2"
+                " JOIN chunks c1 ON c1.doc_id = c2.doc_id"
+                " AND c1.extraction_input_hash = c2.extraction_input_hash"
+                " WHERE c1.version_id = :first_version"
+                " AND c2.version_id = :second_version"
+                " AND EXISTS (SELECT 1 FROM claims cl"
+                "             WHERE cl.chunk_id = c2.chunk_id)"
+            ),
+            versions,
+        ).scalar_one()
 
     assert first_summary == "The original reuse-spike document."
     assert second_summary == "The edited reuse-spike document."
-    # Reuse breadth, not a tautology (review): every v2 chunk either reused a
-    # v1 extraction (rows here) or was freshly selected (selection_v2).
-    assert len(reused) == v2_chunk_count - selection_v2
+    # D122 splits reuse: Selection follows extraction_input_hash, Claimify also
+    # hashes the previous-eight Selection producers. Every v2 chunk is one of
+    # freshly selected, Selection-reused+Claimify-reused, or Selection-reused
+    # with Claimify re-run because a preceding producer changed.
+    assert hash_new + claimify_reused + claimify_rerun == v2_chunk_count
+    assert hash_new == selection_v2
     assert 0 < selection_v2 < v2_chunk_count
+    assert claimify_reused > 0
+    assert claimify_rerun > 0
 
 
 def test_reused_chunks_carry_identical_claims_and_prefixes(rig: _ReuseRig) -> None:
@@ -460,6 +486,7 @@ def test_reused_chunks_carry_identical_claims_and_prefixes(rig: _ReuseRig) -> No
             .all()
         )
         assert pairs, "the edit must leave unchanged chunks to pair up"
+        claimify_reused = 0
         for pair in pairs:
             assert pair["new_prefix"] == pair["old_prefix"]  # byte-identical
             old_claims = set(
@@ -474,7 +501,15 @@ def test_reused_chunks_carry_identical_claims_and_prefixes(rig: _ReuseRig) -> No
                     {"c": pair["new_chunk"]},
                 ).scalars()
             )
-            assert new_claims == old_claims  # same immutable claims, re-attached
+            minted = connection.execute(
+                text("SELECT count(*) FROM claims WHERE chunk_id = :c"),
+                {"c": pair["new_chunk"]},
+            ).scalar_one()
+            if minted == 0:
+                assert new_claims == old_claims  # Claimify reuse: same ids
+                assert new_claims
+                claimify_reused += 1
+        assert claimify_reused > 0
 
 
 def test_reuse_never_crosses_into_the_same_version(rig: _ReuseRig) -> None:

@@ -201,6 +201,13 @@ services:
       setup:
         condition: service_completed_successfully
 
+  worker-ground-claims:
+    <<: *app
+    command: ["worker", "--stage", "ground_claims"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   worker-normalize-relations:
     <<: *app
     command: ["worker", "--stage", "normalize_relations"]

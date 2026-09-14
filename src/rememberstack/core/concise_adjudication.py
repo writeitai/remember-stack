@@ -18,7 +18,7 @@ from rememberstack.model.fact_application import FactWindowUpdate
 from rememberstack.model.fact_application import NewFact
 from rememberstack.model.fact_windows import GroundedFactWindow
 
-PROMPT_RENDERER_VERSION = "concise-handles-1"
+PROMPT_RENDERER_VERSION = "concise-handles-2"
 """Pinned projector/response-adapter generation included in the fingerprint."""
 
 # F/C/A/E/S are citable supplied rows. T is factored text. W is a window
@@ -144,6 +144,8 @@ def _compact_content(
     if not isinstance(content, Mapping):
         return content
     compacted = dict(content)
+    # Resolved context is presented separately with the attempt's entity names.
+    compacted.pop("context_refs", None)
     field, rendered = _text_value(
         text=compacted.get("statement"),
         repeats=repeats,
@@ -183,7 +185,7 @@ def project_concise_inputs(
     """
     fact_rows = list(snapshot.get("facts", ()))
     claim_rows = list(snapshot.get("claims", ()))
-    assertion_rows = list(snapshot.get("assertions", ()))
+    assertion_rows: list[dict[str, Any]] = list(snapshot.get("assertions", ()))
     facts = {
         _handle("F", index): _as_id(row["fact_id"])
         for index, row in enumerate(fact_rows)
@@ -241,6 +243,24 @@ def project_concise_inputs(
                 entity_ids=entity_ids, names=entity_names, entity_id=canonical_id
             )
             same_as[_as_id(object_raw)] = canonical_id
+            same_as[canonical_id] = canonical_id
+    for row in assertion_rows:
+        for context in row.get("context_entities", ()):
+            entity_id = _as_id(context["entity_id"])
+            canonical_id = _as_id(context["canonical_entity_id"])
+            _remember_entity(
+                entity_ids=entity_ids,
+                names=entity_names,
+                entity_id=entity_id,
+                name=context.get("name"),
+            )
+            _remember_entity(
+                entity_ids=entity_ids,
+                names=entity_names,
+                entity_id=canonical_id,
+                name=context.get("canonical_name"),
+            )
+            same_as[entity_id] = canonical_id
             same_as[canonical_id] = canonical_id
     for entity_id, canonical_id in same_as.items():
         if entity_names.get(entity_id) and not entity_names.get(canonical_id):
@@ -406,6 +426,11 @@ def project_concise_inputs(
             item["object"] = obj
             if canonical_object is not None:
                 item["canonical_object"] = canonical_object
+        if row.get("context_entities"):
+            item["context"] = [
+                entity_ref(context["entity_id"])[0]
+                for context in row["context_entities"]
+            ]
         presented_assertions.append(item)
 
     evidence = []
@@ -452,6 +477,8 @@ def project_concise_inputs(
             names for names in contradiction_groups.values() if len(names) > 1
         ],
     }
+    if snapshot.get("context_truncated"):
+        presentation["context_truncated"] = True
     if evidence_not_supplied:
         presentation["evidence_not_supplied"] = evidence_not_supplied
     mapping = AttemptMapping(

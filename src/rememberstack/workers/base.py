@@ -61,6 +61,10 @@ class ExtractChunkBarrier(BaseModel):
     normalize_component_version: str
 
 
+class SelectionChunkBarrier(ExtractChunkBarrier):
+    """Complete Selection before any chunk consumes the shared source references."""
+
+
 class ClaimNormalizeBarrier(BaseModel):
     """D88: after a claim normalize succeeds, complete+barrier in one ledger txn."""
 
@@ -119,6 +123,7 @@ class HandlerOutcome(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     follow_up: tuple[EnqueueWork, ...] = ()
+    selection_chunk_barrier: SelectionChunkBarrier | None = None
     extract_chunk_barrier: ExtractChunkBarrier | None = None
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
     entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
@@ -378,7 +383,13 @@ class Worker:
             return RunResult(
                 processing_id=claimed.processing_id, outcome=result_outcome
             )
-        if outcome.extract_chunk_barrier is not None:
+        if outcome.selection_chunk_barrier is not None:
+            self._ledger.complete_chunk_selection(
+                processing_id=claimed.processing_id,
+                barrier=outcome.selection_chunk_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.extract_chunk_barrier is not None:
             self._ledger.complete_chunk_extract(
                 processing_id=claimed.processing_id,
                 barrier=outcome.extract_chunk_barrier,

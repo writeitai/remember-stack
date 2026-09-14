@@ -1186,6 +1186,9 @@ _MARK_ACCEPTED = text(
 
 _POSTGRES_SCRUB = (
     text(
+        "DELETE FROM selection_results WHERE deployment_id=:deployment_id AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))"
+    ),
+    text(
         "DELETE FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)"
     ),
     text(
@@ -1682,6 +1685,12 @@ _VERIFY_POSTGRES_SCRUB = text(
     SELECT count(*)
     FROM (
         SELECT 1 FROM normalization_outputs WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
+        UNION ALL
+        SELECT 1 FROM selection_results WHERE deployment_id=:deployment_id AND chunk_id=ANY(CAST(:chunk_ids AS uuid[]))
+        UNION ALL
+        SELECT 1 FROM application_context_bindings WHERE deployment_id=:deployment_id AND application_id IN (
+          SELECT application_id FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
+        )
         UNION ALL
         SELECT 1 FROM fact_applications WHERE deployment_id=:deployment_id AND claim_id=ANY(:claim_ids)
         UNION ALL

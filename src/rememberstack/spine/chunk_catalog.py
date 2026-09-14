@@ -132,6 +132,28 @@ class ChunkCatalog:
             for row in rows
         )
 
+    def chunks_for_references(
+        self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
+    ) -> tuple[ChunkForEmbedding, ...]:
+        """Load target, eight preceding producers and their possible neighbor support."""
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_FOR_REFERENCE_WINDOW,
+                    {
+                        "representation_id": representation_id,
+                        "chunker_version": chunker_version,
+                        "chunk_id": chunk_id,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            ChunkForEmbedding.model_validate(_normalize_chunk_embed_row(dict(row)))
+            for row in rows
+        )
+
     def list_chunk_ids(
         self, *, representation_id: UUID, chunker_version: str
     ) -> tuple[UUID, ...]:
@@ -365,4 +387,15 @@ _UPDATE_EMBEDDING = text(
         prefixer_version = :prefixer_version
     WHERE chunk_id = :chunk_id
     """
+)
+
+
+_SELECT_FOR_REFERENCE_WINDOW = text(
+    str(_SELECT_FOR_EMBEDDING).replace(
+        "ORDER BY c.ordinal",
+        """AND c.ordinal BETWEEN
+             (SELECT ordinal-9 FROM chunks WHERE chunk_id=:chunk_id) AND
+             (SELECT ordinal+1 FROM chunks WHERE chunk_id=:chunk_id)
+           ORDER BY c.ordinal""",
+    )
 )

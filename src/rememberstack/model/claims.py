@@ -130,12 +130,29 @@ class SelectionCandidate(BaseModel):
         return SelectionDropReason(self.outcome.value.removeprefix(_DROP_PREFIX))
 
 
+class SourceReferenceCard(BaseModel):
+    """One source-backed referent Selection introduced in the target chunk.
+
+    The name is orientation, not evidence. ``source_refs`` cites engine-supplied
+    passage labels from the same catalog D119 uses for claim evidence. The model
+    never writes quote strings or character offsets. Local aliases are allowed
+    only when the shown source itself establishes them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: _NonEmpty
+    aliases: tuple[str, ...] = ()
+    source_refs: tuple[_NonEmpty, ...]
+
+
 class SelectionResponse(BaseModel):
-    """The Selection call's structured output: every judged candidate."""
+    """The Selection call's structured output: judged candidates and referents."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     candidates: tuple[SelectionCandidate, ...]
+    references: tuple[SourceReferenceCard, ...] = ()
 
 
 class AddedContext(BaseModel):

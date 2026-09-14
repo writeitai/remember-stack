@@ -257,16 +257,20 @@ class _E2Rig:
         registry.register(
             stage=PipelineStage.EXTRACT_CLAIMS, handler=self.extract_handler
         )
+        registry.register(
+            stage=PipelineStage.GROUND_CLAIMS, handler=self.extract_handler
+        )
         self.worker = Worker(ledger=ledger, registry=registry)
 
     def run_chain(self) -> None:
-        """Drive one document through the full chain including extraction."""
+        """Drive one document through Selection freeze and Claimify grounding."""
         for stage in (
             PipelineStage.CONVERT,
             PipelineStage.STRUCTURE,
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
         ):
             outcome = self.worker.run_one(
                 deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
@@ -327,8 +331,9 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
         metered_calls = (
             connection.execute(
                 text(
-                    "SELECT call_key, model_name, tier, tokens_in, cost_usd"
-                    " FROM cost_ledger WHERE stage = 'extract_claims'"
+                    "SELECT call_key, model_name, tier, tokens_in, cost_usd, stage"
+                    " FROM cost_ledger"
+                    " WHERE stage IN ('extract_claims', 'ground_claims')"
                     " ORDER BY call_key"
                 )
             )
@@ -362,7 +367,7 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     assert stance["is_attributed"]
 
     # drops, flags, edits, and Claimify-stage rejections are ledgered (D33/#161);
-    # Selection is enforced — the fused call's attempt to resurrect the dropped
+    # Selection is enforced — Claimify's attempt to resurrect the dropped
     # advice span never landed (it becomes grounding_rejected, not a claims row):
     by_kind = {decision["decision_type"]: decision for decision in decisions}
     assert set(by_kind) == {
@@ -416,6 +421,9 @@ def test_claims_land_grounded_with_drops_ledgered_and_stance_kept(rig: _E2Rig) -
     ]
     assert all(call["model_name"] and call["tokens_in"] > 0 for call in metered_calls)
     assert {call["tier"] for call in metered_calls} == {"decontextualize", "selection"}
+    by_tier = {call["tier"]: call["stage"] for call in metered_calls}
+    assert by_tier["selection"] == "extract_claims"
+    assert by_tier["decontextualize"] == "ground_claims"
     # Extraction is a measurement surface (#154): selection + claimify must pin
     # temperature=0.0 so identical bindings do not wander (gold-span coverage
     # previously varied 7/8 → 4/8 across runs at the provider default).
@@ -490,8 +498,9 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
     no_info marker makes the replay check hold without re-calling the model.
 
     D84: extract_claims is chunk-grain. A document/version-targeted handle only
-    fans out; Claimify runs on the CHUNK job. This proof drives the chunk grain
-    directly so the empty-Selection terminal marker and replay stay covered.
+    fans out; Selection freezes on EXTRACT_CLAIMS and Claimify runs on
+    GROUND_CLAIMS. This proof drives both chunk jobs so the empty-Selection
+    terminal marker and replay stay covered.
     """
     rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
@@ -557,8 +566,11 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
         },
     )
     handler.handle(work=work, meter=NoopCostMeter())
+    assert len(empty_provider.generated_prompts) == 1  # Selection freeze only
+    ground = work.model_copy(update={"stage": PipelineStage.GROUND_CLAIMS})
+    handler.handle(work=ground, meter=NoopCostMeter())
     calls_after_first = len(empty_provider.generated_prompts)
-    assert calls_after_first == 1  # one Selection call, no fused call
+    assert calls_after_first == 1  # empty keeps skip Claimify
 
     with rig.engine.connect() as connection:
         marker = (
@@ -574,4 +586,5 @@ def test_empty_extraction_is_terminal_and_replays_without_calls(
     assert marker["decision_type"] == "selection_drop"
 
     handler.handle(work=work.model_copy(update={"attempt": 2}), meter=NoopCostMeter())
+    handler.handle(work=ground.model_copy(update={"attempt": 2}), meter=NoopCostMeter())
     assert len(empty_provider.generated_prompts) == calls_after_first

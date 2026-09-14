@@ -33,8 +33,11 @@ Generated summaries and section orientation cannot justify a reference.
 Only definitions with at least one target-chunk body passage are published by
 that Selection unit; its allowed neighbor evidence may clarify them. This avoids
 every neighbor publishing duplicate introductions. Do not merge cards by equal
-name/date/participants. A particular unnamed tournament is eligible when source
-context identifies it; a bare unqualified “tournament” is not an identity proof.
+name/date/participants, and do not treat the same supporting passage as identity:
+one paragraph can introduce both a person and a tournament. Preserve distinct
+emitted cards and cap them as whole cards. A particular unnamed tournament is
+eligible when source context identifies it; a bare unqualified “tournament” is
+not an identity proof.
 Ambiguous references may remain unresolved.
 
 The card shown to Claimify includes its descriptive label and exact supporting

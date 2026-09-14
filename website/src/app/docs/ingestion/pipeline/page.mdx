@@ -13,7 +13,9 @@ Exhaustive stage reference for the per-document evidence chain. Parent overview:
 ```
 ingest → convert → structure → chunk → embed(chunks)
                                       ↓
-                              extract claims → embed(claims)
+                         select propositions and source references
+                                      ↓
+                         ground claims → embed(claims)
                                       ↓
                               normalize / resolve entities
                                       ↓
@@ -119,6 +121,29 @@ Each claim carries:
 - Source-asserted validity interval when the source states one (`asserted` validity — testimony, not system verdict)
 - Extractor / representation / structure generation coordinates (basis)
 
+Extraction has two model calls. **Selection** chooses propositions and identifies
+source-backed people, organizations, works and particular events. Its response
+is saved once, including an empty result. After all chunks finish Selection,
+**Claimify** writes standalone claims using their kept propositions and a bounded
+set of earlier references. A reference can cross a section boundary, but remains
+within the previous eight chunks of the same document representation.
+
+Each earlier reference includes exact source passages. Its descriptive name helps
+orientation; the source passages must support the resulting claim and be cited.
+For example, a tournament introduced in chunk 2 can clarify “that tournament” in
+chunk 7. Two tournaments with the same date remain separate references. The
+engine supplies passage labels and resolves them to exact occurrence ranges.
+
+The initial limits are four published references per Selection response and eight
+references, totaling at most 4,096 characters including evidence, per Claimify
+request. These are bounded context limits, not a guarantee that every distant
+reference is available. No additional extraction model call is introduced.
+
+Version reuse includes the earlier chunks' source inputs even when they produced
+no references. An edit there can introduce a competing referent and must trigger
+rechecking. Unchanged inputs reuse the saved decisions and claim identities,
+remapping all evidence ranges onto the new occurrence.
+
 **Gates:**
 
 - Deterministic grounding checks reject unanchored inventions.
@@ -164,6 +189,13 @@ These instructions improve extraction; they do not guarantee that every
 model output has the correct kind or date.
 
 ## E3 — Facts
+
+Normalized assertions may name a few extra source-backed context entities
+(a tournament, company, or person the claim refers to besides the subject).
+Those bindings live on the assertion application. Candidate nomination still
+starts with the same-subject baseline and may add a small number of facts that
+share that context. Shared context never proves two assertions are the same
+fact, and an empty context search does not authorize a new fact.
 
 ### Entity resolution
 

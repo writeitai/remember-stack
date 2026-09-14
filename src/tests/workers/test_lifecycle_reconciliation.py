@@ -104,6 +104,7 @@ _STAGES = (
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
+    PipelineStage.GROUND_CLAIMS,
     PipelineStage.NORMALIZE_RELATIONS,
     PipelineStage.ADJUDICATE_OBSERVATIONS,
     PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -303,6 +304,10 @@ class _LifecycleRig:
                 settings=E2Settings(),
                 chunker_version=chunker_version(params=_PARAMS),
             ),
+        )
+        registry.register(
+            stage=PipelineStage.GROUND_CLAIMS,
+            handler=registry.handler_for(stage=PipelineStage.EXTRACT_CLAIMS),
         )
         facts = FactCatalog(engine=engine)
         obs_adjudicator = FactAdjudicator(

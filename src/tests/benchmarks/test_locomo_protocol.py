@@ -18,6 +18,8 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
+from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
@@ -38,6 +40,7 @@ from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import VertexSettings
+from rememberstack.core.concise_adjudication import PROMPT_RENDERER_VERSION
 from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -189,6 +192,20 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
 def test_protocol_pins_the_shipping_extractor_generation() -> None:
     """The benchmark cannot silently ingest a different temporal extraction policy."""
     assert EXPECTED_INGEST_COMPONENT_VERSIONS["extract_claims"] == E2_EXTRACTOR_VERSION
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS["ground_claims"] == E2_EXTRACTOR_VERSION
+
+
+def test_protocol_pins_ground_claims_as_the_e2_split() -> None:
+    """Claimify is a supported ingest stage at the same extractor generation."""
+    assert EXPECTED_PIPELINE_STAGES.index("ground_claims") == (
+        EXPECTED_PIPELINE_STAGES.index("extract_claims") + 1
+    )
+    assert tuple(EXPECTED_INGEST_COMPONENT_VERSIONS) == EXPECTED_PIPELINE_STAGES
+
+
+def test_protocol_pins_the_shipping_concise_renderer_generation() -> None:
+    """Adjudication input rendering is part of the processing identity."""
+    assert EXPECTED_PROMPT_RENDERER_VERSION == PROMPT_RENDERER_VERSION
 
 
 def test_protocol_pins_the_shipping_observation_flush_generation() -> None:
@@ -253,10 +270,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v30_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v31_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v30"
-    assert DEFAULT_PROTOCOL_KEY == "full-v30"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v31"
+    assert DEFAULT_PROTOCOL_KEY == "full-v31"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -301,13 +318,13 @@ def test_protocol_is_v30_and_answer_prompt_has_reasoning_and_loop_guards() -> No
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
-        "full-v30",
-        "full-v30-gemma-vertex",
-        "full-v30-codex-subscription",
+        "full-v31",
+        "full-v31-gemma-vertex",
+        "full-v31-codex-subscription",
     )
-    protocol = PROTOCOL_REGISTRY["full-v30"]
+    protocol = PROTOCOL_REGISTRY["full-v31"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v30"
+    assert protocol.name == "RS-LoCoMo-Full-v31"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -345,7 +362,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v30"]
+    assert selected == ["full-v31"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -483,12 +500,12 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v30 pins, so its scores are
-    an answer-agent comparison rather than a new benchmark identity."""
-    base = PROTOCOL_REGISTRY["full-v30"]
-    variant = PROTOCOL_REGISTRY["full-v30-gemma-vertex"]
+    """The variant is a reader-only provider swap over identical v31 pins, so its
+    scores are an answer-agent comparison rather than a new benchmark identity."""
+    base = PROTOCOL_REGISTRY["full-v31"]
+    variant = PROTOCOL_REGISTRY["full-v31-gemma-vertex"]
 
-    assert variant.name == "RS-LoCoMo-Full-v30-GemmaVertex"
+    assert variant.name == "RS-LoCoMo-Full-v31-GemmaVertex"
     assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
     assert variant.answer_agent_provider == "vertex"
     assert variant.answer_agent_reasoning_effort == "none"
@@ -526,7 +543,7 @@ def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
         base.judge_repetitions,
         base.answer_word_cap,
     )
-    assert DEFAULT_PROTOCOL_KEY == "full-v30"
+    assert DEFAULT_PROTOCOL_KEY == "full-v31"
 
 
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
@@ -567,7 +584,7 @@ def test_cli_composes_only_the_vertex_answer_seat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v30-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v31-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
     built: list[VertexSettings] = []
@@ -604,12 +621,12 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v30")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v31")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
     def refuse(**_values: object) -> object:  # pragma: no cover
-        raise AssertionError("Vertex must not be composed for full-v30")
+        raise AssertionError("Vertex must not be composed for full-v31")
 
     monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
@@ -624,7 +641,7 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A missing project id is caught before any stage work or paid call."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v30-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v31-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
@@ -634,10 +651,10 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
 
 def test_codex_subscription_variant_pins_both_generation_seats() -> None:
     """The experimental variant changes provider controls, not LoCoMo logic."""
-    base = PROTOCOL_REGISTRY["full-v30"]
-    variant = PROTOCOL_REGISTRY["full-v30-codex-subscription"]
+    base = PROTOCOL_REGISTRY["full-v31"]
+    variant = PROTOCOL_REGISTRY["full-v31-codex-subscription"]
 
-    assert variant.name == "RS-LoCoMo-Full-v30-CodexSubscription"
+    assert variant.name == "RS-LoCoMo-Full-v31-CodexSubscription"
     assert variant.answer_agent_model == "gpt-5.6-luna"
     assert variant.judge_model == "gpt-5.6-luna"
     assert variant.answer_agent_provider == "codex_subscription"
@@ -658,7 +675,7 @@ def test_cli_codex_answer_and_judge_need_no_openrouter_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An already-ingested run can evaluate solely through local Codex auth."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v30-codex-subscription")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v31-codex-subscription")
     monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
 
     answer_provider = cli._provider(run_dir=tmp_path, stage="answer")

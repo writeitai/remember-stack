@@ -53,6 +53,7 @@ from rememberstack.model.claims import SelectionDropReason
 from rememberstack.model.claims import SelectionOutcome
 from rememberstack.model.claims import SelectionResponse
 from rememberstack.model.claims import SelectionVerdict
+from rememberstack.model.claims import SourceReferenceCard
 from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
@@ -604,6 +605,7 @@ __all__ = (
     "SelectionOutcome",
     "SelectionDropReason",
     "SelectionResponse",
+    "SourceReferenceCard",
     "SelectionVerdict",
     "LifecycleReport",
     "CurrencyTransition",
