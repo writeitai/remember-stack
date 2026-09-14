@@ -1,10 +1,10 @@
 # RS-LoCoMo-Full-v32 setup
 
-v32 (2026-09-15) keeps the v31 processing, retrieval, answer, and judge pins
-and rolls structure generation so the fallback nested JSON field is
-`subsections` (internal `children`). Stores ingested under v31 are not
-comparable and must be re-ingested. Dataset, provider defaults, answer/judge
-behavior and scoring are unchanged. No new numbered architectural decision.
+v32 (2026-09-15) changes the fallback structuring JSON field to `subsections`
+while preserving the internal `children` tree. The structure generation and
+protocol identity advance together. Other processing, retrieval, answer, and
+judge settings stay the same. Re-ingest v31 stores for a v32 run; historical
+results remain available for directional comparisons.
 
 v31 (2026-09-14) pins D122 source-backed document references and D123
 contextual fact nomination on the combined D119–D121 processing contract, and

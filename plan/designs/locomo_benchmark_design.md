@@ -1,12 +1,12 @@
 # LoCoMo full-system benchmark design
 
 > **v32 structuring-compatibility amendment (2026-09-15).** Full-v32 is the
-> current protocol. It keeps the Full-v31 processing, retrieval, answer, and
-> judge pins and rolls structure generation so the fallback nested JSON field
-> is `subsections` (internal `children`). Adapter identity, protocol keys,
+> current protocol. Its fallback structuring JSON uses `subsections` while
+> preserving the internal `children` tree. Other processing, retrieval,
+> answer, and judge pins stay the same. Adapter identity, protocol keys,
 > variants, and fingerprints roll together. Dataset, models, budgets, and
 > scoring are unchanged. Stores ingested under v31 are not this protocol.
-> No new numbered architectural decision. Analysis:
+> Analysis:
 > [gemma_fallback_subsections_20260915.md](../analysis/gemma_fallback_subsections_20260915.md).
 
 > **Binding D124 retrieval-ablation amendment (2026-09-14).** An additive,
@@ -228,7 +228,7 @@ stored. A change creates a new protocol version.
 
 **v31 → v32 (2026-09-15 — Gemma fallback subsections):** Structure generation
 includes the fallback nested JSON field `subsections`. This is the measured
-Gemma/Vertex compatibility correction, not a new architecture decision.
+Gemma/Vertex compatibility correction.
 Dataset, models, answer/judge behavior, budgets, and scoring are unchanged.
 Adapter version, protocol identities, variants, and fingerprints roll. Stores
 ingested under v31 must be re-ingested.

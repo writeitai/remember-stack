@@ -7,7 +7,7 @@ anchor-tree contract, and it does not claim that every hang or HTTP failure
 shares this cause.
 
 Durable probe record:
-[locomo-conv42-gemma-structure-probes-20260915.json](https://github.com/writeitai/ultimate-memory-cloud/blob/9520a426f7ac4270d15409903f7426e9fad4a5cb/design/analysis/locomo-conv42-gemma-structure-probes-20260915.json).
+[locomo-conv42-gemma-structure-probes-20260915.json](https://github.com/writeitai/ultimate-memory-cloud/blob/cb93439497da22917c3dabc93ae329846a0b1411/design/analysis/locomo-conv42-gemma-structure-probes-20260915.json).
 Interrupted diagnostic streams were stopped after the behavior was established;
 their usage is unavailable and those charges remain unknown.
 
