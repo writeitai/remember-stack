@@ -7,8 +7,8 @@
 [D121](../designs/concise_adjudication_inputs_design.md), commit `4a803c1d`
 (PR #401, merged).
 **PR:** https://github.com/writeitai/remember-stack/pull/402 (draft)
-**Head:** lean-prompt checkpoint on PR #402; SHA filled after push. Previous
-Antigravity-reviewed head was `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
+**Head:** `ef17559a1616c8c276ea5934658aedf5b5029d6d` (lean-prompt checkpoint).
+Previous Antigravity-reviewed head was `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
 This checkpoint is not D119-integrated and is not merge-ready.
 **Parent owns** integration, merge, and release. User authorized the checked
 CLA text.
