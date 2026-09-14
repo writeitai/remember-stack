@@ -36,13 +36,17 @@ class FallbackAnchor(BaseModel):
 
     ``occurrence_index`` is zero-based among exact occurrences inside the
     enclosing parent's block range. Geometry is deliberately absent.
+
+    Nested nodes are ``children`` in Python. The provider JSON field is
+    ``subsections`` so a constrained decoder that emits keys alphabetically
+    writes the required index before recursing.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     anchor: str = Field(min_length=1)
     occurrence_index: int = Field(ge=0)
-    children: tuple[FallbackAnchor, ...] = ()
+    children: tuple[FallbackAnchor, ...] = Field(default=(), alias="subsections")
 
 
 class FallbackStructureResponse(BaseModel):

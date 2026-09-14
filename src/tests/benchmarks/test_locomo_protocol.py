@@ -49,6 +49,7 @@ from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import E3_NORMALIZER_VERSION
 from rememberstack.workers import OBS_FLUSH_VERSION
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
@@ -187,6 +188,11 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert '"dropped_by_hydration":0' in prompt
     assert isinstance(call.response, Envelope)
     assert call.response.ranking  # durable raw record is unchanged
+
+
+def test_protocol_pins_the_shipping_structure_generation() -> None:
+    """Readiness rejects a store structured under a different fallback wire contract."""
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS["structure"] == E0_STRUCTURE_VERSION
 
 
 def test_protocol_pins_the_shipping_extractor_generation() -> None:

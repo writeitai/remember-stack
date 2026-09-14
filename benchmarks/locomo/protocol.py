@@ -74,7 +74,7 @@ _E2_EXTRACTOR_GENERATION: Final = (
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "convert": "e0-convert-2026.08",
-        "structure": "e0-structure-2026.07f:d79-wave2",
+        "structure": "e0-structure-2026.07g:d79-wave2",
         "chunk": (
             "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
             "blockizer-heading-metadata"
