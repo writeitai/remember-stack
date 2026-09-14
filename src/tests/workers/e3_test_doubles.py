@@ -60,7 +60,9 @@ class RecordingResolver:
         self.calls.append(reference)
         entity_id = self.identities.get(reference.name, uuid4())
         resolved = ResolvedEntity(
-            entity_id=entity_id, created=True, decision_id=uuid4()  # type: ignore[arg-type]
+            entity_id=entity_id,
+            created=True,
+            decision_id=uuid4(),  # type: ignore[arg-type]
         )
         self.resolved.append(resolved)
         return resolved

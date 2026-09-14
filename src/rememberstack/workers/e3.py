@@ -394,10 +394,7 @@ class NormalizeRelationsHandler:
                     raise NonRetryableHandlerError(
                         "context resolution produced no validating decision"
                     )
-                if (
-                    resolved.entity_id in exclude
-                    or resolved.entity_id in seen_entities
-                ):
+                if resolved.entity_id in exclude or resolved.entity_id in seen_entities:
                     continue
                 seen_entities.add(resolved.entity_id)
                 context_bindings.append(

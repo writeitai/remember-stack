@@ -112,7 +112,9 @@ def test_overflow_still_stages_the_assertion() -> None:
         ],
     }
     facts = _run(payload=payload, resolver=RecordingResolver())
-    frozen, accepted = facts.applications.published
+    published = facts.applications.published
+    assert published is not None
+    frozen, accepted = published
     assert accepted == (("observation", 0),)
     assert len(frozen.observations[0].context_refs) == 6
     bindings = facts.applications.staged[0]["context_bindings"]

@@ -204,7 +204,7 @@ def test_canonical_membership_changes_the_context_fingerprint(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE entities SET merged_into=:survivor WHERE entity_id=:absorbed"
+                "UPDATE entities SET status='merged', merged_into=:survivor WHERE entity_id=:absorbed"
             ),
             {"survivor": tournament, "absorbed": alias},
         )
@@ -221,9 +221,7 @@ def test_context_extra_does_not_displace_baseline_targets(
     case = WriterCase(engine=database_engine)
     tournament = _tournament(engine=database_engine, case=case)
     _, win_app = case.stage(
-        day=10,
-        statement="Nate took first place in May",
-        context_entities=(tournament,),
+        day=10, statement="Nate took first place in May", context_entities=(tournament,)
     )
     case.decide(
         decision={

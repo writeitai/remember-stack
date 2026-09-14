@@ -188,11 +188,12 @@ class WriterCase:
             connection.execute(
                 text("""INSERT INTO mentions(mention_id,deployment_id,surface_form,
                 normalized_lemma,canonical_name_form,claim_id,doc_id)
-                VALUES(:mention,:dep,:name,lower(:name),:name,:claim,:doc)"""),
+                VALUES(:mention,:dep,:name,:lemma,:name,:claim,:doc)"""),
                 {
                     "mention": mention_id,
                     "dep": self.dep,
                     "name": name,
+                    "lemma": name.casefold(),
                     "claim": claim_id,
                     "doc": doc_id,
                 },

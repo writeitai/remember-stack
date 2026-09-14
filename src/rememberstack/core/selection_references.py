@@ -33,7 +33,11 @@ PassageRegion = Literal["target", "previous", "next"]
 
 @dataclass(frozen=True)
 class PassageSupport:
-    """One engine-supplied source passage the model may cite (D119 descriptor)."""
+    """Pre-integration stand-in for D119's engine-supplied source passage.
+
+    Selection cites these labels; it does not search quote strings. Replace
+    this type with the shared D119 catalog descriptor when that PR lands.
+    """
 
     label: str
     char_start: int
@@ -263,7 +267,7 @@ def _unique_region(
     *, char_start: int, char_end: int, windows: Mapping[PassageRegion, tuple[int, int]]
 ) -> PassageRegion | None:
     """Region of the unique window that fully contains the range."""
-    matches = [
+    matches: list[PassageRegion] = [
         region
         for region, (start, end) in windows.items()
         if start <= char_start and char_end <= end
@@ -348,21 +352,34 @@ def card_payload(*, card: GroundedCard) -> dict[str, object]:
 
 def card_from_payload(*, payload: dict[str, object]) -> GroundedCard:
     """Rehydrate one stored card."""
-    passages = tuple(
-        GroundedPassage(
-            label=str(item["label"]),
-            char_start=int(item["char_start"]),
-            char_end=int(item["char_end"]),
-            region=item["region"],  # type: ignore[arg-type]
-            text=str(item["text"]),
+    raw_passages = payload["passages"]
+    if not isinstance(raw_passages, list):
+        raise ValueError("card payload passages must be a list")
+    raw_aliases = payload.get("aliases", ())
+    if not isinstance(raw_aliases, (list, tuple)):
+        raise ValueError("card payload aliases must be a sequence")
+    grounded: list[GroundedPassage] = []
+    for item in raw_passages:
+        if not isinstance(item, dict):
+            raise ValueError("card payload passage must be an object")
+        region = item["region"]
+        if region not in ("target", "previous", "next"):
+            raise ValueError("card payload passage region is not a catalog region")
+        grounded.append(
+            GroundedPassage(
+                label=str(item["label"]),
+                char_start=int(str(item["char_start"])),
+                char_end=int(str(item["char_end"])),
+                region=region,
+                text=str(item["text"]),
+            )
         )
-        for item in payload["passages"]  # type: ignore[union-attr]
-    )
+    passages = tuple(grounded)
     return GroundedCard(
         name=str(payload["name"]),
-        aliases=tuple(str(alias) for alias in payload.get("aliases", ())),
+        aliases=tuple(str(alias) for alias in raw_aliases),
         passages=passages,
-        ordinal=int(payload["ordinal"]),
+        ordinal=int(str(payload["ordinal"])),
         owner_chunk_id=UUID(str(payload["owner_chunk_id"])),
-        owner_ordinal=int(payload["owner_ordinal"]),
+        owner_ordinal=int(str(payload["owner_ordinal"])),
     )

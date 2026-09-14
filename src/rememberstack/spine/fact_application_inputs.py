@@ -178,10 +178,7 @@ def application_snapshot(
             extra = _rows(
                 connection=connection,
                 sql=extra_sql,
-                params={
-                    **params,
-                    "baseline_ids": [row["fact_id"] for row in baseline],
-                },
+                params={**params, "baseline_ids": [row["fact_id"] for row in baseline]},
             )
         by_id = {row["fact_id"]: row for row in baseline}
         for row in extra:
