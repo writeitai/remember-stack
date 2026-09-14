@@ -1,15 +1,16 @@
-"""The E2 extractor (D31-D35): two-call Claimify over the context bundle.
+"""The E2 extractor (D31-D35, D122): Selection then Claimify over the bundle.
 
-Per chunk: a Selection call judges every proposition (keep / keep-flagged /
-drop — drops and flags go to the D33 ledger), then one fused call
-decontextualizes, decomposes, and self-grounds the keeps. The deterministic
-grounding gate (D32 layers 1-2) accepts a claim only if its verbatim source
-span anchors inside the chunk and every content token in added text exists in
-the union of the bundle's source-derived texts. A closed set of functional
-scaffolding tokens is permitted; the model's source tag is advisory provenance,
-not an acceptance boundary. Every kept span ends in accepted claim(s),
-grounding_rejected row(s), or a claimify_omitted row so Claimify-stage losses
-are never silent (#161).
+EXTRACT_CLAIMS runs Selection only: it judges propositions, publishes grounded
+source-reference cards, and freezes the complete result. GROUND_CLAIMS runs
+Claimify after every required Selection producer exists. The deterministic
+grounding gate (D32 layers 1-2) accepts a claim only if its origin is a target
+keep-overlapping passage and every content token in added text exists in the
+union of the bundle's source-derived texts plus cited card passage text. A
+closed set of functional scaffolding tokens is permitted; the model's source
+tag is advisory provenance, not an acceptance boundary. Card names are
+orientation only. Every kept span ends in accepted claim(s), grounding_rejected
+row(s), or a claimify_omitted row so Claimify-stage losses are never silent
+(#161).
 """
 
 from dataclasses import dataclass
@@ -30,6 +31,12 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core import blocks_from_sidecar
+from rememberstack.core.selection_references import CardDiagnostic
+from rememberstack.core.selection_references import claimify_input_hash
+from rememberstack.core.selection_references import GroundedCard
+from rememberstack.core.selection_references import publish_selection_cards
+from rememberstack.core.selection_references import rank_and_fit_cards
+from rememberstack.core.selection_references import render_cards_for_claimify
 from rememberstack.core.source_passages import build_passage_catalog
 from rememberstack.core.source_passages import origin_span_from_record
 from rememberstack.core.source_passages import PassageCatalog
@@ -38,7 +45,6 @@ from rememberstack.core.source_passages import remap_evidence_spans
 from rememberstack.core.source_passages import render_passage_catalog
 from rememberstack.core.source_passages import resolve_source_refs
 from rememberstack.core.source_passages import same_section_neighbours
-from rememberstack.core.source_passages import window_bounds
 from rememberstack.model import Block
 from rememberstack.model import CandidateClaim
 from rememberstack.model import ChunkForEmbedding
@@ -78,10 +84,21 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
+from rememberstack.spine.selection_catalog import FrozenSelection
 from rememberstack.workers.base import ExtractChunkBarrier
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.base import SelectionChunkBarrier
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
+from rememberstack.workers.extraction_references import attach_card_passages
+from rememberstack.workers.extraction_references import card_passage_texts
+from rememberstack.workers.extraction_references import collect_eligible_cards
+from rememberstack.workers.extraction_references import MissingSelectionError
+from rememberstack.workers.extraction_references import preceding_producer_ids
+from rememberstack.workers.extraction_references import reference_windows
+from rememberstack.workers.extraction_references import remap_frozen_cards
+from rememberstack.workers.extraction_references import render_selection_passages
+from rememberstack.workers.extraction_references import require_frozen_producers
 from rememberstack.workers.section_orientation import render_section_orientation
 
 _logger = logging.getLogger(__name__)
@@ -188,6 +205,15 @@ For each candidate, copy a verbatim substring of the target into source_span.
 Choose exactly one outcome from: {outcomes}. Each drop_* outcome already names
 the reason; there is no separate reason field.
 
+Also emit references for people, companies, works, or particular events the
+TARGET CHUNK introduces. Cite only the supplied SOURCE PASSAGES labels; never
+invent a label or character offset. Neighbour passages may clarify a target
+introduction. Names are orientation, not evidence. Do not merge two referents
+because they share a name. A particular unnamed event is eligible when the
+shown source identifies it; a bare unqualified noun is not.
+
+{passages}
+
 {bundle}"""
 
 _CLAIMIFY_PROMPT: Final = """You are the Claimify stage of a claim extractor.
@@ -215,15 +241,18 @@ For each claim return:
 - source_refs: every supplied SOURCE PASSAGES label needed to support it.
   The first label is the origin: a TARGET passage marked origin-eligible that
   contains the kept proposition. This means it overlaps a Selection keep.
-  Further labels supply support from the target or permitted same-section
-  neighbours. Cite all required support, not just the origin. A larger passage
-  may also contain dropped statements; citing it does not authorize extracting
-  those statements. Never invent a label or character offset.
+  Further labels supply support from the target, permitted same-section
+  neighbours, or cited source-reference-card supporting passages. Cite all
+  required support, not just the origin. A larger passage may also contain
+  dropped statements; citing it does not authorize extracting those
+  statements. Never invent a label or character offset.
 - added_context: each substring added from outside the TARGET CHUNK. Text
   already in the target needs no entry. Each addition must occur verbatim in
-  the DOCUMENT HEADER, permitted PREVIOUS/NEXT CHUNK or typed LOCATION elements,
-  except resolved dates under the rules below. Mark its origin with
-  header|neighbour|prefix; the tag is advisory and does not establish support.
+  the DOCUMENT HEADER, permitted PREVIOUS/NEXT CHUNK, typed LOCATION elements,
+  or cited source-reference-card supporting passages, except resolved dates
+  under the rules below. Card names are orientation only and cannot ground an
+  addition. Mark its origin with header|neighbour|prefix; the tag is advisory
+  and does not establish support.
 - entailment_self_verdict: whether the source and permitted context actually
   support the whole claim, rather than merely containing the same words.
 - is_attributed: whether the claim records someone's statement or stance.
@@ -330,6 +359,11 @@ Examples (DOCUMENT HEADER date → structured output):
 
 {passages}
 
+SOURCE REFERENCE CARDS (names are orientation only; never treat a generated
+name as evidence. Cite the supporting SOURCE PASSAGES labels. A card cannot
+resurrect a dropped proposition or replace the TARGET origin rule):
+{cards}
+
 KEPT PROPOSITIONS:
 {keeps}
 
@@ -345,7 +379,7 @@ class E2Settings(BaseSettings):
 
 
 class ExtractClaimsHandler:
-    """The extract stage: every chunk of one representation through Claimify."""
+    """Selection on EXTRACT_CLAIMS, Claimify on GROUND_CLAIMS, same handler."""
 
     def __init__(
         self,
@@ -366,12 +400,18 @@ class ExtractClaimsHandler:
         self._chunker_version = chunker_version
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Extract claims: D84 chunk grain, or legacy version coordinator."""
+        """Run Selection or Claimify at chunk grain, or fan out legacy extract."""
         source = self._chunk_catalog.chunk_source(
             representation_id=_payload_uuid(work=work, field="representation_id")
         )
+        if work.stage is PipelineStage.GROUND_CLAIMS:
+            if work.target_kind is not ProcessingTarget.CHUNK:
+                raise NonRetryableHandlerError(
+                    f"ground_claims work {work.processing_id} is not chunk grain"
+                )
+            return self._handle_claimify(work=work, source=source, meter=meter)
         if work.target_kind is ProcessingTarget.CHUNK:
-            return self._handle_chunk(work=work, source=source, meter=meter)
+            return self._handle_selection(work=work, source=source, meter=meter)
         # Legacy document/version extract row: fan out only (ids, not full rows).
         chunk_ids = self._chunk_catalog.list_chunk_ids(
             representation_id=source.representation_id,
@@ -401,67 +441,124 @@ class ExtractClaimsHandler:
             )
         )
 
-    def _handle_chunk(
+    def _handle_selection(
         self, *, work: ClaimedWork, source: ChunkSource, meter: CostMeterPort
     ) -> HandlerOutcome:
-        """Run Claimify for one chunk and schedule the atomic barrier on complete."""
+        """Freeze one chunk's Selection result; Claimify is scheduled by the barrier."""
         chunk_id = work.target_id
         chunks = self._chunk_catalog.chunks_for_extract(
             representation_id=source.representation_id,
             chunker_version=self._chunker_version,
             chunk_id=chunk_id,
         )
-        index = next(
-            (i for i, chunk in enumerate(chunks) if chunk.chunk_id == chunk_id), None
+        index, chunk = _require_chunk(
+            chunks=chunks, chunk_id=chunk_id, representation_id=source.representation_id
         )
-        if index is None:
-            raise NonRetryableHandlerError(
-                f"chunk {chunk_id} is not part of representation"
-                f" {source.representation_id}"
-            )
-        chunk = chunks[index]
-        if not self._catalog.chunk_already_extracted(
+        frozen = self._catalog.selections.load(
             chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
-        ):
-            occurrence_context = self._load_occurrence_context(source=source)
-            document_md = self._artifact_store.read_bytes(
-                key=ObjectKey(source.markdown_uri)
-            ).decode("utf-8")
-            if not self._reuse_prior_extraction(
+        )
+        if frozen is None:
+            document_md = self._read_markdown(source=source)
+            if not self._reuse_prior_selection(
                 source=source,
                 chunk=chunk,
                 chunks=chunks,
                 index=index,
                 document_md=document_md,
-                occurrence_context=occurrence_context,
             ):
-                self._extract_chunk(
+                self._select_chunk(
                     source=source,
                     chunks=chunks,
                     index=index,
                     document_md=document_md,
-                    blocks=_load_blocks(
-                        artifact_store=self._artifact_store,
-                        source=source,
-                        document_md=document_md,
-                    ),
                     meter=meter,
-                    occurrence_context=occurrence_context,
                 )
-        return HandlerOutcome(
-            extract_chunk_barrier=ExtractChunkBarrier(
-                deployment_id=work.deployment_id,
-                version_id=source.version_id,
-                representation_id=source.representation_id,
-                chunker_version=self._chunker_version,
-                extractor_version=E2_EXTRACTOR_VERSION,
-                content_hash=work.content_hash,
-                lane=work.lane,
-                normalize_component_version=E3_NORMALIZER_VERSION,
-            )
+        return _selection_barrier(
+            work=work, source=source, chunker_version=self._chunker_version
         )
 
-    def _reuse_prior_extraction(
+    def _handle_claimify(
+        self, *, work: ClaimedWork, source: ChunkSource, meter: CostMeterPort
+    ) -> HandlerOutcome:
+        """Ground keeps against frozen Selection producers, then extract-complete."""
+        chunk_id = work.target_id
+        if not self._catalog.chunk_already_extracted(
+            chunk_id=chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+        ):
+            extract_chunks = self._chunk_catalog.chunks_for_extract(
+                representation_id=source.representation_id,
+                chunker_version=self._chunker_version,
+                chunk_id=chunk_id,
+            )
+            index, chunk = _require_chunk(
+                chunks=extract_chunks,
+                chunk_id=chunk_id,
+                representation_id=source.representation_id,
+            )
+            reference_chunks = self._chunk_catalog.chunks_for_references(
+                representation_id=source.representation_id,
+                chunker_version=self._chunker_version,
+                chunk_id=chunk_id,
+            )
+            document_md = self._read_markdown(source=source)
+            target_frozen, preceding = self._required_selection_producers(
+                chunk=chunk, reference_chunks=reference_chunks
+            )
+            input_hash = claimify_input_hash(
+                target_selection_input_hash=target_frozen.input_hash,
+                preceding_selection_input_hashes=tuple(
+                    frozen.input_hash for frozen in preceding
+                ),
+            )
+            occurrence_context = self._load_occurrence_context(source=source)
+            if not self._reuse_prior_claimify(
+                source=source,
+                chunk=chunk,
+                reference_chunks=reference_chunks,
+                document_md=document_md,
+                occurrence_context=occurrence_context,
+                claimify_hash=input_hash,
+            ):
+                self._claimify_chunk(
+                    source=source,
+                    chunks=extract_chunks,
+                    index=index,
+                    document_md=document_md,
+                    meter=meter,
+                    occurrence_context=occurrence_context,
+                    target_frozen=target_frozen,
+                    preceding=preceding,
+                    claimify_hash=input_hash,
+                )
+        return _extract_barrier(
+            work=work, source=source, chunker_version=self._chunker_version
+        )
+
+    def _required_selection_producers(
+        self,
+        *,
+        chunk: ChunkForEmbedding,
+        reference_chunks: tuple[ChunkForEmbedding, ...],
+    ) -> tuple[FrozenSelection, tuple[FrozenSelection, ...]]:
+        """Load the target freeze and every previous-eight producer, including empties."""
+        target_frozen = self._catalog.selections.load(
+            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+        )
+        if target_frozen is None:
+            raise MissingSelectionError(
+                f"required Selection result is missing for chunk {chunk.chunk_id}"
+            )
+        producer_ids = preceding_producer_ids(chunks=reference_chunks, target=chunk)
+        if not producer_ids:
+            return target_frozen, ()
+        loaded = self._catalog.selections.preceding(
+            chunk_ids=producer_ids, extractor_version=E2_EXTRACTOR_VERSION
+        )
+        return target_frozen, require_frozen_producers(
+            loaded=loaded, required_ids=producer_ids
+        )
+
+    def _reuse_prior_selection(
         self,
         *,
         source: ChunkSource,
@@ -469,85 +566,120 @@ class ExtractClaimsHandler:
         chunks: tuple[ChunkForEmbedding, ...],
         index: int,
         document_md: str,
-        occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> bool:
-        """The D56 chunk-grain reuse rung: re-attach instead of re-extract.
-
-        An unchanged ``extraction_input_hash`` within the lineage means some
-        already-extracted chunk read the exact same stable inputs — its
-        claims are re-attached to this version's chunk row (occurrence
-        links, F4) and no model is called. Every evidence span is remapped
-        through the matching content-identical window. If any span cannot
-        be remapped uniquely, this returns False and ordinary extraction
-        runs. A prior extraction that found nothing claim-worthy carries
-        its terminal marker forward the same way. Returns False when the
-        lineage holds no extracted match.
-        """
-        prior = self._catalog.prior_extracted_chunk(
+        """Replay a same-input earlier Selection, remapping every published card."""
+        prior = self._catalog.selections.prior(
             deployment_id=source.deployment_id,
             doc_id=source.doc_id,
             version_id=chunk.version_id,
-            extraction_input_hash=chunk.extraction_input_hash,
+            input_hash=chunk.extraction_input_hash,
+            extractor_version=E2_EXTRACTOR_VERSION,
         )
         if prior is None:
             return False
-        remapped = self._remap_reused_spans(
-            source=source,
+        remapped = self._remap_prior_selection_cards(
             chunk=chunk,
             chunks=chunks,
             index=index,
             document_md=document_md,
-            prior_chunk_id=prior,
+            prior=prior,
         )
         if remapped is None:
             return False
-        occurrences = self._reused_occurrences(
-            remapped_spans=remapped, occurrence_context=occurrence_context
-        )
-        attached = self._catalog.attach_reused_claims(
+        self._catalog.selections.freeze(
             deployment_id=source.deployment_id,
+            representation_id=source.representation_id,
             chunk_id=chunk.chunk_id,
-            prior_chunk_id=prior,
-            occurrences=occurrences,
-            evidence_spans=remapped,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            input_hash=chunk.extraction_input_hash,
+            selection=prior.selection,
+            cards=remapped,
+            diagnostics=prior.diagnostics,
+            truncated=prior.truncated,
+            reused_from=prior.chunk_id,
         )
-        if attached == 0:
-            # the prior chunk carries no claims. Zero claims no longer means
-            # no_info — the prior may hold claimify_omitted /
-            # grounding_rejected rows (#161) — so carry the prior transcript
-            # forward verbatim; fabricate the no_info marker only when the
-            # prior transcript is itself empty. Either way replay stays
-            # closed for this chunk.
-            copied = self._catalog.copy_reused_decisions(
-                chunk_id=chunk.chunk_id, prior_chunk_id=prior
-            )
-            if copied == 0:
-                self._catalog.record_extraction(
-                    claims=(),
-                    decisions=(_empty_extraction_marker(source=source, chunk=chunk),),
-                )
         return True
 
-    def _extract_chunk(
+    def _remap_prior_selection_cards(
+        self,
+        *,
+        chunk: ChunkForEmbedding,
+        chunks: tuple[ChunkForEmbedding, ...],
+        index: int,
+        document_md: str,
+        prior: FrozenSelection,
+    ) -> tuple[GroundedCard, ...] | None:
+        """Map prior card ranges through local D119 windows onto this occurrence."""
+        prior_representation_id = self._chunk_catalog.representation_id_for_chunk(
+            chunk_id=prior.chunk_id
+        )
+        if prior_representation_id is None:
+            return None
+        prior_source = self._chunk_catalog.chunk_source(
+            representation_id=prior_representation_id
+        )
+        prior_chunks = self._chunk_catalog.chunks_for_extract(
+            representation_id=prior_representation_id,
+            chunker_version=self._chunker_version,
+            chunk_id=prior.chunk_id,
+        )
+        prior_index = next(
+            (
+                position
+                for position, item in enumerate(prior_chunks)
+                if item.chunk_id == prior.chunk_id
+            ),
+            None,
+        )
+        if prior_index is None:
+            return None
+        prior_md = self._read_markdown(source=prior_source)
+        return remap_frozen_cards(
+            cards=prior.cards,
+            prior_chunks=prior_chunks,
+            prior_index=prior_index,
+            current_chunks=chunks,
+            current_index=index,
+            prior_md=prior_md,
+            current_md=document_md,
+            current_chunk=chunk,
+        )
+
+    def _select_chunk(
         self,
         *,
         source: ChunkSource,
         chunks: tuple[ChunkForEmbedding, ...],
         index: int,
         document_md: str,
-        blocks: tuple[Block, ...],
         meter: CostMeterPort,
-        occurrence_context: RepresentationOccurrenceContext | None = None,
     ) -> None:
-        """Run the two Claimify calls for one chunk and land the results."""
+        """Call Selection once, resolve cards against engine labels, freeze the winner."""
         chunk = chunks[index]
+        previous, following = same_section_neighbours(chunks=chunks, index=index)
+        blocks = _load_blocks(
+            artifact_store=self._artifact_store, source=source, document_md=document_md
+        )
+        catalog = build_passage_catalog(
+            blocks=blocks,
+            target=chunk,
+            previous=previous,
+            following=following,
+            kept_ranges=(),
+        )
         bundle = _bundle_text(
             source=source, chunks=chunks, index=index, document_md=document_md
         )
         selection_call = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.extract_model,
-                prompt=_SELECTION_PROMPT.format(outcomes=_OUTCOMES, bundle=bundle),
+                prompt=_SELECTION_PROMPT.format(
+                    outcomes=_OUTCOMES,
+                    bundle=bundle,
+                    passages=render_selection_passages(
+                        catalog=catalog, document_md=document_md
+                    ),
+                ),
                 temperature=0.0,
             ),
             response_type=SelectionResponse,
@@ -558,6 +690,85 @@ class ExtractClaimsHandler:
             usage=selection_call.usage,
         )
         selection = selection_call.output
+        cards, truncated, diagnostics = publish_selection_cards(
+            cards=selection.references,
+            catalog=catalog.by_label(),
+            document_md=document_md,
+            owner_chunk=chunk,
+        )
+        self._catalog.selections.freeze(
+            deployment_id=source.deployment_id,
+            representation_id=source.representation_id,
+            chunk_id=chunk.chunk_id,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            input_hash=chunk.extraction_input_hash,
+            selection=selection,
+            cards=cards,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _reuse_prior_claimify(
+        self,
+        *,
+        source: ChunkSource,
+        chunk: ChunkForEmbedding,
+        reference_chunks: tuple[ChunkForEmbedding, ...],
+        document_md: str,
+        occurrence_context: RepresentationOccurrenceContext | None,
+        claimify_hash: str,
+    ) -> bool:
+        """The D56 Claimify reuse rung: same claim IDs only with the full hash.
+
+        Every stored span remaps through the target-9..+1 windows. Incomplete
+        mapping refuses reuse. Zero-claim completion is persisted by attach.
+        """
+        prior = self._catalog.prior_extracted_chunk(
+            deployment_id=source.deployment_id,
+            doc_id=source.doc_id,
+            version_id=chunk.version_id,
+            extraction_input_hash=chunk.extraction_input_hash,
+            claimify_input_hash=claimify_hash,
+        )
+        if prior is None:
+            return False
+        remapped = self._remap_reused_spans(
+            chunk=chunk,
+            reference_chunks=reference_chunks,
+            document_md=document_md,
+            prior_chunk_id=prior,
+        )
+        if remapped is None:
+            return False
+        occurrences = self._reused_occurrences(
+            remapped_spans=remapped, occurrence_context=occurrence_context
+        )
+        self._catalog.attach_reused_claims(
+            deployment_id=source.deployment_id,
+            chunk_id=chunk.chunk_id,
+            prior_chunk_id=prior,
+            occurrences=occurrences,
+            evidence_spans=remapped,
+            claimify_input_hash=claimify_hash,
+        )
+        return True
+
+    def _claimify_chunk(
+        self,
+        *,
+        source: ChunkSource,
+        chunks: tuple[ChunkForEmbedding, ...],
+        index: int,
+        document_md: str,
+        meter: CostMeterPort,
+        occurrence_context: RepresentationOccurrenceContext | None,
+        target_frozen: FrozenSelection,
+        preceding: tuple[FrozenSelection, ...],
+        claimify_hash: str,
+    ) -> None:
+        """Run Claimify against frozen keeps and admitted reference cards."""
+        chunk = chunks[index]
+        selection = target_frozen.selection
         decisions = list(
             _selection_decisions(source=source, chunk=chunk, selection=selection)
         )
@@ -567,34 +778,53 @@ class ExtractClaimsHandler:
             if candidate.verdict is not SelectionVerdict.DROP
         )
         claims: list[ClaimRecord] = []
+        claimify_truncated = False
         if keeps:
             keep_ranges = tuple(
                 _keep_range(keep=keep, chunk=chunk, document_md=document_md)
                 for keep in keeps
             )
             kept_ranges = tuple(span for span in keep_ranges if span is not None)
+            eligible = collect_eligible_cards(target=target_frozen, preceding=preceding)
+            fitted, claimify_truncated = rank_and_fit_cards(
+                cards=eligible,
+                target_text=document_md[chunk.char_start : chunk.char_end],
+                target_ordinal=chunk.ordinal,
+            )
             previous, following = same_section_neighbours(chunks=chunks, index=index)
             catalog = build_passage_catalog(
-                blocks=blocks,
+                blocks=_load_blocks(
+                    artifact_store=self._artifact_store,
+                    source=source,
+                    document_md=document_md,
+                ),
                 target=chunk,
                 previous=previous,
                 following=following,
                 kept_ranges=kept_ranges,
             )
+            catalog, fitted = attach_card_passages(catalog=catalog, cards=fitted)
             flagged_spans = {
                 candidate.source_span
                 for candidate in keeps
                 if candidate.verdict is SelectionVerdict.KEEP_FLAGGED
             }
+            grounding_texts = card_passage_texts(cards=fitted)
             response_call = self._model_provider.generate(
                 request=ModelRequest(
                     model=self._settings.extract_model,
                     prompt=_CLAIMIFY_PROMPT.format(
                         keeps="\n".join(f"- {keep.source_span}" for keep in keeps),
-                        bundle=bundle,
+                        bundle=_bundle_text(
+                            source=source,
+                            chunks=chunks,
+                            index=index,
+                            document_md=document_md,
+                        ),
                         passages=render_passage_catalog(
                             catalog=catalog, document_md=document_md
                         ),
+                        cards=render_cards_for_claimify(cards=fitted),
                     ),
                     temperature=0.0,
                 ),
@@ -629,6 +859,7 @@ class ExtractClaimsHandler:
                     flagged_spans=flagged_spans,
                     kept_ranges=kept_ranges,
                     catalog=catalog,
+                    card_passage_texts=grounding_texts,
                 )
                 origin_range = _origin_range_for_accounting(
                     result=result, candidate=candidate, catalog=catalog
@@ -662,6 +893,15 @@ class ExtractClaimsHandler:
                             source=source, chunk=chunk, keep=keep
                         )
                     )
+        decisions.extend(
+            _card_loss_decisions(
+                source=source,
+                chunk=chunk,
+                diagnostics=target_frozen.diagnostics,
+                selection_truncated=target_frozen.truncated,
+                claimify_truncated=claimify_truncated,
+            )
+        )
         decisions = _link_flagged_decisions(
             decisions=decisions, claims=claims, chunk=chunk, document_md=document_md
         )
@@ -677,7 +917,14 @@ class ExtractClaimsHandler:
             claims=accepted,
             decisions=tuple(decisions),
             occurrences=_occurrences_for_claims(claims=accepted, context=context),
+            claimify_input_hash=claimify_hash,
         )
+
+    def _read_markdown(self, *, source: ChunkSource) -> str:
+        """Load the representation markdown; absence is a retryable store miss."""
+        return self._artifact_store.read_bytes(
+            key=ObjectKey(source.markdown_uri)
+        ).decode("utf-8")
 
     def _load_occurrence_context(
         self, *, source: ChunkSource
@@ -729,14 +976,12 @@ class ExtractClaimsHandler:
     def _remap_reused_spans(
         self,
         *,
-        source: ChunkSource,
         chunk: ChunkForEmbedding,
-        chunks: tuple[ChunkForEmbedding, ...],
-        index: int,
+        reference_chunks: tuple[ChunkForEmbedding, ...],
         document_md: str,
         prior_chunk_id: UUID,
     ) -> dict[UUID, tuple[EvidenceSpan, ...]] | None:
-        """Remap every prior occurrence span into this representation's windows."""
+        """Remap every prior span through target-9..+1 relative-ordinal windows."""
         prior_representation_id = self._chunk_catalog.representation_id_for_chunk(
             chunk_id=prior_chunk_id
         )
@@ -745,38 +990,19 @@ class ExtractClaimsHandler:
         prior_source = self._chunk_catalog.chunk_source(
             representation_id=prior_representation_id
         )
-        prior_chunks = self._chunk_catalog.chunks_for_extract(
+        prior_chunks = self._chunk_catalog.chunks_for_references(
             representation_id=prior_representation_id,
             chunker_version=self._chunker_version,
             chunk_id=prior_chunk_id,
         )
-        prior_index = next(
-            (
-                position
-                for position, item in enumerate(prior_chunks)
-                if item.chunk_id == prior_chunk_id
-            ),
-            None,
+        prior_chunk = next(
+            (item for item in prior_chunks if item.chunk_id == prior_chunk_id), None
         )
-        if prior_index is None:
+        if prior_chunk is None:
             return None
-        prior_md = self._artifact_store.read_bytes(
-            key=ObjectKey(prior_source.markdown_uri)
-        ).decode("utf-8")
-        prior_previous, prior_following = same_section_neighbours(
-            chunks=prior_chunks, index=prior_index
-        )
-        current_previous, current_following = same_section_neighbours(
-            chunks=chunks, index=index
-        )
-        prior_windows = window_bounds(
-            target=prior_chunks[prior_index],
-            previous=prior_previous,
-            following=prior_following,
-        )
-        current_windows = window_bounds(
-            target=chunk, previous=current_previous, following=current_following
-        )
+        prior_md = self._read_markdown(source=prior_source)
+        prior_windows = reference_windows(chunks=prior_chunks, target=prior_chunk)
+        current_windows = reference_windows(chunks=reference_chunks, target=chunk)
         remapped: dict[UUID, tuple[EvidenceSpan, ...]] = {}
         for anchor in self._catalog.claims_for_occurrence_reuse(
             chunk_id=prior_chunk_id
@@ -825,6 +1051,8 @@ class GroundingGate(StrEnum):
     ORIGIN_NOT_ELIGIBLE = "origin_not_eligible"
     TOO_MANY_SOURCE_REFS = "too_many_source_refs"
     EMPTY_SOURCE_REFS = "empty_source_refs"
+    REFERENCE_CARD_REJECTED = "reference_card_rejected"
+    REFERENCE_CARD_CAP = "reference_card_cap"
 
 
 @dataclass(frozen=True)
@@ -850,6 +1078,7 @@ def _grounded_claim(
     flagged_spans: set[str],
     kept_ranges: tuple[tuple[int, int], ...],
     catalog: PassageCatalog,
+    card_passage_texts: tuple[str, ...] = (),
 ) -> ClaimRecord | GroundingRejection:
     """Apply the deterministic grounding gate (D32 layers 1-2, D119 refs).
 
@@ -897,7 +1126,11 @@ def _grounded_claim(
         )
     claim_span = document_md[origin.char_start : origin.char_end]
     grounding_elements = _source_grounding_elements(
-        source=source, chunks=chunks, index=index, document_md=document_md
+        source=source,
+        chunks=chunks,
+        index=index,
+        document_md=document_md,
+        card_passage_texts=card_passage_texts,
     )
     valid_from, valid_until, valid_precision, valid_kind = _parse_claim_valid_time(
         candidate=candidate
@@ -1151,13 +1384,15 @@ def _source_grounding_elements(
     chunks: tuple[ChunkForEmbedding, ...],
     index: int,
     document_md: str,
+    card_passage_texts: tuple[str, ...] = (),
 ) -> tuple[tuple[str, str], ...]:
     """Return the complete D32 layer-2 membership union.
 
     Every member is source-derived: the target chunk slice, deterministic
-    document header, same-section neighbours, and validated D80
-    LocationElement rows. Free-form location headers and section summaries
-    are deliberately absent (D79/D80).
+    document header, same-section neighbours, validated D80 LocationElement
+    rows, and verbatim supporting passages of admitted reference cards.
+    Generated card names, free-form location headers, and section summaries
+    are deliberately absent (D79/D80/D122).
     """
     chunk = chunks[index]
     elements = [
@@ -1178,6 +1413,8 @@ def _source_grounding_elements(
             )
     for kind, text in _location_grounding_pairs(chunk=chunk):
         elements.append((kind, text))
+    for ordinal, text in enumerate(card_passage_texts, start=1):
+        elements.append((f"reference_card_passage_{ordinal}", text))
     return tuple(elements)
 
 
@@ -1448,6 +1685,114 @@ def _empty_extraction_marker(
     )
 
 
+def _require_chunk(
+    *, chunks: tuple[ChunkForEmbedding, ...], chunk_id: UUID, representation_id: UUID
+) -> tuple[int, ChunkForEmbedding]:
+    """Return the target inside a loaded window or fail permanently."""
+    index = next(
+        (
+            position
+            for position, chunk in enumerate(chunks)
+            if chunk.chunk_id == chunk_id
+        ),
+        None,
+    )
+    if index is None:
+        raise NonRetryableHandlerError(
+            f"chunk {chunk_id} is not part of representation {representation_id}"
+        )
+    return index, chunks[index]
+
+
+def _selection_barrier(
+    *, work: ClaimedWork, source: ChunkSource, chunker_version: str
+) -> HandlerOutcome:
+    """Selection completion; the ledger opens Claimify after every freeze exists."""
+    return HandlerOutcome(
+        selection_chunk_barrier=SelectionChunkBarrier(
+            deployment_id=work.deployment_id,
+            version_id=source.version_id,
+            representation_id=source.representation_id,
+            chunker_version=chunker_version,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            content_hash=work.content_hash,
+            lane=work.lane,
+            normalize_component_version=E3_NORMALIZER_VERSION,
+        )
+    )
+
+
+def _extract_barrier(
+    *, work: ClaimedWork, source: ChunkSource, chunker_version: str
+) -> HandlerOutcome:
+    """Claimify completion; normalizing waits for every ground_claims row."""
+    return HandlerOutcome(
+        extract_chunk_barrier=ExtractChunkBarrier(
+            deployment_id=work.deployment_id,
+            version_id=source.version_id,
+            representation_id=source.representation_id,
+            chunker_version=chunker_version,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            content_hash=work.content_hash,
+            lane=work.lane,
+            normalize_component_version=E3_NORMALIZER_VERSION,
+        )
+    )
+
+
+def _card_loss_decisions(
+    *,
+    source: ChunkSource,
+    chunk: ChunkForEmbedding,
+    diagnostics: tuple[CardDiagnostic, ...],
+    selection_truncated: bool,
+    claimify_truncated: bool,
+) -> list[DecisionRecord]:
+    """D33 rows for unpublished or cap-dropped reference cards."""
+    rows: list[DecisionRecord] = []
+    for diagnostic in diagnostics:
+        rows.append(
+            _grounding_rejected_decision(
+                source=source,
+                chunk=chunk,
+                rejection=GroundingRejection(
+                    gate=GroundingGate.REFERENCE_CARD_REJECTED,
+                    claim_span=diagnostic.detail,
+                    kind="reference_card",
+                    text=diagnostic.gate,
+                    failed_tokens=(str(diagnostic.ordinal),),
+                ),
+            )
+        )
+    if selection_truncated:
+        rows.append(
+            _grounding_rejected_decision(
+                source=source,
+                chunk=chunk,
+                rejection=GroundingRejection(
+                    gate=GroundingGate.REFERENCE_CARD_CAP,
+                    claim_span="selection_card_cap",
+                    kind="reference_card",
+                    text="selection",
+                ),
+            )
+        )
+    if claimify_truncated:
+        rows.append(
+            _grounding_rejected_decision(
+                source=source,
+                chunk=chunk,
+                rejection=GroundingRejection(
+                    gate=GroundingGate.REFERENCE_CARD_CAP,
+                    claim_span="claimify_card_cap",
+                    kind="reference_card",
+                    text="claimify",
+                ),
+            )
+        )
+    return rows
+
+
 def _grounding_rejected_decision(
     *, source: ChunkSource, chunk: ChunkForEmbedding, rejection: GroundingRejection
 ) -> DecisionRecord:
@@ -1462,6 +1807,14 @@ def _grounding_rejected_decision(
         edit_detail["text"] = _truncate_for_ledger(rejection.text or "")
         edit_detail["searched_elements"] = list(rejection.searched_elements)
         edit_detail["failed_tokens"] = list(rejection.failed_tokens)
+    elif rejection.gate in (
+        GroundingGate.REFERENCE_CARD_REJECTED,
+        GroundingGate.REFERENCE_CARD_CAP,
+    ):
+        edit_detail["kind"] = _truncate_for_ledger(rejection.kind or "reference_card")
+        edit_detail["detail"] = _truncate_for_ledger(rejection.text or "")
+        if rejection.failed_tokens:
+            edit_detail["ordinal"] = rejection.failed_tokens[0]
     return DecisionRecord(
         decision_id=uuid4(),
         deployment_id=source.deployment_id,
