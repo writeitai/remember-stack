@@ -63,8 +63,9 @@ slice. Deduplicate repeated ranges and order non-origin ranges canonically. Keep
 separate disjoint intervals; do not replace them by a document-wide bounding box.
 
 The reference list and cited-text size are bounded as part of the extraction
-input/output contract. Eight supporting passages is the initial measured cap,
-not a guarantee about an optimal threshold. A cap or invalid reference must not
+input/output contract. Eight cited passages, including the origin, is the initial
+bounded choice; this threshold has not been established as optimal by measurement.
+A cap or invalid reference must not
 silently remove evidence while accepting the combined claim: the model may emit
 independently meaningful claims, otherwise existing loss/rejection accounting
 records the failure. Generation identity includes changed limits/semantics.

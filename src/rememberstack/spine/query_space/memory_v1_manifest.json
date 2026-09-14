@@ -828,7 +828,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -2968,7 +2968,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -4748,7 +4748,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -6594,7 +6594,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). Complete body support for the\nselected occurrence is ``evidence_spans``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -41543,5 +41543,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "21090d439f0ea178120eebadc49d36fc37058e365d4753ea5edf2f1a3b3974cb"
+  "surface_manifest_hash": "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2"
 }
