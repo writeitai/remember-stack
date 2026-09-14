@@ -320,8 +320,8 @@ jobs:
             worker-extract-claims worker-normalize-relations \
             worker-adjudicate-observations worker-adjudicate-supersession \
             worker-embed-claim worker-reconcile worker-label-relation
-          # Build an empty prior-generation fixture. D118 intentionally refuses
-          # lossy downgrade and requires populated stores to be recreated.
+          # Build an empty pre-D119 fixture. Temporal/span migrations refuse
+          # lossy conversion or downgrade of populated stores.
           docker compose --env-file .env.example run --rm --no-deps -T \
             --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
             --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'
@@ -346,7 +346,7 @@ jobs:
           config = Config("alembic.ini")
           config.set_main_option("sqlalchemy.url", database_url)
           reset_database(config=config)
-          command.upgrade(config=config, revision="p9_29_0050")
+          command.upgrade(config=config, revision="p9_30_0051")
           engine = create_engine(database_url)
           DeploymentBootstrapper(engine=engine).bootstrap_deployment(
               deployment_input=deployment
@@ -355,7 +355,7 @@ jobs:
           PY
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_29_0050'
+            'SELECT version_num FROM alembic_version')" = 'p9_30_0051'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
@@ -395,14 +395,14 @@ jobs:
             | grep -E '^(api|worker-(convert|structure|chunk|embed-chunk|extract-claims|normalize-relations|adjudicate-observations|adjudicate-supersession|embed-claim|reconcile|label-relation))$' || true)"
           test "$(docker compose "${compose_args[@]}" exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_29_0050'
+            'SELECT version_num FROM alembic_version')" = 'p9_30_0051'
 
           release_gate
           wait "$compose_pid"
           trap - EXIT
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_30_0051'
+            'SELECT version_num FROM alembic_version')" = 'p9_31_0052'
           test "$(docker compose --env-file .env.example exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
