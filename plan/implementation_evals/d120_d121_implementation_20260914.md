@@ -7,7 +7,8 @@
 [D121](../designs/concise_adjudication_inputs_design.md), commit `4a803c1d`
 (PR #401, merged).
 **PR:** https://github.com/writeitai/remember-stack/pull/402 (draft)
-**Head:** `ef17559a1616c8c276ea5934658aedf5b5029d6d` (lean-prompt checkpoint).
+**Measurement revision:** the parent clarity commit containing this document,
+following `ef17559a1616c8c276ea5934658aedf5b5029d6d` (lean-prompt checkpoint).
 Previous Antigravity-reviewed head was `5273eee8197d8b7c89c5d12c70c9000661d9d902`.
 This checkpoint is not D119-integrated and is not merge-ready.
 **Parent owns** integration, merge, and release. User authorized the checked
@@ -140,21 +141,23 @@ historical snapshots were cleared; every fixture is labeled reconstructed.
 
 | Fixture | What it is | full snapshot | compact input | old prompt+schema | new prompt+schema |
 | --- | --- | ---: | ---: | ---: | ---: |
-| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 10421 |
-| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 14044 |
-| bounded 20 varied | 20 distinct facts, 40 claims, 40 applications; mixed shared spans, cross-source repeats, unhydrated witnesses; first five statements from the local audit, remainder reconstructed | 57142 | 28760 | 64433 | 37849 |
-| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 26169 |
+| small mostly-unique | 1 fact, distinct claim/source wording | 2054 | 1332 | 9345 | 10625 |
+| varied reconstructed | 6 facts; shared source span; one cross-source claim repeat; wording from local LoCoMo v28 source-linked audit, not a live store | 10166 | 4955 | 17457 | 14248 |
+| bounded 20 varied | 20 distinct facts, 40 claims, 40 applications; mixed shared spans, cross-source repeats, unhydrated witnesses; first five statements from the local audit, remainder reconstructed | 57142 | 28760 | 64433 | 38053 |
+| best-case repeated | 20 copies of one long sentence (dedup stress, not representative cost) | 66267 | 17080 | 73558 | 26373 |
 
 Schema alone: previous UUID schema 4462 bytes; handle schema 4704 bytes.
-Lean instruction template: 4393 UTF-8 bytes (parent candidate 4259; prior long
-instruction was ~7.1k of template plus compact JSON).
+Instruction template after the parent's clarity pass: 4597 UTF-8 bytes
+(previous shortened template 4393; initial long template approximately 7.1 KB).
 
 The 10:55 parent review was right that the first long instruction offset
 compaction on small inputs (then 9345→13142). After combining repeated
-definitions/examples, the small case is 9345→10421 (still slightly larger:
+definitions/examples and the parent's clarity edits, the small case is
+9345→10625 (still larger:
 clearer rules plus handle schema). The 6-fact case now saves. The
-representative expensive path is the bounded 20-fact snapshot
-(64433→37849 bytes of prompt+schema), not six facts. Best-case exact
+larger reconstructed case is the bounded 20-fact snapshot
+(64433→38053 bytes of prompt+schema). It is not a captured production request.
+Best-case exact
 repetition remains the largest drop. No billed-token saving is claimed.
 Whitespace word counts are not reported as model tokens.
 
@@ -202,6 +205,18 @@ Second review:
   snapshot in addition to small, 6-fact, and best-case fixtures.
 
 ## Remaining integration
+
+The parent took ownership of final prompt wording at the user's request.
+The latest edit defines world dates at first use, replaces internal shorthand
+such as "coexists conservatively" with the actual engine behavior, and corrects
+the misleading sentence "a win is not participation": a win can imply
+participation, but storing only participation loses the asserted result.
+Abandoned design categories and date-dispute machinery are no longer discussed
+in the prompt. The extra 204 bytes over the earlier shortened draft are retained
+for clarity. The adjudicator generation is `concise-handles-4`.
+Parent validation: 64 concise-presentation, protocol, and serialized-run-summary
+tests passed. This wording still requires review on the final integrated head;
+the earlier Antigravity verdicts do not cover it.
 
 D119 PR #400 is still implementing coherent multi-span extraction. This lane
 does not change E2 `source_span` schema. The E2 Claimify prompt still contains
