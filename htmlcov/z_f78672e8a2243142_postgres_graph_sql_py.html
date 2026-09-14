@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_profile_convergence_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-13 10:32 +0000
+            created at 2026-09-14 10:54 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -135,8 +135,8 @@
     <p class="run run2"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="str">        AND anchor.survivor_entity_id = b.anchor_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t"><span class="str">        AND c.ingested_at &lt;= statement_timestamp()</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t"><span class="str">        AND c.invalidated_at IS NULL</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">        AND (c.valid_from IS NULL OR c.valid_from &lt;= statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="str">        AND (c.valid_until IS NULL OR c.valid_until &gt; statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">        AND c.valid_from &lt;= statement_timestamp()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="str">        AND (c.valid_precision=&#x27;open&#x27; OR c.valid_until &gt; statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t"><span class="str">        AND (CAST(:predicates AS text[]) IS NULL</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t"><span class="str">             OR c.predicate = ANY(CAST(:predicates AS text[])))</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t"><span class="str">      UNION ALL</span>&nbsp;</span><span class="r"></span></p>
@@ -150,8 +150,8 @@
     <p class="run run2"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t"><span class="str">        AND c.subject_entity_id &lt;&gt; anchor.entity_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="str">        AND c.ingested_at &lt;= statement_timestamp()</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t"><span class="str">        AND c.invalidated_at IS NULL</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t"><span class="str">        AND (c.valid_from IS NULL OR c.valid_from &lt;= statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="str">        AND (c.valid_until IS NULL OR c.valid_until &gt; statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t"><span class="str">        AND c.valid_from &lt;= statement_timestamp()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="str">        AND (c.valid_precision=&#x27;open&#x27; OR c.valid_until &gt; statement_timestamp())</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t"><span class="str">        AND (CAST(:predicates AS text[]) IS NULL</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t"><span class="str">             OR c.predicate = ANY(CAST(:predicates AS text[])))</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="str">    ) AS candidate</span>&nbsp;</span><span class="r"></span></p>
@@ -191,14 +191,14 @@
     <p class="run run2"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="nam">old</span><span class="op">=</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">            <span class="str">&quot;AND c.ingested_at &lt;= statement_timestamp()\n&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">            <span class="str">&quot;        AND c.invalidated_at IS NULL\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_from IS NULL OR c.valid_from &lt;= statement_timestamp())\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_until IS NULL OR c.valid_until &gt; statement_timestamp())&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">            <span class="str">&quot;        AND c.valid_from &lt;= statement_timestamp()\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_precision=&#x27;open&#x27; OR c.valid_until &gt; statement_timestamp())&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t">        <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">        <span class="nam">new</span><span class="op">=</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">            <span class="str">&quot;AND (c.ingested_at IS NULL OR c.ingested_at &lt;= CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">            <span class="str">&quot;        AND (c.invalidated_at IS NULL OR c.invalidated_at &gt; CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_from IS NULL OR c.valid_from &lt;= CAST(:valid_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_until IS NULL OR c.valid_until &gt; CAST(:valid_at AS timestamptz))&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="str">&quot;        AND c.valid_from &lt;= CAST(:valid_at AS timestamptz)\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="str">&quot;        AND (c.valid_precision=&#x27;open&#x27; OR c.valid_until &gt; CAST(:valid_at AS timestamptz))&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">        <span class="nam">count</span><span class="op">=</span><span class="num">2</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -244,8 +244,8 @@
     <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">    <span class="nam">new</span><span class="op">=</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">        <span class="str">&quot;AND (r.ingested_at IS NULL OR r.ingested_at &lt;= CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">        <span class="str">&quot;         AND (r.invalidated_at IS NULL OR r.invalidated_at &gt; CAST(:believed_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">        <span class="str">&quot;         AND (r.valid_from IS NULL OR r.valid_from &lt;= CAST(:valid_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">        <span class="str">&quot;         AND (r.valid_until IS NULL OR r.valid_until &gt; CAST(:valid_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">        <span class="str">&quot;         AND r.valid_from &lt;= CAST(:valid_at AS timestamptz)\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">        <span class="str">&quot;         AND (r.valid_precision=&#x27;open&#x27; OR r.valid_until &gt; CAST(:valid_at AS timestamptz))\n&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">        <span class="str">&quot;         AND (CAST(:predicates AS text[]) IS NULL\n&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="str">&quot;              OR r.predicate&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -259,7 +259,7 @@
             <a class="nav" href="z_f78672e8a2243142_profile_convergence_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-13 10:32 +0000
+            created at 2026-09-14 10:54 +0000
         </p>
     </div>
 </footer>
