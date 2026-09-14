@@ -92,14 +92,22 @@ class WriterCase:
         predicate: str = "related_to",
         uses_claim_window: bool = True,
         precision: Literal["day", "open"] = "day",
+        statement: str | None = None,
+        context_entities: tuple[UUID, ...] = (),
+        context_bindings: tuple[tuple[int, UUID, UUID], ...] = (),
+        context_ref_names: tuple[str, ...] = (),
     ) -> tuple[UUID, UUID]:
         """Freeze one dated source assertion and stage its original output ordinal.
 
         ``uses_claim_window=False`` models a normalizer that did not attribute
         the claim's dates to this assertion, so a new fact starts undated.
         ``precision="open"`` supplies an explicitly ongoing source window.
+        ``context_entities`` records real resolver decisions for those ids.
+        ``context_bindings`` passes already-built ordinal/entity/decision triples,
+        including invented ids used to prove staging rejection.
         """
         claim = uuid4()
+        doc_id = uuid4()
         instant = datetime(2022, 5, day, tzinfo=timezone.utc)
         with self.engine.begin() as connection:
             connection.execute(
@@ -111,7 +119,7 @@ class WriterCase:
                 {
                     "claim": claim,
                     "dep": self.dep,
-                    "doc": uuid4(),
+                    "doc": doc_id,
                     "chunk": uuid4(),
                     "at": instant,
                     "end": None if precision == "open" else instant,
@@ -128,7 +136,9 @@ class WriterCase:
         if kind == "relation":
             item.update(predicate=predicate, object={"name": "Riverside Cup"})
         else:
-            item["statement"] = "Nate won the Riverside final"
+            item["statement"] = statement or "Nate won the Riverside final"
+        if context_ref_names:
+            item["context_refs"] = [{"name": name} for name in context_ref_names]
         response = NormalizationResponse.model_validate({f"{kind}s": [item]})
         self.catalog.publish_normalization(
             deployment_id=self.dep,
@@ -137,6 +147,21 @@ class WriterCase:
             output=response,
             accepted=((kind, 0),),
         )  # type: ignore[arg-type]
+        bindings = context_bindings
+        if context_entities:
+            bindings = tuple(
+                (
+                    ordinal,
+                    entity_id,
+                    self.record_resolution(
+                        claim_id=claim,
+                        doc_id=doc_id,
+                        entity_id=entity_id,
+                        name="Riverside Cup",
+                    ),
+                )
+                for ordinal, entity_id in enumerate(context_entities)
+            )
         app = self.catalog.stage(
             deployment_id=self.dep,
             claim_id=claim,
@@ -149,8 +174,41 @@ class WriterCase:
             subject_entity_id=self.subject,
             object_entity_id=self.object if kind == "relation" else None,
             version_ids=(self.version,),
+            context_bindings=bindings,
         )  # type: ignore[arg-type]
         return claim, app
+
+    def record_resolution(
+        self, *, claim_id: UUID, doc_id: UUID, entity_id: UUID, name: str
+    ) -> UUID:
+        """Insert one live mention and resolver decision for this claim."""
+        mention_id = uuid4()
+        decision_id = uuid4()
+        with self.engine.begin() as connection:
+            connection.execute(
+                text("""INSERT INTO mentions(mention_id,deployment_id,surface_form,
+                normalized_lemma,canonical_name_form,claim_id,doc_id)
+                VALUES(:mention,:dep,:name,lower(:name),:name,:claim,:doc)"""),
+                {
+                    "mention": mention_id,
+                    "dep": self.dep,
+                    "name": name,
+                    "claim": claim_id,
+                    "doc": doc_id,
+                },
+            )
+            connection.execute(
+                text("""INSERT INTO resolution_decisions(decision_id,deployment_id,
+                mention_id,entity_id,method,confidence,resolver_version)
+                VALUES(:decision,:dep,:mention,:entity,'T0',1.0,'test')"""),
+                {
+                    "decision": decision_id,
+                    "dep": self.dep,
+                    "mention": mention_id,
+                    "entity": entity_id,
+                },
+            )
+        return decision_id
 
     def decide(self, *, decision: dict[str, object]) -> UUID:
         """Publish a supplied answer for the actual locked prepared head."""

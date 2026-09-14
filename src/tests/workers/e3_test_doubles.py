@@ -40,9 +40,11 @@ class RecordingCostMeter:
 class RecordingResolver:
     """Resolver that records resolve calls."""
 
-    def __init__(self) -> None:
-        """Start with an empty call log."""
+    def __init__(self, *, identities: dict[str, object] | None = None) -> None:
+        """Start with an empty call log and optional exact-name identities."""
         self.calls: list[EntityRef] = []
+        self.identities = dict(identities or {})
+        self.resolved: list[ResolvedEntity] = []
 
     def resolve(
         self,
@@ -56,7 +58,12 @@ class RecordingResolver:
         """Record the reference and return a synthetic entity id."""
         del deployment_id, claim, meter, call_key
         self.calls.append(reference)
-        return ResolvedEntity(entity_id=uuid4(), created=True)
+        entity_id = self.identities.get(reference.name, uuid4())
+        resolved = ResolvedEntity(
+            entity_id=entity_id, created=True, decision_id=uuid4()  # type: ignore[arg-type]
+        )
+        self.resolved.append(resolved)
+        return resolved
 
 
 class RecordingFacts:

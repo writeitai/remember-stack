@@ -251,8 +251,16 @@ class FactApplicationCatalog:
         subject_entity_id: UUID,
         object_entity_id: UUID | None,
         version_ids: tuple[UUID, ...],
+        context_bindings: tuple[tuple[int, UUID, UUID], ...] = (),
     ) -> UUID:
-        """Register one accepted assertion and all known source-version memberships."""
+        """Register one accepted assertion, complete context, and version memberships.
+
+        ``context_bindings`` is the complete ordinal/entity/decision set. Empty
+        is valid. The application is not visible without that complete set.
+        """
+        ordinals = [item[0] for item in context_bindings]
+        if len(set(ordinals)) != len(ordinals):
+            raise ValueError("context binding ordinals cannot repeat")
         params = {
             "deployment_id": deployment_id,
             "claim_id": claim_id,
@@ -268,7 +276,7 @@ class FactApplicationCatalog:
             self._engine.begin() as connection,
             application_fence(connection=connection, deployment_id=deployment_id),
         ):
-            connection.execute(
+            inserted = connection.execute(
                 text("""
               INSERT INTO fact_applications(application_id,deployment_id,claim_id,normalizer_version,
                 output_kind,output_ordinal,adjudicator_version,subject_entity_id,object_entity_id)
@@ -279,9 +287,10 @@ class FactApplicationCatalog:
                 AND EXISTS (SELECT 1 FROM jsonb_array_elements(n.accepted_outputs) x
                             WHERE x->>'kind'=:kind AND (x->>'ordinal')::int=:ordinal)
               ON CONFLICT DO NOTHING
+              RETURNING application_id
             """),
                 params,
-            )
+            ).scalar_one_or_none()
             app = (
                 connection.execute(
                     text("""
@@ -295,6 +304,50 @@ class FactApplicationCatalog:
                 .one()
             )
             params["application_id"] = app["application_id"]
+            if inserted is not None:
+                seen_entities: set[UUID] = set()
+                for bind_ordinal, entity_id, decision_id in context_bindings:
+                    if entity_id in seen_entities:
+                        continue
+                    seen_entities.add(entity_id)
+                    bind_params = {
+                        **params,
+                        "ordinal": bind_ordinal,
+                        "entity_id": entity_id,
+                        "decision_id": decision_id,
+                    }
+                    valid = connection.execute(
+                        text("""
+                      SELECT 1 FROM resolution_decisions d
+                      WHERE d.deployment_id=:deployment_id
+                        AND d.decision_id=:decision_id
+                        AND d.entity_id=:entity_id
+                        AND d.superseded_by IS NULL
+                        AND EXISTS (
+                          SELECT 1 FROM mentions m
+                          WHERE m.mention_id=d.mention_id
+                            AND m.deployment_id=:deployment_id
+                            AND m.claim_id=:claim_id
+                        )
+                    """),
+                        bind_params,
+                    ).scalar_one_or_none()
+                    if valid is None:
+                        raise ValueError(
+                            "context binding must cite a live resolver decision "
+                            "for this claim and entity"
+                        )
+                    connection.execute(
+                        text("""
+                      INSERT INTO application_context_bindings(
+                        deployment_id, application_id, ordinal, entity_id,
+                        resolver_decision_id)
+                      VALUES (:deployment_id, :application_id, :ordinal, :entity_id,
+                              :decision_id)
+                      ON CONFLICT DO NOTHING
+                    """),
+                        bind_params,
+                    )
             # Already applied applications still get memberships. The barrier must see
             # their entity unit before receipt-based retirement; no support is relinked.
             for version_id in sorted(set(version_ids)):

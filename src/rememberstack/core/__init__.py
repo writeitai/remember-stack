@@ -18,6 +18,8 @@ from rememberstack.core.chunker import is_anchor
 from rememberstack.core.chunker import pack_blocks
 from rememberstack.core.consumption_skill import CONSUMPTION_SKILL_VERSION
 from rememberstack.core.consumption_skill import render_consumption_skill
+from rememberstack.core.context_references import attempted_context_refs
+from rememberstack.core.context_references import MAX_CONTEXT_REFS
 from rememberstack.core.conversion import ConversionRouter
 from rememberstack.core.conversion import Converter
 from rememberstack.core.conversion import entire_document_labeling
@@ -67,6 +69,8 @@ from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.section_snap import SECTION_ROLES
 from rememberstack.core.section_snap import snap_sections
+from rememberstack.core.selection_references import claimify_input_hash
+from rememberstack.core.selection_references import REFERENCE_POLICY_VERSION
 from rememberstack.core.source_passages import build_passage_catalog
 from rememberstack.core.source_passages import canonicalize_spans
 from rememberstack.core.source_passages import EvidenceSpan
@@ -99,6 +103,10 @@ __all__ = (
     "extraction_input_hash",
     "is_anchor",
     "pack_blocks",
+    "attempted_context_refs",
+    "MAX_CONTEXT_REFS",
+    "claimify_input_hash",
+    "REFERENCE_POLICY_VERSION",
     "EMBEDDING_INPUT_POLICY_VERSION",
     "render_embedding_input",
     "CORE_MANIFEST",

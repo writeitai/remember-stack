@@ -132,6 +132,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_29_0050",
         "p9_30_0051",
         "p9_31_0052",
+        "p9_32_0053",
     )
     assert len(script.get_heads()) == 1
 
@@ -648,7 +649,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 72
+    assert len(fresh_inventory.tables) == 74
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -670,7 +671,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_31_0052"
+    assert head_before_noop == head_after_noop == "p9_32_0053"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1258,4 +1259,48 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_31_0052"
+    assert _head_revision(database_url=database_url) == "p9_32_0053"
+
+
+def test_d122_refuses_a_populated_store() -> None:
+    """The real migration refuses existing claims instead of converting them."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_31_0052")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            deployment_id = uuid4()
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment, 'd122-refuse', 'D122 refuse', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            connection.execute(
+                text(
+                    """INSERT INTO claims(claim_id,deployment_id,doc_id,chunk_id,claim_text,
+                    source_span,char_start,char_end,anchor_ok,window_membership_ok,
+                    extractor_version)
+                    VALUES(:claim,:deployment,:doc,:chunk,'populated store','populated store',
+                    0,15,true,true,'test')"""
+                ),
+                {
+                    "claim": uuid4(),
+                    "deployment": deployment_id,
+                    "doc": uuid4(),
+                    "chunk": uuid4(),
+                },
+            )
+        with pytest.raises(RuntimeError, match="do not convert a store"):
+            command.upgrade(config=config, revision="p9_32_0053")
+        assert _head_revision(database_url=database_url) == "p9_31_0052"
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_32_0053"

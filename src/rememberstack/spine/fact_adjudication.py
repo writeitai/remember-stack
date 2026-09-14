@@ -30,9 +30,17 @@ from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
-RELATION_APPLICATION_VERSION = "relation-adjudicator-2026.09d:concise-handles-5"
-OBSERVATION_APPLICATION_VERSION = "obs-adjudicator-2026.09d:concise-handles-5"
-FACT_NORMALIZER_VERSION = "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3"
+RELATION_APPLICATION_VERSION = (
+    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1"
+)
+OBSERVATION_APPLICATION_VERSION = (
+    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1"
+)
+FACT_NORMALIZER_VERSION = (
+    "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
+    "binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:"
+    "d123-context-refs-1"
+)
 FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
 
 _FACT_PROMPT = """Decide how ONE incoming assertion belongs in the fact store and whether
@@ -44,6 +52,9 @@ A claim records what a source said. An assertion is one proposition taken from
 that claim. A fact is the stored interpretation of testimony about that
 proposition. An entity is a person, event, place, or other referent. Sharing an
 entity does not make two assertions the same proposition.
+Context entities named on an assertion are other referents the source mentioned.
+They help find related facts; they do not prove two assertions are the same fact.
+Empty context does not mean the assertion is new.
 
 IDENTITY AND EVIDENCE
 Choose an existing supplied fact or declare a new fact whose content comes from

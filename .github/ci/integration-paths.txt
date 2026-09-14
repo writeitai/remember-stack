@@ -8,6 +8,7 @@ src/tests/spine/test_backfill.py
 src/tests/spine/test_canonical_bounds_sql.py
 src/tests/spine/test_clustering.py
 src/tests/spine/test_component_versions.py
+src/tests/spine/test_d123_context_nomination.py
 src/tests/spine/test_deployment_bootstrap.py
 src/tests/spine/test_document_inventory.py
 src/tests/spine/test_fact_application_writer.py

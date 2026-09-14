@@ -1027,7 +1027,9 @@ class CascadeResolver:
             _BUMP_MENTION_COUNT,
             {"deployment_id": deployment_id, "entity_id": entity_id},
         )
-        return ResolvedEntity(entity_id=entity_id, created=created)
+        return ResolvedEntity(
+            entity_id=entity_id, created=created, decision_id=decision_id
+        )
 
     def _upsert_alias(
         self,

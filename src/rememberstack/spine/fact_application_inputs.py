@@ -15,6 +15,7 @@ from rememberstack.spine.fact_applications import entity_members
 
 # Bounds limit model input, never certify complete identity/evidence coverage.
 _FACT_LIMIT = 20
+_CONTEXT_FACT_LIMIT = 8
 _CLAIM_LIMIT = 100
 _ASSERTION_LIMIT = 100
 
@@ -129,9 +130,112 @@ def application_snapshot(
           FROM {table} f {joins}
           WHERE f.deployment_id=:deployment_id AND f.subject_entity_id=ANY(:members)
             AND f.invalidated_at IS NULL)
-        SELECT fact_id FROM block ORDER BY tier, rank DESC, fact_id LIMIT {_FACT_LIMIT}"""
-    nominated = _rows(connection=connection, sql=selection, params=params)
-    params["fact_ids"] = sorted(row["fact_id"] for row in nominated)
+        SELECT fact_id, tier, rank FROM block ORDER BY tier, rank DESC, fact_id LIMIT {_FACT_LIMIT}"""
+    context_members = _context_member_ids(
+        connection=connection,
+        deployment_id=deployment_id,
+        root=root,
+        application=incoming[0],
+    )
+    params["context_members"] = context_members
+    extra_sql = f"""
+        SELECT f.{id_column} AS fact_id,
+               CASE WHEN {exact} THEN 0 ELSE 1 END AS tier,
+               ts_rank_cd(to_tsvector('simple',{content}),plainto_tsquery('simple',:query)) AS rank
+        FROM {table} f {joins}
+        WHERE f.deployment_id=:deployment_id AND f.subject_entity_id=ANY(:members)
+          AND f.invalidated_at IS NULL
+          AND NOT f.{id_column} = ANY(CAST(:baseline_ids AS uuid[]))
+          AND EXISTS (
+            SELECT 1 FROM fact_applications a JOIN claims c
+              ON c.deployment_id=a.deployment_id AND c.claim_id=a.claim_id
+            WHERE a.deployment_id=:deployment_id
+              AND a.{pointer}=f.{id_column}
+              AND a.applied_at IS NOT NULL
+              AND a.support_stance='supports'
+              AND c.is_current_testimony
+              AND (
+                EXISTS (
+                  SELECT 1 FROM application_context_bindings b
+                  WHERE b.deployment_id=a.deployment_id
+                    AND b.application_id=a.application_id
+                    AND b.entity_id=ANY(CAST(:context_members AS uuid[]))
+                    AND NOT b.entity_id=ANY(CAST(:members AS uuid[]))
+                )
+                OR (
+                  a.object_entity_id IS NOT NULL
+                  AND a.object_entity_id=ANY(CAST(:context_members AS uuid[]))
+                  AND NOT a.object_entity_id=ANY(CAST(:members AS uuid[]))
+                )
+              )
+          )
+        ORDER BY tier, rank DESC, fact_id LIMIT {_CONTEXT_FACT_LIMIT}"""
+
+    def _nominate_fact_ids() -> list[Any]:
+        baseline = _rows(connection=connection, sql=selection, params=params)
+        extra: list[dict[str, Any]] = []
+        if context_members and baseline:
+            extra = _rows(
+                connection=connection,
+                sql=extra_sql,
+                params={
+                    **params,
+                    "baseline_ids": [row["fact_id"] for row in baseline],
+                },
+            )
+        by_id = {row["fact_id"]: row for row in baseline}
+        for row in extra:
+            by_id.setdefault(row["fact_id"], row)
+        shared_ids = {row["fact_id"] for row in extra}
+        if context_members and baseline:
+            shared_ids.update(
+                row["fact_id"]
+                for row in _rows(
+                    connection=connection,
+                    sql=f"""
+        SELECT f.{id_column} AS fact_id FROM {table} f
+        WHERE f.deployment_id=:deployment_id AND f.{id_column}=ANY(CAST(:shared_probe AS uuid[]))
+          AND EXISTS (
+            SELECT 1 FROM fact_applications a JOIN claims c
+              ON c.deployment_id=a.deployment_id AND c.claim_id=a.claim_id
+            WHERE a.deployment_id=:deployment_id
+              AND a.{pointer}=f.{id_column}
+              AND a.applied_at IS NOT NULL
+              AND a.support_stance='supports'
+              AND c.is_current_testimony
+              AND (
+                EXISTS (
+                  SELECT 1 FROM application_context_bindings b
+                  WHERE b.deployment_id=a.deployment_id
+                    AND b.application_id=a.application_id
+                    AND b.entity_id=ANY(CAST(:context_members AS uuid[]))
+                    AND NOT b.entity_id=ANY(CAST(:members AS uuid[]))
+                )
+                OR (
+                  a.object_entity_id IS NOT NULL
+                  AND a.object_entity_id=ANY(CAST(:context_members AS uuid[]))
+                  AND NOT a.object_entity_id=ANY(CAST(:members AS uuid[]))
+                )
+              )
+          )""",
+                    params={
+                        **params,
+                        "shared_probe": [row["fact_id"] for row in baseline],
+                    },
+                )
+            )
+        ordered = sorted(
+            by_id.values(),
+            key=lambda row: (
+                0 if row["fact_id"] in shared_ids else 1,
+                int(row["tier"]),
+                -float(row["rank"] or 0),
+                str(row["fact_id"]),
+            ),
+        )
+        return [row["fact_id"] for row in ordered]
+
+    params["fact_ids"] = _nominate_fact_ids()
     # Keep complete support membership in the fingerprint, but cap model copies.
     claim_selection = f"""SELECT c.claim_id FROM claims c
         WHERE c.deployment_id=:deployment_id AND (c.claim_id=:claim_id OR EXISTS (
@@ -154,10 +258,7 @@ def application_snapshot(
         params,
     ).all()
     # A lifecycle/review writer may have completed while these row locks waited.
-    if {
-        row["fact_id"]
-        for row in _rows(connection=connection, sql=selection, params=params)
-    } != set(params["fact_ids"]) or {
+    if set(_nominate_fact_ids()) != set(params["fact_ids"]) or {
         row["claim_id"]
         for row in _rows(connection=connection, sql=claim_selection, params=params)
     } != set(params["claim_ids"]):
@@ -176,6 +277,8 @@ def application_snapshot(
     """,
         params=params,
     )
+    order_index = {fact_id: index for index, fact_id in enumerate(params["fact_ids"])}
+    facts.sort(key=lambda fact: order_index[fact["fact_id"]])
     for fact in facts:
         fact["window_claim_ids"] = sorted(fact["window_claim_ids"])
     claims = _rows(
@@ -247,6 +350,48 @@ def application_snapshot(
     """,
         params=params,
     )
+    binding_hash = _digest_rows(
+        connection=connection,
+        sql=f"""
+      SELECT a.application_id,a.support_stance,c.is_current_testimony,c.claim_id,
+             b.ordinal,b.entity_id,b.resolver_decision_id
+      FROM fact_applications a
+      JOIN claims c ON c.deployment_id=a.deployment_id AND c.claim_id=a.claim_id
+      LEFT JOIN application_context_bindings b
+        ON b.deployment_id=a.deployment_id AND b.application_id=a.application_id
+      WHERE a.deployment_id=:deployment_id
+        AND (
+          a.application_id=:application_id
+          OR a.{pointer}=ANY(CAST(:fact_ids AS uuid[]))
+          OR (
+            a.subject_entity_id=ANY(CAST(:members AS uuid[]))
+            AND a.applied_at IS NOT NULL
+            AND a.support_stance='supports'
+            AND c.is_current_testimony
+            AND (
+              b.entity_id=ANY(CAST(:context_members AS uuid[]))
+              OR (
+                a.object_entity_id IS NOT NULL
+                AND a.object_entity_id=ANY(CAST(:context_members AS uuid[]))
+              )
+            )
+          )
+        )
+      ORDER BY a.application_id, b.ordinal NULLS FIRST
+    """,
+        params=params,
+    )
+    canonical_membership_hash = _digest_rows(
+        connection=connection,
+        sql="""
+      SELECT member_id FROM unnest(CAST(:context_members AS uuid[])) AS members(member_id)
+      ORDER BY member_id
+    """,
+        params=params,
+    )
+    context_hash = sha256(
+        f"{binding_hash}\n{canonical_membership_hash}".encode()
+    ).hexdigest()
     all_assertions = sorted(
         [*incoming, *assertions], key=lambda row: row["application_id"]
     )
@@ -279,12 +424,57 @@ def application_snapshot(
         "membership_hash": member_hash,
         "evidence_hash": evidence_hash,
         "support_hash": support_hash,
+        "context_hash": context_hash,
+        "context_member_ids": [str(entity_id) for entity_id in context_members],
+        "context_truncated": len(assertion.get("context_refs") or []) > 4,
         "limits": {
             "facts": _FACT_LIMIT,
+            "context_facts": _CONTEXT_FACT_LIMIT,
             "claims": _CLAIM_LIMIT,
             "assertions": _ASSERTION_LIMIT,
         },
-        "potentially_truncated": len(facts) == _FACT_LIMIT
+        "potentially_truncated": len(facts) >= _FACT_LIMIT
         or len(claims) == _CLAIM_LIMIT
         or len(assertions) == _ASSERTION_LIMIT,
     }
+
+
+def _context_member_ids(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    root: UUID,
+    application: Mapping[str, Any],
+) -> list[UUID]:
+    """Canonical reverse-closure of incoming context, excluding the subject."""
+    rows = _rows(
+        connection=connection,
+        sql="""
+      SELECT entity_id FROM application_context_bindings
+      WHERE deployment_id=:deployment_id AND application_id=:application_id
+      ORDER BY ordinal
+    """,
+        params={
+            "deployment_id": deployment_id,
+            "application_id": application["application_id"],
+        },
+    )
+    entity_ids = [UUID(str(row["entity_id"])) for row in rows]
+    object_id = application.get("object_entity_id")
+    if object_id is not None:
+        entity_ids.append(UUID(str(object_id)))
+    members: list[UUID] = []
+    seen: set[UUID] = set()
+    for entity_id in entity_ids:
+        canonical = canonical_entity(
+            connection=connection, deployment_id=deployment_id, entity_id=entity_id
+        )
+        if canonical == root:
+            continue
+        for member in entity_members(
+            connection=connection, deployment_id=deployment_id, root=canonical
+        ):
+            if member not in seen:
+                seen.add(member)
+                members.append(member)
+    return members

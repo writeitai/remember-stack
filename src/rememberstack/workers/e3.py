@@ -18,6 +18,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.context_references import attempted_context_refs
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EnqueueWork
@@ -130,6 +131,16 @@ EXAMPLES
 - "Nate enjoyed Tournament A" → a different assertion from winning.
 - "Nate said he won Tournament A" → attributed stance on Nate, not an
   unqualified win.
+
+CONTEXT REFERENCES
+For each assertion, list up to four other named entities the claim itself
+refers to, besides the subject and besides a relation's object. These help
+later matching; they do not change who the assertion is about.
+"Joanna said Nate won Tournament A" stays an observation about Joanna; Nate
+and Tournament A are context. Equal names can still be different people or
+events; do not merge them here. Do not guess entities that are not explicit
+in the claim. If more than four apply, keep the first four in emission order.
+Overflow must not drop the assertion. An empty list is valid.
 
 SOURCE TIMESTAMP: {asserted_at}
 CLAIM WORLD WINDOW (inclusive raw source dates): {claim_window}
@@ -358,6 +369,40 @@ class NormalizeRelationsHandler:
                     meter=meter,
                     call_key=f"resolve:{claim.claim_id}:relation:{ordinal}:object",
                 ).entity_id
+            exclude = {subject.entity_id}
+            if object_id is not None:
+                exclude.add(object_id)
+            attempted, truncated = attempted_context_refs(refs=output.context_refs)
+            if truncated:
+                _logger.warning(
+                    "context references truncated for claim %s: kept %s of %s",
+                    claim.claim_id,
+                    len(attempted),
+                    len(output.context_refs),
+                )
+            context_bindings: list[tuple[int, UUID, UUID]] = []
+            seen_entities: set[UUID] = set()
+            for bind_ordinal, ref in attempted:
+                resolved = self._resolver.resolve(
+                    deployment_id=deployment_id,
+                    reference=ref,
+                    claim=claim,
+                    meter=meter,
+                    call_key=f"resolve:{claim.claim_id}:{kind}:{ordinal}:context:{bind_ordinal}",
+                )
+                if resolved.decision_id is None:
+                    raise NonRetryableHandlerError(
+                        "context resolution produced no validating decision"
+                    )
+                if (
+                    resolved.entity_id in exclude
+                    or resolved.entity_id in seen_entities
+                ):
+                    continue
+                seen_entities.add(resolved.entity_id)
+                context_bindings.append(
+                    (bind_ordinal, resolved.entity_id, resolved.decision_id)
+                )
             catalog.stage(
                 deployment_id=deployment_id,
                 claim_id=claim.claim_id,
@@ -370,6 +415,7 @@ class NormalizeRelationsHandler:
                 subject_entity_id=subject.entity_id,
                 object_entity_id=object_id,
                 version_ids=version_ids,
+                context_bindings=tuple(context_bindings),
             )
 
     def _generate_normalize_response(

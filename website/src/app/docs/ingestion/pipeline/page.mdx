@@ -165,6 +165,13 @@ model output has the correct kind or date.
 
 ## E3 — Facts
 
+Normalized assertions may name a few extra source-backed context entities
+(a tournament, company, or person the claim refers to besides the subject).
+Those bindings live on the assertion application. Candidate nomination still
+starts with the same-subject baseline and may add a small number of facts that
+share that context. Shared context never proves two assertions are the same
+fact, and an empty context search does not authorize a new fact.
+
 ### Entity resolution
 
 **Job:** map surface forms to **canonical entity ids** (write path).

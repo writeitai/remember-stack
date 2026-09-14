@@ -79,10 +79,10 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
             "no-types-1:binary-t4-1:document-t0-1:mutable-window-1:"
-            "assertion-clarity-3"
+            "assertion-clarity-3:d123-context-refs-1"
         ),
         "adjudicate_observations": (
-            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:relation-adjudicator-2026.09d:concise-handles-5:obs-adjudicator-2026.09d:concise-handles-5"
+            "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-1:relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1:obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-1"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
