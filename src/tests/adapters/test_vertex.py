@@ -107,7 +107,8 @@ def test_generate_posts_strict_schema_with_bearer_and_computes_cost() -> None:
     payload = json.loads(request.content)
     assert payload["model"] == GEMMA_4_26B_A4B_IT_MAAS
     assert payload["messages"] == [{"role": "user", "content": "Where is the meeting?"}]
-    assert payload["max_tokens"] == 4096
+    assert payload["max_tokens"] == 128_000
+    assert request.extensions["timeout"]["read"] is None
     assert payload["temperature"] == 0.0
     assert "reasoning" not in payload and "reasoning_effort" not in payload
     schema = payload["response_format"]["json_schema"]
@@ -399,3 +400,34 @@ def test_default_price_table_pins_gemma_list_prices() -> None:
     ]
     assert price.input_usd_per_million == Decimal("0.15")
     assert price.output_usd_per_million == Decimal("0.60")
+
+
+def test_large_processing_response_is_preserved() -> None:
+    """A response larger than the former allowance reaches validation intact."""
+    value = "section " * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Return a complete long response and its accounted usage."""
+        return httpx.Response(
+            200, json=_completion(json.dumps({"answer": value}), completion_tokens=6000)
+        )
+
+    result = _provider(handler).generate(
+        request=ModelRequest(
+            model=GEMMA_4_26B_A4B_IT_MAAS, prompt="Structure this document"
+        ),
+        response_type=_Answer,
+    )
+    assert result.output.answer == value
+    assert result.usage.tokens_out == 6000
+
+
+def test_operator_can_explicitly_set_deadline() -> None:
+    """Removing the default deadline does not discard an intentional override."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Check the effective transport deadline without sleeping."""
+        assert request.extensions["timeout"]["read"] == 37
+        return httpx.Response(200, json=_completion('{"answer":"ok"}'))
+
+    _generate(_provider(handler, timeout_s=37))

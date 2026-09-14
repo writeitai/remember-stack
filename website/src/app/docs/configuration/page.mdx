@@ -356,3 +356,22 @@ See [Ingestion](/docs/ingestion) and [Lifecycle](/docs/ingestion/lifecycle).
 - [Deployment](/docs/deployment)  
 - [Troubleshooting](/docs/troubleshooting)  
 - [Evaluation](/docs/evaluation)  
+
+## Vertex generation adapter
+
+Library integrations can bind `VertexModelProvider` explicitly through the model
+provider port. This does not change the default self-host provider. Generation
+uses Vertex; embeddings must be routed separately to their configured provider.
+
+`VertexSettings` reads `REMEMBERSTACK_VERTEX_*`. Set `PROJECT_ID` for the billed
+Google Cloud project; `LOCATION` defaults to `global`.
+`MAX_COMPLETION_TOKENS` defaults to 128000, the
+[documented Gemma 4 26B A4B IT output maximum](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/google/gemma-4-26b-a4b-it),
+verified September 14, 2026. This is an allowance, not a requested output length.
+Provider context limits still apply. Set it explicitly when binding another model.
+
+`TIMEOUT_S` is optional and defaults to no client deadline, allowing slow
+generations to finish. Set a positive number only when an operator deadline is
+intended. Monitor running calls: a stalled service can otherwise wait indefinitely.
+Invalid structured responses remain errors with available token usage retained;
+allowing more output does not make an invalid response usable.
