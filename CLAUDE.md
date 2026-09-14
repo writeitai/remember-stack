@@ -66,6 +66,18 @@ silently. When writing any design or decision:
   point may let a consumer bypass an invariant (ingestion always writes through E0; review always
   appends reversible verdicts; a control plane is never an authority for E/K/P truth).
 
+## Publish work in progress
+
+This applies to the supervising agent and every delegated agent. Push a meaningful
+checkpoint and open a draft PR early; do not keep substantial implementation only
+in a local worktree while waiting for tests, reviews, or dependencies to finish.
+Push subsequent coherent checkpoints and keep the PR description current about
+what works, what remains incomplete, and which checks have actually run.
+
+Draft publication is not merge approval. Complete the required integration,
+validation, and reviews before marking the PR ready or merging. The supervising
+agent remains responsible for the combined result.
+
 ## The docs site ships with the code (D66)
 
 `website/` is the public documentation site (Next.js + MDX, statically exported to
