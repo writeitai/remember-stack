@@ -218,14 +218,19 @@ Parent validation: 64 concise-presentation, protocol, and serialized-run-summary
 tests passed. This wording still requires review on the final integrated head;
 the earlier Antigravity verdicts do not cover it.
 
-D119 PR #400 is still implementing coherent multi-span extraction. This lane
-does not change E2 `source_span` schema. The E2 Claimify prompt still contains
-main's "simplest standalone claims" wording; D119's coherent-claim language
-must be preserved at rebase, not overwritten. After #400 is ready, rebase,
-project any additional exact-span fields the claims snapshot gains, and
-regenerate extractor/normalizer/adjudicator generations and LoCoMo Full-v29
-pins from that combined source. Do not treat the current E2 prompt, schema,
-or protocol pins as final.
+The parent has stacked this branch on D119's published `1debaf80` checkpoint.
+The extraction prompts now retain coherent multi-span claims and explicitly
+explain origin versus additional supporting passages, source evidence versus
+summaries, and preservation of each assertion's meaning. The Claimify task is
+stated in ordinary language rather than "decontextualize+decompose+ground".
+The extractor generation is `assertion-clarity-3`; LoCoMo is Full-v30 so the
+combined processing contract is distinct from D119's Full-v29.
+
+D119's subsequent coordinate/reuse fixes and final main merge still need to be
+integrated. The final combined head requires PostgreSQL regression checks and
+Antigravity review. Earlier reviews apply only to their recorded SHAs. Parent
+will also review the additional D122 document-reference instructions when that
+runtime is ready. No final merge-readiness is claimed here.
 
 No paid LoCoMo run, no remote store mutation, no merge, no release.
 

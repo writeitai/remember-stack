@@ -443,7 +443,7 @@ class _VersionRig:
         for prompt in self.provider.generated_prompts:
             if (
                 "Selection stage of a claim extractor" not in prompt
-                and "decontextualize+ground stage" not in prompt
+                and "Claimify stage of a claim extractor" not in prompt
             ):
                 continue
             match = _TARGET_PATTERN.search(prompt)

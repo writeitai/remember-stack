@@ -1057,9 +1057,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_reader_completions",
     ),
     (
-        ("full-v29", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
+        ("full-v30", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
         (
-            "full-v29-codex-subscription",
+            "full-v30-codex-subscription",
             "gpt-5.6-luna",
             "gpt-5.6-luna",
             "high",
@@ -1930,8 +1930,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v29","protocol_fingerprint":'
-        '"d9eac6b112270ef11b6e04b859f83ebac7e2834b7bf84cd8c7dc5855c47742ae",'
+        '{"protocol_name":"RS-LoCoMo-Full-v30","protocol_fingerprint":'
+        '"8baf35116d7a6b761298488bfbad8910864e4518626cd6bdede12fbf3eac1c21",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2150,7 +2150,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v29"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v30"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -3422,7 +3422,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v29-gemma-vertex"]
+    protocol = PROTOCOL_REGISTRY["full-v30-gemma-vertex"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",

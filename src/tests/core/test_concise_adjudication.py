@@ -507,7 +507,7 @@ def test_prompts_state_assertion_identity_in_plain_language() -> None:
         assert "enjoy" in prompt
     assert "source_said_at" in _FACT_PROMPT
     assert (
-        "never an unqualified" in _CLAIMIFY_PROMPT
+        "must never become an unqualified" in _CLAIMIFY_PROMPT
         or "not automatically" in _CLAIMIFY_PROMPT
     )
     assert "uses_claim_window" in _NORMALIZE_PROMPT
