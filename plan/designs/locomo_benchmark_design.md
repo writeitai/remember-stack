@@ -1,15 +1,33 @@
 # LoCoMo full-system benchmark design
 
-> **v37 adjudication target-discipline amendment (2026-09-15).** Full-v37 is
-> the current protocol. The fact-adjudication prompt adds two sentences: when
-> target is a supplied F-name, `new_facts` must be empty, and the incoming
-> assertion's placement is decided by target/stance alone, never by a
-> `support_moves` entry. This addresses the R8 Vertex/Gemma dead-letters
-> (declared-but-unused N-names, incoming support filed as a move). Schema and
-> translator stay the same. Relation and observation application generations
-> append `:target-discipline-1`. Normalizer and resolver generations stay the
-> same. The v36 N1/F2 wording and JSON examples are unchanged underneath.
-> Analysis: [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+> **v38 adjudication rejection-feedback amendment (2026-09-15).** Full-v38 is
+> the current protocol. The fact adjudicator retries one deterministic
+> translator rejection inside the delivery: on a new-fact target/declare
+> mismatch, a supplied-name collision, or incoming support filed as a move,
+> drain re-generates once against the same prepared attempt with a structural
+> note appended outside the inputs, metered under a distinct
+> `:translator-retry1` receipt. A second identical rejection raises exactly as
+> before. Relation and observation application generations append
+> `:rej-feedback-1`. The base prompt is byte-identical; schema, translator,
+> normalizer, and resolver generations stay the same. Adapter identity,
+> protocol keys, variants, and fingerprints roll together. Dataset, models,
+> budgets, and scoring are unchanged. Stores ingested under v37 are not this
+> protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v37 adjudication target-discipline amendment (2026-09-15).** Full-v37 added
+> two sentences to the fact-adjudication prompt: when target was a supplied
+> F-name, `new_facts` had to be empty, and the incoming assertion's placement
+> was decided by target/stance alone, never by a `support_moves` entry. That
+> addressed the R8 Vertex/Gemma dead-letters (declared-but-unused N-names,
+> incoming support filed as a move). Schema and translator stayed the same.
+> Relation and observation application generations appended
+> `:target-discipline-1`. Normalizer and resolver generations stayed the same.
+> The v36 N1/F2 wording and JSON examples were unchanged underneath. Adapter
+> identity, protocol keys, variants, and fingerprints rolled together. Dataset,
+> models, budgets, and scoring were unchanged. Stores ingested under v36 are
+> not that protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
 >
 > **v36 fact new-fact-reference amendment (2026-09-15).** Full-v36 said to
 > choose N1 rather than continue F-numbering, declare that name in `new_facts`,
@@ -272,7 +290,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v37
+protocol                RS-LoCoMo-Full-v38
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -296,6 +314,17 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v37 → v38 (2026-09-15 — adjudication rejection feedback):** Relation and
+observation application generations include `rej-feedback-1`. The fact
+adjudicator retries one deterministic translator rejection inside the delivery
+against the same prepared attempt, with a structural note outside the inputs
+metered under a distinct `:translator-retry1` receipt; a second identical
+rejection raises exactly as before. The base prompt is byte-identical; schema,
+translator, normalizer, and resolver generations are unchanged. Meaning,
+temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
+version, protocol identities, variants, and fingerprints roll. Stores ingested
+under v37 must be re-ingested.
 
 **v36 → v37 (2026-09-15 — adjudication target discipline):** Relation and
 observation application generations include `target-discipline-1`. The fact
@@ -672,7 +701,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v37-codex-subscription` is an additive evaluator-provider variant for
+`full-v38-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -971,7 +1000,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v37 requires to be
+- the non-secret `document_binding_generation`, which Full-v38 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -1120,12 +1149,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v37 \
+  --protocol full-v38 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v37`; the
-explicit `full-v37-gemma-vertex` and `full-v37-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v38`; the
+explicit `full-v38-gemma-vertex` and `full-v38-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

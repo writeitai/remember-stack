@@ -606,3 +606,44 @@ def translate_prompt_decision(
         confidence=response.confidence,
         rationale=response.rationale,
     )
+
+
+def translator_rejection_note(
+    *, error: ValueError, response: PromptFactDecision
+) -> str | None:
+    """Return the structural retry note for a known deterministic rejection.
+
+    Only the census classes that die identically at temperature 0 are
+    retried: an undeclared new-fact target, a new-fact handle colliding with
+    a supplied name, and incoming support filed as a move. The note carries
+    the rejection class plus counts from the rejected answer, never model
+    text: translator messages can embed invented handles, so the message
+    itself is classified but never quoted. Any other ``ValueError`` returns
+    None so the caller raises immediately with today's behavior.
+    """
+    message = str(error)
+    if message == "new handles must be declared and used in the decision":
+        return (
+            "Translator rejected the previous answer: new-fact target/declare"
+            f" mismatch (declared new facts: {len(response.new_facts)})."
+            " Declare every targeted N-name in new_facts and target only"
+            " declared names; fix only that and keep everything else identical."
+        )
+    if message.startswith("new-fact handle ") and message.endswith(
+        " collides with a supplied name"
+    ):
+        return (
+            "Translator rejected the previous answer: a new-fact handle"
+            f" collides with a supplied name (declared new facts:"
+            f" {len(response.new_facts)}). New-fact handles must not reuse"
+            " supplied F, C, A, E, S, T, or W names; use an N-name; fix only"
+            " that and keep everything else identical."
+        )
+    if message == "incoming support is assigned by target, not a move":
+        return (
+            "Translator rejected the previous answer: the incoming assertion"
+            " was filed as a support move. Place the incoming assertion by"
+            " target and stance alone, never by a support_moves entry; fix"
+            " only that and keep everything else identical."
+        )
+    return None
