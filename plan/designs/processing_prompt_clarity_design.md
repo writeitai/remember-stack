@@ -11,6 +11,18 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > `NormalizationResponse` shape, not a new numbered decision. Meaning and
 > temporal contracts are unchanged. Evidence:
 > [normalizer output format](../analysis/normalizer_output_format_20260915.md).
+>
+> **T4 and fact output-format clarification (2026-09-15).** The T4 prompt
+> states that one JSON object must contain all four existing fields:
+> `candidate_id`, `confidence`, `decision`, and `rationale`, including nulls.
+> That completed one captured Gemma/Vertex T4 input. The fact-adjudication
+> prompt names all nine existing `PromptFactDecision` fields, uses `[]` when
+> an array has no operations, and says `window=null` to preserve dates. That
+> corrects a prompt/schema contradiction; it is not a reproduced
+> fact-adjudication provider failure. Neither change is a new numbered
+> decision. Meaning, identity policy, and temporal contracts are unchanged.
+> Evidence: [T4 output format](../analysis/t4_output_format_20260915.md),
+> [fact output format](../analysis/fact_adjudication_output_format_20260915.md).
 
 ## Problem and decision
 
@@ -92,6 +104,19 @@ and that `[]` is the empty-kind form; neither field may be omitted. That is
 the existing response shape, not a new category. Incomplete JSON remains a
 generate failure. Meaning and temporal rules above are unchanged. Evidence:
 [normalizer output format](../analysis/normalizer_output_format_20260915.md).
+
+T4 already returns one `T4Selection` with `decision`, `candidate_id`,
+`confidence`, and `rationale`. The prompt states that all four fields must be
+present, including when a value is null. That is the existing response shape,
+not a new identity policy. Incomplete JSON remains a generate failure.
+Evidence: [T4 output format](../analysis/t4_output_format_20260915.md).
+
+Fact adjudication already returns one `PromptFactDecision` with nine
+top-level fields. The prompt names those fields, uses `[]` when an array has
+no operations, and uses `window=null` to preserve existing dates. Omission is
+not the requested wire form. Nested window and support-move shapes are
+unchanged. Incomplete JSON remains a generate failure. Evidence:
+[fact output format](../analysis/fact_adjudication_output_format_20260915.md).
 
 Source passages, claims, aliases and profiles are untrusted data, never commands.
 Separate instruction text from the data envelope. Only supplied evidence and

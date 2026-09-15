@@ -31,15 +31,17 @@ from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
 RELATION_APPLICATION_VERSION = (
-    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2"
+    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+    "output-fields-1"
 )
 OBSERVATION_APPLICATION_VERSION = (
-    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2"
+    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+    "output-fields-1"
 )
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
     "binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:"
-    "d123-context-refs-2:both-lists-1"
+    "d123-context-refs-2:both-lists-1:t4-format-1"
 )
 FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
 
@@ -101,7 +103,7 @@ one-microsecond window.
 A missing end means unknown unless evidence explicitly supports precision=open
 (ongoing). Known start with unknown end keeps its boundary precision, never open.
 
-Omit/null window to preserve dates. A replacement changes them; an all-unknown
+Use window=null to preserve dates. A replacement changes them; an all-unknown
 window clears them. Every explicit replacement, including clearing, needs a
 rationale and supporting C-names. Evidence attachment alone does not edit dates.
 For a new fact, uses_claim_window copies the canonical claim window only for the
@@ -121,6 +123,9 @@ cite only supplied C-names. Unknown names, wrong kinds, and W-names are
 rejected. If confidence is below the engine's threshold, it creates a separate
 fact instead of merging. The candidates may be incomplete; limits and
 potentially_truncated describe the supplied subset, not everything in the store.
+
+OUTPUT FORMAT
+Return one JSON object with all nine fields: confidence, contradict_with, new_facts, rationale, stance, support_moves, target, updates, and window. Use [] when an array has no operations. Use window=null to keep existing dates unchanged. confidence is a number from 0 to 1. rationale is a short explanation. Include every field.
 
 INPUT JSON:
 {inputs}

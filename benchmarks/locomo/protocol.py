@@ -35,10 +35,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v33"
-DEFAULT_PROTOCOL_KEY: Final = "full-v33"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v33"
-"""Adapter identity for Full-v33: v32 pins plus both-lists normalizer prompt."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v34"
+DEFAULT_PROTOCOL_KEY: Final = "full-v34"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v34"
+"""Adapter identity for Full-v34: v33 pins plus T4 and fact output-format prompts."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -85,14 +85,16 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "normalize_relations": (
             "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:"
             "no-types-1:binary-t4-1:document-t0-1:mutable-window-1:"
-            "assertion-clarity-3:d123-context-refs-2:both-lists-1"
+            "assertion-clarity-3:d123-context-refs-2:both-lists-1:t4-format-1"
         ),
         "adjudicate_observations": (
             "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:"
             "claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:"
-            "mutable-window-1:assertion-clarity-3:d123-context-refs-2:both-lists-1:"
-            "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-            "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2"
+            "mutable-window-1:assertion-clarity-3:d123-context-refs-2:"
+            "both-lists-1:t4-format-1:relation-adjudicator-2026.09d:"
+            "concise-handles-5:d123-context-nom-2:output-fields-1:"
+            "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+            "output-fields-1"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -128,12 +130,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v33-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v33-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v34-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v34-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant is reader-only. It keeps every canonical v33 ingest pin --
+The variant is reader-only. It keeps every canonical v34 ingest pin --
 pipeline stages including ground_claims, component generations, model
 bindings, prompts, tool catalog, budgets, and judge -- and swaps only the
 answer agent to this model on Vertex, with thinking deliberately pinned off
@@ -142,8 +144,8 @@ decision in a two-branch JSON shape that Vertex's order-enforcing decoder
 completes. It does not configure processing. Scores are therefore an
 answer-agent comparison over the same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v33-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v33-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v34-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v34-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -280,7 +282,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v33",
+    key="full-v34",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
