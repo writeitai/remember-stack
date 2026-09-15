@@ -388,6 +388,16 @@ def test_schema_invalid_content_is_invalid_response_carrying_usage() -> None:
     assert caught.value.usage is not None
 
 
+def test_schema_invalid_content_names_fields_without_leaking_text() -> None:
+    """A rejected answer says which field failed, never the answer itself."""
+    with pytest.raises(VertexInvalidResponseError) as caught:
+        _generate(_provider(lambda _request: _ok('{"answer":["Prague-secret-list"]}')))
+
+    message = str(caught.value)
+    assert "answer.string_type" in message
+    assert "Prague-secret-list" not in message
+
+
 def test_blank_content_is_invalid_response() -> None:
     """An empty string is the provider declining, not a partial answer."""
     with pytest.raises(VertexInvalidResponseError, match="no completion content"):
