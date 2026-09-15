@@ -14,6 +14,7 @@ from rememberstack.core.concise_adjudication import project_concise_inputs
 from rememberstack.core.concise_adjudication import translate_prompt_decision
 from rememberstack.core.concise_adjudication import translator_rejection_note
 from rememberstack.model.concise_adjudication import PromptFactDecision
+from rememberstack.model.concise_adjudication import PromptNewFact
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.spine.fact_adjudication import _FACT_PROMPT
 from rememberstack.spine.fact_applications import canonical_json
@@ -1246,7 +1247,7 @@ def test_rejection_note_names_known_classes_without_model_text() -> None:
     """The three census classes map to structural notes; handles never echo."""
     declared = PromptFactDecision(
         target="N1",
-        new_facts=[{"handle": "N1", "assertion": "A1"}],
+        new_facts=(PromptNewFact(handle="N1", assertion="A1"),),
         confidence=0.9,
         rationale="test",
     )
