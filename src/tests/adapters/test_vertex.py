@@ -89,6 +89,24 @@ def _stream(*events: object) -> httpx.Response:
     )
 
 
+def _unread(status: int, raw: bytes) -> httpx.Response:
+    """Return an unread streamed HTTP body (``json=`` would hide ResponseNotRead)."""
+    return httpx.Response(
+        status, stream=httpx.ByteStream(raw), headers={"content-type": "text/plain"}
+    )
+
+
+class _DropAfter(httpx.SyncByteStream):
+    """Yield one SSE prefix, then fail the read the way a dropped connection does."""
+
+    def __init__(self, prefix: bytes) -> None:
+        self._prefix = prefix
+
+    def __iter__(self):
+        yield self._prefix
+        raise httpx.ReadError("test drop")
+
+
 def _ok(
     content: str | None = '{"answer":"Prague"}',
     *,
@@ -272,9 +290,7 @@ def test_missing_model_identity_fails_closed() -> None:
 def test_identity_and_entitlement_refusals_are_access_errors(status: int) -> None:
     """Revoked federation, a disabled API, or unlinked billing must stop a run."""
     with pytest.raises(VertexAccessError, match=f"returned {status}") as caught:
-        _generate(
-            _provider(lambda _request: httpx.Response(status, text="PERMISSION_DENIED"))
-        )
+        _generate(_provider(lambda _request: _unread(status, b"PERMISSION_DENIED")))
     assert isinstance(caught.value, VertexProviderError)
     assert caught.value.usage is None
 
@@ -285,8 +301,7 @@ def test_other_http_failures_are_ordinary_provider_errors(status: int) -> None:
     with pytest.raises(VertexProviderError, match=f"returned {status}") as caught:
         _generate(
             _provider(
-                lambda _request: httpx.Response(status, text="busy"),
-                throttle_retry_delays_s=(),
+                lambda _request: _unread(status, b"busy"), throttle_retry_delays_s=()
             )
         )
     assert not isinstance(caught.value, VertexAccessError)
@@ -302,7 +317,7 @@ def test_throttling_is_resent_after_each_delay_then_fails(
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        return httpx.Response(429, text="The request queue is full.")
+        return _unread(429, b"The request queue is full.")
 
     with pytest.raises(VertexProviderError, match="returned 429"):
         _generate(_provider(handler, throttle_retry_delays_s=(0.5, 1.5)))
@@ -315,7 +330,7 @@ def test_throttling_recovers_when_a_resend_succeeds(
 ) -> None:
     """The first non-429 reply is used and charged exactly once."""
     monkeypatch.setattr("rememberstack.adapters.vertex.time.sleep", lambda _s: None)
-    replies = iter((httpx.Response(429, text="busy"), _ok()))
+    replies = iter((_unread(429, b"busy"), _ok()))
 
     generated = _generate(_provider(lambda _request: next(replies)))
 
@@ -329,7 +344,7 @@ def test_non_throttle_failures_are_never_resent() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        return httpx.Response(500, text="boom")
+        return _unread(500, b"boom")
 
     with pytest.raises(VertexProviderError, match="returned 500"):
         _generate(_provider(handler))
@@ -590,3 +605,96 @@ def test_stream_error_event_is_a_provider_error() -> None:
                 lambda _request: _stream({"error": {"code": "internal"}}, "[DONE]")
             )
         )
+
+
+_T4_USAGE = _usage_dict(prompt_tokens=316, completion_tokens=93)
+_T4_COST = Decimal("0.0001032")
+
+
+def _t4_prefix(*, include_usage: bool) -> bytes:
+    """SSE bytes matching the live T4 stream through the usage-only chunk."""
+    events: list[object] = [
+        _chunk(content='{"decision":"new"}', model=GEMMA_4_26B_A4B_IT_MAAS)
+    ]
+    if include_usage:
+        events.append(
+            _chunk(choices=[], model=GEMMA_4_26B_A4B_IT_MAAS, usage=_T4_USAGE)
+        )
+    return _sse(*events)
+
+
+def test_unread_http_403_and_503_do_not_raise_response_not_read() -> None:
+    """Streamed error bodies must be read before ``response.text`` is used."""
+    with pytest.raises(VertexAccessError, match="returned 403") as denied:
+        _generate(_provider(lambda _request: _unread(403, b"PERMISSION_DENIED")))
+    assert denied.value.usage is None
+    with pytest.raises(VertexProviderError, match="returned 503") as unavailable:
+        _generate(
+            _provider(
+                lambda _request: _unread(503, b"The service is currently unavailable."),
+                throttle_retry_delays_s=(),
+            )
+        )
+    assert unavailable.value.usage is None
+    assert not isinstance(unavailable.value, VertexAccessError)
+
+
+def test_malformed_event_after_usage_preserves_known_tokens() -> None:
+    """A broken event after model+usage still meters 316/93; it is not success."""
+    calls: list[httpx.Request] = []
+    raw = _t4_prefix(include_usage=True) + b"data: {not-json\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(raw),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    with pytest.raises(VertexProviderError, match="malformed stream event") as caught:
+        _generate(_provider(handler))
+    assert len(calls) == 1
+    assert caught.value.usage is not None
+    assert caught.value.usage.tokens_in == 316
+    assert caught.value.usage.tokens_out == 93
+    assert caught.value.usage.cost_usd == _T4_COST
+
+
+def test_network_drop_after_usage_preserves_known_tokens() -> None:
+    """A dropped connection after terminal usage still meters 316/93 once."""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200,
+            stream=_DropAfter(_t4_prefix(include_usage=True)),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    with pytest.raises(VertexProviderError, match="ReadError") as caught:
+        _generate(_provider(handler))
+    assert len(calls) == 1
+    assert caught.value.usage is not None
+    assert caught.value.usage.tokens_in == 316
+    assert caught.value.usage.tokens_out == 93
+    assert caught.value.usage.cost_usd == _T4_COST
+
+
+def test_network_drop_before_usage_does_not_invent_usage() -> None:
+    """A drop before any usage chunk leaves usage unknown."""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200,
+            stream=_DropAfter(_t4_prefix(include_usage=False)),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    with pytest.raises(VertexProviderError, match="ReadError") as caught:
+        _generate(_provider(handler))
+    assert len(calls) == 1
+    assert caught.value.usage is None

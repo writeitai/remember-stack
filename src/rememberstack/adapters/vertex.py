@@ -296,7 +296,12 @@ class VertexModelProvider:
         payload["stream_options"] = {"include_usage": True}
 
         started_ns = time.monotonic_ns()
-        body = self._complete(path="/chat/completions", payload=payload)
+        body = self._complete(
+            path="/chat/completions",
+            payload=payload,
+            price=price,
+            started_ns=started_ns,
+        )
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
         finish = _finish_reason(body)
         if finish is None:
@@ -339,16 +344,25 @@ class VertexModelProvider:
             " embeddings to the provider that owns the deployment's vector space"
         )
 
-    def _complete(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
+    def _complete(
+        self,
+        *,
+        path: str,
+        payload: dict[str, object],
+        price: VertexModelPrice,
+        started_ns: int,
+    ) -> dict[str, Any]:
         """POST one streamed completion; map HTTP failures; never retry a 2xx.
 
         Only HTTP 429 is re-sent, after the configured delays, because it is
         the one refusal that provably did no billable work. A 2xx stream has
         been admitted: this call is not re-sent even if the body is later
-        incomplete or malformed.
+        incomplete or malformed. Error bodies are read before ``response.text``.
+        The 429 response is closed before the backoff sleep.
         """
         delays = iter(self._settings.throttle_retry_delays_s)
         while True:
+            retry_delay_s: float | None = None
             with self._client.stream(
                 "POST",
                 path,
@@ -356,31 +370,28 @@ class VertexModelProvider:
                 headers={"Authorization": f"Bearer {self._access_token()}"},
             ) as response:
                 if response.status_code == 429:
-                    delay_s = next(delays, None)
-                    if delay_s is None:
+                    retry_delay_s = next(delays, None)
+                    preview = _error_preview(response)
+                    if retry_delay_s is None:
                         raise VertexProviderError(
-                            f"Vertex {path} returned 429: {response.text[:500]}"
+                            f"Vertex {path} returned 429: {preview}"
                         )
-                    time.sleep(delay_s)
-                    continue
-                if response.status_code in (401, 403):
+                elif response.status_code in (401, 403):
                     raise VertexAccessError(
                         f"Vertex {path} returned {response.status_code}:"
-                        f" {response.text[:500]}"
+                        f" {_error_preview(response)}"
                     )
-                if response.status_code >= 400:
+                elif response.status_code >= 400:
                     raise VertexProviderError(
                         f"Vertex {path} returned {response.status_code}:"
-                        f" {response.text[:500]}"
+                        f" {_error_preview(response)}"
                     )
-                try:
-                    return _completion_from_stream(response)
-                except VertexProviderError:
-                    raise
-                except httpx.HTTPError as error:
-                    raise VertexProviderError(
-                        f"Vertex {path} stream failed: {type(error).__name__}"
-                    ) from error
+                else:
+                    return _completion_from_stream(
+                        response, path=path, price=price, started_ns=started_ns
+                    )
+            if retry_delay_s is not None:
+                time.sleep(retry_delay_s)
 
 
 def computed_cost_usd(
@@ -448,64 +459,23 @@ def _message_text(body: dict[str, Any]) -> str:
     return content if isinstance(content, str) else ""
 
 
-def _completion_from_stream(response: httpx.Response) -> dict[str, Any]:
-    """Reassemble one chat.completion-shaped body from SSE data events."""
-    content_parts: list[str] = []
-    finish_reason: object = None
-    model_name: object = None
-    usage_raw: object = None
-    for payload in _sse_data_payloads(response):
-        try:
-            event = json.loads(payload)
-        except json.JSONDecodeError as error:
-            raise VertexProviderError(
-                "Vertex /chat/completions returned a malformed stream event"
-            ) from error
-        if not isinstance(event, dict):
-            raise VertexProviderError(
-                "Vertex /chat/completions returned a malformed stream event"
-            )
-        error = event.get("error")
-        if isinstance(error, dict):
-            raise VertexProviderError(
-                "Vertex /chat/completions stream error"
-                + (f": {error.get('code')}" if error.get("code") is not None else "")
-            )
-        if error:
-            raise VertexProviderError("Vertex /chat/completions stream error")
-        model = event.get("model")
-        if isinstance(model, str) and model.strip():
-            model_name = model
-        raw_usage = event.get("usage")
-        if raw_usage is not None:
-            usage_raw = raw_usage
-        choices = event.get("choices")
-        if choices is None:
-            continue
-        if not isinstance(choices, list):
-            raise VertexProviderError(
-                "Vertex /chat/completions returned a malformed stream event"
-            )
-        if not choices:
-            continue
-        choice = choices[0]
-        if not isinstance(choice, dict):
-            raise VertexProviderError(
-                "Vertex /chat/completions returned a malformed stream event"
-            )
-        if choice.get("finish_reason") is not None:
-            finish_reason = choice["finish_reason"]
-        delta = choice.get("delta")
-        if not isinstance(delta, dict):
-            continue
-        piece = delta.get("content")
-        if piece is None:
-            continue
-        if not isinstance(piece, str):
-            raise VertexProviderError(
-                "Vertex /chat/completions returned a malformed content delta"
-            )
-        content_parts.append(piece)
+def _error_preview(response: httpx.Response) -> str:
+    """Read an unread streamed error body, then return a short text preview."""
+    try:
+        response.read()
+    except httpx.HTTPError:
+        return ""
+    return response.text[:500]
+
+
+def _completion_body(
+    *,
+    content_parts: list[str],
+    finish_reason: object,
+    model_name: object,
+    usage_raw: object,
+) -> dict[str, Any]:
+    """Build the chat.completion-shaped dict used by usage and validation."""
     body: dict[str, Any] = {
         "model": model_name if isinstance(model_name, str) else "",
         "choices": [
@@ -519,6 +489,104 @@ def _completion_from_stream(response: httpx.Response) -> dict[str, Any]:
     if usage_raw is not None:
         body["usage"] = usage_raw
     return body
+
+
+def _stream_usage(
+    *, body: dict[str, Any], price: VertexModelPrice, started_ns: int
+) -> ProviderCallUsage | None:
+    """Attach real terminal usage to a failed stream; never invent counts."""
+    return _try_usage(
+        body=body,
+        price=price,
+        latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+    )
+
+
+def _completion_from_stream(
+    response: httpx.Response, *, path: str, price: VertexModelPrice, started_ns: int
+) -> dict[str, Any]:
+    """Reassemble one completion, keeping any usage already seen if the stream fails."""
+    content_parts: list[str] = []
+    finish_reason: object = None
+    model_name: object = None
+    usage_raw: object = None
+
+    def body() -> dict[str, Any]:
+        return _completion_body(
+            content_parts=content_parts,
+            finish_reason=finish_reason,
+            model_name=model_name,
+            usage_raw=usage_raw,
+        )
+
+    try:
+        for payload in _sse_data_payloads(response):
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError as error:
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                ) from error
+            if not isinstance(event, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            error = event.get("error")
+            if isinstance(error, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions stream error"
+                    + (
+                        f": {error.get('code')}"
+                        if error.get("code") is not None
+                        else ""
+                    )
+                )
+            if error:
+                raise VertexProviderError("Vertex /chat/completions stream error")
+            model = event.get("model")
+            if isinstance(model, str) and model.strip():
+                model_name = model
+            raw_usage = event.get("usage")
+            if raw_usage is not None:
+                usage_raw = raw_usage
+            choices = event.get("choices")
+            if choices is None:
+                continue
+            if not isinstance(choices, list):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            if not choices:
+                continue
+            choice = choices[0]
+            if not isinstance(choice, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            if choice.get("finish_reason") is not None:
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            piece = delta.get("content")
+            if piece is None:
+                continue
+            if not isinstance(piece, str):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed content delta"
+                )
+            content_parts.append(piece)
+    except VertexProviderError as error:
+        raise VertexProviderError(
+            str(error),
+            usage=_stream_usage(body=body(), price=price, started_ns=started_ns),
+        ) from error
+    except (httpx.HTTPError, UnicodeError, OSError) as error:
+        raise VertexProviderError(
+            f"Vertex {path} stream failed: {type(error).__name__}",
+            usage=_stream_usage(body=body(), price=price, started_ns=started_ns),
+        ) from error
+    return body()
 
 
 def _sse_data_payloads(response: httpx.Response) -> Iterator[str]:
