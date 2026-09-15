@@ -9,11 +9,21 @@
 > translator stay the same. Relation and observation application generations
 > append `:target-discipline-1`. Normalizer and resolver generations stay the
 > same. The v36 N1/F2 wording and JSON examples are unchanged underneath.
-> Analysis: [reliability fixes](../analysis/fact_adjudication_reliability_fixes_20260915.md).
-> Normalizer and resolver generations stay the same. Meaning, temporal,
-> schema, retrieval, answer, and judge pins stay the same. Adapter identity,
-> protocol keys, variants, and fingerprints roll together. Dataset, models,
-> budgets, and scoring are unchanged. Stores ingested under v35 are not this
+> Analysis: [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v36 fact new-fact-reference amendment (2026-09-15).** Full-v36 said to
+> choose N1 rather than continue F-numbering, declare that name in `new_facts`,
+> and use the same name as `target`. Two complete nine-field JSON examples
+> showed structure only: repeating supplied F1 with no other changes, or
+> incoming A1 as a different proposition declared as N1. A separate
+> Gemma/Vertex control on one captured R7 input had named the new fact F2;
+> three diagnostics of this template returned N1 or F1 as required. Invalid F
+> references remained rejected. Schema and translator stayed the same.
+> Relation and observation application generations appended `:new-fact-refs-1`.
+> Normalizer and resolver generations stayed the same. Meaning, temporal,
+> schema, retrieval, answer, and judge pins stayed the same. Adapter identity,
+> protocol keys, variants, and fingerprints rolled together. Dataset, models,
+> budgets, and scoring were unchanged. Stores ingested under v35 are not that
 > protocol. Analysis:
 > [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
 >
