@@ -27,14 +27,18 @@ R6 live conv-42 processing on Gemma/Vertex (processing-only, all 29 sessions)
 wrote an observation subject after `name=Nate`. Capture at 2026-09-15
 02:50:48.376734 UTC showed 25,564 characters, of which 25,201 were trailing
 whitespace. At capture time the object had not supplied `surface` or closed.
-That in-flight capture is not a terminal provider result. The original exact
-input was SHA-256
+That in-flight capture is not a terminal provider result. A later terminal
+receipt for the same original input ended 2026-09-15 03:10:24.886372 UTC
+after 1,313.902740807 seconds with `VertexProviderError` and no usage. That
+terminal outcome does not invent a final response character count or a
+provider-internal cause, and it does not change the selected instruction.
+Two following normalizations on other claims completed in 2.72 s and 2.77 s.
+The original exact input was SHA-256
 `cf9d74d936c27b735ddbcb5b22742428d4e4a9990618644a63e9b5c2e3416835`
 (5,792 bytes). That prompt already contained PR #408's both-array sentence.
 
-The same input completed in earlier R5. This is not a deterministic failure
-of that unique input, not a universal fix, not corpus reliability, and not a
-provider-internal cause.
+The same input completed in earlier R5. These observations do not establish
+a deterministic failure or identify a provider-internal cause.
 
 A diagnostic outside ingestion used the identical original input and the
 unchanged `NormalizationResponse` schema, with only this six-line instruction
@@ -63,7 +67,8 @@ Each typed object had one observation and an empty relations array. The
 first two receipts record typed output only; they do not independently prove
 raw wire presence of every required field. The third records the raw
 completed body before Pydantic and verifies all required root, item, and
-entity-reference fields (three context refs). Diagnostic input SHA-256
+entity-reference fields (three entity references: the subject and two
+context references). Diagnostic input SHA-256
 `f4fca37d80b0e4147a832df8b1e54239a3165137a970c75414e6ade2ea5e32b3`
 (6,333 bytes — the original 5,792-byte prompt plus the nested instruction).
 The raw subject used `surface=null`; the model still copied matching surfaces

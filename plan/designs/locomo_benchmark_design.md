@@ -9,7 +9,8 @@
 > had the both-array sentence; the same input completed in an earlier run, so
 > this is not a deterministic failure. Three sequential diagnostics completed
 > that one unique input; the third verified raw required fields before
-> Pydantic. Resolver and fact-adjudicator prompt
+> Pydantic, including three entity references: the subject and two context
+> references. Resolver and fact-adjudicator prompt
 > generations stay the same; the normalizer generation appends
 > `:nested-fields-1`. Meaning, temporal, schema, retrieval, answer, and judge
 > pins stay the same. Adapter identity, protocol keys, variants, and
