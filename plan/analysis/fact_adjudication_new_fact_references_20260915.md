@@ -35,10 +35,10 @@ the raw or typed completion from the live failed call.
   `^([FCAESTW])([1-9]\d*)$`. The translator then raises. That check is the
   reserved pattern, not membership in this attempt’s fact table.
 - Unknown path: `translate_prompt_decision` at `response.target` through
-  `_fact_reference`. An F-spelling is looked up in `mapping.facts` first,
-  whether or not `new_facts` declared that spelling. The original unknown-F2
-  traceback therefore shows that F2 was not in the mapping; it does not by
-  itself prove the rest of that answer.
+  `_fact_reference`. Declared reserved names have already been rejected before
+  this lookup. The unknown-F2 traceback therefore implies that F2 was neither
+  supplied in the mapping nor declared as a new fact. It does not establish
+  the rest of that answer.
 
 Three pending applications captured locally
 (`/tmp/conv42-gemma-full-run/r7-fact-reference-inputs-0345.json`; private
@@ -84,8 +84,8 @@ existing-fact reference and is valid only when this attempt supplied F2.
 
 - rejects `new_facts` handles whose spelling is a reserved typed name
 - looks up F-names only in `mapping.facts`
-- accepts undeclared non-reserved names only as `FactReference(new_handle=…)`
-  after requiring them to appear in `new_facts`
+- translates declared non-reserved names into `FactReference(new_handle=…)`
+  references, requiring a declaration in `new_facts`
 
 Unknown F99, wrong-kind C1-as-target, and W-names stay rejected. Support
 moves, window replacements, confidence, and stance are unchanged. A decision
@@ -140,5 +140,5 @@ frozen answers from the old prompt are not presented as new decisions.
 Derived observation-flush pins follow. Normalizer, resolver, schema, and
 translator stay the same. This rolls LoCoMo Full-v36. Dataset, models,
 budgets, retrieval, answer, judge, and scoring stay the same. Stores ingested
-under v35 are not this protocol. No quality or cost improvement is claimed
-from the wording.
+under v35 are not this protocol. No corpus-level quality or cost improvement is claimed
+from these three diagnostics.
