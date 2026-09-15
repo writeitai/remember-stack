@@ -1,4 +1,12 @@
-# RS-LoCoMo-Full-v32 setup
+# RS-LoCoMo-Full-v33 setup
+
+v33 (2026-09-15) adds an explicit normalizer output-format sentence: both
+`observations` and `relations` arrays must be present, using `[]` when a kind
+has no output. The normalizer generation and protocol identity advance
+together. Meaning, temporal, schema, retrieval, answer, and judge settings
+stay the same. Re-ingest v32 stores for a v33 run; historical results remain
+available for directional comparisons. The wording does not establish a
+benchmark score or cost improvement.
 
 v32 (2026-09-15) changes the fallback structuring JSON field to `subsections`
 while preserving the internal `children` tree. The structure generation and
@@ -60,12 +68,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v32 \
+  --protocol full-v33 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v32` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v33` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -214,7 +222,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v32 sample and
+The additive D124 runner reuses one completely processed Full-v33 sample and
 compares four answer routes without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -285,12 +293,12 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v32 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v33 protocol and
 its source state are never modified by this command.
 
-## Gemma 4 on Vertex as the answer agent (`full-v32-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v33-gemma-vertex`)
 
-`full-v32-gemma-vertex` is a *reader-only variant* of `full-v32`, not a new
+`full-v33-gemma-vertex` is a *reader-only variant* of `full-v33`, not a new
 benchmark identity and not a processing configuration: every ingest pin is
 identical -- pipeline stages including `ground_claims`, component generations,
 model bindings, prompts, tool catalog, budgets, temperature, and the frozen
@@ -321,7 +329,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v32-gemma-vertex \
+  --protocol full-v33-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 
@@ -364,7 +372,7 @@ any upload.
 
 ## Codex ChatGPT subscription for answer and judge
 
-`full-v32-codex-subscription` runs both evaluator seats through the official
+`full-v33-codex-subscription` runs both evaluator seats through the official
 local Codex app-server and the operator's existing ChatGPT login. It does not
 read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
 ChatGPT response route directly. Run `codex login` once, then prepare the
@@ -374,14 +382,14 @@ separately fingerprinted protocol:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v32-codex-subscription \
+  --protocol full-v33-codex-subscription \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 
-The v32 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+The v33 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
 the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
 effort `high`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v32 score.
+provider variant, not a canonical v33 score.
 
 Each model call uses a fresh ephemeral thread, an empty temporary directory,
 read-only/no-network sandboxing, and deny-all approvals. It receives no custom

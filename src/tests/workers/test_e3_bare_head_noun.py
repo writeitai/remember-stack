@@ -31,6 +31,21 @@ def test_prompt_forbids_bare_head_nouns() -> None:
     assert "FIFA 23" in _NORMALIZE_PROMPT
 
 
+def test_prompt_requires_both_observation_and_relation_arrays() -> None:
+    """Both lists must be present, including when one kind has no output."""
+    assert (
+        'Return one JSON object containing both "observations" and "relations".'
+        in _NORMALIZE_PROMPT
+    )
+    assert "Both values must be arrays." in _NORMALIZE_PROMPT
+    assert "Use [] when a kind has no output; never omit either field." in (
+        _NORMALIZE_PROMPT
+    )
+    format_at = _NORMALIZE_PROMPT.index("OUTPUT FORMAT")
+    timestamp_at = _NORMALIZE_PROMPT.index("SOURCE TIMESTAMP:")
+    assert format_at < timestamp_at
+
+
 def test_normalize_drops_game_relation_without_resolve() -> None:
     """Legal types still drop when an endpoint is the noun ``game``."""
     payload = {
