@@ -329,10 +329,11 @@ class VertexModelProvider:
             )
         try:
             output = response_type.model_validate_json(content)
-        except ValidationError:
+        except ValidationError as error:
             raise VertexInvalidResponseError(
                 f"completion content failed {response_type.__name__} validation"
-                f" ({_diagnosis(body=body, content=content, usage=usage)})",
+                f" ({_diagnosis(body=body, content=content, usage=usage)};"
+                f" {_validation_summary(error=error)})",
                 usage=usage,
             ) from None
         return GeneratedResponse(output=output, usage=usage)
@@ -624,6 +625,25 @@ def _token_count(*, raw: dict[str, Any], key: str) -> int:
             f"Vertex response carries an unusable {key} token count"
         )
     return value
+
+
+def _validation_summary(*, error: ValidationError, limit: int = 5) -> str:
+    """Name the failing fields of a rejected completion without its text.
+
+    Only each error's location path and enumerated type appear: the offending
+    input values and the raw content stay out because model output can restate
+    source material and these strings reach run records and logs. At most
+    ``limit`` entries are listed so one pathological answer cannot flood a log.
+    """
+    parts: list[str] = []
+    for entry in error.errors()[:limit]:
+        raw_loc = entry.get("loc", ())
+        loc = ".".join(str(step) for step in raw_loc) if raw_loc else "<root>"
+        parts.append(f"{loc}.{entry.get('type', 'unknown')}")
+    remaining = error.error_count() - len(parts)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    return f"validation_errors=[{', '.join(parts)}]"
 
 
 def _diagnosis(
