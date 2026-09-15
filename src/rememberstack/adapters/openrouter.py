@@ -42,6 +42,7 @@ _DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 32_000
 _GENERATION_USAGE_POLL_DELAYS_S: Final[tuple[float, ...]] = (0.0, 1.0, 2.0, 3.0, 5.0)
 _GENERATION_USAGE_TIMEOUT_S: Final[float] = 10.0
 _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S: Final[float] = 120.0
+_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S: Final[float] = 30.0
 _IN_FLIGHT_BUDGET_RETRIES: Final[int] = 3
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
@@ -504,6 +505,16 @@ class OpenRouterModelProvider:
                 )
                 time.sleep(retry_after)
                 continue
+            overload_wait = _upstream_overload_retry_after(
+                response=response, attempt=attempt
+            )
+            if overload_wait is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
+                _logger.warning(
+                    "OpenRouter upstream overloaded (429); retrying after %.1fs",
+                    overload_wait,
+                )
+                time.sleep(overload_wait)
+                continue
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
@@ -547,6 +558,41 @@ def _in_flight_budget_retry_after(*, response: httpx.Response) -> float | None:
     if parsed is None or parsed < 0:
         return _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S
     return min(parsed, _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S)
+
+
+def _upstream_overload_retry_after(
+    *, response: httpx.Response, attempt: int
+) -> float | None:
+    """Return one bounded wait for a transient upstream 429 overload.
+
+    Only 429 responses are retried; anything else falls through to the typed
+    error. An explicit Retry-After (header or provider metadata) wins, capped
+    at the bound; otherwise a small linear backoff keeps a hot shared pool
+    from being hammered while the worker's own attempt budget still applies.
+    """
+    if response.status_code != 429:
+        return None
+    retry_after: object = response.headers.get("Retry-After")
+    try:
+        body = response.json()
+        metadata = body["error"]["metadata"]
+    except (KeyError, TypeError, ValueError):
+        metadata = None
+    if isinstance(metadata, dict):
+        if retry_after is None:
+            retry_after = metadata.get("retry_after") or metadata.get("Retry-After")
+        provider_headers = metadata.get("headers")
+        if retry_after is None and isinstance(provider_headers, dict):
+            retry_after = provider_headers.get("Retry-After")
+    try:
+        parsed = (
+            float(retry_after) if isinstance(retry_after, (int, float, str)) else None
+        )
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None or parsed < 0:
+        parsed = min(2.0 * (attempt + 1), _UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S)
+    return min(parsed, _UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S)
 
 
 def _strict_json_schema(response_type: type[StructuredResponseModel]) -> dict[str, Any]:

@@ -371,6 +371,101 @@ def test_other_payment_failures_are_not_retried(
     assert sleeps == []
 
 
+def test_upstream_429_retries_with_retry_after_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shared-pool 429 waits out the overload inside one worker attempt."""
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "temporarily rate-limited upstream"}},
+                headers={"Retry-After": "3"},
+            )
+        return httpx.Response(200, json={"ok": True})
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    try:
+        body = provider._post(path="/chat/completions", payload={"model": "test"})
+    finally:
+        provider._client.close()
+
+    assert body == {"ok": True}
+    assert calls == 3
+    assert sleeps == [3.0, 3.0]
+
+
+def test_persistent_upstream_429_fails_after_bounded_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hot pool gets linear backoff, not an unbounded stall or a hot loop."""
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            429, json={"error": {"message": "temporarily rate-limited upstream"}}
+        )
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="returned 429"):
+            provider._post(path="/chat/completions", payload={"model": "test"})
+    finally:
+        provider._client.close()
+
+    assert calls == 4
+    assert sleeps == [2.0, 4.0, 6.0]
+
+
+def test_non_overload_failures_are_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 400 remains an immediate provider error under the overload retry."""
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="returned 400"):
+            provider._post(path="/chat/completions", payload={"model": "test"})
+    finally:
+        provider._client.close()
+
+    assert calls == 1
+    assert sleeps == []
+
+
 @pytest.mark.parametrize(
     ("settings_override", "expected"),
     (({}, 32_000), ({"max_completion_tokens": None}, None)),
