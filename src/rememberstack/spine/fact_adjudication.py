@@ -39,7 +39,7 @@ OBSERVATION_APPLICATION_VERSION = (
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
     "binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:"
-    "d123-context-refs-2"
+    "d123-context-refs-2:both-lists-1"
 )
 FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
 

@@ -1119,9 +1119,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_reader_completions",
     ),
     (
-        ("full-v32", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
+        ("full-v33", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
         (
-            "full-v32-codex-subscription",
+            "full-v33-codex-subscription",
             "gpt-5.6-luna",
             "gpt-5.6-luna",
             "high",
@@ -1766,7 +1766,7 @@ def test_ingest_refuses_model_binding_drift_before_upload(
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full-v32 cannot silently process with document-local T0 disabled."""
+    """Full-v33 cannot silently process with document-local T0 disabled."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
@@ -1992,8 +1992,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v32","protocol_fingerprint":'
-        '"15e79b5349e10ffc61b2533d2f834c80f66f064c39104506a4001b9c9cbe84de",'
+        '{"protocol_name":"RS-LoCoMo-Full-v33","protocol_fingerprint":'
+        '"ac7ab489948c6512e80af8a63d3d439228ef7a25fcd41ddedc13cd9c674b4e89",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2212,7 +2212,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v32"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v33"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -3484,7 +3484,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v32-gemma-vertex"]
+    protocol = PROTOCOL_REGISTRY["full-v33-gemma-vertex"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",

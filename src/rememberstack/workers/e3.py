@@ -144,6 +144,9 @@ events; do not merge them here. Do not guess entities that are not explicit
 in the claim. If more than four apply, keep the first four in emission order.
 Overflow must not drop the assertion. An empty list is valid.
 
+OUTPUT FORMAT
+Return one JSON object containing both "observations" and "relations". Both values must be arrays. Use [] when a kind has no output; never omit either field.
+
 SOURCE TIMESTAMP: {asserted_at}
 CLAIM WORLD WINDOW (inclusive raw source dates): {claim_window}
 

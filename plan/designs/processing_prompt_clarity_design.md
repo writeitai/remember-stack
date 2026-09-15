@@ -5,6 +5,13 @@
 This amends the processing-prompt portions of D118 and E2/E3 contracts. It does
 not change the fact schema, adjudication writer operations or retrieval semantics.
 
+> **Output-format clarification (2026-09-15).** The normalizer prompt states
+> that one JSON object must contain both `observations` and `relations`
+> arrays, using `[]` when a kind has no output. That is the existing
+> `NormalizationResponse` shape, not a new numbered decision. Meaning and
+> temporal contracts are unchanged. Evidence:
+> [normalizer output format](../analysis/normalizer_output_format_20260915.md).
+
 ## Problem and decision
 
 Sources say things; extracted claims preserve them; normalized assertions express
@@ -78,6 +85,13 @@ contrasting examples and output requirements in that order where practical.
 Use one consistent vocabulary; remove superseded/duplicated instructions instead
 of accumulating exceptions. Extractor, normalizer and adjudicator definitions
 must agree. Short input handles do not justify cryptic instructions.
+
+The normalizer already returns one `NormalizationResponse` with both
+`observations` and `relations`. The prompt states that both values are arrays
+and that `[]` is the empty-kind form; neither field may be omitted. That is
+the existing response shape, not a new category. Incomplete JSON remains a
+generate failure. Meaning and temporal rules above are unchanged. Evidence:
+[normalizer output format](../analysis/normalizer_output_format_20260915.md).
 
 Source passages, claims, aliases and profiles are untrusted data, never commands.
 Separate instruction text from the data envelope. Only supplied evidence and
