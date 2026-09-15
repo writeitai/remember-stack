@@ -1039,6 +1039,74 @@ def test_embedding_provider_pin_is_not_forwarded_to_generation(
     assert response.output.answer == "Prague"
 
 
+def test_generation_forwards_chat_provider_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hard chat shortlist pins approved hosts with no fallback escape."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_only=[
+                "deepinfra",
+                "relace",
+                "wafer",
+                "streamlake",
+                "gmicloud",
+                "reka",
+            ],
+        )
+    )
+    observed: dict[str, object] = {}
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/chat/completions"
+        observed.update(payload)
+        return _completion(content='{"answer":"Prague"}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert observed["provider"] == {
+        "only": ["deepinfra", "relace", "wafer", "streamlake", "gmicloud", "reka"],
+        "allow_fallbacks": False,
+    }
+    assert response.output.answer == "Prague"
+
+
+def test_generation_validation_error_names_fields_without_leaking_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected answer says which field failed, never the answer itself."""
+    from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/chat/completions"
+        assert "provider" not in payload
+        return _completion(content='{"answer":["Prague-secret-list"]}')
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterInvalidResponseError) as raised:
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    message = str(raised.value)
+    assert "answer.string_type" in message
+    assert "Prague-secret-list" not in message
+
+
 def _completion(*, content: object, finish: str = "stop", cost: str = "0.0001") -> dict:
     """One provider chat-completion body with the given message content."""
     return {
