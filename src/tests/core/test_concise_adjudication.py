@@ -12,6 +12,7 @@ import pytest
 
 from rememberstack.core.concise_adjudication import project_concise_inputs
 from rememberstack.core.concise_adjudication import translate_prompt_decision
+from rememberstack.core.concise_adjudication import translator_rejection_note
 from rememberstack.model.concise_adjudication import PromptFactDecision
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.spine.fact_adjudication import _FACT_PROMPT
@@ -1239,3 +1240,48 @@ def test_resolved_context_has_readable_names_aliases_and_source_claim() -> None:
     assert "context_refs" not in item["content"]
     assert presentation["context_truncated"] is True
     assert str(_OBJECT) not in canonical_json(presentation)
+
+
+def test_rejection_note_names_known_classes_without_model_text() -> None:
+    """The three census classes map to structural notes; handles never echo."""
+    declared = PromptFactDecision(
+        target="N1",
+        new_facts=[{"handle": "N1", "assertion": "A1"}],
+        confidence=0.9,
+        rationale="test",
+    )
+    note = translator_rejection_note(
+        error=ValueError("new handles must be declared and used in the decision"),
+        response=declared,
+    )
+    assert note is not None
+    assert "declared new facts: 1" in note
+    note = translator_rejection_note(
+        error=ValueError("incoming support is assigned by target, not a move"),
+        response=declared,
+    )
+    assert note is not None
+    assert "support_moves" in note
+    note = translator_rejection_note(
+        error=ValueError("new-fact handle N-EVIL-1 collides with a supplied name"),
+        response=declared,
+    )
+    assert note is not None
+    assert "N-EVIL-1" not in note
+
+
+def test_rejection_note_returns_none_for_unlisted_rejections() -> None:
+    """Unknown translator failures raise immediately, never retry."""
+    bare = PromptFactDecision(target="F1", confidence=0.9, rationale="test")
+    assert (
+        translator_rejection_note(
+            error=ValueError("unknown fact handle F99"), response=bare
+        )
+        is None
+    )
+    assert (
+        translator_rejection_note(
+            error=ValueError("something entirely new"), response=bare
+        )
+        is None
+    )

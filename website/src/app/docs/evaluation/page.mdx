@@ -75,7 +75,7 @@ Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember
 
 - **Unshipped as a vendored dataset** — you supply pinned `locomo10.json` after confirming **CC BY-NC 4.0** terms.
 - **Operator-invoked** real provider runs; not silent CI spend.
-- Current protocol is `RS-LoCoMo-Full-v37`, versioned and fingerprinted in the adapter README.
+- Current protocol is `RS-LoCoMo-Full-v38`, versioned and fingerprinted in the adapter README.
 - Answer agent can use the **complete shipped read plane**: assured operations,
   direct primitives, open SQL/live graph helpers and saved queries, P1, and the ordinary
   published P3 mount. It has no private database/object-store shortcut.
@@ -86,7 +86,7 @@ Repository adapter: [`benchmarks/locomo/`](https://github.com/writeitai/remember
 
 ### Development retrieval-access ablations
 
-The D124 answer-only runner can reuse one processed Full-v37 sample across four
+The D124 answer-only runner can reuse one processed Full-v38 sample across four
 OSS-only access profiles: native Codex with a locally copied P3 directory,
 native Codex with P3 plus the read-only RememberStack MCP server, an OpenRouter
 Luna agent with only that MCP surface, and the same provider-neutral loop with
@@ -105,7 +105,7 @@ uv sync --extra benchmark
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v37 \
+  --protocol full-v38 \
   --output .benchmark-runs/locomo-smoke
 ```
 

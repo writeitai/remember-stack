@@ -35,10 +35,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v37"
-DEFAULT_PROTOCOL_KEY: Final = "full-v37"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v37"
-"""Adapter identity for Full-v37: v36 pins plus adjudication target-discipline sentences."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38"
+DEFAULT_PROTOCOL_KEY: Final = "full-v38"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
+"""Adapter identity for Full-v38: v36 pins plus adjudication target-discipline sentences."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -94,8 +94,9 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "mutable-window-1:assertion-clarity-3:d123-context-refs-2:"
             "both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09d:"
             "concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:"
-            "target-discipline-1:obs-adjudicator-2026.09d:concise-handles-5:"
-            "d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1"
+            "target-discipline-1:rej-feedback-1:obs-adjudicator-2026.09d:"
+            "concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:"
+            "target-discipline-1:rej-feedback-1"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -131,12 +132,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v37-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v37-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v38-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant is reader-only. It keeps every canonical v37 ingest pin --
+The variant is reader-only. It keeps every canonical v38 ingest pin --
 pipeline stages including ground_claims, component generations, model
 bindings, prompts, tool catalog, budgets, and judge -- and swaps only the
 answer agent to this model on Vertex, with thinking deliberately pinned off
@@ -145,8 +146,8 @@ decision in a two-branch JSON shape that Vertex's order-enforcing decoder
 completes. It does not configure processing. Scores are therefore an
 answer-agent comparison over the same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v37-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v37-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v38-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -283,7 +284,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v37",
+    key="full-v38",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,

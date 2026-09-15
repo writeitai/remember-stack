@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.core.concise_adjudication import project_concise_inputs
 from rememberstack.core.concise_adjudication import translate_prompt_decision
+from rememberstack.core.concise_adjudication import translator_rejection_note
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallError
 from rememberstack.model.concise_adjudication import PromptFactDecision
@@ -32,11 +33,11 @@ from rememberstack.spine.fact_applications import snapshot_hash
 
 RELATION_APPLICATION_VERSION = (
     "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1:new-fact-refs-1:target-discipline-1"
+    "output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"
 )
 OBSERVATION_APPLICATION_VERSION = (
     "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1:new-fact-refs-1:target-discipline-1"
+    "output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"
 )
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
@@ -196,39 +197,62 @@ class FactAdjudicator:
                 return tuple(results)
             if prepared.decision is None:
                 presentation, mapping = project_concise_inputs(snapshot=prepared.inputs)
-                try:
-                    call = self._provider.generate(
-                        request=ModelRequest(
-                            model=self._settings.model,
-                            prompt=_FACT_PROMPT.format(
-                                inputs=canonical_json(presentation)
-                            ),
-                            temperature=0.0,
-                        ),
-                        response_type=PromptFactDecision,
-                    )
-                except ProviderCallError as error:
-                    if error.usage is not None:
-                        meter.record(
-                            call_key=f"{call_key}:{prepared.application_id}:{prepared.attempt_id}:failure",
-                            tier="fact_adjudication",
-                            usage=error.usage,
-                            outcome="provider_error",
-                        )
-                    raise
-                meter.record(
-                    call_key=f"{call_key}:{prepared.application_id}:{prepared.attempt_id}",
-                    tier="fact_adjudication",
-                    usage=call.usage,
+                base_prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+                base_receipt_key = (
+                    f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
                 )
-                try:
-                    decision = translate_prompt_decision(
-                        response=call.output, mapping=mapping
+                # In-delivery translator budget: exactly one retry against this
+                # same prepared attempt. The note is a local variable, never
+                # cross-delivery state: redelivery starts again at today's
+                # prompt with the worker's attempt cap as the outer backstop.
+                rejection_note: str | None = None
+                translator_retries = 0
+                while True:
+                    prompt = base_prompt
+                    receipt_key = base_receipt_key
+                    if rejection_note is not None:
+                        prompt = f"{prompt}\n\n{rejection_note}"
+                        receipt_key = f"{receipt_key}:translator-retry1"
+                    try:
+                        call = self._provider.generate(
+                            request=ModelRequest(
+                                model=self._settings.model,
+                                prompt=prompt,
+                                temperature=0.0,
+                            ),
+                            response_type=PromptFactDecision,
+                        )
+                    except ProviderCallError as error:
+                        if error.usage is not None:
+                            meter.record(
+                                call_key=f"{base_receipt_key}:failure",
+                                tier="fact_adjudication",
+                                usage=error.usage,
+                                outcome="provider_error",
+                            )
+                        raise
+                    meter.record(
+                        call_key=receipt_key, tier="fact_adjudication", usage=call.usage
                     )
-                except ValueError as error:
-                    raise ApplicationInputChanged(
-                        f"invalid adjudication answer rejected: {error}"
-                    ) from error
+                    try:
+                        decision = translate_prompt_decision(
+                            response=call.output, mapping=mapping
+                        )
+                    except ValueError as error:
+                        if translator_retries >= 1:
+                            raise ApplicationInputChanged(
+                                f"invalid adjudication answer rejected: {error}"
+                            ) from error
+                        rejection_note = translator_rejection_note(
+                            error=error, response=call.output
+                        )
+                        if rejection_note is None:
+                            raise ApplicationInputChanged(
+                                f"invalid adjudication answer rejected: {error}"
+                            ) from error
+                        translator_retries += 1
+                        continue
+                    break
                 published = self._catalog.publish_decision(
                     deployment_id=deployment_id, prepared=prepared, decision=decision
                 )
