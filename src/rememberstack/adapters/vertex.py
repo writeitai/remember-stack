@@ -83,6 +83,14 @@ _DEFAULT_THROTTLE_RETRY_DELAYS_S: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
 )
+# R8 evidence: one Gemma stream degenerated into tens of kilobytes of repeated
+# text before the truncated completion failed validation. A legitimate
+# structured verdict never repeats a long delta verbatim several times in a
+# row, while a long varied processing response must keep flowing (see
+# test_large_processing_response_is_preserved), so the guard keys on
+# repetition, never on total size.
+_REPETITION_PIECE_MIN_CHARS: Final[int] = 32
+_REPETITION_MAX_IDENTICAL_RUN: Final[int] = 8
 _ONE_MILLION: Final = Decimal(1_000_000)
 
 AccessTokenSource = Callable[[], str]
@@ -511,6 +519,8 @@ def _completion_from_stream(
     finish_reason: object = None
     model_name: object = None
     usage_raw: object = None
+    previous_piece: str | None = None
+    identical_run = 0
 
     def body() -> dict[str, Any]:
         """Build the current completion for validation or error accounting."""
@@ -578,6 +588,21 @@ def _completion_from_stream(
                     "Vertex /chat/completions returned a malformed content delta"
                 )
             content_parts.append(piece)
+            if len(piece) >= _REPETITION_PIECE_MIN_CHARS and piece == previous_piece:
+                identical_run += 1
+            elif len(piece) >= _REPETITION_PIECE_MIN_CHARS:
+                identical_run = 1
+            else:
+                identical_run = 0
+            previous_piece = piece
+            if identical_run >= _REPETITION_MAX_IDENTICAL_RUN:
+                assembled = sum(len(part) for part in content_parts)
+                raise VertexProviderError(
+                    "Vertex /chat/completions stream repeated one"
+                    f" {len(piece)}-character delta {identical_run} times in a"
+                    f" row (assembled {assembled} characters); aborting a"
+                    " degenerating stream"
+                )
     except VertexProviderError as error:
         raise VertexProviderError(
             str(error),
