@@ -1,1 +1,1 @@
-"""The pinned RS-LoCoMo-Full-v36 benchmark adapter."""
+"""The pinned RS-LoCoMo-Full-v37 benchmark adapter."""

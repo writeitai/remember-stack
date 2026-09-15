@@ -32,11 +32,11 @@ from rememberstack.spine.fact_applications import snapshot_hash
 
 RELATION_APPLICATION_VERSION = (
     "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1:new-fact-refs-1"
+    "output-fields-1:new-fact-refs-1:target-discipline-1"
 )
 OBSERVATION_APPLICATION_VERSION = (
     "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1:new-fact-refs-1"
+    "output-fields-1:new-fact-refs-1:target-discipline-1"
 )
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
@@ -93,6 +93,9 @@ For a new fact, choose a name such as N1; do not continue the supplied F-numberi
 Declare that name in new_facts and use the same name wherever you target it.
 The declaration's assertion must be a supplied A-name. F2 is an existing-fact
 reference and is valid only when this attempt supplied F2.
+When target is a supplied F-name, new_facts must be empty: never declare an
+N-name you do not target. The incoming assertion's own placement is decided by
+target and stance alone; never list the incoming A-name in support_moves.
 
 WORLD DATES
 source_said_at is when a source spoke or published, never a fallback world date.

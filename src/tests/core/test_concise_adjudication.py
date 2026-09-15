@@ -580,6 +580,8 @@ def test_prompts_state_assertion_identity_in_plain_language() -> None:
     assert "positive evidence of a win" in _FACT_PROMPT
     assert "won Tournament A" in _FACT_PROMPT
     assert "5 November" in _FACT_PROMPT and "6 November" in _FACT_PROMPT
+    assert "new_facts must be empty" in _FACT_PROMPT
+    assert "never list the incoming A-name in support_moves" in _FACT_PROMPT
     assert "won on 5 November" not in _FACT_PROMPT
     assert "one-microsecond" in _FACT_PROMPT
     assert "quarter" in _FACT_PROMPT
@@ -619,7 +621,7 @@ def test_fact_prompt_names_all_nine_existing_output_fields() -> None:
     assert "These examples show the response structure." in _FACT_PROMPT
     assert (
         hashlib.sha256(_FACT_PROMPT.encode()).hexdigest()
-        == "5f7e0a10003bbc0261fec53f55e735665643d6c6ec14beb0a0038e3add70df91"
+        == "997d7faca906a97b2f758caed4531fbd647abe523b5739b92cfe42c06734f748"
     )
     format_at = _FACT_PROMPT.index("OUTPUT FORMAT")
     inputs_at = _FACT_PROMPT.index("INPUT JSON:")

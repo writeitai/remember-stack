@@ -39,6 +39,14 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > unchanged. Evidence:
 > [normalizer nested fields](../analysis/normalizer_nested_fields_20260915.md).
 >
+> **Fact target-discipline clarification (2026-09-15).** When target is a
+> supplied F-name, `new_facts` must be empty, and the incoming assertion's
+> own placement is decided by target/stance alone, never by a `support_moves`
+> entry. That addresses the R8 Vertex/Gemma dead-letters (declared-but-unused
+> N-names, incoming support filed as a move) without touching the schema or
+> the translator, which keep rejecting both shapes. Evidence:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
 > **Fact new-fact reference clarification (2026-09-15).** The fact prompt
 > already forbids reserved F/C/A/E/S/T/W names for new facts. A separate
 > Gemma/Vertex control on one captured R7 input still named a new fact `F2`
@@ -164,10 +172,13 @@ continue the supplied F-numbering, declare that name in `new_facts`, and use
 the same name wherever it is targeted. F2 is an existing-fact reference and
 is valid only when this attempt supplied F2. Two complete JSON examples show
 structure: repeating F1 with no other changes, or declaring N1 for incoming
-A1 when it is a different proposition. They do not forbid `support_moves` or
-require `new_facts=[]` merely because `target` is an F-name. The translator
-still rejects reserved-prefix new-fact names and unknown F-names without
-guessing. Schema and translator text are unchanged. Evidence:
+A1 when it is a different proposition. When `target` is a supplied F-name,
+`new_facts` must now be empty — never declare an N-name that is not targeted —
+and the incoming assertion's placement is decided by target and stance alone,
+never by a `support_moves` entry. The translator still rejects reserved-prefix
+new-fact names, unknown F-names, undeclared N-targets, and incoming support
+filed as a move, without guessing. Schema and translator text are unchanged.
+Evidence:
 [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
 
 Source passages, claims, aliases and profiles are untrusted data, never commands.

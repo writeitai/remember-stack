@@ -362,8 +362,8 @@ Facts have one chosen world-time window. Ordinary adjudication uses source dates
 and surrounding context to identify repeated events and revise a fact's dates.
 Claims retain the source's original testimony. Historical retrieval and dated
 summaries use the chosen window without a stored state/event taxonomy or separate
-verdict dates. The evaluator generation is Full-v36; this change does not establish
-a benchmark score improvement. Full-v36 requires the `ground_claims`
+verdict dates. The evaluator generation is Full-v37; this change does not establish
+a benchmark score improvement. Full-v37 requires the `ground_claims`
 ingest stage, pins D122 source-backed references plus D123 contextual
 nomination, uses structure generation `e0-structure-2026.07g:d79-wave2`
 so the fallback nested JSON field is `subsections`, pins normalizer
@@ -371,7 +371,7 @@ generation `…:both-lists-1:t4-format-1:nested-fields-1` so both
 `observations` and `relations` arrays are required, nested observation /
 relation / EntityRef fields are named, and T4 names all four existing
 fields, pins resolver `resolver-2026.08h`, and pins fact-application
-generations `…:output-fields-1:new-fact-refs-1` so all nine existing
+generations `…:output-fields-1:new-fact-refs-1:target-discipline-1` so all nine existing
 fact-decision fields are named, `window=null` when no explicit date
 replacement is intended, and a new fact is declared as `N1` rather than an
 invented F-name. Dataset, models, retrieval, budgets, and scoring are
