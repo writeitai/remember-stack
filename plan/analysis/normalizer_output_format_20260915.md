@@ -39,9 +39,9 @@ Return one JSON object containing both "observations" and "relations". Both valu
 ```
 
 That call succeeded in 3.9215 seconds: 1,443 input tokens, 96 output tokens,
-USD 0.00027405. The validated object had `relations: 0` and
-`observations: 1`. Safe receipt:
-`/tmp/conv42-gemma-full-run/normalization-format-probe-safe.json`
+USD 0.00027405. The validated object had an empty relations array and one
+observation. Durable receipt:
+[locomo-conv42-gemma-normalization-format-probe-20260915.json](https://github.com/writeitai/ultimate-memory-cloud/blob/cdf2486d/design/analysis/locomo-conv42-gemma-normalization-format-probe-20260915.json)
 (diagnostic input SHA-256
 `f738b2315c3fa382c963127d6a0fcbaf471e06157418805ad485ce740710df87`,
 5,823 bytes — the original 5,650-byte prompt plus the format sentence).
@@ -89,9 +89,11 @@ observations-only stream as a finished empty-relations result.
 - **Timeout, token cap, automatic retry, or another provider.** Those would
   paper over an incomplete object. They are not this change. Parent owns
   runtime operations.
-- **Silently accept observations without relations.** That would discard
-  required relation assertions whenever the model stopped early. The
-  existing generate path already refuses incomplete JSON.
+- **Treat the truncated stream as a finished result.** The observed failure
+  is incomplete JSON: observations, then no `relations` field, no root
+  closure, then whitespace. That must remain a generate failure. A complete
+  object with an empty relations array is valid and does not by itself mean
+  assertions were discarded.
 
 The chosen path is the measured sentence in the existing prompt, placed
 before `SOURCE TIMESTAMP` as in the successful diagnostic. An extra
