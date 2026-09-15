@@ -98,7 +98,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/getting-started` | Install, first ingest, first assured queries |
 | `/docs/why` | What this memory is and why agents that act need it |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
-| `/docs/architecture` | remember.db: durable spine, stores, write vs read |
+| `/docs/architecture` | RememberStack architecture: durable spine, stores, write vs read |
 | `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
 | `/docs/ingestion` | Write-path overview + guarantees |
 | `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |

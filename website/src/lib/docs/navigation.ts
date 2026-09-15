@@ -6,7 +6,7 @@ export type NavItem = {
 
 // Single source of truth for the docs sidebar order and grouping. It also
 // drives prev/next pagination. Add a page here when you add its page.mdx.
-// Order is progressive disclosure: mission → why this memory → remember.db
+// Order is progressive disclosure: mission → why this memory → architecture
 // → core model → write path → read path → operate → reference.
 export const docsNavigation: NavItem[] = [
   {
@@ -15,7 +15,7 @@ export const docsNavigation: NavItem[] = [
     children: [
       { title: "Mission", href: "/docs" },
       { title: "Why this memory", href: "/docs/why" },
-      { title: "remember.db architecture", href: "/docs/architecture" },
+      { title: "Architecture", href: "/docs/architecture" },
       { title: "Concepts", href: "/docs/concepts" },
       { title: "Knowledge (Plane K)", href: "/docs/knowledge" },
     ],

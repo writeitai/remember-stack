@@ -1,14 +1,14 @@
 export const metadata = {
-  title: "remember.db architecture",
+  title: "Architecture",
   description:
-    "How RememberStack’s durable spine is shaped: what lives in PostgreSQL and object storage, what is derived, and how writes and reads relate.",
+    "RememberStack architecture: the durable memory spine — PostgreSQL, object storage, and git — and how writes and reads relate.",
 };
 
-# remember.db
+# Architecture
 
-A RememberStack deployment does not treat a vector index as the database. Memory lives in a **durable spine**: PostgreSQL rows that record what was ingested, what sources claimed, what the system currently holds true, and when those beliefs changed — plus object storage for the bytes those rows point at.
+RememberStack does not treat a vector index as the database. A deployment’s memory lives in a **durable spine**: PostgreSQL rows that record what was ingested, what sources claimed, what the system currently holds true, and when those beliefs changed — plus object storage for the bytes those rows point at. Git holds compiled and authored knowledge pages beside that spine.
 
-These docs call that spine **remember.db**. The name is a teaching handle, not a file on disk and not a separate product. In the Compose self-host it is PostgreSQL 19 plus MinIO; another deployment uses the same engine schema on PostgreSQL plus an S3-compatible bucket. The rules do not change with the vendor.
+In the Compose self-host the spine is PostgreSQL 19 plus MinIO; another deployment uses the same engine schema on PostgreSQL plus an S3-compatible bucket. The rules do not change with the vendor.
 
 **Hard rule:** validity and invalidation live **only** in PostgreSQL. Search indexes are derived state beside the authority rows. They **nominate** candidates; the spine **confirms** live truth. Neither a lagging index nor a knowledge page can become independent authority.
 
@@ -52,7 +52,7 @@ The store is a **DAG across three planes**, not a single ladder. The plane a com
 
 **E is what we ingested, K is what we concluded, P is how we reach it — and P always rebuilds from E.** K pages and P3 cross-link as consumers of each other; K is never a structural input to P1 or graph reads.
 
-The conceptual *why* (testimony vs truth, two clocks, why indexes cannot be authority) is on [Why this memory](/docs/why). This page is the store.
+The conceptual *why* (testimony vs truth, two clocks, why indexes cannot be authority) is on [Why this memory](/docs/why). This page is the spine.
 
 ## Writes: evidence accumulates
 

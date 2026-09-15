@@ -6,9 +6,11 @@ export const metadata = {
 
 # RememberStack
 
-**RememberStack** is Apache-2.0 open-source memory infrastructure for AI agents.
+**RememberStack** is Apache-2.0 open-source memory infrastructure for AI agents. This repository is the complete engine.
 
-Most stacks answer *where did I read something like this?* Agents that act need a harder question: **what do we actually know — and what changed our mind?** This repository is the complete engine for that question: ingest, resolve, supersede, retrieve. Nothing that determines correctness is withheld for a commercial tier.
+**[remember.dev](https://remember.dev)** is the managed cloud product built around that same engine.
+
+Most stacks answer *where did I read something like this?* Agents that act need a harder question: **what do we actually know — and what changed our mind?** RememberStack answers that question: ingest, resolve, supersede, retrieve. Nothing that determines correctness is withheld for a commercial tier.
 
 The system is built to stay useful at **a million documents**. The default self-host profile routes **Markdown** out of the box; other MIME routes are engine-supported once registered. See [Project status](/docs/project-status) for what ships.
 
@@ -16,7 +18,7 @@ The system is built to stay useful at **a million documents**. The default self-
 
 1. [Getting started](/docs/getting-started) — `uvx remember setup`, a file in, an answer back.
 2. [Why this memory](/docs/why) — testimony vs truth, and why passage RAG is not enough.
-3. [remember.db architecture](/docs/architecture) — the durable spine: what lives where, how reads and writes relate.
+3. [Architecture](/docs/architecture) — the durable spine: what lives where, how reads and writes relate.
 
 ## What this is not
 
@@ -24,6 +26,6 @@ The system is built to stay useful at **a million documents**. The default self-
 - Not passage RAG with extra metadata.
 - Not a web UI or a multi-tenant control plane. Those belong to the separate cloud product. Agent surfaces — API, CLI, MCP, and filesystem mounts — are the complete consumption story in this repo.
 - Not a paywalled core. Extraction, resolution, supersession, grounding, budgets, the dead-letter queue, and deletion all ship here.
-- Not a hosted SLA from these docs. Self-host is the full engine; [Remember Cloud](/docs/cloud/architecture) is the managed platform built around it.
+- Not a hosted SLA from these docs. Self-host is the full RememberStack engine; [remember.dev](https://remember.dev) is the managed cloud. See [Cloud architecture](/docs/cloud/architecture).
 
 The vocabulary (claim, fact, grain, clocks) lives on [Concepts](/docs/concepts) when you need it.

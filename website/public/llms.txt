@@ -7,7 +7,7 @@
 - [Mission](https://remember.dev/docs): RememberStack doorway — who this is for, what it changes, and where to start.
 - [Why this memory](https://remember.dev/docs/why): Testimony vs truth, failure modes vs passage RAG, and why agents that act need a harder question than similar text.
 - [Concepts](https://remember.dev/docs/concepts): Core vocabulary: claims, relations, observations, bitemporal clocks, and validity windows.
-- [remember.db architecture](https://remember.dev/docs/architecture): Durable spine: what lives in PostgreSQL and object storage, what is derived, and how writes and reads relate.
+- [Architecture](https://remember.dev/docs/architecture): RememberStack architecture — durable spine (PostgreSQL, object storage, git), what is derived, and how writes and reads relate.
 - [Getting Started](https://remember.dev/docs/getting-started): 2-minute quickstart with `uvx remember setup`.
 - [Agent Harnesses](https://remember.dev/docs/harnesses): Connecting Cursor, Claude Code, Claude Desktop, Codex, and Google Antigravity.
 - [Python SDK Reference](https://remember.dev/docs/reference/sdk): Official `remember` Python package documentation (`RememberClient`).
