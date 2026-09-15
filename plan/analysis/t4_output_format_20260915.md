@@ -105,9 +105,10 @@ whitespace so the live proof does not need another paid call.
 
 ## What follows if accepted
 
-The resolver generation rolls so T4 decisions under the new prompt do not
-share D22 provenance with `resolver-2026.08g`. Thresholds and identity policy
-do not change. The normalizer generation appends a T4-format marker so
+The resolver generation rolls so T4 decisions under the new prompt have new
+provenance. Thresholds and identity policy do not change. Curves measured
+under `resolver-2026.08g` remain 08g and may still be compared directionally
+when labeled as such. The normalizer generation appends a T4-format marker so
 pipeline work that embeds resolution is distinguished. The LoCoMo protocol
 identity rolls from Full-v33 to Full-v34 together with the fact-adjudication
 output-format correction. Adapter keys, variants, and fingerprints roll

@@ -371,8 +371,8 @@ generation `…:both-lists-1:t4-format-1` so both `observations` and
 `relations` arrays are required and T4 names all four existing fields,
 pins resolver `resolver-2026.08h`, and pins fact-application generations
 `…:output-fields-1` so all nine existing fact-decision fields are named
-and `window=null` preserves dates. Dataset, models, retrieval, budgets,
-and scoring are unchanged.
+and `window=null` when no explicit date replacement is intended. Dataset,
+models, retrieval, budgets, and scoring are unchanged.
 
 Stores created before this change are recreated and re-ingested; the migration
 refuses a populated database rather than converting it

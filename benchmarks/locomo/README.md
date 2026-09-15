@@ -4,7 +4,8 @@ v34 (2026-09-15) names existing decision-output fields in two processing
 prompts. T4 requires `candidate_id`, `confidence`, `decision`, and
 `rationale` together, including nulls; that wording completed one captured
 Gemma/Vertex T4 input. Fact adjudication names all nine `PromptFactDecision`
-fields, uses `[]` for empty arrays, and says `window=null` to preserve dates;
+fields, uses `[]` for empty arrays, and says `window=null` when no explicit
+date replacement is intended;
 that corrects a prompt/schema contradiction and is not a reproduced
 fact-adjudication provider failure. Resolver, normalizer, and application
 generations roll together. Meaning, temporal, schema, retrieval, answer, and

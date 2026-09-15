@@ -101,9 +101,10 @@ one-microsecond window.
 A missing end means unknown unless evidence explicitly supports precision=open
 (ongoing). Known start with unknown end keeps its boundary precision, never open.
 
-Use window=null to preserve dates. A replacement changes them; an all-unknown
-window clears them. Every explicit replacement, including clearing, needs a
-rationale and supporting C-names. Evidence attachment alone does not edit dates.
+Use window=null when no explicit date replacement is intended. A replacement
+changes them; an all-unknown window clears them. Every explicit replacement,
+including clearing, needs a rationale and supporting C-names. Evidence
+attachment alone does not edit dates.
 For a new fact, uses_claim_window copies the canonical claim window only for the
 assertion it applies to; otherwise dates start unknown. A claim mentioning hiring
 in 2019 and founding in 1990 does not date both alike.
@@ -123,7 +124,11 @@ fact instead of merging. The candidates may be incomplete; limits and
 potentially_truncated describe the supplied subset, not everything in the store.
 
 OUTPUT FORMAT
-Return one JSON object with all nine fields: confidence, contradict_with, new_facts, rationale, stance, support_moves, target, updates, and window. Use [] when an array has no operations. Use window=null to keep existing dates unchanged. confidence is a number from 0 to 1. rationale is a short explanation. Include every field.
+Return one JSON object with all nine fields: confidence, contradict_with,
+new_facts, rationale, stance, support_moves, target, updates, and window.
+Use [] when an array has no operations. Use window=null when no explicit
+date replacement is intended. confidence is a number from 0 to 1.
+rationale is a short explanation. Include every field.
 
 INPUT JSON:
 {inputs}

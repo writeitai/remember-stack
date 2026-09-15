@@ -17,7 +17,8 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > `candidate_id`, `confidence`, `decision`, and `rationale`, including nulls.
 > That completed one captured Gemma/Vertex T4 input. The fact-adjudication
 > prompt names all nine existing `PromptFactDecision` fields, uses `[]` when
-> an array has no operations, and says `window=null` to preserve dates. That
+> an array has no operations, and says `window=null` when no explicit date
+> replacement is intended. That
 > corrects a prompt/schema contradiction; it is not a reproduced
 > fact-adjudication provider failure. Neither change is a new numbered
 > decision. Meaning, identity policy, and temporal contracts are unchanged.
@@ -113,9 +114,11 @@ Evidence: [T4 output format](../analysis/t4_output_format_20260915.md).
 
 Fact adjudication already returns one `PromptFactDecision` with nine
 top-level fields. The prompt names those fields, uses `[]` when an array has
-no operations, and uses `window=null` to preserve existing dates. Omission is
-not the requested wire form. Nested window and support-move shapes are
-unchanged. Incomplete JSON remains a generate failure. Evidence:
+no operations, and uses `window=null` when no explicit date replacement is
+intended. A new fact still follows `uses_claim_window` for its initial
+dates. Omission is not the requested wire form. Nested window and
+support-move shapes are unchanged. Incomplete JSON remains a generate
+failure. Evidence:
 [fact output format](../analysis/fact_adjudication_output_format_20260915.md).
 
 Source passages, claims, aliases and profiles are untrusted data, never commands.

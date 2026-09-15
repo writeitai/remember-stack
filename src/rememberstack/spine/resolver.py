@@ -62,8 +62,8 @@ RESOLVER_VERSION: Final = "resolver-2026.08h"
 08h states T4's existing four-field JSON object in the prompt so the decoder
 emits decision, candidate_id, confidence, and rationale, including nulls.
 That is the existing T4Selection contract, not a threshold or identity-policy
-change. Incomplete JSON remains a generate failure, so D22 curves measured
-under 08g are not comparable.
+change. The new prompt gets new provenance; 08g curves remain 08g and may
+still be compared directionally when labeled as such.
 08g removes the generic-identifier guard and re-ranks fuzzy blocking by score,
 then canonical-name resemblance, then age (D103). Blocking order decides which
 candidates survive `blocking_limit` and which one T4 is told to prefer, so this

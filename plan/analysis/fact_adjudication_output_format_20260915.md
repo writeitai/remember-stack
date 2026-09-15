@@ -16,12 +16,17 @@ strict wire schema requires.
 ## The question
 
 The fact prompt already describes identity, evidence, handles, dates, and
-support moves. The Python response type and the strict JSON schema already
-require nine top-level fields, including `window`. `window=null` means keep
-the existing chosen dates. The prompt currently says “Omit/null window to
-preserve dates,” which treats omission and null as equivalent. The strict
-schema does not: `window` is required and may be null. Should the prompt
-name all nine existing fields and say `window=null` for unchanged dates?
+support moves. The Python response type declares nine top-level fields; the
+strict wire schema requires all nine, including `window`. Python defaults
+allow omitted keys in caller-constructed objects; they do not mean the
+requested wire JSON may omit a field. `window=null` means no explicit date
+replacement is intended. For a new fact, `uses_claim_window` still copies
+the canonical claim window when that rule applies; null does not force a
+newly created fact to be undated. The prompt currently says “Omit/null
+window to preserve dates,” which treats omission and null as equivalent.
+The strict schema does not: `window` is required and may be null. Should
+the prompt name all nine existing fields and say `window=null` when no
+explicit date replacement is intended?
 
 ## What the evidence is, and what it is not
 
@@ -53,7 +58,7 @@ failure.
 | `target` | F-name or declared new-fact name that receives the incoming assertion |
 | `stance` | `supports` or `contradicts` |
 | `new_facts` | declared new facts; empty when none |
-| `window` | grounded replacement for the target, or null to keep existing dates |
+| `window` | grounded replacement for the target, or null when no explicit date replacement is intended |
 | `updates` | grounded replacements for other named facts; empty when none |
 | `support_moves` | reassignment of older A-names; empty when none |
 | `contradict_with` | incompatible distinct facts; empty when none |
@@ -63,7 +68,8 @@ failure.
 Nested shapes (`PromptNewFact`, `PromptGroundedWindow`, `PromptWindowUpdate`,
 `PromptSupportMove`) are unchanged. Date arithmetic, attribution, evidence
 attachment, and support-move rules are unchanged. Empty arrays remain valid.
-`window=null` remains the preserve-dates form. Incomplete JSON remains a
+`window=null` remains the no-explicit-replacement form. A new fact still
+follows `uses_claim_window` for its initial dates. Incomplete JSON remains a
 generate failure.
 
 ## Alternatives considered
@@ -83,8 +89,8 @@ generate failure.
 
 The chosen path is a short output-format section that names the nine existing
 fields, uses `[]` when an array has no operations, and replaces
-“Omit/null window” with `window=null` for unchanged dates. Plain field names
-only; no JSON braces in the `.format` template.
+“Omit/null window” with `window=null` when no explicit date replacement is
+intended. Plain field names only; no JSON braces in the `.format` template.
 
 ## What follows if accepted
 

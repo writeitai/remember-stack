@@ -5,7 +5,8 @@
 > (`candidate_id`, `confidence`, `decision`, `rationale`), including nulls;
 > that is a measured Gemma/Vertex completion of one captured input. The fact
 > prompt names all nine existing `PromptFactDecision` fields, uses `[]` for
-> empty arrays, and says `window=null` to preserve dates; that corrects a
+> empty arrays, and says `window=null` when no explicit date replacement is
+> intended; that corrects a
 > prompt/schema contradiction and is not a reproduced fact-adjudication
 > provider failure. Resolver, normalizer, and application generations roll.
 > Meaning, temporal, schema, retrieval, answer, and judge pins stay the same.
@@ -253,10 +254,10 @@ generation is `resolver-2026.08h`. Normalizer generation includes
 `t4-format-1`. Relation and observation application generations include
 `output-fields-1`. T4 names all four existing fields, including nulls. Fact
 adjudication names all nine existing fields, uses `[]` for empty arrays, and
-uses `window=null` to preserve dates. Meaning, temporal, schema, retrieval,
-answer, and judge pins are unchanged. Adapter version, protocol identities,
-variants, and fingerprints roll. Stores ingested under v33 must be
-re-ingested.
+uses `window=null` when no explicit date replacement is intended. Meaning,
+temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
+version, protocol identities, variants, and fingerprints roll. Stores
+ingested under v33 must be re-ingested.
 
 **v32 → v33 (2026-09-15 — both-lists normalizer prompt):** Normalizer
 generation includes `both-lists-1`. The prompt requires both `observations`
