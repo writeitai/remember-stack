@@ -2,6 +2,8 @@
 
 from datetime import datetime
 from datetime import timezone
+import hashlib
+import json
 from typing import Any
 from uuid import UUID
 
@@ -494,6 +496,65 @@ def test_wrong_kind_and_unknown_handles_fail() -> None:
         )
 
 
+def test_invented_f2_new_fact_handle_is_rejected() -> None:
+    """F2 is reserved even when this attempt supplied only F1. Never guess N1."""
+    _presentation, mapping = project_concise_inputs(snapshot=_snapshot())
+    assert list(mapping.facts) == ["F1"]
+    with pytest.raises(ValueError, match="collides with a supplied name"):
+        translate_prompt_decision(
+            response=PromptFactDecision.model_validate(
+                {
+                    "target": "F2",
+                    "new_facts": [{"handle": "F2", "assertion": "A1"}],
+                    "confidence": 0.9,
+                    "rationale": "Invented the next F-name.",
+                }
+            ),
+            mapping=mapping,
+        )
+
+
+def test_invented_f2_target_without_declaration_is_rejected() -> None:
+    """Unknown F2 as target is not treated as a new fact."""
+    _presentation, mapping = project_concise_inputs(snapshot=_snapshot())
+    with pytest.raises(ValueError, match="unknown fact handle F2"):
+        translate_prompt_decision(
+            response=PromptFactDecision.model_validate(
+                {
+                    "target": "F2",
+                    "new_facts": [],
+                    "confidence": 0.9,
+                    "rationale": "Guessed F2.",
+                }
+            ),
+            mapping=mapping,
+        )
+
+
+def test_declared_n1_new_fact_translates() -> None:
+    """Matching N1 handle, target, and A1 assertion is the valid new-fact path."""
+    _presentation, mapping = project_concise_inputs(snapshot=_snapshot())
+    decision = translate_prompt_decision(
+        response=PromptFactDecision.model_validate(
+            {
+                "target": "N1",
+                "new_facts": [{"handle": "N1", "assertion": "A1"}],
+                "window": None,
+                "updates": [],
+                "support_moves": [],
+                "contradict_with": [],
+                "confidence": 0.9,
+                "rationale": "Different proposition from F1.",
+            }
+        ),
+        mapping=mapping,
+    )
+    assert decision.target.new_handle == "N1"
+    assert decision.target.fact_id is None
+    assert decision.new_facts[0].handle == "N1"
+    assert decision.new_facts[0].assertion_application_id == _APP
+
+
 def test_prompts_state_assertion_identity_in_plain_language() -> None:
     """Prompt-contract: required semantics are present, not a phrasing freeze."""
     for prompt in (
@@ -552,10 +613,48 @@ def test_fact_prompt_names_all_nine_existing_output_fields() -> None:
     assert "confidence is a number from 0 to 1." in _FACT_PROMPT
     assert "rationale is a short explanation." in _FACT_PROMPT
     assert "uses_claim_window copies the canonical claim window" in _FACT_PROMPT
+    assert "do not continue the supplied F-numbering" in _FACT_PROMPT
+    assert "Declare that name in new_facts" in _FACT_PROMPT
+    assert "F2 is an existing-fact" in _FACT_PROMPT
+    assert "These examples show the response structure." in _FACT_PROMPT
+    assert (
+        hashlib.sha256(_FACT_PROMPT.encode()).hexdigest()
+        == "5f7e0a10003bbc0261fec53f55e735665643d6c6ec14beb0a0038e3add70df91"
+    )
     format_at = _FACT_PROMPT.index("OUTPUT FORMAT")
     inputs_at = _FACT_PROMPT.index("INPUT JSON:")
     assert format_at < inputs_at
-    _FACT_PROMPT.format(inputs="{}")
+    rendered = _FACT_PROMPT.format(inputs="{}")
+    decoder = json.JSONDecoder()
+    examples: list[dict[str, Any]] = []
+    cursor = 0
+    while True:
+        start = rendered.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            obj, consumed = decoder.raw_decode(rendered[start:])
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(obj, dict) and "target" in obj:
+            examples.append(obj)
+        cursor = start + consumed
+    assert len(examples) == 2
+    existing, created = examples
+    _presentation, mapping = project_concise_inputs(snapshot=_snapshot())
+    attached = translate_prompt_decision(
+        response=PromptFactDecision.model_validate(existing), mapping=mapping
+    )
+    minted = translate_prompt_decision(
+        response=PromptFactDecision.model_validate(created), mapping=mapping
+    )
+    assert existing["target"] == "F1"
+    assert existing["new_facts"] == []
+    assert attached.target.fact_id == _FACT
+    assert created["target"] == "N1"
+    assert created["new_facts"] == [{"assertion": "A1", "handle": "N1"}]
+    assert minted.target.new_handle == "N1"
 
 
 def _mostly_unique_snapshot() -> dict[str, Any]:

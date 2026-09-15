@@ -31,10 +31,12 @@ from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
 RELATION_APPLICATION_VERSION = (
-    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1"
+    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+    "output-fields-1:new-fact-refs-1"
 )
 OBSERVATION_APPLICATION_VERSION = (
-    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1"
+    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
+    "output-fields-1:new-fact-refs-1"
 )
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
@@ -87,6 +89,10 @@ from separate sources is still separate testimony. W-names disclose window
 witnesses whose text is not supplied; you may not cite them.
 Use supplied names of the required kind. New facts need distinct declared names
 such as win or N1, not reserved F/C/A/E/S/T/W names. No guessed IDs or names.
+For a new fact, choose a name such as N1; do not continue the supplied F-numbering.
+Declare that name in new_facts and use the same name wherever you target it.
+The declaration's assertion must be a supplied A-name. F2 is an existing-fact
+reference and is valid only when this attempt supplied F2.
 
 WORLD DATES
 source_said_at is when a source spoke or published, never a fallback world date.
@@ -129,6 +135,16 @@ new_facts, rationale, stance, support_moves, target, updates, and window.
 Use [] when an array has no operations. Use window=null when no explicit
 date replacement is intended. confidence is a number from 0 to 1.
 rationale is a short explanation. Include every field.
+
+These examples show the response structure. Use the actual supplied references,
+evidence, stance and confidence for your decision; other operations remain allowed.
+
+Example: the incoming assertion repeats supplied fact F1, with no other changes:
+{{"confidence": 0.9, "contradict_with": [], "new_facts": [], "rationale": "Same win as F1.", "stance": "supports", "support_moves": [], "target": "F1", "updates": [], "window": null}}
+
+Example: incoming assertion A1 is a different proposition from every supplied
+fact, with no other changes:
+{{"confidence": 0.9, "contradict_with": [], "new_facts": [{{"assertion": "A1", "handle": "N1"}}], "rationale": "Different proposition from the supplied facts.", "stance": "supports", "support_moves": [], "target": "N1", "updates": [], "window": null}}
 
 INPUT JSON:
 {inputs}
