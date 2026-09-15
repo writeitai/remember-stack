@@ -527,6 +527,37 @@ def test_prompts_state_assertion_identity_in_plain_language() -> None:
     )
 
 
+def test_fact_prompt_names_all_nine_existing_output_fields() -> None:
+    """Wire fields are named; omit/null is not treated as a valid window form."""
+    assert tuple(PromptFactDecision.model_fields) == (
+        "target",
+        "stance",
+        "new_facts",
+        "window",
+        "updates",
+        "support_moves",
+        "contradict_with",
+        "confidence",
+        "rationale",
+    )
+    assert "Omit/null window" not in _FACT_PROMPT
+    assert "Use window=null when no explicit date replacement is intended." in (
+        _FACT_PROMPT
+    )
+    assert (
+        "Return one JSON object with all nine fields: confidence, contradict_with,\n"
+        "new_facts, rationale, stance, support_moves, target, updates, and window."
+    ) in _FACT_PROMPT
+    assert "Use [] when an array has no operations." in _FACT_PROMPT
+    assert "confidence is a number from 0 to 1." in _FACT_PROMPT
+    assert "rationale is a short explanation." in _FACT_PROMPT
+    assert "uses_claim_window copies the canonical claim window" in _FACT_PROMPT
+    format_at = _FACT_PROMPT.index("OUTPUT FORMAT")
+    inputs_at = _FACT_PROMPT.index("INPUT JSON:")
+    assert format_at < inputs_at
+    _FACT_PROMPT.format(inputs="{}")
+
+
 def _mostly_unique_snapshot() -> dict[str, Any]:
     """Small ordinary case: two distinct statements, almost no repeated wording."""
     return _snapshot(

@@ -1,4 +1,4 @@
-"""Typed values for the full-system RS-LoCoMo-Full-v33 protocol."""
+"""Typed values for the full-system RS-LoCoMo-Full-v34 protocol."""
 
 from __future__ import annotations
 
@@ -33,12 +33,12 @@ Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
 ProtocolKey = Literal[
-    "full-v33", "full-v33-gemma-vertex", "full-v33-codex-subscription"
+    "full-v34", "full-v34-gemma-vertex", "full-v34-codex-subscription"
 ]
 ProtocolName = Literal[
-    "RS-LoCoMo-Full-v33",
-    "RS-LoCoMo-Full-v33-GemmaVertex",
-    "RS-LoCoMo-Full-v33-CodexSubscription",
+    "RS-LoCoMo-Full-v34",
+    "RS-LoCoMo-Full-v34-GemmaVertex",
+    "RS-LoCoMo-Full-v34-CodexSubscription",
 ]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal[
@@ -135,7 +135,7 @@ class QuestionManifest(FrozenModel):
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v33"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v34"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -486,7 +486,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v33"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v34"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)
