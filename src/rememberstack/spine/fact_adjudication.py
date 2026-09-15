@@ -31,12 +31,10 @@ from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
 RELATION_APPLICATION_VERSION = (
-    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1"
+    "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1"
 )
 OBSERVATION_APPLICATION_VERSION = (
-    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
-    "output-fields-1"
+    "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1"
 )
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
