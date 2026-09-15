@@ -375,3 +375,10 @@ generations to finish. Set a positive number only when an operator deadline is
 intended. Monitor running calls: a stalled service can otherwise wait indefinitely.
 Invalid structured responses remain errors with available token usage retained;
 allowing more output does not make an invalid response usable.
+
+`generate()` stays a single synchronous call. The adapter receives the completion
+as server-sent events on the documented Chat Completions route, assembles the
+full text, and still requires a complete `stop` finish, schema-valid JSON, and
+provider usage before it succeeds. Truncated or dropped streams are errors.
+Missing usage is never billed as zero. HTTP 429 is retried only before a stream
+has started.

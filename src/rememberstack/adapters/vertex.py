@@ -24,12 +24,18 @@ Endpoint shape (retrieved 2026-09-04 from
 https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/call-open-model-apis):
 ``POST https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi/chat/completions``;
 the ``global`` location uses the bare ``aiplatform.googleapis.com`` host.
+``generate`` stays a synchronous port: it requests that route with ``stream``
+and reassembles one complete completion from server-sent events before
+validating or charging. Analysis:
+``plan/analysis/vertex_streamed_completion_20260915.md``.
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
 from decimal import Decimal
 import hashlib
+import json
 import threading
 import time
 from typing import Any
@@ -286,19 +292,34 @@ class VertexModelProvider:
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
 
         started_ns = time.monotonic_ns()
-        body = self._post(path="/chat/completions", payload=payload)
-        usage = _usage(
-            body=body,
-            price=price,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-        )
+        body = self._complete(path="/chat/completions", payload=payload)
+        latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
+        finish = _finish_reason(body)
+        if finish is None:
+            usage = _try_usage(body=body, price=price, latency_ms=latency_ms)
+            raise VertexProviderError(
+                f"{response_type.__name__}: Vertex stream ended before a complete"
+                " completion"
+                f" ({_diagnosis(body=body, content=_message_text(body), usage=usage)})",
+                usage=usage,
+            )
+        usage = _usage(body=body, price=price, latency_ms=latency_ms)
         content = _completion_content(body=body)
         if content is None:
             raise VertexInvalidResponseError(
                 f"{response_type.__name__}: provider returned no completion"
                 f" content ({_diagnosis(body=body, content='', usage=usage)})",
+                usage=usage,
+            )
+        if finish != "stop":
+            raise VertexInvalidResponseError(
+                f"{response_type.__name__}: provider returned an incomplete"
+                " completion"
+                f" ({_diagnosis(body=body, content=content, usage=usage)})",
                 usage=usage,
             )
         try:
@@ -318,42 +339,48 @@ class VertexModelProvider:
             " embeddings to the provider that owns the deployment's vector space"
         )
 
-    def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
-        """POST one JSON request with a fresh bearer token; map HTTP failures.
+    def _complete(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
+        """POST one streamed completion; map HTTP failures; never retry a 2xx.
 
         Only HTTP 429 is re-sent, after the configured delays, because it is
-        the one refusal that provably did no billable work.
+        the one refusal that provably did no billable work. A 2xx stream has
+        been admitted: this call is not re-sent even if the body is later
+        incomplete or malformed.
         """
         delays = iter(self._settings.throttle_retry_delays_s)
         while True:
-            response = self._client.post(
+            with self._client.stream(
+                "POST",
                 path,
                 json=payload,
                 headers={"Authorization": f"Bearer {self._access_token()}"},
-            )
-            if response.status_code != 429:
-                break
-            delay_s = next(delays, None)
-            if delay_s is None:
-                break
-            time.sleep(delay_s)
-        if response.status_code in (401, 403):
-            raise VertexAccessError(
-                f"Vertex {path} returned {response.status_code}: {response.text[:500]}"
-            )
-        if response.status_code >= 400:
-            raise VertexProviderError(
-                f"Vertex {path} returned {response.status_code}: {response.text[:500]}"
-            )
-        try:
-            body = response.json()
-        except ValueError as error:
-            raise VertexProviderError(
-                f"Vertex {path} returned non-JSON body"
-            ) from error
-        if not isinstance(body, dict):
-            raise VertexProviderError(f"Vertex {path} returned a malformed body")
-        return body
+            ) as response:
+                if response.status_code == 429:
+                    delay_s = next(delays, None)
+                    if delay_s is None:
+                        raise VertexProviderError(
+                            f"Vertex {path} returned 429: {response.text[:500]}"
+                        )
+                    time.sleep(delay_s)
+                    continue
+                if response.status_code in (401, 403):
+                    raise VertexAccessError(
+                        f"Vertex {path} returned {response.status_code}:"
+                        f" {response.text[:500]}"
+                    )
+                if response.status_code >= 400:
+                    raise VertexProviderError(
+                        f"Vertex {path} returned {response.status_code}:"
+                        f" {response.text[:500]}"
+                    )
+                try:
+                    return _completion_from_stream(response)
+                except VertexProviderError:
+                    raise
+                except httpx.HTTPError as error:
+                    raise VertexProviderError(
+                        f"Vertex {path} stream failed: {type(error).__name__}"
+                    ) from error
 
 
 def computed_cost_usd(
@@ -391,6 +418,135 @@ def _usage(
     )
 
 
+def _try_usage(
+    *, body: dict[str, Any], price: VertexModelPrice, latency_ms: int
+) -> ProviderCallUsage | None:
+    """Return parsed usage when the stream actually reported it; never invent it."""
+    try:
+        return _usage(body=body, price=price, latency_ms=latency_ms)
+    except ProviderAccountingError:
+        return None
+
+
+def _finish_reason(body: dict[str, Any]) -> object:
+    """Return the provider finish reason, or None when the stream never finished."""
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(choice, dict):
+        return None
+    return choice.get("finish_reason")
+
+
+def _message_text(body: dict[str, Any]) -> str:
+    """Return assembled completion text for diagnosis; never invent content."""
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return content if isinstance(content, str) else ""
+
+
+def _completion_from_stream(response: httpx.Response) -> dict[str, Any]:
+    """Reassemble one chat.completion-shaped body from SSE data events."""
+    content_parts: list[str] = []
+    finish_reason: object = None
+    model_name: object = None
+    usage_raw: object = None
+    for payload in _sse_data_payloads(response):
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError as error:
+            raise VertexProviderError(
+                "Vertex /chat/completions returned a malformed stream event"
+            ) from error
+        if not isinstance(event, dict):
+            raise VertexProviderError(
+                "Vertex /chat/completions returned a malformed stream event"
+            )
+        error = event.get("error")
+        if isinstance(error, dict):
+            raise VertexProviderError(
+                "Vertex /chat/completions stream error"
+                + (f": {error.get('code')}" if error.get("code") is not None else "")
+            )
+        if error:
+            raise VertexProviderError("Vertex /chat/completions stream error")
+        model = event.get("model")
+        if isinstance(model, str) and model.strip():
+            model_name = model
+        raw_usage = event.get("usage")
+        if raw_usage is not None:
+            usage_raw = raw_usage
+        choices = event.get("choices")
+        if choices is None:
+            continue
+        if not isinstance(choices, list):
+            raise VertexProviderError(
+                "Vertex /chat/completions returned a malformed stream event"
+            )
+        if not choices:
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise VertexProviderError(
+                "Vertex /chat/completions returned a malformed stream event"
+            )
+        if choice.get("finish_reason") is not None:
+            finish_reason = choice["finish_reason"]
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            continue
+        piece = delta.get("content")
+        if piece is None:
+            continue
+        if not isinstance(piece, str):
+            raise VertexProviderError(
+                "Vertex /chat/completions returned a malformed content delta"
+            )
+        content_parts.append(piece)
+    body: dict[str, Any] = {
+        "model": model_name if isinstance(model_name, str) else "",
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "index": 0,
+                "message": {"role": "assistant", "content": "".join(content_parts)},
+            }
+        ],
+    }
+    if usage_raw is not None:
+        body["usage"] = usage_raw
+    return body
+
+
+def _sse_data_payloads(response: httpx.Response) -> Iterator[str]:
+    """Yield SSE ``data`` payloads, stopping at ``[DONE]``."""
+    pending: list[str] = []
+    for line in response.iter_lines():
+        if line == "":
+            if not pending:
+                continue
+            payload = "\n".join(pending)
+            pending = []
+            if payload.strip() == "[DONE]":
+                return
+            yield payload
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            pending.append(value)
+    if pending:
+        payload = "\n".join(pending)
+        if payload.strip() != "[DONE]":
+            yield payload
+
+
 def _token_count(*, raw: dict[str, Any], key: str) -> int:
     """Read one non-negative integer token count or fail closed."""
     value = raw.get(key)
@@ -401,26 +557,26 @@ def _token_count(*, raw: dict[str, Any], key: str) -> int:
     return value
 
 
-def _diagnosis(*, body: dict[str, Any], content: str, usage: ProviderCallUsage) -> str:
+def _diagnosis(
+    *, body: dict[str, Any], content: str, usage: ProviderCallUsage | None
+) -> str:
     """Describe an unusable completion with metadata only, never its text.
 
     Model output can restate source material and these strings reach run
     records and logs, so only enumerated reasons, lengths, and a digest appear.
     """
-    finish: object = None
-    try:
-        choice = body["choices"][0]
-        if isinstance(choice, dict):
-            finish = choice.get("finish_reason")
-    except (KeyError, IndexError, TypeError):
-        finish = None
+    finish = _finish_reason(body)
     safe_finish = (
         finish if isinstance(finish, str) and finish in _SAFE_FINISH_REASONS else None
     )
     digest = hashlib.sha256(
         content.encode("utf-8", errors="surrogatepass")
     ).hexdigest()[:12]
+    tokens_out = usage.tokens_out if usage is not None else None
+    model: object = usage.model_name if usage is not None else body.get("model")
+    if not isinstance(model, str) or not model.strip():
+        model = None
     return (
         f"len={len(content)}, sha256_12={digest}, finish_reason={safe_finish!r},"
-        f" completion_tokens={usage.tokens_out}, model={usage.model_name!r}"
+        f" completion_tokens={tokens_out}, model={model!r}"
     )
