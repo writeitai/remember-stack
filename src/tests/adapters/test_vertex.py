@@ -708,3 +708,75 @@ def test_network_drop_before_usage_does_not_invent_usage() -> None:
         _generate(_provider(handler))
     assert len(calls) == 1
     assert caught.value.usage is None
+
+
+def test_degenerating_repetition_aborts_with_diagnosis_and_usage() -> None:
+    """Eight identical long deltas abort the stream before kilobytes accrue."""
+    repeated = "the hearing continues on Tuesday morning; "  # 42 characters.
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Send usage first so the abort stays accounted, then repeat."""
+        return _stream(
+            _chunk(
+                choices=[],
+                model=GEMMA_4_26B_A4B_IT_MAAS,
+                usage=_usage_dict(prompt_tokens=100, completion_tokens=10),
+            ),
+            *(_chunk(content=repeated) for _ in range(8)),
+            "[DONE]",
+        )
+
+    with pytest.raises(
+        VertexProviderError, match="repeated one 42-character"
+    ) as caught:
+        _generate(_provider(handler))
+
+    message = str(caught.value)
+    assert "8 times in a row" in message
+    assert repeated.strip() not in message
+    assert caught.value.usage is not None
+    assert caught.value.usage.tokens_in == 100
+    assert caught.value.usage.tokens_out == 10
+
+
+def test_varied_long_deltas_pass_repetition_guard() -> None:
+    """Distinct long deltas assemble normally; only repetition trips the guard."""
+    segments = [f"segment-{index:02d}-" + "x" * 53 for index in range(20)]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Split valid JSON into twenty distinct long deltas."""
+        events: list[object] = [_chunk(content='{"answer":"')]
+        events.extend(_chunk(content=segment) for segment in segments)
+        events.append(
+            _chunk(
+                content='"}',
+                finish_reason="stop",
+                usage=_usage_dict(prompt_tokens=100, completion_tokens=10),
+            )
+        )
+        events.append("[DONE]")
+        return _stream(*events)
+
+    generated = _generate(_provider(handler))
+    assert generated.output.answer == "".join(segments)  # type: ignore[attr-defined]
+
+
+def test_short_repeated_pieces_pass_repetition_guard() -> None:
+    """Repeated separators stream on; the guard only watches long deltas."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Repeat a two-character piece twenty times inside valid JSON."""
+        events: list[object] = [_chunk(content='{"answer":"')]
+        events.extend(_chunk(content="--") for _ in range(20))
+        events.append(
+            _chunk(
+                content='"}',
+                finish_reason="stop",
+                usage=_usage_dict(prompt_tokens=100, completion_tokens=10),
+            )
+        )
+        events.append("[DONE]")
+        return _stream(*events)
+
+    generated = _generate(_provider(handler))
+    assert generated.output.answer == "--" * 20  # type: ignore[attr-defined]
