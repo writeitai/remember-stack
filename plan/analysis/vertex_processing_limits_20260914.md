@@ -18,7 +18,9 @@ new queue, or automatic escalation is introduced. A stuck provider can wait
 indefinitely and repetitive output can cost more; monitoring and cancellation
 remain operational responsibilities. Invalid output still fails validation,
 and unknown usage is never a fabricated zero charge. This correction cannot
-prove or fix the suspected recursive-schema generation failure.
+prove or fix the suspected recursive-schema generation failure. The measured
+fallback wire-field correction is
+[gemma_fallback_subsections_20260915.md](gemma_fallback_subsections_20260915.md).
 
 The separate UMC experiment runner turns its spend limit into a warning and
 keeps independent work moving past missing usage or dead letters. Its accepted

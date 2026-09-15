@@ -1,5 +1,14 @@
 # LoCoMo full-system benchmark design
 
+> **v32 structuring-compatibility amendment (2026-09-15).** Full-v32 is the
+> current protocol. Its fallback structuring JSON uses `subsections` while
+> preserving the internal `children` tree. Other processing, retrieval,
+> answer, and judge pins stay the same. Adapter identity, protocol keys,
+> variants, and fingerprints roll together. Dataset, models, budgets, and
+> scoring are unchanged. Stores ingested under v31 are not this protocol.
+> Analysis:
+> [gemma_fallback_subsections_20260915.md](../analysis/gemma_fallback_subsections_20260915.md).
+
 > **Binding D124 retrieval-ablation amendment (2026-09-14).** An additive,
 > answer-and-judge-only development runner compares four access profiles over
 > one already-processed run: native Codex with local P3, native Codex with P3
@@ -192,7 +201,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v31
+protocol                RS-LoCoMo-Full-v32
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -216,6 +225,13 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v31 → v32 (2026-09-15 — Gemma fallback subsections):** Structure generation
+includes the fallback nested JSON field `subsections`. This is the measured
+Gemma/Vertex compatibility correction.
+Dataset, models, answer/judge behavior, budgets, and scoring are unchanged.
+Adapter version, protocol identities, variants, and fingerprints roll. Stores
+ingested under v31 must be re-ingested.
 
 **v24 → v25 (2026-09-07 — shared entity follow-up and audited Codex):** The
 answer prompt remains one constant shared by the default, Gemma/Vertex, and
@@ -540,7 +556,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v31-codex-subscription` is an additive evaluator-provider variant for
+`full-v32-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -839,7 +855,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v31 requires to be
+- the non-secret `document_binding_generation`, which Full-v32 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -988,12 +1004,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v31 \
+  --protocol full-v32 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v31`; the
-explicit `full-v31-gemma-vertex` and `full-v31-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v32`; the
+explicit `full-v32-gemma-vertex` and `full-v32-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

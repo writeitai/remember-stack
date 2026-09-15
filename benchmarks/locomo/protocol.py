@@ -35,10 +35,10 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31"
-DEFAULT_PROTOCOL_KEY: Final = "full-v31"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v31"
-"""Adapter identity for Full-v31: D122/D123 on the D119–D121 processing contract."""
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v32"
+DEFAULT_PROTOCOL_KEY: Final = "full-v32"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v32"
+"""Adapter identity for Full-v32: v31 pins plus fallback subsections structure generation."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -74,7 +74,7 @@ _E2_EXTRACTOR_GENERATION: Final = (
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "convert": "e0-convert-2026.08",
-        "structure": "e0-structure-2026.07f:d79-wave2",
+        "structure": "e0-structure-2026.07g:d79-wave2",
         "chunk": (
             "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
             "blockizer-heading-metadata"
@@ -128,12 +128,12 @@ ANSWER_AGENT_REASONING_EFFORT: Final = "none"
 JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
 JUDGE_REASONING_EFFORT: Final = "none"
 TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v31-gemma-vertex"
+GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v32-GemmaVertex"
+GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v32-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
 """Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
 
-The variant is reader-only. It keeps every canonical v31 ingest pin --
+The variant is reader-only. It keeps every canonical v32 ingest pin --
 pipeline stages including ground_claims, component generations, model
 bindings, prompts, tool catalog, budgets, and judge -- and swaps only the
 answer agent to this model on Vertex, with thinking deliberately pinned off
@@ -142,8 +142,8 @@ decision in a two-branch JSON shape that Vertex's order-enforcing decoder
 completes. It does not configure processing. Scores are therefore an
 answer-agent comparison over the same stores, not a new benchmark identity.
 """
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v31-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v31-codex-subscription"
+CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v32-CodexSubscription"
+CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v32-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
 
@@ -280,7 +280,7 @@ class LoCoMoProtocol:
 
 
 _FULL_V25 = LoCoMoProtocol(
-    key="full-v31",
+    key="full-v32",
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
