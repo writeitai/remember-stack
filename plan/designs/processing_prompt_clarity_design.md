@@ -39,6 +39,14 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > unchanged. Evidence:
 > [normalizer nested fields](../analysis/normalizer_nested_fields_20260915.md).
 >
+> **Fact target-discipline clarification (2026-09-15).** When target is a
+> supplied F-name, `new_facts` must be empty, and the incoming assertion's
+> own placement is decided by target/stance alone, never by a `support_moves`
+> entry. That addresses the R8 Vertex/Gemma dead-letters (declared-but-unused
+> N-names, incoming support filed as a move) without touching the schema or
+> the translator, which keep rejecting both shapes. Evidence:
+> [reliability fixes](../analysis/fact_adjudication_reliability_fixes_20260915.md).
+>
 > **Fact new-fact reference clarification (2026-09-15).** The fact prompt
 > already forbids reserved F/C/A/E/S/T/W names for new facts. A separate
 > Gemma/Vertex control on one captured R7 input still named a new fact `F2`
