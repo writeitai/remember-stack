@@ -512,6 +512,7 @@ def _completion_from_stream(
     usage_raw: object = None
 
     def body() -> dict[str, Any]:
+        """Build the current completion for validation or error accounting."""
         return _completion_body(
             content_parts=content_parts,
             finish_reason=finish_reason,

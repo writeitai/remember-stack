@@ -35,8 +35,8 @@ and matched the live frame. The same prompt and strict `T4Selection` schema
 sent with `stream: true` finished in 1.269s (316 input tokens, 93 output
 tokens, five cached tokens ignored by conservative pricing, USD 0.0001032)
 with a valid `new` decision. A second diagnostic using the actual
-non-streaming provider started at 00:08 UTC and was still pending at 00:19
-UTC; that start time is not a stall timestamp.
+non-streaming provider started at 00:08:16 UTC and also failed with HTTP 503
+after 1,802.00 seconds, without usage.
 
 The original non-streaming T4 call finished at 00:22:26.116936 UTC after
 1801.3395596 seconds with `VertexProviderError`, HTTP 503, body code 503,
@@ -46,12 +46,18 @@ three `NormalizationResponse` calls (2.26s / 2.60s / 3.02s). Live R3 then
 had 66 receipts and one unknown-usage 503. Durable recording continues in
 [UMC PR 590](https://github.com/writeitai/ultimate-memory-cloud/pull/590).
 
-That **suggests transport-path-dependent behavior** on this request: an
-observable ~30-minute provider 503 on the non-streaming path versus 1.27s
-for the same input over streaming. Two pending or failed non-streaming
-calls and one successful stream do not prove causation or a general root
-cause. They do not prove that streaming fixes every stall, hang, or invalid
-structured output.
+The actual patched adapter at `e61918926534e9daed859faed59e1d23852b3a2c`
+was then tested in an isolated checkout against the same saved input. Its
+ordinary synchronous `generate()` returned a validated `T4Selection` in
+2.61 seconds, with 316 input and 76 output tokens, USD 0.000093, and complete
+usage. No diagnostic prompt or schema substitution was applied. The running
+processing checkout was not changed by this probe.
+
+That **suggests transport-path-dependent behavior** on this request: two
+approximately 30-minute provider failures on the non-streaming path versus
+two successful streaming calls. It supports testing the new adapter on the
+full conversation. It does not prove a general root cause or that streaming
+fixes every stall, hang, or invalid structured output.
 
 Earlier conv-42 notes already separated other failures from transport: the
 4,096-token / 120s defaults in
