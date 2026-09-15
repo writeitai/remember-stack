@@ -118,6 +118,14 @@ class OpenRouterSettings(BaseSettings):
     endpoint labels; routing uses the base provider slug from the endpoints
     API. See ``design/operations/openrouter-embedding-routing.md``.
     """
+    chat_provider_only: list[str] | None = None
+    """Hard OpenRouter chat provider allowlist (``provider.only``, no escape).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY`` as a comma-separated
+    list of *provider slugs*. Unlike the embedding order, there is no
+    marketplace fallback: ``allow_fallbacks`` is False, so a request the
+    listed hosts cannot serve fails instead of routing to an unapproved host.
+    """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
@@ -163,6 +171,12 @@ class OpenRouterSettings(BaseSettings):
         return _parse_provider_name_list(
             value=value, field_name="embedding_provider_order"
         )
+
+    @field_validator("chat_provider_only", mode="before")
+    @classmethod
+    def parse_chat_provider_only(cls, value: object) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(value=value, field_name="chat_provider_only")
 
     @field_validator("max_completion_tokens", mode="before")
     @classmethod
@@ -259,6 +273,9 @@ class OpenRouterModelProvider:
         effort = self._reasoning_effort_for(request=request)
         if effort is not None:
             payload["reasoning"] = {"effort": effort}
+        provider = self._chat_provider_payload()
+        if provider is not None:
+            payload["provider"] = provider
 
         content, usage, body = self._completion_text(
             payload=payload, response_type=response_type, started_ns=started_ns
@@ -284,7 +301,7 @@ class OpenRouterModelProvider:
             ) from err
         try:
             output = response_type.model_validate(decoded)
-        except ValidationError:
+        except ValidationError as error:
             self._capture_invalid_completion(
                 body=body,
                 content=content,
@@ -297,6 +314,7 @@ class OpenRouterModelProvider:
                 f"completion body failed {response_type.__name__} validation"
                 " ("
                 f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
+                f"; {_validation_error_names(error=error)}"
                 ")",
                 usage=usage,
             ) from None
@@ -400,6 +418,18 @@ class OpenRouterModelProvider:
         return recover_completion_usage(
             body=body, started_ns=started_ns, fetch_generation=self._get_generation
         )
+
+    def _chat_provider_payload(self) -> dict[str, object] | None:
+        """Build the hard OpenRouter chat allowlist, or leave routing alone.
+
+        ``chat_provider_only`` names approved hosts with no marketplace
+        escape; unset keeps automatic routing (and keeps the embedding pin
+        from constraining chat, as before).
+        """
+        only = self._settings.chat_provider_only
+        if not only:
+            return None
+        return {"only": list(only), "allow_fallbacks": False}
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
@@ -644,6 +674,25 @@ def _choice_value(*, body: dict[str, Any], key: str) -> object:
     if not isinstance(choice, dict):
         return None
     return choice.get(key)
+
+
+def _validation_error_names(*, error: ValidationError, limit: int = 5) -> str:
+    """Name the failing fields of a rejected completion without its text.
+
+    Only each error's location path and enumerated type appear: the offending
+    input values and the raw content stay out because model output can restate
+    source material and these strings reach run records and logs. At most
+    ``limit`` entries are listed so one pathological answer cannot flood a log.
+    """
+    parts: list[str] = []
+    for entry in error.errors()[:limit]:
+        raw_loc = entry.get("loc", ())
+        loc = ".".join(str(step) for step in raw_loc) if raw_loc else "<root>"
+        parts.append(f"{loc}.{entry.get('type', 'unknown')}")
+    remaining = error.error_count() - len(parts)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    return f"validation_errors=[{', '.join(parts)}]"
 
 
 def _invalid_completion_diagnosis(
