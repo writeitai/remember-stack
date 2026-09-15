@@ -734,9 +734,60 @@ def test_degenerating_repetition_aborts_with_diagnosis_and_usage() -> None:
     message = str(caught.value)
     assert "8 times in a row" in message
     assert repeated.strip() not in message
+    # The stream-wrap normalizes subclasses to the base type, so this pins the
+    # exact external contract: a transport abort, never an invalid response.
+    assert type(caught.value) is VertexProviderError
     assert caught.value.usage is not None
     assert caught.value.usage.tokens_in == 100
     assert caught.value.usage.tokens_out == 10
+
+
+def test_seven_identical_long_deltas_pass_repetition_guard() -> None:
+    """One fewer than the limit assembles normally; the run of 8 is exact."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Send seven identical 42-char deltas inside a complete stream."""
+        events: list[object] = [_chunk(content='{"answer":"')]
+        events.extend(
+            _chunk(content="the hearing continues on Tuesday morning; ")
+            for _ in range(7)
+        )
+        events.append(
+            _chunk(
+                content='"}',
+                finish_reason="stop",
+                usage=_usage_dict(prompt_tokens=100, completion_tokens=10),
+            )
+        )
+        events.append("[DONE]")
+        return _stream(*events)
+
+    generated = _generate(_provider(handler))
+    assert generated.output.answer == (  # type: ignore[attr-defined]
+        "the hearing continues on Tuesday morning; " * 7
+    )
+
+
+def test_identical_pieces_below_minimum_length_pass_guard() -> None:
+    """Eight identical 31-char deltas stay below the piece-length floor."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Repeat a 31-character piece eight times inside valid JSON."""
+        piece = "x" * 31
+        events: list[object] = [_chunk(content='{"answer":"')]
+        events.extend(_chunk(content=piece) for _ in range(8))
+        events.append(
+            _chunk(
+                content='"}',
+                finish_reason="stop",
+                usage=_usage_dict(prompt_tokens=100, completion_tokens=10),
+            )
+        )
+        events.append("[DONE]")
+        return _stream(*events)
+
+    generated = _generate(_provider(handler))
+    assert generated.output.answer == "x" * 31 * 8  # type: ignore[attr-defined]
 
 
 def test_varied_long_deltas_pass_repetition_guard() -> None:
