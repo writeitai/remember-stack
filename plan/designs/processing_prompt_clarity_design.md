@@ -24,6 +24,20 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > decision. Meaning, identity policy, and temporal contracts are unchanged.
 > Evidence: [T4 output format](../analysis/t4_output_format_20260915.md),
 > [fact output format](../analysis/fact_adjudication_output_format_20260915.md).
+>
+> **Normalizer nested-field clarification (2026-09-15).** After the root
+> both-array sentence, the normalizer prompt names every existing nested
+> field on observations, relations, and entity references. It uses
+> `context_refs=[]` when there are no context references, an explicit
+> boolean `uses_claim_window`, and `surface=null` when the claim spelling
+> matches the canonical name. That completed one captured Gemma/Vertex
+> input that had already received the both-array sentence and, at capture
+> time, was incomplete inside an observation subject after `name`. Python
+> defaults still permit callers to omit nullable `surface`; the strict wire
+> schema does not.
+> This is not a new numbered decision. Meaning and temporal contracts are
+> unchanged. Evidence:
+> [normalizer nested fields](../analysis/normalizer_nested_fields_20260915.md).
 
 ## Problem and decision
 
@@ -101,10 +115,19 @@ must agree. Short input handles do not justify cryptic instructions.
 
 The normalizer already returns one `NormalizationResponse` with both
 `observations` and `relations`. The prompt states that both values are arrays
-and that `[]` is the empty-kind form; neither field may be omitted. That is
-the existing response shape, not a new category. Incomplete JSON remains a
+and that `[]` is the empty-kind form; neither field may be omitted. Each
+observation already has `context_refs`, `statement`, `subject`, and
+`uses_claim_window`. Each relation already has `context_refs`, `object`,
+`predicate`, `subject`, and `uses_claim_window`. Every entity reference
+already has `name` and `surface`. The prompt names those nested fields, uses
+`[]` for empty context references, requires an explicit boolean
+`uses_claim_window`, and uses `surface=null` when the claim spelling matches
+the canonical name. Omission is not the requested wire form even though
+Python defaults allow a caller to omit nullable `surface`. That is the
+existing response shape, not a new category. Incomplete JSON remains a
 generate failure. Meaning and temporal rules above are unchanged. Evidence:
-[normalizer output format](../analysis/normalizer_output_format_20260915.md).
+[normalizer output format](../analysis/normalizer_output_format_20260915.md),
+[normalizer nested fields](../analysis/normalizer_nested_fields_20260915.md).
 
 T4 already returns one `T4Selection` with `decision`, `candidate_id`,
 `confidence`, and `rationale`. The prompt states that all four fields must be

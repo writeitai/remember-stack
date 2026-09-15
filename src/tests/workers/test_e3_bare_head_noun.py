@@ -2,9 +2,14 @@
 
 from uuid import uuid4
 
+from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.model import ClaimForNormalization
+from rememberstack.model.relations import EntityRef
+from rememberstack.model.relations import NormalizationResponse
+from rememberstack.model.relations import ObservationCandidate
+from rememberstack.model.relations import RelationCandidate
 from rememberstack.workers.e3 import _NORMALIZE_PROMPT
 from tests.workers.e3_test_doubles import _claim
 from tests.workers.e3_test_doubles import _handler
@@ -44,6 +49,63 @@ def test_prompt_requires_both_observation_and_relation_arrays() -> None:
     format_at = _NORMALIZE_PROMPT.index("OUTPUT FORMAT")
     timestamp_at = _NORMALIZE_PROMPT.index("SOURCE TIMESTAMP:")
     assert format_at < timestamp_at
+
+
+def test_prompt_names_every_nested_normalizer_field() -> None:
+    """Declared nested fields are named; nullable surface stays required on the wire."""
+    nested = (
+        "Each observation contains context_refs, statement, subject, "
+        "and uses_claim_window.\n"
+        "Each relation contains context_refs, object, predicate, subject, "
+        "and uses_claim_window.\n"
+        "Every entity reference in subject, object, or context_refs contains "
+        "both name and surface.\n"
+        "Use surface=null when the claim spelling matches the canonical name; "
+        "otherwise use the exact claim spelling.\n"
+        "Use context_refs=[] when there are no context references. "
+        "uses_claim_window is always true or false.\n"
+        "Include every field, even when its value is null or an empty array.\n\n"
+        "SOURCE TIMESTAMP:"
+    )
+    assert nested in _NORMALIZE_PROMPT
+    root_at = _NORMALIZE_PROMPT.index(
+        'Return one JSON object containing both "observations" and "relations".'
+    )
+    nested_at = _NORMALIZE_PROMPT.index(
+        "Each observation contains context_refs, statement, subject, "
+        "and uses_claim_window."
+    )
+    timestamp_at = _NORMALIZE_PROMPT.index("SOURCE TIMESTAMP:")
+    assert root_at < nested_at < timestamp_at
+    assert tuple(ObservationCandidate.model_fields) == (
+        "subject",
+        "statement",
+        "uses_claim_window",
+        "context_refs",
+    )
+    assert tuple(RelationCandidate.model_fields) == (
+        "subject",
+        "predicate",
+        "object",
+        "uses_claim_window",
+        "context_refs",
+    )
+    assert tuple(EntityRef.model_fields) == ("name", "surface")
+    omitted = EntityRef(name="Nate")
+    assert omitted.surface is None
+    schema = _strict_json_schema(NormalizationResponse)
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    entity_ref = defs["EntityRef"]
+    assert set(entity_ref["required"]) == {"name", "surface"}
+    surface = entity_ref["properties"]["surface"]
+    assert "default" not in surface
+    assert {"type": "null"} in surface["anyOf"]
+    assert set(defs["ObservationCandidate"]["required"]) == set(
+        ObservationCandidate.model_fields
+    )
+    assert set(defs["RelationCandidate"]["required"]) == set(
+        RelationCandidate.model_fields
+    )
 
 
 def test_normalize_drops_game_relation_without_resolve() -> None:
