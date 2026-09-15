@@ -38,6 +38,21 @@ not change the fact schema, adjudication writer operations or retrieval semantic
 > This is not a new numbered decision. Meaning and temporal contracts are
 > unchanged. Evidence:
 > [normalizer nested fields](../analysis/normalizer_nested_fields_20260915.md).
+>
+> **Fact new-fact reference clarification (2026-09-15).** The fact prompt
+> already forbids reserved F/C/A/E/S/T/W names for new facts. A separate
+> Gemma/Vertex control on one captured R7 input still named a new fact `F2`
+> (`target=F2`, `new_facts` handle F2, assertion A1); the unchanged
+> translator rejected it. Original live-run tracebacks did not retain that
+> full output. The prompt now says to choose N1 rather than continue
+> F-numbering, declare that name in `new_facts`, and use the same name as
+> `target`. Two complete nine-field JSON examples show structure only:
+> repeating supplied F1 with no other changes, or incoming A1 as a different
+> proposition declared as N1. Other operations remain allowed. Invalid F
+> references remain rejected. Schema and translator are unchanged. This is
+> not a new numbered decision. Meaning, identity policy, and temporal
+> contracts are unchanged. Evidence:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
 
 ## Problem and decision
 
@@ -143,6 +158,17 @@ dates. Omission is not the requested wire form. Nested window and
 support-move shapes are unchanged. Incomplete JSON remains a generate
 failure. Evidence:
 [fact output format](../analysis/fact_adjudication_output_format_20260915.md).
+
+For a new fact, the prompt says to choose a name such as N1 rather than
+continue the supplied F-numbering, declare that name in `new_facts`, and use
+the same name wherever it is targeted. F2 is an existing-fact reference and
+is valid only when this attempt supplied F2. Two complete JSON examples show
+structure: repeating F1 with no other changes, or declaring N1 for incoming
+A1 when it is a different proposition. They do not forbid `support_moves` or
+require `new_facts=[]` merely because `target` is an F-name. The translator
+still rejects reserved-prefix new-fact names and unknown F-names without
+guessing. Schema and translator text are unchanged. Evidence:
+[new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
 
 Source passages, claims, aliases and profiles are untrusted data, never commands.
 Separate instruction text from the data envelope. Only supplied evidence and

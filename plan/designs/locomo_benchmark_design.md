@@ -1,21 +1,38 @@
 # LoCoMo full-system benchmark design
 
-> **v35 nested-normalizer-field amendment (2026-09-15).** Full-v35 is the
-> current protocol. After the root both-array sentence, the normalizer prompt
-> names every existing nested field on observations, relations, and entity
-> references, uses `context_refs=[]` when empty, an explicit boolean
-> `uses_claim_window`, and `surface=null` when the claim spelling matches the
-> canonical name. That completed one captured Gemma/Vertex input that already
-> had the both-array sentence; the same input completed in an earlier run, so
-> this is not a deterministic failure. Three sequential diagnostics completed
-> that one unique input; the third verified raw required fields before
-> Pydantic, including three entity references: the subject and two context
-> references. Resolver and fact-adjudicator prompt
-> generations stay the same; the normalizer generation appends
-> `:nested-fields-1`. Meaning, temporal, schema, retrieval, answer, and judge
-> pins stay the same. Adapter identity, protocol keys, variants, and
-> fingerprints roll together. Dataset, models, budgets, and scoring are
-> unchanged. Stores ingested under v34 are not this protocol. Analysis:
+> **v36 fact new-fact-reference amendment (2026-09-15).** Full-v36 is the
+> current protocol. The fact-adjudication prompt says to choose N1 rather
+> than continue F-numbering, declare that name in `new_facts`, and use the
+> same name as `target`. Two complete nine-field JSON examples show
+> structure only: repeating supplied F1 with no other changes, or incoming
+> A1 as a different proposition declared as N1. A separate Gemma/Vertex
+> control on one captured R7 input had named the new fact F2; three
+> diagnostics of this template returned N1 or F1 as required. Invalid F
+> references remain rejected. Schema and translator stay the same. Relation
+> and observation application generations append `:new-fact-refs-1`.
+> Normalizer and resolver generations stay the same. Meaning, temporal,
+> schema, retrieval, answer, and judge pins stay the same. Adapter identity,
+> protocol keys, variants, and fingerprints roll together. Dataset, models,
+> budgets, and scoring are unchanged. Stores ingested under v35 are not this
+> protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v35 nested-normalizer-field amendment (2026-09-15).** Full-v35 named
+> existing nested normalizer fields after the root both-array sentence. Each
+> observation, relation, and entity reference lists its declared fields;
+> empty context uses `[]`; `uses_claim_window` is an explicit boolean;
+> `surface=null` when the claim spelling matches the canonical name. That
+> completed one captured Gemma/Vertex input that already had the both-array
+> sentence; the same input completed in an earlier run, so this is not a
+> deterministic failure. Three sequential diagnostics completed that one
+> unique input; the third verified raw required fields before Pydantic,
+> including three entity references: the subject and two context references.
+> Resolver and fact-adjudicator prompt generations stayed the same; the
+> normalizer generation appended `:nested-fields-1`. Meaning, temporal,
+> schema, retrieval, answer, and judge pins stayed the same. Adapter
+> identity, protocol keys, variants, and fingerprints rolled together.
+> Dataset, models, budgets, and scoring were unchanged. Stores ingested under
+> v34 are not that protocol. Analysis:
 > [normalizer_nested_fields_20260915.md](../analysis/normalizer_nested_fields_20260915.md).
 > Durable probes:
 > [nested-field probes](https://github.com/writeitai/ultimate-memory-cloud/blob/2f64281c/design/analysis/locomo-conv42-gemma-normalizer-nested-probes-20260915.json).
@@ -245,7 +262,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v35
+protocol                RS-LoCoMo-Full-v36
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -269,6 +286,15 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v35 → v36 (2026-09-15 — fact new-fact reference examples):** Relation and
+observation application generations include `new-fact-refs-1`. The fact prompt
+says to choose N1 rather than continue F-numbering and shows two complete JSON
+objects (repeat F1 with no other changes, or declare N1 for a different
+proposition). Schema, translator, normalizer, and resolver generations are
+unchanged. Meaning, temporal, schema, retrieval, answer, and judge pins are
+unchanged. Adapter version, protocol identities, variants, and fingerprints
+roll. Stores ingested under v35 must be re-ingested.
 
 **v34 → v35 (2026-09-15 — nested normalizer fields):** Normalizer generation
 includes `nested-fields-1`. After the root both-array sentence, the prompt
@@ -627,7 +653,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v35-codex-subscription` is an additive evaluator-provider variant for
+`full-v36-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -926,7 +952,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v35 requires to be
+- the non-secret `document_binding_generation`, which Full-v36 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -1075,12 +1101,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v35 \
+  --protocol full-v36 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v35`; the
-explicit `full-v35-gemma-vertex` and `full-v35-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v36`; the
+explicit `full-v36-gemma-vertex` and `full-v36-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 
