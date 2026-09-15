@@ -642,6 +642,8 @@ def test_fact_prompt_names_all_nine_existing_output_fields() -> None:
         cursor = start + consumed
     assert len(examples) == 2
     existing, created = examples
+    assert set(existing) == set(PromptFactDecision.model_fields)
+    assert set(created) == set(PromptFactDecision.model_fields)
     _presentation, mapping = project_concise_inputs(snapshot=_snapshot())
     attached = translate_prompt_decision(
         response=PromptFactDecision.model_validate(existing), mapping=mapping
