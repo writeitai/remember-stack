@@ -9,6 +9,7 @@ never drops a billed call.
 
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
@@ -69,11 +70,11 @@ class _RecordingMeter:
 
 def _setup(
     engine: Engine, router: object
-) -> tuple[WriterCase, FactAdjudicator, str, str]:
-    """Stage two assertions and return the case, a routed adjudicator, and names."""
+) -> tuple[WriterCase, FactAdjudicator, str, str, UUID]:
+    """Stage two assertions and return case, adjudicator, names, and day-12 app."""
     case = WriterCase(engine=engine)
     case.first()
-    case.stage(day=12)
+    _, day12_app = case.stage(day=12)
     adjudicator = FactAdjudicator(
         engine=engine,
         model_provider=FakeModelProvider(generate_router=router),
@@ -85,7 +86,7 @@ def _setup(
     assert prepared is not None
     _, mapping = project_concise_inputs(snapshot=prepared.inputs)
     fact_name = sorted(mapping.facts)[0]
-    return case, adjudicator, fact_name, mapping.incoming_assertion
+    return case, adjudicator, fact_name, mapping.incoming_assertion, day12_app
 
 
 def test_reject_then_accept_records_two_receipts(database_engine: Engine) -> None:
@@ -105,7 +106,7 @@ def test_reject_then_accept_records_two_receipts(database_engine: Engine) -> Non
         return {"target": calls_fact[0], "confidence": 0.9, "rationale": "test"}
 
     calls_fact: list[str] = []
-    case, adjudicator, fact_name, _ = _setup(database_engine, router)
+    case, adjudicator, fact_name, _, _ = _setup(database_engine, router)
     calls_fact.append(fact_name)
     meter = _RecordingMeter()
     facts = adjudicator.drain(
@@ -135,7 +136,7 @@ def test_double_rejection_raises_with_both_receipts(database_engine: Engine) -> 
         calls.append(prompt)
         return {"target": "N9", "new_facts": [], "confidence": 0.9, "rationale": "test"}
 
-    case, adjudicator, _, _ = _setup(database_engine, router)
+    case, adjudicator, _, _, _ = _setup(database_engine, router)
     meter = _RecordingMeter()
     with pytest.raises(ApplicationInputChanged):
         adjudicator.drain(
@@ -159,7 +160,7 @@ def test_first_answer_accepted_has_no_note(database_engine: Engine) -> None:
 
     calls: list[str] = []
     calls_fact: list[str] = []
-    case, adjudicator, fact_name, _ = _setup(database_engine, router)
+    case, adjudicator, fact_name, _, _ = _setup(database_engine, router)
     calls_fact.append(fact_name)
     prepared = adjudicator.prepare(
         deployment_id=case.dep, subject_entity_id=case.subject
@@ -188,7 +189,7 @@ def test_provider_error_never_retries(database_engine: Engine) -> None:
         calls.append(prompt)
         raise ProviderCallError("test drop")
 
-    case, adjudicator, _, _ = _setup(database_engine, router)
+    case, adjudicator, _, _, _ = _setup(database_engine, router)
     meter = _RecordingMeter()
     with pytest.raises(ProviderCallError):
         adjudicator.drain(
@@ -218,20 +219,29 @@ def test_decision_published_once_after_retry(database_engine: Engine) -> None:
         return {"target": seen_fact[0], "confidence": 0.9, "rationale": "test"}
 
     seen_fact: list[str] = []
-    case, adjudicator, fact_name, _ = _setup(database_engine, router)
+    case, adjudicator, fact_name, _, day12_app = _setup(database_engine, router)
     seen_fact.append(fact_name)
-    adjudicator.drain(
+    facts = adjudicator.drain(
         deployment_id=case.dep,
         subject_entity_id=case.subject,
         meter=_RecordingMeter(),
         call_key="test",
     )
+    assert len(facts) == 1
     with database_engine.connect() as connection:
-        rows = connection.execute(
-            text(
-                "SELECT count(*) FROM fact_applications WHERE deployment_id=:dep"
-                " AND decision IS NOT NULL"
-            ),
-            {"dep": case.dep},
-        ).scalar_one()
-        assert rows == 1
+        row = (
+            connection.execute(
+                text(
+                    "SELECT applied_at IS NOT NULL AS applied, decision IS NULL"
+                    " AS consumed FROM fact_applications"
+                    " WHERE deployment_id=:dep AND application_id=:id"
+                ),
+                {"dep": case.dep, "id": day12_app},
+            )
+            .mappings()
+            .one()
+        )
+        # One publication through one CAS identity: applied once, and the
+        # decision payload consumed (apply clears it; the result endures).
+        assert row["applied"] is True
+        assert row["consumed"] is True
