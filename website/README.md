@@ -94,11 +94,11 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 
 | Route | Subject |
 | --- | --- |
-| `/docs` | Why RememberStack — sell + three planes + ship surface |
+| `/docs` | Mission landing — who this is for, what it changes, Start here |
 | `/docs/getting-started` | Install, first ingest, first assured queries |
-| `/docs/why` | Competitive advantages without fluff |
+| `/docs/why` | What this memory is and why agents that act need it |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
-| `/docs/architecture` | Planes, stores, write vs read path |
+| `/docs/architecture` | remember.db: durable spine, stores, write vs read |
 | `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
 | `/docs/ingestion` | Write-path overview + guarantees |
 | `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |

@@ -1,12 +1,14 @@
 export const metadata = {
-  title: "vs passage RAG",
+  title: "Why this memory",
   description:
-    "The load-bearing advantages of RememberStack versus passage RAG and simple memory stores — for agents that must act on what they know.",
+    "What RememberStack memory is and why agents that act need it: testimony vs truth, failure modes vs passage RAG, and a harder question than similar text.",
 };
 
-# RememberStack vs passage RAG
+# Why this memory
 
-This page is the competitive brief without fluff. Use it when an agent or human is deciding whether RememberStack is the right memory substrate.
+**RememberStack** is a memory system for AI agents. Ingest documents into a structured spine and get back **navigable, auditable knowledge**: not just passages that *look* relevant, but an account of what sources said, what the system currently holds true, and how those two can differ.
+
+If your agent must **act** on memory — spend money, change state, or brief a human — those distinctions are load-bearing.
 
 ## The problem is not “more retrieval”
 
@@ -19,9 +21,25 @@ Passage RAG finds *similar text*. Simple memory stores append notes and re-embed
 
 RememberStack is designed so an agent can **plan, verify, and audit** — not merely rank chunks.
 
-## Advantage 1 — Testimony is not truth
+Most “memory” stacks answer: *where did I read something like this?*
+
+Agents that act need a harder question: **what do we actually know — and what changed our mind?**
+
+| Failure mode in typical RAG / memory | RememberStack response |
+| --- | --- |
+| Source text is treated as truth | **Claims** (testimony) are separate from **facts** (adjudicated current belief) |
+| Edits overwrite history | Supersession **closes a validity window**; history stays queryable |
+| Contradictions are averaged or hidden | Contradictions are **grouped and returned together** |
+| Re-ingestion inflates confidence | Support counts **distinct document lineages**, not re-extracts |
+| Vector index is the authority | Indexes **nominate**; Postgres **confirms** live validity |
+| LLM completion on every query | **No LLM completion on the query path** (semantic search still embeds the query string) — planning stays in the agent |
+| “No results” is a vague empty list | Typed negatives: `unknown_entity`, `known_empty`, `boundary` |
+
+## Testimony is not truth
 
 ![Testimony vs truth](/docs/diagrams/testimony-vs-truth.jpg)
+
+Sources go stale, contradict each other, and get corrected. Memory that conflates *what was said* with *what is true now* either serves outdated statements as facts or silently rewrites history.
 
 | Layer | Answers | Mutability |
 | --- | --- | --- |
@@ -33,7 +51,7 @@ RememberStack is designed so an agent can **plan, verify, and audit** — not me
 
 Why it matters: an agent that confuses these two will act on stale testimony with high confidence.
 
-## Advantage 2 — Two clocks, not one timestamp
+## Two clocks, not one timestamp
 
 ![Two clocks: world time and system time](/docs/diagrams/two-clocks.jpg)
 
@@ -49,7 +67,7 @@ Both questions are first-class:
 
 Media adds a third coordinate — *where in a recording* something was said — deliberately named apart so agents never conflate the three.
 
-## Advantage 3 — Confidence that cannot be gamed by reprocessing
+## Confidence that cannot be gamed by reprocessing
 
 `evidence_count` = **number of distinct document lineages** whose *current testimony* supports a fact.
 
@@ -61,7 +79,7 @@ Dead inflation paths:
 
 Corroboration is an **external-source** property. Within-document emphasis is not.
 
-## Advantage 4 — Projections propose; the spine disposes
+## Indexes nominate; the spine confirms
 
 Search indexes may lag, so they **nominate** candidates. The live graph and
 authority views share one PostgreSQL snapshot and **confirm** validity,
@@ -75,9 +93,9 @@ Consequence:
 
 Mounted file reads are snapshot-by-construction; the consumption skill teaches: orient on mounts, **verify load-bearing facts on the spine**.
 
-## Advantage 5 — No LLM *completion* on the query path
+## No LLM *completion* on the query path
 
-Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **Read path does not call a chat/completion model to invent an answer.** Assured operations, open SQL, live-graph helpers, and primitives are deterministic compositions.
+Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **The read path does not call a chat/completion model to invent an answer.** Assured operations, open SQL, live-graph helpers, and primitives are deterministic compositions.
 
 **Footnote (honesty):** semantic channels still **embed the query string** through the configured embedder. That is not “chat with your data,” but it is a provider round-trip on semantic paths. Lexical/BM25 and pure SQL spine reads do not need it.
 
@@ -87,25 +105,52 @@ Why agents care:
 - Inspectable plans (grain, freshness, drops are machine-readable).
 - The agent *is* the planner — which matches how coding harnesses already work.
 
-## Advantage 6 — Surfaces agents already know
-
-| Surface | Job |
-| --- | --- |
-| **Mounts** | Navigate, read, grep like a codebase |
-| **MCP / CLI / API** | Semantic search, graph, time-travel, open query — one operation set |
-| **SKILL.md** | Deployment-rendered curriculum; cold-agent skill checks |
-
-Filesystem-first when mounted; full parity when not.
-
-## Advantage 7 — Contradictions are a feature
+## Contradictions are a feature
 
 When two sources disagree on FY2023 revenue, both sides return with the contradiction group. Ranking may order; **hiding one side is a contract violation**.
 
 Agents that must brief a human or act under uncertainty need the disagreement, not a smoothed average.
 
-## Advantage 8 — Full engine open
+## Built for agents (primary), readable by humans
 
-If it affects correctness, it ships in Apache-2.0 OSS. Cloud is ops and product — not a teaser core. Self-host gets the complete memory for one deployment.
+Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers). That is not marketing color; it drives the surface design:
+
+1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
+2. **Query when files cannot.** Semantic search, live graph traversal, time-travel, hydration, and open SQL — via API, CLI, and MCP with the **same** operations.
+3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
+4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the four assured operations. Automated cold-agent checks guard that curriculum.
+
+Humans get the same audit trail: every conclusion drills to claims, then to the exact span, page, image region, or second of audio.
+
+## Reading motion (do this every time)
+
+![Orient, verify, audit](/docs/diagrams/orient-verify-audit.jpg)
+
+1. **Orient** — K pages and P3 indexes for the map.
+2. **Verify** — fact grain (relations + observations) for anything load-bearing.
+3. **Audit** — claims and raw sources when stakes demand provenance.
+
+Never stop at orientation for decisions that cost money, trust, or irreversible action.
+
+## What agents call today
+
+Exactly **four** top-level assured operations:
+
+| Operation | Use for |
+| --- | --- |
+| `resolve_entity` | Turn a name/string into ranked entity candidates |
+| `claims_and_sources_context` | High-recall **evidence** context (claims + chunks) for a question |
+| `facts_context` | **Current or historical fact** context with live testimony under budget |
+| `combined_context` | Both complete authority views in `ContextBundle/v2` |
+
+Plus open query: sandboxed SQL, typed live-graph helpers, saved `examples.*`
+queries, and schema discovery. The helpers read PostgreSQL live; there is no
+graph snapshot or public Cypher surface. Full contracts:
+[Retrieval](/docs/retrieval), [API](/docs/reference/api).
+
+## Full engine, open
+
+Apache-2.0. Correctness-determining behavior — extraction, entity resolution, supersession, provenance, budgets, DLQ, hard-forget — is **never paywalled**. The hosted cloud runs this same engine; it adds operations and product chrome, not a secret core. Self-host gets the complete memory for one deployment.
 
 ## What this is not
 
@@ -116,16 +161,17 @@ If it affects correctness, it ships in Apache-2.0 OSS. Cloud is ops and product 
 - Not a production hosted SLA claim from the OSS docs (see cloud product for managed offers).
 - Not “set and forget magic memory” — you still need connectors, model seats, and operational budgets.
 
-**Not yet the default smoke profile in `v0.2.0` (engine may support; do not assume wired)**
+**Not yet the default smoke profile (engine may support; do not assume wired)**
 
-- Non-Markdown conversion routes (PDF/HTML/images/audio/video) on the Compose self-host profile. Static images are engine-capable via `image_ocr_description` once registered; they are not smoke-profile defaults
-- Fuzzy / phonetic / embedding tiers on **query-time** `resolve_entity` (write-time cascade is richer; query resolve is T0 exact)
-- Cross-modal `media_segments` search as a first-class public search target
-- Hosted multi-tenant control plane, no free tier, or production SLA claims from this OSS docs site
+- Non-Markdown conversion routes (PDF/HTML/images/audio/video) on the Compose self-host profile. Static images are engine-capable via `image_ocr_description` once registered; they are not smoke-profile defaults.
+- Fuzzy / phonetic / embedding tiers on **query-time** `resolve_entity` (write-time cascade is richer; query resolve is T0 exact).
+- Cross-modal `media_segments` search as a first-class public search target.
+- Hosted multi-tenant control plane, no free tier, or production SLA claims from this OSS docs site.
 
 ## Next
 
-- [Concepts](/docs/concepts) — vocabulary.
-- [Architecture](/docs/architecture) — planes and stores.
+- [Getting started](/docs/getting-started) — run it.
+- [Concepts](/docs/concepts) — vocabulary (claim / fact / grain / clocks).
+- [remember.db architecture](/docs/architecture) — the durable spine and how reads and writes relate.
 - [Ingestion](/docs/ingestion) — write path.
 - [Retrieval](/docs/retrieval) — read path.

@@ -1,44 +1,64 @@
 export const metadata = {
-  title: "Architecture",
+  title: "remember.db architecture",
   description:
-    "Three planes end to end: evidence spine E0–E3, knowledge plane K, projections P1–P3, and the agent consumption surfaces.",
+    "How RememberStack’s durable spine is shaped: what lives in PostgreSQL and object storage, what is derived, and how writes and reads relate.",
 };
 
-# Architecture
+# remember.db
 
-RememberStack is a **DAG across three planes**, not a single ladder. The plane a component lives in fixes its rules: triggers, authority, mutability, rebuild semantics.
+A RememberStack deployment does not treat a vector index as the database. Memory lives in a **durable spine**: PostgreSQL rows that record what was ingested, what sources claimed, what the system currently holds true, and when those beliefs changed — plus object storage for the bytes those rows point at.
 
-## At a glance
+These docs call that spine **remember.db**. The name is a teaching handle, not a file on disk and not a separate product. In the Compose self-host it is PostgreSQL 19 plus MinIO; another deployment uses the same engine schema on PostgreSQL plus an S3-compatible bucket. The rules do not change with the vendor.
+
+**Hard rule:** validity and invalidation live **only** in PostgreSQL. Search indexes are derived state beside the authority rows. They **nominate** candidates; the spine **confirms** live truth. Neither a lagging index nor a knowledge page can become independent authority.
+
+## What lives where
 
 ![Three planes](/docs/diagrams/three-planes.jpg)
+
+| Store | Holds | Authority |
+| --- | --- | --- |
+| **PostgreSQL** | Document lineages and versions, chunks, claims, entities, facts, evidence links, validity windows, processing state; rebuildable P1 vectors and BM25; live graph views | **Source of truth** for natural evidence rows. P1 and graph query structures are derived |
+| **Object storage — raw** | Original uploaded bytes | Byte authority |
+| **Object storage — artifacts** | Converted Markdown, structure, media sidecars | Representation authority (replayed, never regenerated in place) |
+| **Object storage — corpus tree** | P3 browsable filesystem | Derived; rebuild from Postgres + artifacts |
+| **Git** | Plane K compiled and authored pages | **Source of truth** for knowledge prose (authored words are irreducible; compiled pages recompile from the spine) |
+
+One line: **Postgres says what is true and when; object storage holds the bytes; git holds the prose we wrote about it.**
+
+## How the spine is shaped
+
+The store is a **DAG across three planes**, not a single ladder. The plane a component lives in fixes its rules: triggers, authority, mutability, rebuild semantics.
 
 ```
   inputs (files, mail, web, audio, video, images)
       │
       ▼
   E0 files ─→ E1 chunks ─→ E2 claims ─→ E3 facts     Plane E — evidence spine
-      │                                    │           (Postgres + object storage)
-      │              ┌─────────────────────┤
-      ▼              ▼                     ▼
+    │                                    │           (Postgres + object storage)
+    │              ┌─────────────────────┤
+    ▼              ▼                     ▼
   P3 corpus fs    P1 search             live graph   Read models
                   indexes               (Postgres)
 
                   K knowledge pages (git)             Plane K — compiled + authored
 ```
 
-| Plane | Trigger | Source of truth | Mutability | Rebuild |
+| Plane | Meaning | Trigger | Mutability | Rebuild |
 | --- | --- | --- | --- | --- |
-| **E** | Per-document chain | Postgres (+ object bytes) | Append-only; windows close | n/a — *is* truth |
-| **K** | Debounced evidence change | Git | Compiled rewrite / authored edit | Recompile (semantic) |
-| **P / read models** | Inline or scheduled | None | P1 and graph are live; P3 is immutable | P1 maintenance / P3 rebuild |
+| **E — Evidence** | What we ingested and adjudicated | Per-document chain | Append-only; windows close | n/a — it *is* the ground truth |
+| **K — Knowledge** | What we concluded in prose | Debounced evidence change | Compiled rewrite / authored edit | Recompile (semantic) |
+| **P — Projections** | How we reach it fast | Inline or scheduled | P1 and graph are live; P3 is immutable | P1 maintenance / P3 rebuild |
 
-**Hard rule:** validity and invalidation live **only** in PostgreSQL. P1 search
-indexes are derived state beside the authority rows; SQL/PGQ and recursive
-graph helpers read live PostgreSQL rows. Neither can become independent truth.
+**E is what we ingested, K is what we concluded, P is how we reach it — and P always rebuilds from E.** K pages and P3 cross-link as consumers of each other; K is never a structural input to P1 or graph reads.
 
-## Plane E — evidence spine
+The conceptual *why* (testimony vs truth, two clocks, why indexes cannot be authority) is on [Why this memory](/docs/why). This page is the store.
 
-Every input walks one durable, inspectable pipeline. Stages are idempotent workers on a work ledger (retries, dead-letter, budgets).
+## Writes: evidence accumulates
+
+![Ingestion pipeline](/docs/diagrams/ingestion-pipeline.jpg)
+
+Every input walks one durable, inspectable pipeline. Stages are idempotent workers on a work ledger (retries, dead-letter, budgets). Writes may call models. Work is ledgered, versioned, and replayable. Reads never enqueue writes.
 
 | Stage | Name | Job |
 | --- | --- | --- |
@@ -47,64 +67,49 @@ Every input walks one durable, inspectable pipeline. Stages are idempotent worke
 | **E2** | Claims | Atomic grounded assertions (immutable) |
 | **E3** | Facts | Entity resolution + relation/observation adjudication, supersession, contradictions |
 
-Postgres holds metadata, claims, entities, facts, evidence links, processing state. Object storage holds raw originals and converted representations.
+Postgres holds metadata, claims, entities, facts, evidence links, and processing state. Object storage holds raw originals and converted representations.
 
 Exhaustive write path: [Ingestion](/docs/ingestion) · [Pipeline stages](/docs/ingestion/pipeline) · [Lifecycle](/docs/ingestion/lifecycle).
 
-## Plane K — compiled and authored knowledge
+## Reads: nominate, confirm, account
 
-Git repository of knowledge pages:
+![Retrieval flow](/docs/diagrams/retrieval-flow.jpg)
+
+**Reads use no LLM completion** (semantic paths may still embed the query). The motion is:
+
+1. **Nominate** — P1 search, live graph SQL, open SQL, or an assured operation proposes candidates (P1 may lag; the graph does not).
+2. **Confirm** — hydration against live Postgres re-reads validity, invalidation, contradiction membership, and testimony currency.
+3. **Account** — the envelope states grain, freshness, drops, truncation, and typed negatives.
+
+Mounted file reads skip step 2 by construction (snapshot files). Rule: orient on mounts; **verify load-bearing facts on the spine**.
+
+Agents reach the store through four surfaces with one precedence rule:
+
+1. **Mounts** (when available) — prefer for navigate / read / `grep`
+2. **API** — enforcement point for query-engine reads; open SQL + assured ops
+3. **CLI** — the same operations for shell agents
+4. **MCP** — the same operations for tool-using harnesses
+
+Open query is sandboxed SQL over the `memory_v1` views plus typed live-graph helpers. There is no graph snapshot and no public Cypher surface. Exhaustive read path: [Retrieval](/docs/retrieval).
+
+## Projections (how we reach it)
+
+| Projection | Store | Serves |
+| --- | --- | --- |
+| **P1** | Same PostgreSQL (`pgvector` + `pg_textsearch`) | Vector + BM25 over chunks and claims; semantic search over fact labels and entities |
+| **Live graph** | Same PostgreSQL (SQL/PGQ + recursive SQL) | Immediate neighborhood / path / as-of graph from committed entity and relation authority |
+| **P3** | Object tree / mount | Browsable corpus filesystem (`ls` / `cat` / `grep`) |
+
+P1 can be repaired from authority and P3 can be rebuilt. The graph is a live relational view plus catalog metadata, so there is no graph snapshot to rebuild.
+
+## Knowledge sits beside the spine
+
+Git holds knowledge pages:
 
 - **Compiled** — LLM writers produce citation-bearing prose; a deterministic driver owns staleness, routing, and commits.
 - **Authored** — human/agent commitments (principles, plans). Evidence changes **flag** them; nothing rewrites them silently.
 
-K is never a structural input to P1 or graph reads. K pages and P3 cross-link as consumers of each other.
-
-Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
-
-## Plane P — projections agents use for speed
-
-| Projection | Store | Serves |
-| --- | --- | --- |
-| **P1** | PostgreSQL 19 (`pgvector` + `pg_textsearch`) | Vector + BM25 over chunks and claims; semantic search over fact labels and entities |
-| **Live graph** | PostgreSQL 19 SQL/PGQ + recursive SQL | Immediate neighborhood / path / as-of graph served directly from committed entity and relation authority |
-| **P3** | Object tree / mount | Browsable corpus filesystem (`ls` / `cat` / `grep`) |
-
-P1 can be repaired from authority and P3 can be rebuilt. The graph is a live
-relational view plus catalog metadata, so there is no graph snapshot to rebuild.
-
-## Stores and authority
-
-| Store | Role | Authority |
-| --- | --- | --- |
-| PostgreSQL | Spine plus derived P1 vectors and BM25 indexes | **E source of truth** for natural rows; P1 state is rebuildable |
-| Object storage — raw | Original bytes | Byte authority |
-| Object storage — artifacts | Converted Markdown, structure, media sidecars | Representation authority (replay, not regenerate-in-place) |
-| PostgreSQL SQL/PGQ graph | Live views over the E authority | Derived read model; no copied rows |
-| Git | Plane K | **K source of truth** (authored + compile history) |
-
-## Write path vs read path
-
-![Ingestion pipeline](/docs/diagrams/ingestion-pipeline.jpg)
-
-**Writes** may call models (conversion helpers, claim extraction, adjudication, K compilation). Work is ledgered, versioned, and replayable.
-
-![Retrieval flow](/docs/diagrams/retrieval-flow.jpg)
-
-**Reads** use **no LLM completion** (semantic paths may still embed the query). Projections nominate; Postgres confirms; the envelope accounts for grain, freshness, contradictions, truncation, and typed negatives.
-
-Exhaustive read path: [Retrieval](/docs/retrieval).
-
-## Consumption architecture
-
-Four surfaces, one precedence rule:
-
-1. **Mounts** (when available) — prefer for navigate/read/grep
-2. **API** — enforcement point for query-engine reads; open SQL + assured ops
-3. **CLI** — same operations for shell agents
-4. **MCP** — same operations for tool-using harnesses
-
-Deployment-rendered **consumption skill** teaches the two-layer model and is checked by cold-agent evals. See [Mounts and skill](/docs/mounts).
+Compiled pages are semantically regenerable from the spine plus recorded compile inputs. Authored words are irreducible. Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
 
 ## Registries (shared control data)
 
@@ -115,7 +120,7 @@ Deployment-rendered **consumption skill** teaches the two-layer model and is che
 | **Operations / saved queries** | Versioned query compositions; MCP renders from registry |
 | **Ontology packs** | Domain extensions without forking the core |
 
-Adding a operation is inserting a row — surfaces stay in lockstep.
+Adding an operation is inserting a row — surfaces stay in lockstep.
 
 ## Scale posture
 
@@ -126,10 +131,11 @@ Adding a operation is inserting a row — surfaces stay in lockstep.
 
 ## Where deeper design lives
 
-This site documents **what ships**. Extended architecture notes for implementers live in the repository under [`plan/designs/`](https://github.com/writeitai/remember-stack/tree/main/plan/designs) (optional reading — not required to use the product).
+This site documents **what ships**. Extended architecture notes for implementers live in the repository under [`plan/designs/`](https://github.com/writeitai/remember-stack/tree/main/plan/designs) (optional reading — not required to use the product). The spine schema contract is [`postgres_schema_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/postgres_schema_design.md); the three-plane map is [`overall_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/overall_design.md).
 
 ## Next
 
-- [Concepts](/docs/concepts) if vocabulary is still fuzzy  
-- [Ingestion](/docs/ingestion) to follow a document through the spine  
-- [Retrieval](/docs/retrieval) to follow a query through nominate → confirm → account  
+- [Getting started](/docs/getting-started) if you have not run it yet
+- [Concepts](/docs/concepts) if vocabulary is still fuzzy
+- [Ingestion](/docs/ingestion) to follow a document through the spine
+- [Retrieval](/docs/retrieval) to follow a query through nominate → confirm → account
