@@ -147,6 +147,13 @@ Overflow must not drop the assertion. An empty list is valid.
 OUTPUT FORMAT
 Return one JSON object containing both "observations" and "relations". Both values must be arrays. Use [] when a kind has no output; never omit either field.
 
+Each observation contains context_refs, statement, subject, and uses_claim_window.
+Each relation contains context_refs, object, predicate, subject, and uses_claim_window.
+Every entity reference in subject, object, or context_refs contains both name and surface.
+Use surface=null when the claim spelling matches the canonical name; otherwise use the exact claim spelling.
+Use context_refs=[] when there are no context references. uses_claim_window is always true or false.
+Include every field, even when its value is null or an empty array.
+
 SOURCE TIMESTAMP: {asserted_at}
 CLAIM WORLD WINDOW (inclusive raw source dates): {claim_window}
 

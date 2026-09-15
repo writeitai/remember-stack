@@ -1,4 +1,17 @@
-# RS-LoCoMo-Full-v34 setup
+# RS-LoCoMo-Full-v35 setup
+
+v35 (2026-09-15) names existing nested normalizer fields after the root
+both-array sentence. Each observation, relation, and entity reference lists
+its declared fields; empty context uses `[]`; `uses_claim_window` is an
+explicit boolean; `surface=null` when the claim spelling matches the
+canonical name. That wording completed one captured Gemma/Vertex input that
+had already received the both-array sentence. The same input completed in
+an earlier run, so this is not a deterministic failure. Resolver and
+fact-adjudicator prompt generations stay the same; the normalizer generation
+appends `:nested-fields-1`. Meaning, temporal, schema, retrieval, answer, and
+judge settings stay the same. Re-ingest v34 stores for a v35 run; historical
+results remain available for directional comparisons. The wording does not
+establish a benchmark score or cost improvement.
 
 v34 (2026-09-15) names existing decision-output fields in two processing
 prompts. T4 requires `candidate_id`, `confidence`, `decision`, and
@@ -81,12 +94,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v34 \
+  --protocol full-v35 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v34` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v35` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -235,7 +248,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v34 sample and
+The additive D124 runner reuses one completely processed Full-v35 sample and
 compares four answer routes without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -306,12 +319,12 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v34 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v35 protocol and
 its source state are never modified by this command.
 
-## Gemma 4 on Vertex as the answer agent (`full-v34-gemma-vertex`)
+## Gemma 4 on Vertex as the answer agent (`full-v35-gemma-vertex`)
 
-`full-v34-gemma-vertex` is a *reader-only variant* of `full-v34`, not a new
+`full-v35-gemma-vertex` is a *reader-only variant* of `full-v35`, not a new
 benchmark identity and not a processing configuration: every ingest pin is
 identical -- pipeline stages including `ground_claims`, component generations,
 model bindings, prompts, tool catalog, budgets, temperature, and the frozen
@@ -342,7 +355,7 @@ Prepare it explicitly; every later stage reads the immutable choice:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v34-gemma-vertex \
+  --protocol full-v35-gemma-vertex \
   --output .benchmark-runs/locomo-gemma-smoke
 ```
 
@@ -385,7 +398,7 @@ any upload.
 
 ## Codex ChatGPT subscription for answer and judge
 
-`full-v34-codex-subscription` runs both evaluator seats through the official
+`full-v35-codex-subscription` runs both evaluator seats through the official
 local Codex app-server and the operator's existing ChatGPT login. It does not
 read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
 ChatGPT response route directly. Run `codex login` once, then prepare the
@@ -395,14 +408,14 @@ separately fingerprinted protocol:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v34-codex-subscription \
+  --protocol full-v35-codex-subscription \
   --output .benchmark-runs/locomo-codex-smoke
 ```
 
-The v34 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
+The v35 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
 the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
 effort `high`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v34 score.
+provider variant, not a canonical v35 score.
 
 Each model call uses a fresh ephemeral thread, an empty temporary directory,
 read-only/no-network sandboxing, and deny-all approvals. It receives no custom

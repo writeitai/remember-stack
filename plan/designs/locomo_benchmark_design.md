@@ -1,7 +1,27 @@
 # LoCoMo full-system benchmark design
 
-> **v34 decision-output-format amendment (2026-09-15).** Full-v34 is the
-> current protocol. The T4 prompt requires all four existing fields
+> **v35 nested-normalizer-field amendment (2026-09-15).** Full-v35 is the
+> current protocol. After the root both-array sentence, the normalizer prompt
+> names every existing nested field on observations, relations, and entity
+> references, uses `context_refs=[]` when empty, an explicit boolean
+> `uses_claim_window`, and `surface=null` when the claim spelling matches the
+> canonical name. That completed one captured Gemma/Vertex input that already
+> had the both-array sentence; the same input completed in an earlier run, so
+> this is not a deterministic failure. Three sequential diagnostics completed
+> that one unique input; the third verified raw required fields before
+> Pydantic. Resolver and fact-adjudicator prompt
+> generations stay the same; the normalizer generation appends
+> `:nested-fields-1`. Meaning, temporal, schema, retrieval, answer, and judge
+> pins stay the same. Adapter identity, protocol keys, variants, and
+> fingerprints roll together. Dataset, models, budgets, and scoring are
+> unchanged. Stores ingested under v34 are not this protocol. Analysis:
+> [normalizer_nested_fields_20260915.md](../analysis/normalizer_nested_fields_20260915.md).
+> Durable probes:
+> [nested-field probes](https://github.com/writeitai/ultimate-memory-cloud/blob/2f64281c/design/analysis/locomo-conv42-gemma-normalizer-nested-probes-20260915.json).
+>
+> **v34 decision-output-format amendment (2026-09-15).** Full-v34 named
+> existing decision-output fields in two processing prompts. The T4 prompt
+> requires all four existing fields
 > (`candidate_id`, `confidence`, `decision`, `rationale`), including nulls;
 > that is a measured Gemma/Vertex completion of one captured input. The fact
 > prompt names all nine existing `PromptFactDecision` fields, uses `[]` for
@@ -12,7 +32,7 @@
 > Meaning, temporal, schema, retrieval, answer, and judge pins stay the same.
 > Adapter identity, protocol keys, variants, and fingerprints roll together.
 > Dataset, models, budgets, and scoring are unchanged. Stores ingested under
-> v33 are not this protocol. Analysis:
+> v33 are not that protocol. Analysis:
 > [t4_output_format_20260915.md](../analysis/t4_output_format_20260915.md),
 > [fact_adjudication_output_format_20260915.md](../analysis/fact_adjudication_output_format_20260915.md).
 >
@@ -224,7 +244,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v34
+protocol                RS-LoCoMo-Full-v35
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -248,6 +268,16 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v34 → v35 (2026-09-15 — nested normalizer fields):** Normalizer generation
+includes `nested-fields-1`. After the root both-array sentence, the prompt
+names every existing nested observation, relation, and EntityRef field,
+uses `[]` for empty context references, an explicit boolean
+`uses_claim_window`, and `surface=null` when spelling matches. Resolver and
+fact-adjudicator prompt generations are unchanged. Meaning, temporal, schema,
+retrieval, answer, and judge pins are unchanged. Adapter version, protocol
+identities, variants, and fingerprints roll. Stores ingested under v34 must
+be re-ingested.
 
 **v33 → v34 (2026-09-15 — T4 and fact output-format prompts):** Resolver
 generation is `resolver-2026.08h`. Normalizer generation includes
@@ -596,7 +626,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v34-codex-subscription` is an additive evaluator-provider variant for
+`full-v35-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -895,7 +925,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v34 requires to be
+- the non-secret `document_binding_generation`, which Full-v35 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -1044,12 +1074,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v34 \
+  --protocol full-v35 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v34`; the
-explicit `full-v34-gemma-vertex` and `full-v34-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v35`; the
+explicit `full-v35-gemma-vertex` and `full-v35-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 
