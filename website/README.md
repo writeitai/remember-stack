@@ -94,7 +94,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 
 | Route | Subject |
 | --- | --- |
-| `/docs` | Mission landing — who this is for, what it changes, Start here |
+| `/docs` | Mission landing — centralize information, expose it to agents, Start here |
 | `/docs/getting-started` | Install, first ingest, first assured queries |
 | `/docs/why` | What this memory is and why agents that act need it |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
