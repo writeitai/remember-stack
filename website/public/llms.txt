@@ -4,7 +4,7 @@
 
 ## Documentation Overview
 
-- [Mission](https://remember.dev/docs): RememberStack doorway — who this is for, what it changes, and where to start.
+- [Mission](https://remember.dev/docs): Our mission — centralize all your information in a single place, and expose it to AI agents in the best possible way.
 - [Why this memory](https://remember.dev/docs/why): Testimony vs truth, failure modes vs passage RAG, and why agents that act need a harder question than similar text.
 - [Concepts](https://remember.dev/docs/concepts): Core vocabulary: claims, relations, observations, bitemporal clocks, and validity windows.
 - [Architecture](https://remember.dev/docs/architecture): RememberStack architecture — durable spine (PostgreSQL, object storage, git), what is derived, and how writes and reads relate.
