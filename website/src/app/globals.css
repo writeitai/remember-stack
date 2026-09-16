@@ -184,6 +184,17 @@
   letter-spacing: -0.025em;
 }
 
+/* Hero statement under a page title — same display face as headings, larger and bold. */
+.prose :where(p.lead-statement) {
+  font-family:
+    var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
 .prose :where(a) {
   text-decoration-color: var(--coral);
   text-decoration-thickness: 1.5px;
