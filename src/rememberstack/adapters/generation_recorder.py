@@ -24,10 +24,11 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import import_module
 import logging
+from typing import Any
 from typing import Literal
 from typing import Protocol
-from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
@@ -35,8 +36,30 @@ from pydantic_settings import SettingsConfigDict
 
 from rememberstack.model import ProviderCallUsage
 
-if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer
+
+class _Span(Protocol):
+    """The span operations used by the recorder."""
+
+    def set_attribute(self, key: str, value: object) -> None:
+        """Attach one attribute to the span."""
+        ...
+
+    def set_status(self, status: object) -> None:
+        """Mark the span status."""
+        ...
+
+    def end(self) -> None:
+        """Close the span."""
+        ...
+
+
+class _Tracer(Protocol):
+    """The tracer operation used by the recorder."""
+
+    def start_span(self, *, name: str, kind: object = None) -> _Span:
+        """Open one client span."""
+        ...
+
 
 GenerationOutcome = Literal[
     "succeeded", "no_content", "incomplete", "invalid", "transport_error"
@@ -159,33 +182,44 @@ def build_generation_recorder(
     )
 
 
-def _build_otel_tracer(
-    *, endpoint: str, public_key: str, secret_key: str, ca_file: str | None
-) -> tuple[Tracer, Callable[[], None]]:
-    """Build one OTLP tracer plus its flush callable.
-
-    Imports are lazy so processes without the optional ``observability``
-    extra keep working.
-    """
+def _load_module(*, name: str, package: str) -> Any:
+    """Import one optional OTel module, or raise with the extra hint."""
     try:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
-        )
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        return import_module(name)
     except ImportError as error:
         raise ValueError(
             "Full-payload recording needs the 'observability' extra installed"
-            " (opentelemetry-sdk, opentelemetry-exporter-otlp-proto-http)"
+            f" ({package})"
         ) from error
+
+
+def _build_otel_tracer(
+    *, endpoint: str, public_key: str, secret_key: str, ca_file: str | None
+) -> tuple[_Tracer, Callable[[], None]]:
+    """Build one OTLP tracer plus its flush callable.
+
+    The SDK is resolved with ``import_module`` (like ``adapters/sentry.py``)
+    so static analysis and runtimes without the optional ``observability``
+    extra never touch a missing import.
+    """
+    sdk_trace = _load_module(
+        name="opentelemetry.sdk.trace", package="opentelemetry-sdk"
+    )
+    sdk_export = _load_module(
+        name="opentelemetry.sdk.trace.export", package="opentelemetry-sdk"
+    )
+    otlp_http = _load_module(
+        name="opentelemetry.exporter.otlp.proto.http.trace_exporter",
+        package="opentelemetry-exporter-otlp-proto-http",
+    )
     credentials = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
-    exporter = OTLPSpanExporter(
+    exporter = otlp_http.OTLPSpanExporter(
         endpoint=endpoint,
         headers={"Authorization": f"Basic {credentials}"},
         certificate_file=ca_file,
     )
-    provider = TracerProvider()
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    provider = sdk_trace.TracerProvider()
+    provider.add_span_processor(sdk_export.BatchSpanProcessor(exporter))
     tracer = provider.get_tracer("rememberstack.generation_recorder")
     return tracer, provider.force_flush
 
@@ -194,7 +228,7 @@ class OtelSpanRecorder:
     """Deliver generation records as OTLP spans. Best effort only."""
 
     def __init__(
-        self, *, tracer: Tracer, flusher: Callable[[], None], run_tag: str = ""
+        self, *, tracer: _Tracer, flusher: Callable[[], None], run_tag: str = ""
     ) -> None:
         """Bind one tracer, its flush callable, and the run label."""
         self._tracer = tracer
@@ -218,15 +252,14 @@ class OtelSpanRecorder:
 
     def _emit(self, *, record: GenerationRecord) -> None:
         """Send one span with the full prompt and raw completion attached."""
-        from opentelemetry.trace import SpanKind
-        from opentelemetry.trace import Status
-        from opentelemetry.trace import StatusCode
-
+        trace_api = _load_module(
+            name="opentelemetry.trace", package="opentelemetry-sdk"
+        )
         model_key = record.resolved_model or record.requested_model
         call_seq = self._call_seq_by_model.get(model_key, 0) + 1
         self._call_seq_by_model[model_key] = call_seq
         span = self._tracer.start_span(
-            name=f"locomo.generation/{record.provider}", kind=SpanKind.CLIENT
+            name=f"locomo.generation/{record.provider}", kind=trace_api.SpanKind.CLIENT
         )
         try:
             span.set_attribute("gen_ai.system", record.provider)
@@ -249,7 +282,9 @@ class OtelSpanRecorder:
             span.set_attribute("locomo.latency_ms", record.latency_ms)
             if record.outcome != "succeeded":
                 span.set_status(
-                    Status(StatusCode.ERROR, record.error or record.outcome)
+                    trace_api.Status(
+                        trace_api.StatusCode.ERROR, record.error or record.outcome
+                    )
                 )
         finally:
             span.end()
