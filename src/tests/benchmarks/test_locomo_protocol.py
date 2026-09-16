@@ -596,8 +596,11 @@ def test_cli_composes_only_the_vertex_answer_seat(
     built: list[VertexSettings] = []
 
     class _FakeVertex:
-        def __init__(self, *, settings: VertexSettings) -> None:
+        def __init__(
+            self, *, settings: VertexSettings, recorder: object = None
+        ) -> None:
             built.append(settings)
+            assert recorder is None
 
     monkeypatch.setattr(cli, "VertexModelProvider", _FakeVertex)
 
