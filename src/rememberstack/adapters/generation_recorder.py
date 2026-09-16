@@ -171,14 +171,17 @@ def build_generation_recorder(
             "REMEMBERSTACK_LANGFUSE_PUBLIC_KEY and"
             " REMEMBERSTACK_LANGFUSE_SECRET_KEY are required when enabled"
         )
-    tracer, flusher = _build_otel_tracer(
+    tracer, flusher, trace_api = _build_otel_tracer(
         endpoint=host.rstrip("/") + _OTLP_TRACES_PATH,
         public_key=public_key,
         secret_key=secret_key,
         ca_file=settings.ca_file.strip() or None,
     )
     return OtelSpanRecorder(
-        tracer=tracer, flusher=flusher, run_tag=settings.run_tag.strip()
+        tracer=tracer,
+        flusher=flusher,
+        trace_api=trace_api,
+        run_tag=settings.run_tag.strip(),
     )
 
 
@@ -195,7 +198,7 @@ def _load_module(*, name: str, package: str) -> Any:
 
 def _build_otel_tracer(
     *, endpoint: str, public_key: str, secret_key: str, ca_file: str | None
-) -> tuple[_Tracer, Callable[[], None]]:
+) -> tuple[_Tracer, Callable[[], None], Any]:
     """Build one OTLP tracer plus its flush callable.
 
     The SDK is resolved with ``import_module`` (like ``adapters/sentry.py``)
@@ -221,18 +224,31 @@ def _build_otel_tracer(
     provider = sdk_trace.TracerProvider()
     provider.add_span_processor(sdk_export.BatchSpanProcessor(exporter))
     tracer = provider.get_tracer("rememberstack.generation_recorder")
-    return tracer, provider.force_flush
+    trace_api = _load_module(name="opentelemetry.trace", package="opentelemetry-sdk")
+    return tracer, provider.force_flush, trace_api
 
 
 class OtelSpanRecorder:
     """Deliver generation records as OTLP spans. Best effort only."""
 
     def __init__(
-        self, *, tracer: _Tracer, flusher: Callable[[], None], run_tag: str = ""
+        self,
+        *,
+        tracer: _Tracer,
+        flusher: Callable[[], None],
+        trace_api: Any,
+        run_tag: str = "",
     ) -> None:
-        """Bind one tracer, its flush callable, and the run label."""
+        """Bind one tracer, its flush callable, the trace API, and the run label.
+
+        ``trace_api`` is the loaded ``opentelemetry.trace`` module (or a test
+        double with ``SpanKind``/``Status``/``StatusCode``). Resolving it once
+        at construction keeps unit CI without the ``observability`` extra
+        green: ``_emit`` never imports.
+        """
         self._tracer = tracer
         self._flusher = flusher
+        self._trace_api = trace_api
         self._run_tag = run_tag
         self._call_seq_by_model: dict[str, int] = {}
 
@@ -252,9 +268,7 @@ class OtelSpanRecorder:
 
     def _emit(self, *, record: GenerationRecord) -> None:
         """Send one span with the full prompt and raw completion attached."""
-        trace_api = _load_module(
-            name="opentelemetry.trace", package="opentelemetry-sdk"
-        )
+        trace_api = self._trace_api
         model_key = record.resolved_model or record.requested_model
         call_seq = self._call_seq_by_model.get(model_key, 0) + 1
         self._call_seq_by_model[model_key] = call_seq

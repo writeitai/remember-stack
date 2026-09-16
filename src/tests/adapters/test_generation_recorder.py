@@ -1,6 +1,8 @@
 """Full-payload recorder proofs: gate, capture, and never-break-generation."""
 
 from decimal import Decimal
+import enum
+from types import SimpleNamespace
 from typing import Annotated
 from typing import Any
 
@@ -168,13 +170,46 @@ class _FakeTracer:
         return span
 
 
+class _FakeSpanKind:
+    """Stand-in for the span-kind enum."""
+
+    CLIENT = "CLIENT"
+
+
+class _FakeStatusCode(enum.Enum):
+    """Stand-in for the status-code enum."""
+
+    UNSET = 0
+    OK = 1
+    ERROR = 2
+
+
+class _FakeStatus:
+    """Stand-in for the span status value."""
+
+    def __init__(self, code: _FakeStatusCode, description: str | None = None) -> None:
+        """Keep the code and description."""
+        self.status_code = code
+        self.description = description
+
+
+def _fake_trace_api() -> Any:
+    """Bundle the trace-API doubles the recorder resolves once."""
+    return SimpleNamespace(
+        SpanKind=_FakeSpanKind, Status=_FakeStatus, StatusCode=_FakeStatusCode
+    )
+
+
 def _span_recorder(
     *, tracer: _FakeTracer, run_tag: str = "test-run"
 ) -> tuple[OtelSpanRecorder, list[int]]:
     """Build a span recorder with a counting flusher."""
     flushes: list[int] = []
     recorder = OtelSpanRecorder(
-        tracer=tracer, flusher=lambda: flushes.append(1), run_tag=run_tag
+        tracer=tracer,
+        flusher=lambda: flushes.append(1),
+        trace_api=_fake_trace_api(),
+        run_tag=run_tag,
     )
     return recorder, flushes
 
@@ -203,7 +238,7 @@ def test_enabled_builder_returns_span_recorder(monkeypatch: pytest.MonkeyPatch) 
         seen.update(endpoint=endpoint, public_key=public_key, ca_file=ca_file)
         assert secret_key == "test-secret"
         assert public_key == "test-public"
-        return tracer, lambda: None
+        return tracer, lambda: None, _fake_trace_api()
 
     monkeypatch.setattr(recorder_module, "_build_otel_tracer", fake_tracer)
     recorder = build_generation_recorder(
