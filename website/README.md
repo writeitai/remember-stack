@@ -96,7 +96,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | --- | --- |
 | `/docs` | Mission landing — centralize information, expose it to agents, Start here |
 | `/docs/getting-started` | Install, first ingest, first assured queries |
-| `/docs/why` | What this memory is and why agents that act need it |
+| `/docs/why` | What is a memory system — testimony vs truth, why agents that act need it |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
 | `/docs/architecture` | RememberStack architecture: durable spine, stores, write vs read |
 | `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
