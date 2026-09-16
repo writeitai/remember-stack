@@ -15,6 +15,11 @@ from rememberstack.adapters.codex_writer import CodexAgentAdapterSettings
 from rememberstack.adapters.codex_writer import CodexCLIAgentAdapter
 from rememberstack.adapters.codex_writer import CodexCLIWriterAdapter
 from rememberstack.adapters.codex_writer import CodexWriterAdapterSettings
+from rememberstack.adapters.generation_recorder import build_generation_recorder
+from rememberstack.adapters.generation_recorder import GenerationRecord
+from rememberstack.adapters.generation_recorder import GenerationRecorder
+from rememberstack.adapters.generation_recorder import LangfuseRecorderSettings
+from rememberstack.adapters.generation_recorder import OtelSpanRecorder
 from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
@@ -53,6 +58,10 @@ __all__ = (
     "CodexSubscriptionProviderError",
     "CodexTurnPolicy",
     "CodexWriterAdapterSettings",
+    "GenerationRecord",
+    "GenerationRecorder",
+    "LangfuseRecorderSettings",
+    "OtelSpanRecorder",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",
     "ImageDescriptionSettings",
@@ -61,6 +70,7 @@ __all__ = (
     "MistralOcrSettings",
     "ModelRoutedProvider",
     "build_conversion_routes",
+    "build_generation_recorder",
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",

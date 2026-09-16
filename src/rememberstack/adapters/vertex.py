@@ -36,6 +36,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 import hashlib
 import json
+import logging
 import threading
 import time
 from typing import Any
@@ -50,6 +51,9 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.generation_recorder import GenerationOutcome
+from rememberstack.adapters.generation_recorder import GenerationRecord
+from rememberstack.adapters.generation_recorder import GenerationRecorder
 from rememberstack.adapters.openrouter import _completion_content
 from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.model import EmbeddingRequest
@@ -92,6 +96,7 @@ _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
 _REPETITION_PIECE_MIN_CHARS: Final[int] = 32
 _REPETITION_MAX_IDENTICAL_RUN: Final[int] = 8
 _ONE_MILLION: Final = Decimal(1_000_000)
+_logger = logging.getLogger(__name__)
 
 AccessTokenSource = Callable[[], str]
 """Return a currently valid bearer token; called before every request."""
@@ -249,14 +254,18 @@ class VertexModelProvider:
         settings: VertexSettings,
         access_token_source: AccessTokenSource | None = None,
         transport: httpx.BaseTransport | None = None,
+        recorder: GenerationRecorder | None = None,
     ) -> None:
         """Bind one HTTP client to the project endpoint and a token source.
 
         ``access_token_source`` defaults to Application Default Credentials;
         tests pass a stub. ``transport`` exists only so tests can intercept
-        requests without monkeypatching.
+        requests without monkeypatching. ``recorder`` is an opt-in
+        full-payload sink for benchmark diagnosis; ``None`` (the default)
+        records nothing.
         """
         self._settings = settings
+        self._recorder = recorder
         self._access_token = (
             access_token_source
             if access_token_source is not None
@@ -304,16 +313,40 @@ class VertexModelProvider:
         payload["stream_options"] = {"include_usage": True}
 
         started_ns = time.monotonic_ns()
-        body = self._complete(
-            path="/chat/completions",
-            payload=payload,
-            price=price,
-            started_ns=started_ns,
-        )
+        try:
+            body = self._complete(
+                path="/chat/completions",
+                payload=payload,
+                price=price,
+                started_ns=started_ns,
+            )
+        except VertexProviderError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="transport_error",
+                error=str(error),
+                usage=error.usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
+            raise
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
         finish = _finish_reason(body)
         if finish is None:
             usage = _try_usage(body=body, price=price, latency_ms=latency_ms)
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=_message_text(body),
+                outcome="incomplete",
+                error=(
+                    f"{response_type.__name__}: Vertex stream ended before"
+                    " a complete completion"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexProviderError(
                 f"{response_type.__name__}: Vertex stream ended before a complete"
                 " completion"
@@ -323,12 +356,35 @@ class VertexModelProvider:
         usage = _usage(body=body, price=price, latency_ms=latency_ms)
         content = _completion_content(body=body)
         if content is None:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="no_content",
+                error=(
+                    f"{response_type.__name__}: provider returned no completion content"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexInvalidResponseError(
                 f"{response_type.__name__}: provider returned no completion"
                 f" content ({_diagnosis(body=body, content='', usage=usage)})",
                 usage=usage,
             )
         if finish != "stop":
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="incomplete",
+                error=(
+                    f"{response_type.__name__}: provider returned an incomplete"
+                    " completion"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexInvalidResponseError(
                 f"{response_type.__name__}: provider returned an incomplete"
                 " completion"
@@ -338,13 +394,71 @@ class VertexModelProvider:
         try:
             output = response_type.model_validate_json(content)
         except ValidationError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="invalid",
+                error=(
+                    f"completion content failed {response_type.__name__}"
+                    f" validation ({_validation_summary(error=error)})"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexInvalidResponseError(
                 f"completion content failed {response_type.__name__} validation"
                 f" ({_diagnosis(body=body, content=content, usage=usage)};"
                 f" {_validation_summary(error=error)})",
                 usage=usage,
             ) from None
+        self._record_generation(
+            request=request,
+            response_type_name=response_type.__name__,
+            raw_content=content,
+            outcome="succeeded",
+            error=None,
+            usage=usage,
+            latency_ms=latency_ms,
+        )
         return GeneratedResponse(output=output, usage=usage)
+
+    def _record_generation(
+        self,
+        *,
+        request: ModelRequest,
+        response_type_name: str,
+        raw_content: str | None,
+        outcome: GenerationOutcome,
+        error: str | None,
+        usage: ProviderCallUsage | None,
+        latency_ms: int,
+    ) -> None:
+        """Report one generation to the opt-in recorder, if any is bound.
+
+        A failing recorder must never turn a good generation into an
+        exception, nor replace the provider error the ledger needs.
+        """
+        if self._recorder is None:
+            return
+        try:
+            self._recorder.record(
+                record=GenerationRecord(
+                    provider="vertex",
+                    requested_model=request.model,
+                    resolved_model=(usage.model_name if usage is not None else None),
+                    response_type_name=response_type_name,
+                    prompt=request.prompt,
+                    raw_content=raw_content,
+                    outcome=outcome,
+                    error=error,
+                    usage=usage,
+                    latency_ms=latency_ms,
+                    run_tag="",
+                )
+            )
+        except Exception as emit_error:
+            _logger.warning("vertex generation record dropped: %s", emit_error)
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """Refuse: this adapter serves generation only, by design."""

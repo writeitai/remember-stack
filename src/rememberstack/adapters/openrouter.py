@@ -20,6 +20,9 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.generation_recorder import GenerationOutcome
+from rememberstack.adapters.generation_recorder import GenerationRecord
+from rememberstack.adapters.generation_recorder import GenerationRecorder
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.model import GeneratedResponse
@@ -241,9 +244,19 @@ class OpenRouterInvalidResponseError(
 class OpenRouterModelProvider:
     """Structured generations and embeddings over the OpenRouter HTTP API."""
 
-    def __init__(self, *, settings: OpenRouterSettings) -> None:
-        """Bind one HTTP client to the configured endpoint and key."""
+    def __init__(
+        self,
+        *,
+        settings: OpenRouterSettings,
+        recorder: GenerationRecorder | None = None,
+    ) -> None:
+        """Bind one HTTP client to the configured endpoint and key.
+
+        ``recorder`` is an opt-in full-payload sink for benchmark diagnosis;
+        ``None`` (the default) records nothing.
+        """
         self._settings = settings
+        self._recorder = recorder
         self._client = httpx.Client(
             base_url=settings.base_url,
             headers={"Authorization": f"Bearer {settings.api_key}"},
@@ -278,9 +291,32 @@ class OpenRouterModelProvider:
         if provider is not None:
             payload["provider"] = provider
 
-        content, usage, body = self._completion_text(
-            payload=payload, response_type=response_type, started_ns=started_ns
-        )
+        try:
+            content, usage, body = self._completion_text(
+                payload=payload, response_type=response_type, started_ns=started_ns
+            )
+        except OpenRouterInvalidResponseError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="invalid",
+                error=str(error),
+                usage=error.usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
+            raise
+        except OpenRouterProviderError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="transport_error",
+                error=str(error),
+                usage=error.usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
+            raise
 
         try:
             decoded = json.loads(content)
@@ -292,6 +328,15 @@ class OpenRouterModelProvider:
                 request=request,
                 response_type=response_type,
                 usage=usage,
+            )
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="invalid",
+                error=f"{response_type.__name__}: completion content is not JSON",
+                usage=usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
             )
             raise OpenRouterInvalidResponseError(
                 f"{response_type.__name__}: completion content is not JSON"
@@ -311,6 +356,18 @@ class OpenRouterModelProvider:
                 response_type=response_type,
                 usage=usage,
             )
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="invalid",
+                error=(
+                    f"completion body failed {response_type.__name__} validation"
+                    f" ({_validation_error_names(error=error)})"
+                ),
+                usage=usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
             raise OpenRouterInvalidResponseError(
                 f"completion body failed {response_type.__name__} validation"
                 " ("
@@ -319,7 +376,53 @@ class OpenRouterModelProvider:
                 ")",
                 usage=usage,
             ) from None
+        self._record_generation(
+            request=request,
+            response_type_name=response_type.__name__,
+            raw_content=content,
+            outcome="succeeded",
+            error=None,
+            usage=usage,
+            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+        )
         return GeneratedResponse(output=output, usage=usage)
+
+    def _record_generation(
+        self,
+        *,
+        request: ModelRequest,
+        response_type_name: str,
+        raw_content: str | None,
+        outcome: GenerationOutcome,
+        error: str | None,
+        usage: ProviderCallUsage | None,
+        latency_ms: int,
+    ) -> None:
+        """Report one generation to the opt-in recorder, if any is bound.
+
+        A failing recorder must never turn a good generation into an
+        exception, nor replace the provider error the ledger needs.
+        """
+        if self._recorder is None:
+            return
+        try:
+            self._recorder.record(
+                record=GenerationRecord(
+                    provider="openrouter",
+                    requested_model=request.model,
+                    resolved_model=(usage.model_name if usage is not None else None),
+                    response_type_name=response_type_name,
+                    prompt=request.prompt,
+                    raw_content=raw_content,
+                    outcome=outcome,
+                    error=error,
+                    usage=usage,
+                    latency_ms=latency_ms,
+                    run_tag="",
+                )
+            )
+        except Exception as emit_error:
+            _logger.warning("openrouter generation record dropped: %s", emit_error)
 
     def _capture_invalid_completion(
         self,

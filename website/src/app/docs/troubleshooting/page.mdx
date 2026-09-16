@@ -168,6 +168,7 @@ remember ops graph-catalog ensure
 | --- | --- |
 | Sentry-protocol | Non-empty `REMEMBERSTACK_SENTRY_DSN` |
 | Langfuse (LoCoMo) | **All three** of `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
+| Langfuse full-payload gate (LoCoMo) | `REMEMBERSTACK_LANGFUSE_ENABLED=1` **plus** `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` (missing pieces fail the run loudly instead of tracing silently) |
 
 Empty env = exporters stay off. Ledger state still lives in Postgres.
 

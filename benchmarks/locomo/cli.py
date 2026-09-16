@@ -26,7 +26,10 @@ from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
+from rememberstack.adapters import build_generation_recorder
 from rememberstack.adapters import CodexSubscriptionModelProvider
+from rememberstack.adapters import GenerationRecorder
+from rememberstack.adapters import LangfuseRecorderSettings
 from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
@@ -41,7 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     """Run one local or explicitly acknowledged remote benchmark stage."""
     parser = _parser()
     args = parser.parse_args(argv)
+    recorder: GenerationRecorder | None = None
     try:
+        recorder = build_generation_recorder(
+            settings=LangfuseRecorderSettings.model_validate({})
+        )
         if args.command == "prepare":
             configuration = prepare_run(
                 dataset_path=args.dataset,
@@ -61,13 +68,15 @@ def main(argv: list[str] | None = None) -> int:
                     execute=args.execute,
                     isolated_deployment_confirmation=(args.confirm_isolated_deployment),
                     client=client,
-                    provider=_provider(run_dir=args.run, stage="ingest"),
+                    provider=_provider(
+                        run_dir=args.run, stage="ingest", recorder=recorder
+                    ),
                 )
             for record in records:
                 print(record.model_dump_json())
             return 0
         if args.command == "answer":
-            provider = _provider(run_dir=args.run, stage="answer")
+            provider = _provider(run_dir=args.run, stage="answer", recorder=recorder)
             with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                 records = answer_sample(
                     run_dir=args.run,
@@ -90,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_judge_calls=args.max_judge_calls,
                 max_evaluator_cost_usd=args.max_evaluator_cost_usd,
                 execute=args.execute,
-                provider=_provider(run_dir=args.run, stage="judge"),
+                provider=_provider(run_dir=args.run, stage="judge", recorder=recorder),
             )
             for record in records:
                 print(record.model_dump_json())
@@ -108,9 +117,11 @@ def main(argv: list[str] | None = None) -> int:
             answer_provider = (
                 None
                 if profile.startswith("codex-")
-                else _seat_provider(provider_key="openrouter")
+                else _seat_provider(provider_key="openrouter", recorder=recorder)
             )
-            judge_provider = _seat_provider(provider_key="openrouter")
+            judge_provider = _seat_provider(
+                provider_key="openrouter", recorder=recorder
+            )
             if profile in {"codex-p3-mcp", "mcp", "mcp-p3"}:
                 with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                     summary = run_retrieval_ablation(
@@ -161,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    finally:
+        if recorder is not None:
+            recorder.flush()
     parser.print_help()
     return 2
 
@@ -168,7 +182,9 @@ def main(argv: list[str] | None = None) -> int:
 ProviderStage = Literal["ingest", "answer", "judge"]
 
 
-def _provider(*, run_dir: Path, stage: ProviderStage) -> ModelProviderPort:
+def _provider(
+    *, run_dir: Path, stage: ProviderStage, recorder: GenerationRecorder | None = None
+) -> ModelProviderPort:
     """Compose only the provider needed by this frozen protocol stage.
 
     Ingest uses OpenRouter for the deployment embedding preflight and routes
@@ -180,13 +196,14 @@ def _provider(*, run_dir: Path, stage: ProviderStage) -> ModelProviderPort:
     protocol = run_protocol(run_dir=run_dir)
     codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
     if stage == "ingest":
-        openrouter = _seat_provider(provider_key="openrouter")
+        openrouter = _seat_provider(provider_key="openrouter", recorder=recorder)
         if protocol.answer_agent_provider == "openrouter":
             return openrouter
         answer_provider = _seat_provider(
             provider_key=protocol.answer_agent_provider,
             codex_audit_path=codex_audit_path,
             codex_audit_stage=stage,
+            recorder=recorder,
         )
         return ModelRoutedProvider(
             routes={protocol.answer_agent_model: answer_provider}, default=openrouter
@@ -198,6 +215,7 @@ def _provider(*, run_dir: Path, stage: ProviderStage) -> ModelProviderPort:
         provider_key=provider_key,
         codex_audit_path=codex_audit_path,
         codex_audit_stage=stage,
+        recorder=recorder,
     )
 
 
@@ -206,12 +224,17 @@ def _seat_provider(
     provider_key: ProviderKey,
     codex_audit_path: Path | None = None,
     codex_audit_stage: str = "generation",
+    recorder: GenerationRecorder | None = None,
 ) -> ModelProviderPort:
     """Build one configured provider without reading unrelated credentials."""
     if provider_key == "openrouter":
-        return OpenRouterModelProvider(settings=OpenRouterSettings.model_validate({}))
+        return OpenRouterModelProvider(
+            settings=OpenRouterSettings.model_validate({}), recorder=recorder
+        )
     if provider_key == "vertex":
-        return VertexModelProvider(settings=VertexSettings.model_validate({}))
+        return VertexModelProvider(
+            settings=VertexSettings.model_validate({}), recorder=recorder
+        )
     return CodexSubscriptionModelProvider(
         audit_path=codex_audit_path, audit_stage=codex_audit_stage
     )

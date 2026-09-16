@@ -320,8 +320,9 @@ Exporters stay disabled until env is non-empty.
 | `REMEMBERSTACK_SENTRY_ENVIRONMENT` | Defaults to deployment slug |
 | `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | Defaults to `1.0` |
 | `LANGFUSE_PUBLIC_KEY` + `SECRET_KEY` + `HOST` | LoCoMo answer/judge traces only when **all three** set |
+| `REMEMBERSTACK_LANGFUSE_ENABLED=1` + `_HOST` + `_PUBLIC_KEY` + `_SECRET_KEY` | LoCoMo full-payload diagnosis gate (prompts + raw completions); off by default, fails loud when incomplete |
 
-What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/completions, exception message text as free-form dumps. Worker tags stay stage/lane/processing id. Postgres + JSON telemetry remain authoritative for retries.
+What is **not** sent: request bodies, local vars, breadcrumbs, PII, prompts/completions, exception message text as free-form dumps. Worker tags stay stage/lane/processing id. Postgres + JSON telemetry remain authoritative for retries. The only exception is the opt-in `REMEMBERSTACK_LANGFUSE_*` diagnosis gate above, which exists precisely to capture full payloads while debugging benchmark dead letters.
 
 ## Conversion and connectors
 
