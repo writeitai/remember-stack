@@ -44,10 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     """Run one local or explicitly acknowledged remote benchmark stage."""
     parser = _parser()
     args = parser.parse_args(argv)
-    recorder = build_generation_recorder(
-        settings=LangfuseRecorderSettings.model_validate({})
-    )
+    recorder: GenerationRecorder | None = None
     try:
+        recorder = build_generation_recorder(
+            settings=LangfuseRecorderSettings.model_validate({})
+        )
         if args.command == "prepare":
             configuration = prepare_run(
                 dataset_path=args.dataset,

@@ -29,6 +29,7 @@ from typing import Literal
 from typing import Protocol
 from typing import TYPE_CHECKING
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -112,8 +113,8 @@ class LangfuseRecorderSettings(BaseSettings):
 
     enabled: bool = False
     host: str = ""
-    public_key: str = ""
-    secret_key: str = ""
+    public_key: SecretStr | None = None
+    secret_key: SecretStr | None = None
     ca_file: str = ""
     run_tag: str = ""
 
@@ -132,15 +133,25 @@ def build_generation_recorder(
     host = settings.host.strip()
     if not host:
         raise ValueError("REMEMBERSTACK_LANGFUSE_HOST is required when enabled")
-    if not settings.public_key.strip() or not settings.secret_key.strip():
+    public_key = (
+        ""
+        if settings.public_key is None
+        else settings.public_key.get_secret_value().strip()
+    )
+    secret_key = (
+        ""
+        if settings.secret_key is None
+        else settings.secret_key.get_secret_value().strip()
+    )
+    if not public_key or not secret_key:
         raise ValueError(
             "REMEMBERSTACK_LANGFUSE_PUBLIC_KEY and"
             " REMEMBERSTACK_LANGFUSE_SECRET_KEY are required when enabled"
         )
     tracer, flusher = _build_otel_tracer(
         endpoint=host.rstrip("/") + _OTLP_TRACES_PATH,
-        public_key=settings.public_key.strip(),
-        secret_key=settings.secret_key,
+        public_key=public_key,
+        secret_key=secret_key,
         ca_file=settings.ca_file.strip() or None,
     )
     return OtelSpanRecorder(
@@ -151,7 +162,11 @@ def build_generation_recorder(
 def _build_otel_tracer(
     *, endpoint: str, public_key: str, secret_key: str, ca_file: str | None
 ) -> tuple[Tracer, Callable[[], None]]:
-    """Build one OTLP tracer plus its flush callable. Imports are lazy so processes without the optional ``observability`` extra keep working."""
+    """Build one OTLP tracer plus its flush callable.
+
+    Imports are lazy so processes without the optional ``observability``
+    extra keep working.
+    """
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,

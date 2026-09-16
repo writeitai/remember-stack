@@ -1810,6 +1810,8 @@ benchmark = [
 ]
 observability = [
     { name = "langfuse" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "sentry-sdk" },
 ]
 
@@ -1866,6 +1868,8 @@ requires-dist = [
     { name = "langfuse", marker = "extra == 'observability'", specifier = ">=4.14.1,<5" },
     { name = "nltk", marker = "extra == 'benchmark'", specifier = ">=3.9" },
     { name = "openai-codex", marker = "extra == 'benchmark'", specifier = "==0.147.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.44.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.44.0" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.10" },
     { name = "regex", marker = "extra == 'benchmark'", specifier = ">=2024.11.6" },

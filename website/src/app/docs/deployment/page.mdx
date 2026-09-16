@@ -91,6 +91,13 @@ argument shapes, final answers, and verdicts, then flushes at stage end. It neve
 sends source chunks, documents, rendered prompts, tool response bodies, or gold
 answers.
 
+A separate, default-off diagnosis gate (`REMEMBERSTACK_LANGFUSE_ENABLED=1` with
+`_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, optional `_CA_FILE` and `_RUN_TAG`) records
+every Vertex/OpenRouter generation with its full prompt and raw completion, including
+responses that fail validation. It is meant for debugging benchmark dead letters on
+throwaway runs, fails loud when enabled-but-incomplete, and never activates unless
+explicitly enabled.
+
 Full LoCoMo publication runs can be split across independent Compose hosts while
 retaining the benchmark's one-conversation-per-deployment guard. The harness
 accepts repeated `summarize --run` flags and recomputes the full-manifest score

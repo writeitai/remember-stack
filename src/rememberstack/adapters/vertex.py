@@ -36,6 +36,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 import hashlib
 import json
+import logging
 import threading
 import time
 from typing import Any
@@ -95,6 +96,7 @@ _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
 _REPETITION_PIECE_MIN_CHARS: Final[int] = 32
 _REPETITION_MAX_IDENTICAL_RUN: Final[int] = 8
 _ONE_MILLION: Final = Decimal(1_000_000)
+_logger = logging.getLogger(__name__)
 
 AccessTokenSource = Callable[[], str]
 """Return a currently valid bearer token; called before every request."""
@@ -359,7 +361,10 @@ class VertexModelProvider:
                 response_type_name=response_type.__name__,
                 raw_content=None,
                 outcome="no_content",
-                error=f"{response_type.__name__}: provider returned no completion content",
+                error=(
+                    f"{response_type.__name__}: provider returned"
+                    " no completion content"
+                ),
                 usage=usage,
                 latency_ms=latency_ms,
             )
@@ -430,24 +435,33 @@ class VertexModelProvider:
         usage: ProviderCallUsage | None,
         latency_ms: int,
     ) -> None:
-        """Report one generation to the opt-in recorder, if any is bound."""
+        """Report one generation to the opt-in recorder, if any is bound.
+
+        A failing recorder must never turn a good generation into an
+        exception, nor replace the provider error the ledger needs.
+        """
         if self._recorder is None:
             return
-        self._recorder.record(
-            record=GenerationRecord(
-                provider="vertex",
-                requested_model=request.model,
-                resolved_model=usage.model_name if usage is not None else None,
-                response_type_name=response_type_name,
-                prompt=request.prompt,
-                raw_content=raw_content,
-                outcome=outcome,
-                error=error,
-                usage=usage,
-                latency_ms=latency_ms,
-                run_tag="",
+        try:
+            self._recorder.record(
+                record=GenerationRecord(
+                    provider="vertex",
+                    requested_model=request.model,
+                    resolved_model=(
+                        usage.model_name if usage is not None else None
+                    ),
+                    response_type_name=response_type_name,
+                    prompt=request.prompt,
+                    raw_content=raw_content,
+                    outcome=outcome,
+                    error=error,
+                    usage=usage,
+                    latency_ms=latency_ms,
+                    run_tag="",
+                ),
             )
-        )
+        except Exception as emit_error:
+            _logger.warning("vertex generation record dropped: %s", emit_error)
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """Refuse: this adapter serves generation only, by design."""

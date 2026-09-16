@@ -85,9 +85,22 @@ def _clear_langfuse_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "REMEMBERSTACK_LANGFUSE_HOST",
         "REMEMBERSTACK_LANGFUSE_PUBLIC_KEY",
         "REMEMBERSTACK_LANGFUSE_SECRET_KEY",
+        "REMEMBERSTACK_LANGFUSE_CA_FILE",
         "REMEMBERSTACK_LANGFUSE_RUN_TAG",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+class _FailingRecorder:
+    """Recorder double whose emit always fails."""
+
+    def record(self, *, record: GenerationRecord) -> None:
+        """Raise instead of delivering."""
+        del record
+        raise RuntimeError("test recorder failure")
+
+    def flush(self) -> None:
+        """Flushing a broken recorder is a no-op."""
 
 
 def test_recorder_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -327,6 +340,32 @@ def test_vertex_records_transport_errors(monkeypatch: pytest.MonkeyPatch) -> Non
     assert record.raw_content is None
 
 
+def test_vertex_generate_survives_failing_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken recorder cannot turn a good generation into an exception."""
+    provider = _vertex_provider(
+        monkeypatch=monkeypatch,
+        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        body=_vertex_body(content='{"answer":"Prague"}'),
+    )
+    generated = provider.generate(request=_vertex_request(), response_type=_Answer)
+    assert generated.output.answer == "Prague"
+
+
+def test_vertex_failure_keeps_original_error_when_recorder_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken recorder cannot replace the provider error the ledger needs."""
+    provider = _vertex_provider(
+        monkeypatch=monkeypatch,
+        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        body=VertexProviderError("boom", usage=None),
+    )
+    with pytest.raises(VertexProviderError, match="boom"):
+        provider.generate(request=_vertex_request(), response_type=_Answer)
+
+
 def test_vertex_default_records_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without a recorder the adapter behaves exactly as before."""
     provider = _vertex_provider(
@@ -428,6 +467,56 @@ def test_openrouter_records_rejected_bytes_on_invalid_json(
     assert record.outcome == "invalid"
     assert record.raw_content == "not-json{{{"
     assert "not JSON" in (record.error or "")
+
+
+def test_openrouter_generate_survives_failing_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken recorder cannot turn a good generation into an exception."""
+    provider = _openrouter_provider(
+        monkeypatch=monkeypatch,
+        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+    )
+    try:
+        generated = provider.generate(
+            request=ModelRequest(
+                model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+            ),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+    assert generated.output.answer == "Prague"
+
+
+def test_openrouter_failure_keeps_original_error_when_recorder_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken recorder cannot replace the provider error the ledger needs."""
+    provider = _openrouter_provider(
+        monkeypatch=monkeypatch,
+        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+    )
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, Any]:
+        del path, payload
+        return {
+            "id": "gen-1",
+            "model": "openai/gpt-5.6-luna",
+            "choices": [{"message": {"content": "not-json{{{"}}],
+        }
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterInvalidResponseError):
+            provider.generate(
+                request=ModelRequest(
+                    model="openai/gpt-5.6-luna", prompt="Where is the meeting?"
+                ),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
 
 
 def test_openrouter_records_transport_errors(monkeypatch: pytest.MonkeyPatch) -> None:

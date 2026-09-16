@@ -398,24 +398,33 @@ class OpenRouterModelProvider:
         usage: ProviderCallUsage | None,
         latency_ms: int,
     ) -> None:
-        """Report one generation to the opt-in recorder, if any is bound."""
+        """Report one generation to the opt-in recorder, if any is bound.
+
+        A failing recorder must never turn a good generation into an
+        exception, nor replace the provider error the ledger needs.
+        """
         if self._recorder is None:
             return
-        self._recorder.record(
-            record=GenerationRecord(
-                provider="openrouter",
-                requested_model=request.model,
-                resolved_model=usage.model_name if usage is not None else None,
-                response_type_name=response_type_name,
-                prompt=request.prompt,
-                raw_content=raw_content,
-                outcome=outcome,
-                error=error,
-                usage=usage,
-                latency_ms=latency_ms,
-                run_tag="",
+        try:
+            self._recorder.record(
+                record=GenerationRecord(
+                    provider="openrouter",
+                    requested_model=request.model,
+                    resolved_model=(
+                        usage.model_name if usage is not None else None
+                    ),
+                    response_type_name=response_type_name,
+                    prompt=request.prompt,
+                    raw_content=raw_content,
+                    outcome=outcome,
+                    error=error,
+                    usage=usage,
+                    latency_ms=latency_ms,
+                    run_tag="",
+                ),
             )
-        )
+        except Exception as emit_error:
+            _logger.warning("openrouter generation record dropped: %s", emit_error)
 
     def _capture_invalid_completion(
         self,
