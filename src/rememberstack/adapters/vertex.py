@@ -362,8 +362,7 @@ class VertexModelProvider:
                 raw_content=None,
                 outcome="no_content",
                 error=(
-                    f"{response_type.__name__}: provider returned"
-                    " no completion content"
+                    f"{response_type.__name__}: provider returned no completion content"
                 ),
                 usage=usage,
                 latency_ms=latency_ms,
@@ -447,9 +446,7 @@ class VertexModelProvider:
                 record=GenerationRecord(
                     provider="vertex",
                     requested_model=request.model,
-                    resolved_model=(
-                        usage.model_name if usage is not None else None
-                    ),
+                    resolved_model=(usage.model_name if usage is not None else None),
                     response_type_name=response_type_name,
                     prompt=request.prompt,
                     raw_content=raw_content,
@@ -458,7 +455,7 @@ class VertexModelProvider:
                     usage=usage,
                     latency_ms=latency_ms,
                     run_tag="",
-                ),
+                )
             )
         except Exception as emit_error:
             _logger.warning("vertex generation record dropped: %s", emit_error)

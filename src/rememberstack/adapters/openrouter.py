@@ -410,9 +410,7 @@ class OpenRouterModelProvider:
                 record=GenerationRecord(
                     provider="openrouter",
                     requested_model=request.model,
-                    resolved_model=(
-                        usage.model_name if usage is not None else None
-                    ),
+                    resolved_model=(usage.model_name if usage is not None else None),
                     response_type_name=response_type_name,
                     prompt=request.prompt,
                     raw_content=raw_content,
@@ -421,7 +419,7 @@ class OpenRouterModelProvider:
                     usage=usage,
                     latency_ms=latency_ms,
                     run_tag="",
-                ),
+                )
             )
         except Exception as emit_error:
             _logger.warning("openrouter generation record dropped: %s", emit_error)

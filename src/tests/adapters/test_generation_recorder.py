@@ -10,6 +10,7 @@ import pytest
 
 from rememberstack.adapters import build_generation_recorder
 from rememberstack.adapters import GenerationRecord
+from rememberstack.adapters import GenerationRecorder
 from rememberstack.adapters import LangfuseRecorderSettings
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterProviderError
@@ -182,8 +183,8 @@ def _enable_recorder_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set a complete, bogus recorder configuration."""
     monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_ENABLED", "1")
     monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_HOST", "https://langfuse.invalid")
-    monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_PUBLIC_KEY", "test-public")
-    monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_PUBLIC_KEY", "  test-public  ")
+    monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_SECRET_KEY", "test-secret\n")
     monkeypatch.setenv("REMEMBERSTACK_LANGFUSE_RUN_TAG", "test-run")
 
 
@@ -201,6 +202,7 @@ def test_enabled_builder_returns_span_recorder(monkeypatch: pytest.MonkeyPatch) 
     ) -> object:
         seen.update(endpoint=endpoint, public_key=public_key, ca_file=ca_file)
         assert secret_key == "test-secret"
+        assert public_key == "test-public"
         return tracer, lambda: None
 
     monkeypatch.setattr(recorder_module, "_build_otel_tracer", fake_tracer)
@@ -253,7 +255,7 @@ def _vertex_body(*, content: str) -> dict[str, Any]:
 
 
 def _vertex_provider(
-    monkeypatch: pytest.MonkeyPatch, *, recorder: _MemoryRecorder | None, body: Any
+    monkeypatch: pytest.MonkeyPatch, *, recorder: GenerationRecorder | None, body: Any
 ) -> VertexModelProvider:
     """Build a Vertex adapter whose HTTP layer returns one canned body."""
     provider = VertexModelProvider(
@@ -346,7 +348,7 @@ def test_vertex_generate_survives_failing_recorder(
     """A broken recorder cannot turn a good generation into an exception."""
     provider = _vertex_provider(
         monkeypatch=monkeypatch,
-        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        recorder=_FailingRecorder(),
         body=_vertex_body(content='{"answer":"Prague"}'),
     )
     generated = provider.generate(request=_vertex_request(), response_type=_Answer)
@@ -359,7 +361,7 @@ def test_vertex_failure_keeps_original_error_when_recorder_fails(
     """A broken recorder cannot replace the provider error the ledger needs."""
     provider = _vertex_provider(
         monkeypatch=monkeypatch,
-        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        recorder=_FailingRecorder(),
         body=VertexProviderError("boom", usage=None),
     )
     with pytest.raises(VertexProviderError, match="boom"):
@@ -378,7 +380,7 @@ def test_vertex_default_records_nothing(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def _openrouter_provider(
-    monkeypatch: pytest.MonkeyPatch, *, recorder: _MemoryRecorder | None
+    monkeypatch: pytest.MonkeyPatch, *, recorder: GenerationRecorder | None
 ) -> OpenRouterModelProvider:
     """Build an OpenRouter adapter with stubbed POST and accounting."""
     provider = OpenRouterModelProvider(
@@ -474,8 +476,7 @@ def test_openrouter_generate_survives_failing_recorder(
 ) -> None:
     """A broken recorder cannot turn a good generation into an exception."""
     provider = _openrouter_provider(
-        monkeypatch=monkeypatch,
-        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        monkeypatch=monkeypatch, recorder=_FailingRecorder()
     )
     try:
         generated = provider.generate(
@@ -494,8 +495,7 @@ def test_openrouter_failure_keeps_original_error_when_recorder_fails(
 ) -> None:
     """A broken recorder cannot replace the provider error the ledger needs."""
     provider = _openrouter_provider(
-        monkeypatch=monkeypatch,
-        recorder=_FailingRecorder(),  # type: ignore[arg-type]
+        monkeypatch=monkeypatch, recorder=_FailingRecorder()
     )
 
     def post(*, path: str, payload: dict[str, object]) -> dict[str, Any]:
