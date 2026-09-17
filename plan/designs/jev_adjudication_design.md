@@ -310,18 +310,21 @@ defined in `src/rememberstack/spine/fact_adjudication.py`:
 2. **`FactAdjudicator.apply()` (`src/rememberstack/spine/fact_adjudication.py`)**:
    - Calls `admit_head(..., adjudicator_versions=active_adjudicator_versions(self._settings.engine))` (guaranteeing Jev head rows are admitted during apply).
    - Re-verifies `expected_hash = snapshot_hash(snapshot=snapshot, engine=self._settings.engine, question_identity=active_question_identity(self._settings.engine))`.
-3. **`workers/e3.py` (`E3Handler`)**:
+3. **`workers/e3.py` (`NormalizeRelationsHandler` and `AdjudicateObservationsHandler`)**:
    - Reads `adjudication_engine = FactAdjudicationSettings().engine`.
-   - Stages application rows via `catalog.stage(..., adjudicator_version=active_rel if kind == "relation" else active_obs)` using `active_adjudicator_versions(adjudication_engine)`.
-   - Sets `obs_flush_component_version = active_flush_version(adjudication_engine)`.
-   - Flush worker component version check compares `work.component_version != active_flush_version(adjudication_engine)`.
+   - In `NormalizeRelationsHandler`: stages application rows via `catalog.stage(..., adjudicator_version=active_rel if kind == "relation" else active_obs)` using `active_adjudicator_versions(adjudication_engine)`.
+   - In `AdjudicateObservationsHandler`: sets `obs_flush_component_version = active_flush_version(adjudication_engine)` when opening the barrier.
+   - In `AdjudicateObservationsHandler`: flush worker component version check compares `work.component_version != active_flush_version(adjudication_engine)`.
 4. **`profiles/selfhost.py`**:
    - Maps `_expected_components[PipelineStage.ADJUDICATE_OBSERVATIONS] = active_flush_version(FactAdjudicationSettings().engine)`.
    - Constructs `FactAdjudicator` at both handler sites (~lines 1290 and 1304), wiring `systemone_provider=typesafe_client` when `engine == "jev"`.
 5. **`spine/work_ledger.py`**:
-   - Enqueues obs flush with `obs_flush_component_version=active_flush_version(FactAdjudicationSettings().engine)`.
-   - Empty-extract fanout enqueues using `active_flush_version(FactAdjudicationSettings().engine)`.
-   - Barrier readiness checks (`_SELECT_OBS_FLUSH_VERSION_STATE`, `_UPSERT_OBS_FLUSH_VERSION_STATE`) and `register_version_applications_on` pass `relation_version=active_rel`, `observation_version=active_obs` from `active_adjudicator_versions(FactAdjudicationSettings().engine)`.
+   - Reads `adjudication_engine = FactAdjudicationSettings().engine`.
+   - In `_enqueue_entity_obs_flush_fanout`: compares `obs_flush_component_version != active_flush_version(adjudication_engine)` before opening the D118 barrier.
+   - In `_enqueue_entity_obs_flush_fanout`: calls `register_version_applications_on` passing `relation_version=active_rel`, `observation_version=active_obs` from `active_adjudicator_versions(adjudication_engine)`.
+   - In `_entity_obs_flush_barrier_ready`: compares `obs_flush_version != active_flush_version(adjudication_engine)`.
+   - In `_entity_obs_flush_barrier_ready`: calls `version_applications_ready_on` passing `relation_version=active_rel`, `observation_version=active_obs` from `active_adjudicator_versions(adjudication_engine)`.
+   - In empty-extract fanout: enqueues with `obs_flush_component_version = active_flush_version(adjudication_engine)`.
 
 ### B. Snapshot Hash & Backwards-Compatible Attempt Fingerprinting
 `snapshot_hash` binds:

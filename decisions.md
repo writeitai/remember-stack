@@ -5969,9 +5969,9 @@ so spine never imports adapters.
 Binds distinct plane versions (`RELATION_APPLICATION_VERSION_JEV`, `OBSERVATION_APPLICATION_VERSION_JEV`)
 and attempt fingerprints (`snapshot_hash` with engine and `active_question_identity`)
 to prevent cross-engine attempt contamination. All generation identity call sites
-(`E3.stage`, `FactAdjudicator.prepare` and `apply`, `selfhost._expected_components`,
-and `work_ledger`) read unified active version helpers (`active_adjudicator_versions`,
-`active_flush_version`). Metered on tier `fact_adjudication_jev`
+(`NormalizeRelationsHandler`/`AdjudicateObservationsHandler`, `FactAdjudicator.prepare` and `apply`,
+`selfhost._expected_components`, and `work_ledger` barrier/enqueue checks) read unified active version
+helpers (`active_adjudicator_versions`, `active_flush_version`). Metered on tier `fact_adjudication_jev`
 with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
 Replacing generative claim extraction or section summaries with System One was rejected
 because System One cannot generate freeform prose; placing the engine behind a Cloud
