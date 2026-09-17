@@ -1,6 +1,6 @@
 # Inference capacity: R14 evidence, provider survey, alternatives
 
-Non-binding analysis for D125. Evidence date: 2026-09-16. External facts retrieved
+Non-binding analysis for D127. Evidence date: 2026-09-16. External facts retrieved
 2026-09-17 (prices and policies change; re-check before spending).
 
 ## The question
@@ -83,4 +83,4 @@ a provider pick — the design wires it in.
 
 Do (1) immediately in ops, implement (2)+(3) in the core engine adapter, keep (4) as the
 tracked follow-up. Detail: `plan/designs/openrouter_provider_rotation_design.md`.
-Decision: D125 in `decisions.md`.
+Decision: D127 in `decisions.md`.

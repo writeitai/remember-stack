@@ -1,6 +1,6 @@
 # OpenRouter provider rotation + 429 policy (chat path)
 
-Binding design for D125. Analysis:
+Binding design for D127. Analysis:
 `plan/analysis/openrouter_inference_capacity_20260916.md`.
 Status: accepted pending review; implementation follows in a stacked PR.
 
