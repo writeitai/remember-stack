@@ -1,10 +1,15 @@
 """Contextual adjudication of staged relation and observation assertions (D118)."""
 
+from datetime import datetime
 import json
+import logging
 from typing import Any
+from typing import Literal
+from typing import Mapping
 from uuid import UUID
 from uuid import uuid4
 
+from pydantic import AliasChoices
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -14,14 +19,21 @@ from sqlalchemy.engine import Engine
 from rememberstack.core.concise_adjudication import project_concise_inputs
 from rememberstack.core.concise_adjudication import translate_prompt_decision
 from rememberstack.core.concise_adjudication import translator_rejection_note
+from rememberstack.core.fact_windows import fact_window_from_raw
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.concise_adjudication import PromptFactDecision
+from rememberstack.model.concise_adjudication import PromptGroundedWindow
+from rememberstack.model.concise_adjudication import PromptNewFact
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.model.fact_application import FactReference
 from rememberstack.model.fact_application import NewFact
+from rememberstack.model.fact_windows import FactWindow
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
+from rememberstack.ports.systemone import SystemOnePort
 from rememberstack.spine.apply_fact_decision import apply_fact_decision
 from rememberstack.spine.fact_application_inputs import application_snapshot
 from rememberstack.spine.fact_applications import application_block
@@ -31,6 +43,8 @@ from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 
+_logger = logging.getLogger(__name__)
+
 RELATION_APPLICATION_VERSION = (
     "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
     "output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"
@@ -39,12 +53,39 @@ OBSERVATION_APPLICATION_VERSION = (
     "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:"
     "output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"
 )
+RELATION_APPLICATION_VERSION_JEV = "relation-adjudicator-2026.09a:jev-choice-match-3"
+OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"
+JEV_ADJUDICATOR_VERSION = "jev-adjudicator-2026.09a:choice-match-3"
 FACT_NORMALIZER_VERSION = (
     "e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:"
     "binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:"
     "d123-context-refs-2:both-lists-1:t4-format-1:nested-fields-1"
 )
-FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
+FACT_FLUSH_VERSION = (
+    f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:"
+    f"{RELATION_APPLICATION_VERSION}:{OBSERVATION_APPLICATION_VERSION}"
+)
+
+
+def active_adjudicator_versions(engine: str) -> tuple[str, str]:
+    """Return the active (relation_version, observation_version) for the given engine."""
+    if engine == "jev":
+        return (RELATION_APPLICATION_VERSION_JEV, OBSERVATION_APPLICATION_VERSION_JEV)
+    return (RELATION_APPLICATION_VERSION, OBSERVATION_APPLICATION_VERSION)
+
+
+def active_question_identity(engine: str) -> str:
+    """Return the question/prompt identity for fingerprinting attempts."""
+    if engine == "jev":
+        return JEV_ADJUDICATOR_VERSION
+    return "fact-prompt-v1"
+
+
+def active_flush_version(engine: str) -> str:
+    """Return the flush component version corresponding to the active adjudicator engine."""
+    rel_ver, obs_ver = active_adjudicator_versions(engine)
+    return f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{rel_ver}:{obs_ver}"
+
 
 _FACT_PROMPT = """Decide how ONE incoming assertion belongs in the fact store and whether
 evidence justifies changing its dates. World dates mean when something happened
@@ -156,11 +197,28 @@ INPUT JSON:
 
 
 class FactAdjudicationSettings(BaseSettings):
-    """Model and conservative confidence floor for the ordinary fact adjudicator."""
+    """Model, engine, and conservative confidence floor for the fact adjudicator."""
 
-    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_FACT_")
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_FACT_", extra="ignore")
     model: str = "openai/gpt-5.6-luna"
+    engine: Literal["prompt", "jev"] = Field(
+        default="prompt",
+        validation_alias=AliasChoices(
+            "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE",
+            "REMEMBERSTACK_FACT_ENGINE",
+            "REMEMBERSTACK_FACT_engine",
+            "engine",
+        ),
+    )
     confidence_floor: float = Field(default=0.75, ge=0.0, le=1.0)
+    fallback_to_prompt: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
+            "REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT",
+            "fallback_to_prompt",
+        ),
+    )
 
 
 class FactAdjudicator:
@@ -171,12 +229,18 @@ class FactAdjudicator:
         *,
         engine: Engine,
         model_provider: ModelProviderPort,
-        settings: FactAdjudicationSettings,
+        settings: FactAdjudicationSettings | None = None,
+        systemone_provider: SystemOnePort | None = None,
     ) -> None:
-        """Bind the durable application catalog and the ordinary metered provider."""
+        """Bind the durable application catalog, model provider, and optional System One provider."""
         self._engine = engine
         self._provider = model_provider
-        self._settings = settings
+        self._settings = settings or FactAdjudicationSettings()
+        self._systemone_provider = systemone_provider
+        if self._settings.engine == "jev" and self._systemone_provider is None:
+            raise ValueError(
+                "systemone_provider must be supplied when fact adjudication engine is 'jev'"
+            )
         self._catalog = FactApplicationCatalog(engine=engine)
 
     def drain(
@@ -197,62 +261,22 @@ class FactAdjudicator:
                 return tuple(results)
             if prepared.decision is None:
                 presentation, mapping = project_concise_inputs(snapshot=prepared.inputs)
-                base_prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
-                base_receipt_key = (
-                    f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
-                )
-                # In-delivery translator budget: exactly one retry against this
-                # same prepared attempt. The note is a local variable, never
-                # cross-delivery state: redelivery starts again at today's
-                # prompt with the worker's attempt cap as the outer backstop.
-                rejection_note: str | None = None
-                translator_retries = 0
-                while True:
-                    prompt = base_prompt
-                    receipt_key = base_receipt_key
-                    if rejection_note is not None:
-                        prompt = f"{prompt}\n\n{rejection_note}"
-                        receipt_key = f"{receipt_key}:translator-retry1"
-                    try:
-                        call = self._provider.generate(
-                            request=ModelRequest(
-                                model=self._settings.model,
-                                prompt=prompt,
-                                temperature=0.0,
-                            ),
-                            response_type=PromptFactDecision,
-                        )
-                    except ProviderCallError as error:
-                        if error.usage is not None:
-                            meter.record(
-                                call_key=f"{base_receipt_key}:failure",
-                                tier="fact_adjudication",
-                                usage=error.usage,
-                                outcome="provider_error",
-                            )
-                        raise
-                    meter.record(
-                        call_key=receipt_key, tier="fact_adjudication", usage=call.usage
+                if self._settings.engine == "jev":
+                    decision = self._adjudicate_jev(
+                        prepared=prepared,
+                        presentation=presentation,
+                        mapping=mapping,
+                        meter=meter,
+                        call_key=call_key,
                     )
-                    try:
-                        decision = translate_prompt_decision(
-                            response=call.output, mapping=mapping
-                        )
-                    except ValueError as error:
-                        if translator_retries >= 1:
-                            raise ApplicationInputChanged(
-                                f"invalid adjudication answer rejected: {error}"
-                            ) from error
-                        rejection_note = translator_rejection_note(
-                            error=error, response=call.output
-                        )
-                        if rejection_note is None:
-                            raise ApplicationInputChanged(
-                                f"invalid adjudication answer rejected: {error}"
-                            ) from error
-                        translator_retries += 1
-                        continue
-                    break
+                else:
+                    decision = self._adjudicate_prompt(
+                        prepared=prepared,
+                        presentation=presentation,
+                        mapping=mapping,
+                        meter=meter,
+                        call_key=call_key,
+                    )
                 published = self._catalog.publish_decision(
                     deployment_id=deployment_id, prepared=prepared, decision=decision
                 )
@@ -266,10 +290,328 @@ class FactAdjudicator:
             if result is not None:
                 results.append(UUID(result["fact_id"]))
 
+    def _adjudicate_prompt(
+        self,
+        *,
+        prepared: PreparedApplication,
+        presentation: Mapping[str, Any],
+        mapping: Any,
+        meter: CostMeterPort,
+        call_key: str,
+    ) -> FactApplicationDecision:
+        """Run generative LLM prompt adjudication (baseline engine)."""
+        base_prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+        base_receipt_key = f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
+        # In-delivery translator budget: exactly one retry against this
+        # same prepared attempt. The note is a local variable, never
+        # cross-delivery state: redelivery starts again at today's
+        # prompt with the worker's attempt cap as the outer backstop.
+        rejection_note: str | None = None
+        translator_retries = 0
+        while True:
+            prompt = base_prompt
+            receipt_key = base_receipt_key
+            if rejection_note is not None:
+                prompt = f"{prompt}\n\n{rejection_note}"
+                receipt_key = f"{receipt_key}:translator-retry1"
+            try:
+                call = self._provider.generate(
+                    request=ModelRequest(
+                        model=self._settings.model, prompt=prompt, temperature=0.0
+                    ),
+                    response_type=PromptFactDecision,
+                )
+            except ProviderCallError as error:
+                if error.usage is not None:
+                    meter.record(
+                        call_key=f"{base_receipt_key}:failure",
+                        tier="fact_adjudication",
+                        usage=error.usage,
+                        outcome="provider_error",
+                    )
+                raise
+            meter.record(
+                call_key=receipt_key, tier="fact_adjudication", usage=call.usage
+            )
+            try:
+                decision = translate_prompt_decision(
+                    response=call.output, mapping=mapping
+                )
+            except ValueError as error:
+                if translator_retries >= 1:
+                    raise ApplicationInputChanged(
+                        f"invalid adjudication answer rejected: {error}"
+                    ) from error
+                rejection_note = translator_rejection_note(
+                    error=error, response=call.output
+                )
+                if rejection_note is None:
+                    raise ApplicationInputChanged(
+                        f"invalid adjudication answer rejected: {error}"
+                    ) from error
+                translator_retries += 1
+                continue
+            return decision
+
+    def _adjudicate_jev(
+        self,
+        *,
+        prepared: PreparedApplication,
+        presentation: Mapping[str, Any],
+        mapping: Any,
+        meter: CostMeterPort,
+        call_key: str,
+    ) -> FactApplicationDecision:
+        """Adjudicate incoming assertion against candidate facts using TypeSafe System One Jev."""
+        if not presentation.get("facts"):
+            return _sole_new_fact(application_id=UUID(str(prepared.application_id)))
+
+        criteria_match: dict[str, str | None] = {}
+        for fact in presentation.get("facts", []):
+            handle = fact["handle"]
+            stmt = fact.get("statement")
+            if not stmt and fact.get("statement_ref"):
+                ref = fact["statement_ref"]
+                stmt = presentation.get("text", {}).get(ref, "")
+            chosen_dates = []
+            if fact.get("chosen_world_from"):
+                chosen_dates.append(f"from: {fact['chosen_world_from']}")
+            if fact.get("chosen_world_until"):
+                chosen_dates.append(f"until: {fact['chosen_world_until']}")
+            dates_desc = f" ({', '.join(chosen_dates)})" if chosen_dates else ""
+            criteria_match[handle] = (
+                f"{stmt}{dates_desc}" if stmt else dates_desc or "Candidate fact"
+            )
+
+        criteria_match["NEW"] = (
+            "The incoming assertion is a new proposition not represented by any "
+            "candidate fact, or only shares general context without making the exact same claim."
+        )
+
+        questions = {
+            "match": {
+                "type": "choice",
+                "instructions": (
+                    "You are adjudicating an incoming assertion against candidate stored facts for "
+                    "the same entity in a memory system. Determine whether the incoming assertion "
+                    "affirms the exact same core proposition and truth claim as one of the candidate "
+                    "facts, or if it is a new, distinct fact.\n"
+                    "- An assertion matches an existing fact ONLY if it asserts the exact same "
+                    "proposition, truth claim, and outcome (including attribution and qualifiers).\n"
+                    "- Sharing a topic, event, or entity (e.g. attending vs winning a tournament, or "
+                    "participating in a final vs winning it) is NOT a match: select NEW.\n"
+                    "- Contradictions (e.g. lost the tournament vs won the tournament) match the "
+                    "target fact so they can be recorded as contradictory.\n"
+                    "- If no candidate fact represents the exact proposition, select NEW."
+                ),
+                "criteria": criteria_match,
+            },
+            "stance": {
+                "type": "choice",
+                "instructions": (
+                    "If the incoming assertion matches one of the candidate facts, does it support "
+                    "or contradict that matched fact? (If the assertion is a new fact not matching "
+                    "any candidate, select not_applicable)."
+                ),
+                "criteria": {
+                    "supports": "The assertion affirms and provides positive evidence for the matched fact.",
+                    "contradicts": "The assertion directly denies or provides incompatible contrary evidence against the matched fact.",
+                    "not_applicable": "The assertion does not match any candidate fact (new fact).",
+                },
+            },
+            "window_action": {
+                "type": "choice",
+                "instructions": (
+                    "If the incoming assertion matches an existing candidate fact, does evidence "
+                    "justify changing its stored world-time window? If the assertion is NEW, select keep."
+                ),
+                "criteria": {
+                    "keep": "Keep the candidate fact's current stored world-time window.",
+                    "use_claim": "Replace the fact's window with the incoming claim's resolved world dates.",
+                    "clear": "Clear the fact's world dates because evidence shows the date is completely unknown or invalid.",
+                },
+            },
+        }
+
+        base_receipt_key = f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
+        jev_receipt_key = f"{base_receipt_key}:jev"
+
+        if self._systemone_provider is None:
+            raise ValueError("systemone_provider is not configured")
+
+        try:
+            answers, usage = self._systemone_provider.evaluate(
+                model="jev-latest", state=presentation, questions=questions
+            )
+            meter.record(
+                call_key=jev_receipt_key, tier="fact_adjudication_jev", usage=usage
+            )
+        except ProviderCallError as error:
+            if error.usage is not None:
+                meter.record(
+                    call_key=f"{jev_receipt_key}:failure",
+                    tier="fact_adjudication_jev",
+                    usage=error.usage,
+                    outcome="provider_error",
+                )
+            if self._settings.fallback_to_prompt:
+                _logger.warning(
+                    "Jev evaluation failed (%s); falling back to prompt adjudication",
+                    error,
+                )
+                return self._adjudicate_prompt(
+                    prepared=prepared,
+                    presentation=presentation,
+                    mapping=mapping,
+                    meter=meter,
+                    call_key=call_key,
+                )
+            raise
+
+        if "match" not in answers or "choice" not in answers["match"]:
+            raise ProviderInvalidResponseError(
+                "TypeSafe response missing 'match' answer"
+            )
+        if "stance" not in answers or "choice" not in answers["stance"]:
+            raise ProviderInvalidResponseError(
+                "TypeSafe response missing 'stance' answer"
+            )
+        if "window_action" not in answers or "choice" not in answers["window_action"]:
+            raise ProviderInvalidResponseError(
+                "TypeSafe response missing 'window_action' answer"
+            )
+
+        match_choice = answers["match"]["choice"]
+        match_confidence = float(answers["match"].get("confidence", 0.0))
+        stance_choice = answers["stance"]["choice"]
+        window_choice = answers["window_action"]["choice"]
+
+        if match_choice != "NEW" and match_choice not in mapping.facts:
+            raise ProviderInvalidResponseError(
+                f"unrecognized match handle: {match_choice}"
+            )
+        if stance_choice not in {"supports", "contradicts", "not_applicable"}:
+            raise ProviderInvalidResponseError(f"unrecognized stance: {stance_choice}")
+        if window_choice not in {"keep", "use_claim", "clear"}:
+            raise ProviderInvalidResponseError(
+                f"unrecognized window action: {window_choice}"
+            )
+        if match_choice != "NEW" and stance_choice == "not_applicable":
+            raise ProviderInvalidResponseError(
+                "matched candidate cannot have not_applicable stance"
+            )
+
+        if match_confidence < self._settings.confidence_floor:
+            prompt_decision = PromptFactDecision(
+                target="N1",
+                new_facts=(
+                    PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),
+                ),
+                stance="supports",
+                window=None,
+                updates=(),
+                support_moves=(),
+                contradict_with=(),
+                confidence=match_confidence,
+                rationale=(
+                    f"Jev System One: sub-floor confidence ({match_confidence:.2f} < "
+                    f"{self._settings.confidence_floor:.2f}); preserve coexistence."
+                ),
+            )
+        elif match_choice == "NEW":
+            prompt_decision = PromptFactDecision(
+                target="N1",
+                new_facts=(
+                    PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),
+                ),
+                stance="supports",
+                window=None,
+                updates=(),
+                support_moves=(),
+                contradict_with=(),
+                confidence=match_confidence,
+                rationale=f"Jev System One: new proposition (confidence {match_confidence:.2f})",
+            )
+        else:
+            stance = "contradicts" if stance_choice == "contradicts" else "supports"
+            grounded_window: PromptGroundedWindow | None = None
+
+            incoming_assertion_item = None
+            for item in presentation.get("assertions", []):
+                if item.get("handle") == presentation.get("incoming_assertion"):
+                    incoming_assertion_item = item
+                    break
+
+            incoming_claim_handle = (
+                incoming_assertion_item.get("claim")
+                if incoming_assertion_item
+                else None
+            )
+
+            if (
+                incoming_assertion_item is not None
+                and not incoming_assertion_item.get("claim_not_supplied")
+                and incoming_claim_handle is not None
+                and incoming_claim_handle in mapping.claims
+            ):
+                if window_choice == "clear":
+                    grounded_window = PromptGroundedWindow(
+                        window=FactWindow(), supporting_claims=(incoming_claim_handle,)
+                    )
+                elif window_choice == "use_claim":
+                    claim_row = None
+                    for crow in presentation.get("claims", []):
+                        if crow.get("handle") == incoming_claim_handle:
+                            claim_row = crow
+                            break
+                    if claim_row and claim_row.get("source_world_precision"):
+                        valid_from = (
+                            datetime.fromisoformat(claim_row["source_world_from"])
+                            if claim_row.get("source_world_from")
+                            else None
+                        )
+                        valid_until = (
+                            datetime.fromisoformat(claim_row["source_world_until"])
+                            if claim_row.get("source_world_until")
+                            else None
+                        )
+                        precision = ClaimValidPrecision(
+                            claim_row["source_world_precision"]
+                        )
+                        fact_window = fact_window_from_raw(
+                            valid_from=valid_from,
+                            valid_until=valid_until,
+                            precision=precision,
+                        )
+                        grounded_window = PromptGroundedWindow(
+                            window=fact_window,
+                            supporting_claims=(incoming_claim_handle,),
+                        )
+
+            prompt_decision = PromptFactDecision(
+                target=match_choice,
+                new_facts=(),
+                stance=stance,
+                window=grounded_window,
+                updates=(),
+                support_moves=(),
+                contradict_with=(),
+                confidence=match_confidence,
+                rationale=f"Jev System One: matched {match_choice} ({stance}) with confidence {match_confidence:.2f}",
+            )
+
+        try:
+            return translate_prompt_decision(response=prompt_decision, mapping=mapping)
+        except ValueError as error:
+            raise ProviderInvalidResponseError(
+                f"Jev translation rejected: {error}"
+            ) from error
+
     def prepare(
         self, *, deployment_id: UUID, subject_entity_id: UUID
     ) -> PreparedApplication | None:
         """Read after locks, persisting an exact attempt before releasing them."""
+        active_rel, active_obs = active_adjudicator_versions(self._settings.engine)
         with (
             self._engine.begin() as connection,
             application_block(
@@ -283,18 +625,11 @@ class FactAdjudicator:
                 deployment_id=deployment_id,
                 members=members,
                 normalizer_version=FACT_NORMALIZER_VERSION,
-                adjudicator_versions=(
-                    RELATION_APPLICATION_VERSION,
-                    OBSERVATION_APPLICATION_VERSION,
-                ),
+                adjudicator_versions=(active_rel, active_obs),
             )
             if app is None:
                 return None
-            expected = (
-                RELATION_APPLICATION_VERSION
-                if app["output_kind"] == "relation"
-                else OBSERVATION_APPLICATION_VERSION
-            )
+            expected = active_rel if app["output_kind"] == "relation" else active_obs
             if (
                 app["normalizer_version"] != FACT_NORMALIZER_VERSION
                 or app["adjudicator_version"] != expected
@@ -309,7 +644,11 @@ class FactAdjudicator:
                 members=members,
                 application=app,
             )
-            digest = snapshot_hash(snapshot=snapshot)
+            digest = snapshot_hash(
+                snapshot=snapshot,
+                engine=self._settings.engine,
+                question_identity=active_question_identity(self._settings.engine),
+            )
             # Reload the application after its row lock; a concurrent publication can
             # have committed while snapshot construction acquired participant locks.
             current = (
@@ -368,6 +707,7 @@ class FactAdjudicator:
         self, *, deployment_id: UUID, subject_entity_id: UUID, application_id: UUID
     ) -> dict[str, Any] | None:
         """Re-read the head and every input after locks; stale output has no effects."""
+        active_rel, active_obs = active_adjudicator_versions(self._settings.engine)
         with (
             self._engine.begin() as connection,
             application_block(
@@ -413,10 +753,7 @@ class FactAdjudicator:
                 deployment_id=deployment_id,
                 members=members,
                 normalizer_version=FACT_NORMALIZER_VERSION,
-                adjudicator_versions=(
-                    RELATION_APPLICATION_VERSION,
-                    OBSERVATION_APPLICATION_VERSION,
-                ),
+                adjudicator_versions=(active_rel, active_obs),
             )
             if app is None or app["application_id"] != application_id:
                 return None
@@ -437,7 +774,12 @@ class FactAdjudicator:
                 .mappings()
                 .one()
             )
-            if current["input_hash"] != snapshot_hash(snapshot=snapshot):
+            expected_hash = snapshot_hash(
+                snapshot=snapshot,
+                engine=self._settings.engine,
+                question_identity=active_question_identity(self._settings.engine),
+            )
+            if current["input_hash"] != expected_hash:
                 connection.execute(
                     text(
                         "UPDATE fact_applications SET attempt_id=NULL,input_hash=NULL,prepared=NULL,decision=NULL WHERE application_id=:id"

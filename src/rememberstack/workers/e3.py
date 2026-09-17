@@ -38,8 +38,11 @@ from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
 from rememberstack.spine.entity_registry import EntityRegistry
+from rememberstack.spine.fact_adjudication import active_adjudicator_versions
+from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FACT_FLUSH_VERSION
 from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
 from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
@@ -51,6 +54,18 @@ from rememberstack.workers.base import ClaimNormalizeBarrier
 from rememberstack.workers.base import EntityObsFlushBarrier
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.reconcile import RECONCILE_VERSION
+
+__all__ = (
+    "AdjudicateObservationsHandler",
+    "AdjudicateSupersessionHandler",
+    "E3Settings",
+    "E3_NORMALIZER_VERSION",
+    "NormalizeRelationsHandler",
+    "OBS_FLUSH_LEGACY_VERSION",
+    "OBS_FLUSH_VERSION",
+    "OBSERVATION_APPLICATION_VERSION",
+    "RELATION_APPLICATION_VERSION",
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -278,6 +293,7 @@ class NormalizeRelationsHandler:
             version_ids=stage_versions,
             meter=meter,
         )
+        adjudication_engine = FactAdjudicationSettings().engine
         return HandlerOutcome(
             claim_normalize_barrier=ClaimNormalizeBarrier(
                 deployment_id=deployment_id,
@@ -289,7 +305,7 @@ class NormalizeRelationsHandler:
                 content_hash=work.content_hash,
                 lane=work.lane,
                 normalize_component_version=E3_NORMALIZER_VERSION,
-                obs_flush_component_version=OBS_FLUSH_VERSION,
+                obs_flush_component_version=active_flush_version(adjudication_engine),
             )
         )
 
@@ -412,15 +428,15 @@ class NormalizeRelationsHandler:
                 context_bindings.append(
                     (bind_ordinal, resolved.entity_id, resolved.decision_id)
                 )
+            adjudication_engine = FactAdjudicationSettings().engine
+            active_rel, active_obs = active_adjudicator_versions(adjudication_engine)
             catalog.stage(
                 deployment_id=deployment_id,
                 claim_id=claim.claim_id,
                 normalizer_version=E3_NORMALIZER_VERSION,
                 kind=kind,
                 ordinal=ordinal,
-                adjudicator_version=RELATION_APPLICATION_VERSION
-                if kind == "relation"
-                else OBSERVATION_APPLICATION_VERSION,
+                adjudicator_version=active_rel if kind == "relation" else active_obs,
                 subject_entity_id=subject.entity_id,
                 object_entity_id=object_id,
                 version_ids=version_ids,
@@ -498,8 +514,10 @@ class AdjudicateObservationsHandler:
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Drain only current entity units; old generations cannot mutate this store."""
+        adjudication_engine = FactAdjudicationSettings().engine
+        expected_flush = active_flush_version(adjudication_engine)
         if (
-            work.component_version != OBS_FLUSH_VERSION
+            work.component_version != expected_flush
             or work.target_kind is not ProcessingTarget.ENTITY
         ):
             raise NonRetryableHandlerError(
