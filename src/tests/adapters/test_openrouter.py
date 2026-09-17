@@ -1878,3 +1878,109 @@ def test_throttle_wait_clamps_retry_after_and_jitters_backoff() -> None:
     for used, bound in ((0, 1.0), (1, 2.0), (2, 4.0)):
         wait = _throttle_wait_s(throttle_used=used, response=silent, cap_s=30.0)
         assert 0.0 <= wait <= bound
+
+
+def test_invalid_no_content_terminal_carries_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content="", finish="length")
+    body["provider"] = "novita"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="no completion content"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "novita"
+
+
+def test_invalid_json_terminal_carries_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-JSON completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content="I cannot answer that.")
+    body["provider"] = "relace"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="not JSON"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "relace"
+
+
+def test_invalid_schema_terminal_carries_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A schema-rejected completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content='{"wrong":"shape"}')
+    body["provider"] = "wafer"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="failed .* validation"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "wafer"
+
+
+def test_invalid_terminal_under_rotation_attributes_targeted_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a response provider field, rotation falls back to the slug."""
+    recorder = _FakeRecorder()
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[httpx.Response(200, json=_completion(content='{"wrong":"shape"}'))],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError, match="failed .* validation"):
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "deepinfra"
