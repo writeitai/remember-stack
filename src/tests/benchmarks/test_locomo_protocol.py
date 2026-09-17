@@ -753,3 +753,25 @@ def test_discriminated_schema_branches_carry_only_their_own_keys() -> None:
     }
     assert set(branches["answer"]["required"]) == {"action", "answer"}
     assert schema["discriminator"]["propertyName"] == "action"
+
+
+def test_chat_routing_transport_settings_leave_fingerprints_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider rotation must not move the surface or catalog fingerprints.
+
+    The benchmark pins models, not hosts: ordering, throttle budgets, and the
+    ZDR flag change neither the tool catalog hash nor the surface hash.
+    """
+    baseline_catalog = tool_catalog_sha256()
+    baseline_surface = EXPECTED_SURFACE_MANIFEST_HASH
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    assert tool_catalog_sha256() == baseline_catalog
+    assert EXPECTED_SURFACE_MANIFEST_HASH == baseline_surface

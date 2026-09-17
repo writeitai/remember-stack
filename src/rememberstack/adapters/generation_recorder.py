@@ -109,6 +109,9 @@ class GenerationRecord:
     run_tag: str
     """Operator label tying calls to one benchmark run (may be empty)."""
 
+    provider_host: str | None = None
+    """Serving host that answered, when known; never a guess."""
+
 
 class GenerationRecorder(Protocol):
     """Sink for full-payload generation records. Never raises into generation."""
@@ -292,6 +295,8 @@ class OtelSpanRecorder:
             span.set_attribute("locomo.response_type", record.response_type_name)
             span.set_attribute("locomo.outcome", record.outcome)
             span.set_attribute("locomo.run_tag", record.run_tag or self._run_tag)
+            if record.provider_host is not None:
+                span.set_attribute("locomo.provider_host", record.provider_host)
             span.set_attribute("locomo.call_seq", call_seq)
             span.set_attribute("locomo.latency_ms", record.latency_ms)
             if record.outcome != "succeeded":
