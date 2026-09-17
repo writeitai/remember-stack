@@ -63,7 +63,7 @@ sibling `TypeSafeSettings` class:
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `model` | `str` | `"openai/gpt-5.6-luna"` | Model identifier for the default generative prompt engine. Env: `REMEMBERSTACK_FACT_MODEL`. |
-| `engine` | `Literal["prompt", "jev"]` | `"prompt"` | Selected adjudication engine. Controlled via `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` or `REMEMBERSTACK_FACT_ENGINE` via `validation_alias=AliasChoices(...)`. |
+| `engine` | `Literal["prompt", "jev"]` | `"prompt"` | Selected adjudication engine. Controlled via `validation_alias=AliasChoices("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "REMEMBERSTACK_FACT_ENGINE", "engine")`. |
 | `confidence_floor` | `float` | `0.75` | Minimum confidence score ($0.0$ to $1.0$). Shared across both prompt and Jev engines. Match choices below this floor fail-safe to `NEW`. |
 
 ### `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`)
@@ -76,22 +76,46 @@ sibling `TypeSafeSettings` class:
 | `timeout_s` | `float` | `30.0` | Client HTTP timeout in seconds (matching `timeout_s` convention). |
 | `fallback_to_prompt` | `bool` | `False` | When true, provider transport/network errors (HTTP 5xx, timeouts after retries) fall back to the generative prompt adjudicator. Sub-floor confidence does NOT fall back. |
 
-### Startup Validation and Class Hierarchy
-1. `ConfigurationError`: Defined in `src/rememberstack/adapters/typesafe.py` as
-   `class ConfigurationError(ValueError): pass`. This ensures callers catching
-   standard `ValueError` or `ConfigurationError` receive the expected exception.
-2. In `FactAdjudicator.__init__`:
-   - Parameters:
-     - `engine: Engine`
-     - `model_provider: ModelProviderPort` (generative provider, used when `engine="prompt"` or on fallback)
-     - `settings: FactAdjudicationSettings | None = None`
-     - `typesafe_settings: TypeSafeSettings | None = None`
-     - `typesafe_client: TypeSafeSystemOneClient | None = None`
-   - If `settings.engine == "jev"`, validates that `typesafe_settings.api_key`
-     (or `typesafe_client.api_key`) is present and non-empty. If missing or
-     blank, it immediately raises `ConfigurationError` at startup.
-   - If `typesafe_settings.fallback_to_prompt` is `True`, `model_provider` is
-     retained to service fallbacks.
+### Architectural Layering and Seam Separation (D61/D62)
+To preserve the strict architectural separation where `spine` never imports
+`adapters`:
+1. **Port Protocol (`src/rememberstack/ports/systemone.py`):**
+   Defines the runtime-checkable protocol:
+   ```python
+   @runtime_checkable
+   class SystemOnePort(Protocol):
+       def evaluate(
+           self,
+           *,
+           model: str,
+           state: Mapping[str, Any],
+           questions: Mapping[str, Any],
+           timeout_s: float | None = None,
+       ) -> tuple[Mapping[str, Any], ProviderCallUsage]: ...
+   ```
+2. **Adapter (`src/rememberstack/adapters/typesafe.py`):**
+   `TypeSafeSystemOneClient` implements `SystemOnePort`. It consumes `TypeSafeSettings`
+   and defines:
+   ```python
+   class ConfigurationError(ValueError):
+       """Raised when required TypeSafe configuration is missing or invalid."""
+   ```
+   If `TypeSafeSettings.api_key` is missing or blank at initialization,
+   `TypeSafeSystemOneClient.__init__` immediately raises `ConfigurationError`.
+3. **Spine (`src/rememberstack/spine/fact_adjudication.py`):**
+   `FactAdjudicator.__init__` accepts:
+   - `engine: Engine`
+   - `model_provider: ModelProviderPort` (used when `engine="prompt"` or for fallback)
+   - `settings: FactAdjudicationSettings | None = None`
+   - `systemone_provider: SystemOnePort | None = None`
+   If `self._settings.engine == "jev"` and `systemone_provider is None`:
+   `FactAdjudicator` raises `ValueError("systemone_provider must be supplied when fact adjudication engine is 'jev'")`.
+   Spine imports only from `ports.systemone`, never from `adapters`.
+4. **Composition Root (`src/rememberstack/profiles/selfhost.py`):**
+   When constructing `FactAdjudicator`, if `fact_settings.engine == "jev"`,
+   wires `typesafe_client = TypeSafeSystemOneClient(settings=TypeSafeSettings())`
+   and passes `systemone_provider=typesafe_client`. Missing API keys fail fast
+   at startup via `ConfigurationError`.
 
 ---
 
@@ -107,7 +131,8 @@ The returned dictionary contains:
   assertion's statement (`item["content"]`), claim reference (`item["claim"]`),
   subject/object entity references, and context entities.
 - `presentation["facts"]`: list of candidate facts for the entity (`F1`, `F2`, ...),
-  each with statement, chosen world dates, and canonical endpoints.
+  each with statement (or `statement_ref` into factored text), chosen world dates,
+  and canonical endpoints.
 - `presentation["claims"]`: dictionary of citable source claims (`C1`, `C2`, ...),
   each with source metadata and raw world dates.
 - `presentation["entities"]`: resolved entities and aliases (`same_as`).
@@ -142,8 +167,10 @@ HTTP call over the presentation state:
     target fact so they can be recorded as contradictory.
   - If no candidate fact represents the exact proposition, select NEW."
 - **Criteria:**
-  - `{"F1": "...", "F2": ...}` for each candidate in `presentation["facts"]`,
-    citing its statement and chosen world dates.
+  - `{"F1": "...", "F2": ...}` for each candidate in `presentation["facts"]`.
+    If a candidate fact's statement is stored as `statement_ref`, its text is
+    resolved from `presentation["text"][row["statement_ref"]]` so the criterion
+    shows the full statement text alongside its chosen world dates.
   - `"NEW"`: "The incoming assertion is a new proposition not represented by any
     candidate fact, or only shares general context without making the exact same claim."
 
@@ -171,10 +198,10 @@ HTTP call over the presentation state:
 ## 4. Response translation and writer contract
 
 The Jev client receives typed responses:
-- `match_choice = response.choices["match"].choice`
-- `match_confidence = response.choices["match"].confidence`
-- `stance_choice = response.choices["stance"].choice`
-- `window_choice = response.choices["window_action"].choice`
+- `match_choice = response["match"]["choice"]`
+- `match_confidence = response["match"]["confidence"]`
+- `stance_choice = response["stance"]["choice"]`
+- `window_choice = response["window_action"]["choice"]`
 
 ### Response Validation
 1. If `match_choice` is neither `"NEW"` nor in `mapping.facts`:
@@ -243,55 +270,87 @@ The Jev client receives typed responses:
    - `rationale = f"Jev System One: matched {match_choice} ({stance}) with confidence {match_confidence:.2f}"`
 
 The translated `PromptFactDecision` is then passed through the existing, verified
-`translate_prompt_decision(response, mapping)` function. The resulting
-`FactApplicationDecision` commits through PostgreSQL locking, CAS, and idempotency
-checks identically to generative decisions.
+`translate_prompt_decision(response=prompt_decision, mapping=mapping)` function (keyword-only).
+The resulting `FactApplicationDecision` commits through PostgreSQL locking, CAS,
+and idempotency checks identically to generative decisions.
 
 ---
 
 ## 5. D61 Substrate Seam, Metering, Fingerprinting, and Pipeline Generations
 
-### A. Generation Identity and Distinct Adjudicator Versions
+### A. Generation Identity and Single Helper Authority
 To prevent cross-engine contamination and ensure that prompt and Jev cannot share
 prepared attempts or complete each other's in-flight rows, Jev binds distinct plane
 adjudicator versions:
+- `RELATION_APPLICATION_VERSION = "relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"`
+- `OBSERVATION_APPLICATION_VERSION = "obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"`
 - `RELATION_APPLICATION_VERSION_JEV = "relation-adjudicator-2026.09a:jev-choice-match-3"`
 - `OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"`
 - `JEV_ADJUDICATOR_VERSION = "jev-adjudicator-2026.09a:choice-match-3"`
 
-When `FactAdjudicationSettings.engine == "jev"`:
-- Active adjudicator versions are `(RELATION_APPLICATION_VERSION_JEV, OBSERVATION_APPLICATION_VERSION_JEV)`.
-- `FactAdjudicator.prepare` admits the active versions.
-- E3 stages `fact_applications.adjudicator_version` using the active versions.
-- `FACT_FLUSH_VERSION` incorporates the active adjudicator versions:
-  `FACT_FLUSH_VERSION = f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{active_relation}:{active_observation}"`.
+All engine-aware pipeline components derive versions from single helper authorities
+defined in `src/rememberstack/spine/fact_adjudication.py`:
+1. `active_adjudicator_versions(engine: str) -> tuple[str, str]`:
+   - Returns `(RELATION_APPLICATION_VERSION_JEV, OBSERVATION_APPLICATION_VERSION_JEV)` when `engine == "jev"`.
+   - Returns `(RELATION_APPLICATION_VERSION, OBSERVATION_APPLICATION_VERSION)` when `engine == "prompt"`.
+2. `active_question_identity(engine: str) -> str`:
+   - Returns `JEV_ADJUDICATOR_VERSION` when `engine == "jev"`.
+   - Returns `"fact-prompt-v1"` when `engine == "prompt"`.
+3. `active_flush_version(engine: str) -> str`:
+   - Computes:
+     `rel_ver, obs_ver = active_adjudicator_versions(engine)`
+     `f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{rel_ver}:{obs_ver}"`.
 
-When `engine == "prompt"`, the existing prompt versions (`RELATION_APPLICATION_VERSION`,
-`OBSERVATION_APPLICATION_VERSION`) are active. Switching `engine` creates distinct
-pipeline generations; rows staged under one engine are never completed by the other.
+**Every call site reads these helpers:**
+- **`workers/e3.py` (`E3Handler._stage_normalizations`)**: Stages `adjudicator_version`
+  matching `active_adjudicator_versions(settings.engine)`.
+- **`spine/fact_adjudication.py` (`FactAdjudicator.prepare`)**: Admits head applications
+  matching `adjudicator_versions=active_adjudicator_versions(self._settings.engine)`.
+- **`spine/work_ledger.py` (`register_version_applications_on` & `check_flush_barrier`)**:
+  Passes `active_adjudicator_versions(engine)` as `relation_version` and `observation_version`,
+  and matches `active_flush_version(engine)`.
 
 ### B. Snapshot Hash & Attempt Fingerprinting
-In `snapshot_hash(*, snapshot: Mapping[str, Any], engine: str = "prompt", question_identity: str = "") -> str`:
-`renderer_version` binds:
-`f"{PROMPT_RENDERER_VERSION}:{engine}:{question_identity}"`
-Where `question_identity = "fact-prompt-v1"` for prompt, and `JEV_ADJUDICATOR_VERSION`
-for Jev. The prepared attempt records `engine` and `question_identity`. An in-flight
-prompt attempt cannot be CAS-published or applied by Jev.
+`snapshot_hash` binds:
+```python
+def snapshot_hash(
+    *,
+    snapshot: Mapping[str, Any],
+    engine: str = "prompt",
+    question_identity: str = "fact-prompt-v1",
+) -> str:
+    renderer_version = f"{PROMPT_RENDERER_VERSION}:{engine}:{question_identity}"
+    return sha256(canonical_json({"renderer_version": renderer_version, "snapshot": dict(snapshot)}).encode()).hexdigest()
+```
+**Crucial invariant:** Both `FactAdjudicator.prepare()` and `FactAdjudicator.apply()`
+call `snapshot_hash` with the exact same arguments:
+```python
+expected_hash = snapshot_hash(
+    snapshot=snapshot,
+    engine=self._settings.engine,
+    question_identity=active_question_identity(self._settings.engine),
+)
+```
+The prepared attempt records `engine` and `question_identity`. An in-flight prompt
+attempt cannot be CAS-published or applied by Jev, preventing cross-engine contamination.
 
 ### C. Meter Key Namespace
 The `:jev` suffix is specifically the `call_key` namespace suffix for
-`meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev", ...)`.
-It does not overload database attempt CAS keys.
+`meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev", usage=usage)`.
+This guarantees that if fallback to prompt occurs, the fallback call key does
+not collide with the Jev attempt key.
 
 ### D. Spend Accounting (`ProviderCallUsage`)
 The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
+- If TypeSafe returns a response lacking `usage` or `input_tokens`, it raises
+  `ProviderAccountingError("TypeSafe response carries no token usage")`.
 - `model_name = f"typesafe/{settings.model}"` (e.g. `"typesafe/jev-latest"`)
-- `tokens_in = int(usage.get("input_tokens", 0))`
+- `tokens_in = int(usage["input_tokens"])`
 - `tokens_out = int(usage.get("output_tokens", 0))`
 - `cost_usd = Decimal(str(round(Decimal(tokens_in) * Decimal("0.000000042"), 6)))`
   (TypeSafe pricing table: $0.042 per 1M input tokens, output tokens free).
 - `latency_ms = int(elapsed_s * 1000)`
-Recorded via `meter.record(call_key=receipt_key, tier="fact_adjudication_jev", usage=usage)`.
+Recorded via `meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev", usage=usage)`.
 
 ---
 
@@ -316,9 +375,10 @@ Recorded via `meter.record(call_key=receipt_key, tier="fact_adjudication_jev", u
 1. **Unit tests (`src/tests/spine/test_jev_adjudication.py`):**
    - Deterministic translation from Jev choices into valid `PromptFactDecision`.
    - Complete `window_action` translation (`keep`, `use_claim`, `clear`) using `fact_window_from_raw`, C-name derivation, and bare `FactWindow()`.
-   - Startup refusal (`ConfigurationError` / `ValueError`) when `engine="jev"` and `api_key` is absent.
+   - Startup refusal when `engine="jev"` and `api_key` is absent (`ConfigurationError(ValueError)`).
    - `ProviderInvalidResponseError` on unrecognized handles, invalid stances, or invalid window actions.
    - Sub-floor confidence handling and integration with `apply()`.
+   - Engine isolation: hash mismatch when comparing prompt and Jev attempts.
 2. **Regression benchmarks:**
    - Nate tournament win (`a80e17f7`) vs "fun experience" (`1104873b`): classified as `NEW`.
    - Nate Valorant final win (`58724598`) vs "in the final" (`3add09d3`): classified as `NEW`.

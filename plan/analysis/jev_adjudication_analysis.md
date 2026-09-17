@@ -136,9 +136,9 @@ zero network calls and zero tokens.
 - **Criteria:**
   - `"keep"`: Retain the existing fact's validity window unchanged.
   - `"use_claim"`: Replace or update the validity window with the incoming claim's
-    explicitly asserted validity dates.
-  - `"clear"`: Clear/open the validity window because evidence shows the prior
-    bounding dates do not apply.
+    explicitly asserted validity dates (via `fact_window_from_raw`).
+  - `"clear"`: Clear the validity window to all-unknown endpoints (`FactWindow()`,
+    with unknown precision and absent endpoints).
 
 ---
 
@@ -164,23 +164,26 @@ To maintain zero regression risk:
      - `engine`: `"prompt"` (default) vs `"jev"`, reading `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
        or `REMEMBERSTACK_FACT_ENGINE` via `AliasChoices`.
      - `confidence_floor`: float (default `0.75`).
-2. **TypeSafe settings (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`):**
-   - `api_key`: `str | None` (required when `engine="jev"`, fail-fast startup validation with `ConfigurationError(ValueError)`).
-   - `model`: default `"jev-latest"`.
-   - `base_url`: default `"https://api.typesafe.ai/v1"`.
-   - `timeout_s`: default `30.0`.
-   - `fallback_to_prompt`: default `False` (controls provider 5xx/timeout fallback).
+2. **Substrate port seam & settings (D61/D62):**
+   - `SystemOnePort` protocol in `ports/systemone.py`. `FactAdjudicator` in spine
+     accepts `systemone_provider: SystemOnePort | None`, avoiding any spine→adapter import.
+   - `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`):
+     - `api_key`: `str | None` (required when `engine="jev"`, fail-fast startup validation with `ConfigurationError(ValueError)`).
+     - `model`: default `"jev-latest"`.
+     - `base_url`: default `"https://api.typesafe.ai/v1"`.
+     - `timeout_s`: default `30.0`.
+     - `fallback_to_prompt`: default `False` (controls provider 5xx/timeout fallback).
 3. **Distinct generation identity & attempt safety:**
-   - Jev engine binds distinct plane adjudicator versions:
-     `RELATION_APPLICATION_VERSION_JEV = "relation-adjudicator-2026.09a:jev-choice-match-3"`
-     `OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"`
-     `JEV_ADJUDICATOR_VERSION = "jev-adjudicator-2026.09a:choice-match-3"`
-   - `snapshot_hash` and `prepared` bind `engine` and `question_identity` (`JEV_ADJUDICATOR_VERSION`),
-     preventing in-flight prompt attempts from being completed by Jev or vice-versa.
-   - `:jev` suffix is the namespace suffix for `meter.record` on tier `fact_adjudication_jev`.
+   - Single helper authority `active_adjudicator_versions(engine)` and `active_flush_version(engine)`.
+     Binds `RELATION_APPLICATION_VERSION_JEV = "relation-adjudicator-2026.09a:jev-choice-match-3"`
+     and `OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"`.
+   - `snapshot_hash` and `prepared` bind `engine` and `question_identity` (`active_question_identity(engine)`),
+     called with identical arguments in `prepare()` and `apply()` to guarantee isolation.
+   - `:jev` suffix is the namespace suffix for `meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev")`.
    - Usage records real `ProviderCallUsage` (`model_name`, `tokens_in`, `tokens_out`, `cost_usd`, `latency_ms`).
 4. **Fail-safe fallback:**
    - If Jev confidence is below `confidence_floor` (< 0.75), Jev strictly fail-safes
+
      to `NEW` (creating a separate fact per D118 coexistence principle). Sub-floor
      confidence does NOT fall back to prompt.
    - If an unrecoverable provider error (5xx, timeout) occurs and `fallback_to_prompt`

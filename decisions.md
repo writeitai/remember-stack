@@ -5963,8 +5963,11 @@ Settings split between `FactAdjudicationSettings` (`model`, `engine` via `AliasC
 `confidence_floor`) and `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix,
 `api_key: str | None`, `timeout_s: float = 30.0`, `extra="ignore"`), with fail-fast
 startup validation (`ConfigurationError(ValueError)`) when `engine="jev"`.
+Strict D61/D62 architectural boundary: `FactAdjudicator` depends only on `SystemOnePort`
+protocol (`ports/systemone.py`), wired at composition roots (`profiles/selfhost.py`)
+so spine never imports adapters.
 Binds distinct plane versions (`RELATION_APPLICATION_VERSION_JEV`, `OBSERVATION_APPLICATION_VERSION_JEV`)
-and attempt fingerprints (`snapshot_hash` with engine and `JEV_ADJUDICATOR_VERSION`)
+and attempt fingerprints (`snapshot_hash` with engine and `active_question_identity`)
 to prevent cross-engine attempt contamination. Metered on tier `fact_adjudication_jev`
 with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
 Replacing generative claim extraction or section summaries with System One was rejected
@@ -5973,6 +5976,7 @@ proxy was rejected per the D60/D61 library boundary.
 
 **Authority:** [design](plan/designs/jev_adjudication_design.md),
 [analysis](plan/analysis/jev_adjudication_analysis.md).
+
 
 
 
