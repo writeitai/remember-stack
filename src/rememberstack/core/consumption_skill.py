@@ -240,7 +240,10 @@ def _time_and_media() -> str:
         "result is relevant but insufficiently dated for a confirmed temporal "
         "count. Report it separately, and never claim a top-k or truncated "
         "response is exhaustive. Claim `asserted_at` is when the source spoke, "
-        "not a fallback fact date.\n\n"
+        "not a fallback fact or event date. When answering questions about when an "
+        "event occurred or was completed, use `claim_valid_from`, "
+        "`[world time: ...]`, or the resolved date in `claim_text`, never defaulting "
+        "to `asserted_at`.\n\n"
         "Live graph traversal shares PostgreSQL authority and has no snapshot"
         " generation. Its bounded-work status still matters: inspect truncation"
         " before treating absence as exhaustive.\n\n"
@@ -313,7 +316,9 @@ def _working_rules() -> str:
         "4. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
         "5. Did I keep world-validity and system-belief clocks paired?\n"
-        "6. Did I hydrate to evidence or raw source when the stakes required it?"
+        "6. Did I hydrate to evidence or raw source when the stakes required it?\n"
+        "7. Did I answer event-date questions using world-validity / `claim_valid_from`, "
+        "rather than treating `asserted_at` (message send time) as the event date?"
     )
 
 
