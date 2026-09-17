@@ -140,7 +140,7 @@ class TypeSafeSystemOneClient(SystemOnePort):
             latency_ms = int(elapsed_s * 1000)
 
             call_usage = ProviderCallUsage(
-                model_name=f"typesafe/{data.get('model', model)}",
+                model_name=f"typesafe/{data.get('model') or target_model}",
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=cost_usd,

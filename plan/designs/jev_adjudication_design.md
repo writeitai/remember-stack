@@ -87,7 +87,7 @@ To preserve the strict architectural separation where `spine` never imports
        def evaluate(
            self,
            *,
-           model: str,
+           model: str | None = None,
            state: Mapping[str, Any],
            questions: Mapping[str, Any],
            timeout_s: float | None = None,

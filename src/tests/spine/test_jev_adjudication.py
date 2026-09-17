@@ -503,8 +503,9 @@ def test_typesafe_client_default_model_honored() -> None:
         client=client,
     )
 
-    ts_client.evaluate(state={}, questions={})
+    answers, usage = ts_client.evaluate(state={}, questions={})
     assert captured_payload["model"] == "custom-jev-model"
+    assert usage.model_name == "typesafe/custom-jev-model"
 
 
 # ============================================================================

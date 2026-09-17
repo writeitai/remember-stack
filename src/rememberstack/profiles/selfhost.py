@@ -1625,7 +1625,6 @@ def _model_bindings() -> dict[str, str]:
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
         "fact_adjudication": fact_adjudication_model,
-        "fact_adjudication_engine": facts.engine,
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
