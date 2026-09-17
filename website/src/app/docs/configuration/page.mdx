@@ -25,7 +25,7 @@ One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMEN
 | Distribution / Artifact | Role |
 | :--- | :--- |
 | `remember` (PyPI package) | Client SDK (`RememberClient`), platform CLI (`remember`), MCP server (`remember mcp`), and agent setup (`remember setup`). Sub-second install, zero C-extension compilation. |
-| `ghcr.io/writeitai/remember-stack` (Docker) | Pre-built engine container: HTTP API, workers (E0–E3), PostgreSQL 19 migrations, and bitemporal spine. |
+| `ghcr.io/writeitai/remember-stack` (Docker) | Pre-built engine container: HTTP API, workers (E0–E3), PostgreSQL 19 migrations, and bitemporal store. |
 | Docker Compose (`docker-compose.yml`) | Single-command local orchestration: PostgreSQL 19 + SQL/PGQ, MinIO object store, API, and workers. |
 | `remember[benchmark]` | LoCoMo / scorer deps |
 | `remember[observability]` | Sentry-protocol + Langfuse SDKs (still opt-in by env) |
@@ -165,7 +165,7 @@ deployment settings.
 | --- | --- |
 | `REMEMBERSTACK_POSTGRES_*` | Postgres user/password/db for the stack |
 | `REMEMBERSTACK_MINIO_*` | MinIO access keys for object storage |
-| `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the spine |
+| `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the database |
 
 Replace every local-only secret before any non-isolated use.
 

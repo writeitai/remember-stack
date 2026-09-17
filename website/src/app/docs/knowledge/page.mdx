@@ -54,7 +54,7 @@ One compilation **mechanism**; many **scopes**:
 | **K1 — general knowledge** | Default scope: entity pages, source digests, root index |
 | **K2 — purpose scopes** | Extra subtrees (people profiles, projects, operating doctrine, migration as-is/to-be, …) |
 
-Scopes share one entity space and one fact spine. They own **markdown**, not separate truth databases.
+Scopes share one entity space and one fact store. They own **markdown**, not separate truth databases.
 
 A deployment can rename, drop, or invent scopes. The framework contract stays fixed: two page kinds, routing rules with citations, one git repo, one automated committer (the driver).
 
@@ -110,7 +110,7 @@ K is never a structural input to P1 maintenance, graph reads, or P3 builds
 | Depth | Where |
 | --- | --- |
 | This page | Contract agents need |
-| [Architecture](/docs/architecture) | Durable spine and stores |
+| [Architecture](/docs/architecture) | Durable store and what lives where |
 | [Mounts](/docs/mounts) | How to open the K checkout |
 | [Retrieval](/docs/retrieval) | Verify path after orientation |
 | Repo | Optional implementer notes under `plan/designs/` |

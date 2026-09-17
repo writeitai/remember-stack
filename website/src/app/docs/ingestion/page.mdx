@@ -37,7 +37,7 @@ Read this page top-to-bottom for the map. Stage detail and lifecycle rules live 
 | **E2 claims** | Chunks + structure | Immutable claims + grounding | Yes (extraction) |
 | **E3 normalize** | Claims | Entity mentions → canonical entities; candidate facts | Resolution cascade (mostly non-LLM; one binary T4 call for the residue) |
 | **E3 adjudicate** | Candidate facts + evidence | Relations/observations, supersession, contradictions | Cascade + ledgers |
-| **P1 / graph / P3** | Spine | Search indexes, live PostgreSQL graph, corpus FS | No completion on query; P3 build only |
+| **P1 / graph / P3** | Store | Search indexes, live PostgreSQL graph, corpus FS | No completion on query; P3 build only |
 
 Deep dive: [Pipeline stages](/docs/ingestion/pipeline).
 
@@ -81,7 +81,7 @@ Derived Markdown/transcripts feed the pipeline. Original bytes stay stored; medi
 
 Edited watched sources create new **versions**. Unchanged chunks **reuse** prior claims and vectors (measured spike hit rates are high). Reconciliation updates **current testimony**, recounts evidence by distinct lineages, and closes facts only under explicit rules (especially **living** sources that remove content). Full rules: [Lifecycle & versions](/docs/ingestion/lifecycle).
 
-## After the spine settles
+## After the store settles
 
 - **P1** updates as claim/chunk/fact-label embeddings land.
 - **Graph** relations are immediately visible after commit; **P3** is the only whole-corpus publication (Compose: operations profile).
