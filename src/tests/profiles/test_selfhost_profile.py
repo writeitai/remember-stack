@@ -353,3 +353,29 @@ def test_external_mount_roots_load_from_environment(
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.raw_mount_root == raw
     assert settings.artifacts_mount_root == artifacts
+
+
+def test_model_bindings_ignore_chat_routing_transport_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chat provider rotation must not move the benchmark fingerprint.
+
+    Routing hosts, throttle budgets, and the ZDR flag are transport, not model
+    identity: setting them changes neither the bindings dict nor any value.
+    """
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+
+    baseline = _model_bindings()
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    assert _model_bindings() == baseline
+    assert not any(
+        key.startswith("openrouter_chat_") or key == "openrouter_zdr"
+        for key in baseline
+    )
