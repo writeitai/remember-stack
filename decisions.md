@@ -5938,12 +5938,14 @@ building a managed mount/download service were also rejected. Full contract:
 items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
 cause: DeepInfra 429 `engine_overloaded` on the shared OpenRouter pool. The chat seat pins
 providers with `allow_fallbacks: false` and never rotates, so adapter and work-ledger
-retries re-hit the same overloaded engine. Fix it in `adapters/openrouter.py`: an ordered
-chat shortlist with fallbacks (DeepInfra → Relace → Wafer default), rotation on overload
-signals, a throttle budget separate from work attempts (Retry-After honor, jittered
-backoff), per-call serving-host recording, and `data_collection: deny` with optional
-`zdr: true`. Rotating hosts under the same pinned model + params keeps benchmark
-comparability; the implementing PR must assert fingerprint stability.
+retries re-hit the same overloaded engine. Fix it in `adapters/openrouter.py`: an ordered chat shortlist with fallbacks (setting
+default `None`; DeepInfra → Relace → Wafer is the deployment-level GLM recommendation),
+rotation on overload signals, a dedicated throttle budget (Retry-After honor, jittered
+backoff) that does not consume work attempts, per-call serving-host recording (response
+`provider` field, else generation lookup, else targeted slug), and unconditional
+`data_collection: deny` with an opt-in ZDR flag. Routing settings stay out of
+`_model_bindings()` so `readiness.model_bindings`, `surface_manifest_hash`, and
+`protocol_fingerprint` are stable; the implementing PR asserts all three in tests.
 
 Locomo-only routing was rejected (it would fork benchmark behavior from product
 behavior), model switching on throttle was rejected (silent comparability break), and

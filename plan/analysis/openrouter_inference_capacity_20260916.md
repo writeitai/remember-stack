@@ -31,8 +31,10 @@ Full autopsy: `/root/r14/r14-autopsy.md` (box; log + Langfuse method inside).
 - `_post` retries 429s with a bounded wait, then the work ledger retries the item twice more —
   but every retry sends the same payload into the same routing, so all three attempts hit the
   same overloaded engine. Retries without rotation manufactured the dead letters.
-- Embeddings already have the better shape: ordered shortlist **with** fallbacks, so a 429
-  moves to the next host (`_embedding_provider_payload`).
+- Embeddings have the better shape on paper — ordered shortlist **with** OpenRouter-side
+  fallbacks (`_embedding_provider_payload`) — but those fallbacks do not fire on every
+  429 shape, and no client-side rotation exists on either path today. Client-side rotation
+  on overload is new capability, not a copy of working behavior.
 
 ## Provider survey for `z-ai/glm-5.3-flash` (OpenRouter, 29 endpoints)
 
