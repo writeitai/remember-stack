@@ -337,7 +337,6 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
         "full-v38",
         "full-v38-gemma-vertex",
         "full-v38-codex-subscription",
-        "full-v38-glm",
     )
     protocol = PROTOCOL_REGISTRY["full-v38"]
 
