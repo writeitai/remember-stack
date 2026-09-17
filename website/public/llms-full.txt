@@ -83,7 +83,7 @@ query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_
 - `remember projects list` / `create`: Manage isolated workspace projects.
 - `remember switch <project-id>`: Set default project context.
 - `remember members list` / `invite`: Manage team seats and roles.
-- `remember ingest <file>`: Ingest document into bitemporal spine.
+- `remember ingest <file>`: Ingest document into bitemporal store.
 - `remember query sql <sql>`: Execute sandboxed SQL statement against `memory_v1`.
 - `remember operations list` / `run`: Run assured operations (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`).
 - `remember mcp`: Launch Model Context Protocol stdio server.

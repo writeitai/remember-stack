@@ -138,7 +138,7 @@ Team collaborator management and seat allocations:
 The data plane commands run identically whether targeting Remember Cloud or a self-hosted engine.
 
 ### `remember ingest <file>`
-Ingests a file into the content-addressed spine, triggering chunk packing, claim extraction, and bitemporal adjudication:
+Ingests a file into the content-addressed store, triggering chunk packing, claim extraction, and bitemporal adjudication:
 
 ```bash
 remember ingest docs/architecture.md
@@ -183,7 +183,7 @@ remember connectors list
 ## 4. Retired Surfaces
 
 In accordance with Decision D108:
-- **`remember review`**: Retired. In early versions, review queues held human triage tasks. In modern Remember, contradiction adjudication is fully autonomous (D3/D43/D107) and runs live in the bitemporal spine. Running `remember review` prints a helpful migration notice.
+- **`remember review`**: Retired. In early versions, review queues held human triage tasks. In modern Remember, contradiction adjudication is fully autonomous (D3/D43/D107) and runs live in the bitemporal store. Running `remember review` prints a helpful migration notice.
 - **`remember budget`**: Retired from the primary data-plane surface. Cloud spend and credit balances are managed via `remember balance`. Self-hosted engine spending is configured via `.env` provider rate limits.
 
 
