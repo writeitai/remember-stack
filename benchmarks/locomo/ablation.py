@@ -384,6 +384,7 @@ def run_retrieval_ablation(
         readiness=checkpointed,
         version_ids=set(version_ids),
         repository_revision=context.configuration.repository_revision,
+        protocol_name=context.configuration.protocol_name,
     ):
         raise runner.ExecutionGuardError(
             "source run lacks exact checkpointed canonical readiness"
@@ -581,6 +582,7 @@ def _guard_live_source(
         readiness=live,
         version_ids=set(version_ids),
         repository_revision=configuration.repository_revision,
+        protocol_name=configuration.protocol_name,
     ):
         raise runner.ExecutionGuardError(
             "live readiness differs from the processed source checkpoint"

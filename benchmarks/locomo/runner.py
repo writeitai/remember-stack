@@ -51,6 +51,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
 from benchmarks.locomo.model import ProtocolKey
+from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import RetrievedClaim
@@ -67,7 +68,6 @@ from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
-from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
@@ -78,6 +78,7 @@ from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import protocol_for_name
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -257,8 +258,13 @@ def _readiness_matches_protocol(
     readiness: PipelineReadinessReport,
     version_ids: set[UUID],
     repository_revision: str,
+    protocol_name: ProtocolName = PROTOCOL_NAME,
 ) -> bool:
-    """Check exact E/P generations, model bindings, completion, and code identity."""
+    """Check exact E/P generations, model bindings, completion, and code identity.
+
+    Model bindings come from the prepared protocol, so ingest-model variants
+    check their own pins instead of the canonical module-global map.
+    """
     versions_ready = all(
         version.ready
         and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
@@ -288,7 +294,8 @@ def _readiness_matches_protocol(
         and capabilities_ready
         and readiness.document_binding_generation
         == EXPECTED_DOCUMENT_BINDING_GENERATION
-        and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+        and readiness.model_bindings
+        == dict(protocol_for_name(protocol_name).ingest_model_bindings)
         and repository_revision
         and readiness.build_revision == repository_revision
     )
@@ -421,10 +428,14 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
-        _require_current_ingest_bindings(model_bindings=build.model_bindings)
+        _require_current_ingest_bindings(
+            model_bindings=build.model_bindings,
+            protocol_name=context.configuration.protocol_name,
+        )
         if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
             raise ExecutionGuardError(
-                "deployment document binding generation differs from RS-LoCoMo-Full-v38"
+                "deployment document binding generation differs from"
+                f" {context.configuration.protocol_name}"
             )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
@@ -584,10 +595,12 @@ def answer_sample(
         readiness=readiness,
         version_ids=set(version_ids),
         repository_revision=context.configuration.repository_revision,
+        protocol_name=context.configuration.protocol_name,
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v38 pipeline, live graph, and fresh P3 projection"
+            f" {context.configuration.protocol_name} pipeline, live graph,"
+            " and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1468,10 +1481,12 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
         )
 
 
-def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
+def _require_current_ingest_bindings(
+    *, model_bindings: dict[str, str], protocol_name: ProtocolName
+) -> None:
     """Fail before upload unless the deployment serves the pinned ingest models."""
 
-    expected = dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    expected = dict(protocol_for_name(protocol_name).ingest_model_bindings)
     if model_bindings != expected:
         mismatches = sorted(
             name
@@ -1479,7 +1494,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v38: "
+            f"deployment ingest model bindings differ from {protocol_name}: "
             + ", ".join(mismatches)
         )
 

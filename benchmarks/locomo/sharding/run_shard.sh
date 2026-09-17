@@ -60,28 +60,62 @@ backup_python() {
     "$python_bin" "$@"
 }
 
-# RS-LoCoMo-Full-v38's non-secret ingest identity. Override ambient self-host
-# defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
-export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_E1_PREFIX_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OBS_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_P1_LABEL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
-unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
-export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
-unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
-export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
+# The protocol's non-secret ingest identity. Override ambient self-host
+# defaults so every shard runs the exact pipeline the protocol checks.
+# full-v38-glm swaps only the generation seats to GLM (embeddings, pipeline,
+# prompts, budgets, answer, and judge stay canonical) and routes chat through
+# the ordered shortlist with fallbacks so D127 rotation can engage; pinning
+# CHAT_PROVIDER_ONLY would leave rotation nowhere to advance to.
+if [[ "$protocol" == "full-v38-glm" ]]; then
+  glm_model=z-ai/glm-5.3-flash
+  export REMEMBERSTACK_STRUCTURER_MODEL="$glm_model"
+  export REMEMBERSTACK_SKELETON_CHECK_MODEL="$glm_model"
+  export REMEMBERSTACK_ROLE_MODEL="$glm_model"
+  export REMEMBERSTACK_SUMMARY_MODEL="$glm_model"
+  export REMEMBERSTACK_E1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_E1_PREFIX_MODEL="$glm_model"
+  export REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"
+  export REMEMBERSTACK_E3_NORMALIZE_MODEL="$glm_model"
+  export REMEMBERSTACK_OBS_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_OBS_SMALL_MODEL="$glm_model"
+  export REMEMBERSTACK_OBS_FRONTIER_MODEL="$glm_model"
+  export REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL="$glm_model"
+  export REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL="$glm_model"
+  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_P1_LABEL_MODEL="$glm_model"
+  export REMEMBERSTACK_FACT_MODEL="$glm_model"
+  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
+  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
+  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"z-ai/glm-5.3-flash":"minimal"}'
+  export REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER=deepinfra,relace,wafer
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+else
+  export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_E1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_E1_PREFIX_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_OBS_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_P1_LABEL_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
+  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
+  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER
+fi
 export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
 [[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
@@ -154,6 +188,9 @@ attest_worker_environment() {
     REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL
     REMEMBERSTACK_P1_EMBEDDING_MODEL
     REMEMBERSTACK_P1_LABEL_MODEL
+    REMEMBERSTACK_FACT_MODEL
+    REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+    REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER
     REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER
     REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
     REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS

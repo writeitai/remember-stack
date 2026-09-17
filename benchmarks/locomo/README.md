@@ -471,6 +471,41 @@ embedding preflight (the chat probe routes to Codex). Against an already
 ingested store, `answer` and `judge` compose only Codex and need no OpenRouter
 or Vertex credential on the evaluator machine.
 
+## GLM ingest variant (`full-v38-glm`)
+
+`full-v38-glm` replays the R14 generation model (`z-ai/glm-5.3-flash` via
+OpenRouter) under the full v38 pipeline: same stages including
+`ground_claims`, component generations, prompts, tool catalog, budgets,
+Qwen embeddings, and the frozen Luna answer agent and judge. Only the ingest
+generation seats and their reasoning-effort pin (`minimal`) change.
+
+Because the ingest models determine what is in the store, this is a new
+ingest-model family baseline, not a canonical v38 score: compare GLM-ingest
+scores only to other GLM-ingest runs, never to Luna-ingest v38 runs. The
+first GLM run sets that baseline; its purpose is to verify the D127
+provider-rotation fix against the exact DeepInfra 429 `engine_overloaded`
+failure that dead-lettered 45 R14 work items. The shard driver routes chat
+through the ordered shortlist `deepinfra,relace,wafer` with fallbacks so
+rotation has somewhere to advance to; pinning `CHAT_PROVIDER_ONLY` would
+reproduce the R14 no-escape behavior.
+
+Prepare and run it with the protocol selected on every invocation (prepare
+records the choice immutably; ingest and answer refuse a deployment whose
+bindings differ from it):
+
+```bash
+export LOCOMO_PROTOCOL=full-v38-glm
+uv run --extra benchmark python -m benchmarks.locomo prepare \
+  --dataset /absolute/path/locomo10.json \
+  --tier smoke \
+  --protocol full-v38-glm \
+  --output .benchmark-runs/locomo-glm-smoke
+```
+
+`run_shard.sh` reads the same `LOCOMO_PROTOCOL` export for the model
+environment, so a shard run without it fails closed at the readiness gate
+instead of silently ingesting under the wrong models.
+
 ## Sharded runs
 
 Publication samples can run concurrently on independent hosts while preserving the required

@@ -1,5 +1,23 @@
 # LoCoMo full-system benchmark design
 
+> **v38 GLM ingest variant (2026-09-17).** `full-v38-glm`
+> (`RS-LoCoMo-Full-v38-GLM`) replays the R14 generation model
+> (`z-ai/glm-5.3-flash` via OpenRouter, reasoning effort `minimal`) under the
+> full v38 pipeline: same stages including `ground_claims`, component
+> generations, prompts, tool catalog, budgets, Qwen embeddings, and the frozen
+> Luna answer agent and judge. Ingest model bindings move from a module-global
+> constant to a per-protocol pin (`LoCoMoProtocol.ingest_model_bindings`,
+> canonical map as default); the runner checks readiness and pre-upload
+> bindings against the prepared protocol, so a wrong-model deployment fails
+> closed naming the expected protocol. Fingerprints are untouched, so existing
+> v38 run dirs keep validating. Scores are a new ingest-model family baseline,
+> comparable only to other GLM-ingest runs, never to Luna-ingest v38 runs. The
+> shard driver routes chat through the ordered shortlist
+> `deepinfra,relace,wafer` with fallbacks so D127 rotation can engage; the
+> first GLM run sets the baseline and verifies the rotation fix against the
+> exact DeepInfra 429 `engine_overloaded` failure that dead-lettered 45 R14
+> work items. Decision: [D128](../../decisions.md) (decisions log in repo root).
+>
 > **v38 adjudication rejection-feedback amendment (2026-09-15).** Full-v38 is
 > the current protocol. The fact adjudicator retries one deterministic
 > translator rejection inside the delivery: on a new-fact target/declare

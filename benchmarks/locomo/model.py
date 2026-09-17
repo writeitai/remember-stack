@@ -33,12 +33,13 @@ Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
 ProtocolKey = Literal[
-    "full-v38", "full-v38-gemma-vertex", "full-v38-codex-subscription"
+    "full-v38", "full-v38-gemma-vertex", "full-v38-codex-subscription", "full-v38-glm"
 ]
 ProtocolName = Literal[
     "RS-LoCoMo-Full-v38",
     "RS-LoCoMo-Full-v38-GemmaVertex",
     "RS-LoCoMo-Full-v38-CodexSubscription",
+    "RS-LoCoMo-Full-v38-GLM",
 ]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal[

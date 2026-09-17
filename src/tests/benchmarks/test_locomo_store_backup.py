@@ -1024,6 +1024,24 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna" in script
+    assert '[[ "$protocol" == "full-v38-glm" ]]' in script
+    assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"' in script
+    assert 'REMEMBERSTACK_FACT_MODEL="$glm_model"' in script
+    assert "glm_model=z-ai/glm-5.3-flash" in script
+    assert (
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP="
+        '\'{"z-ai/glm-5.3-flash":"minimal"}\''
+    ) in script
+    assert (
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER=deepinfra,relace,wafer" in script
+    )
+    assert "unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY" in script
+    frozen = script[script.index("local -a frozen_variables=(") :]
+    frozen = frozen[: frozen.index("\n  )")]
+    assert "REMEMBERSTACK_FACT_MODEL" in frozen
+    assert "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY" in frozen
+    assert "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER" in frozen
     assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
     assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
     assert 'published=$("${compose[@]}" port api 8000 | head -n 1)' in script
