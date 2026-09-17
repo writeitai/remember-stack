@@ -150,6 +150,37 @@ CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-CodexSubscription"
 CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v38-codex-subscription"
 CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
 CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
+GLM_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-GLM"
+GLM_PROTOCOL_KEY: Final = "full-v38-glm"
+GLM_GENERATION_MODEL: Final = "z-ai/glm-5.3-flash"
+"""GLM 5.3 Flash served through OpenRouter, the exact R14 generation model.
+
+The variant keeps every canonical v38 pipeline pin -- stages including
+ground_claims, component generations, prompts, tool catalog, budgets,
+embeddings, and the frozen Luna answer agent and judge -- and swaps only the
+ingest generation seats to this model with reasoning effort minimal. Because
+the ingest models determine what is in the store, its scores are a new
+ingest-model family baseline, comparable only to other GLM-ingest runs, never
+to Luna-ingest v38 runs. The first GLM run sets that baseline; its purpose is
+to verify the D127 provider-rotation fix against the exact DeepInfra 429
+engine_overloaded failure that dead-lettered 45 R14 work items.
+"""
+GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        **EXPECTED_INGEST_MODEL_BINDINGS,
+        "claim_extraction": GLM_GENERATION_MODEL,
+        "context_prefix": GLM_GENERATION_MODEL,
+        "fact_label": GLM_GENERATION_MODEL,
+        "entity_resolution": GLM_GENERATION_MODEL,
+        "fact_adjudication": GLM_GENERATION_MODEL,
+        "openrouter_reasoning_effort_map": '{"z-ai/glm-5.3-flash": "minimal"}',
+        "relation_normalization": GLM_GENERATION_MODEL,
+        "section_role": GLM_GENERATION_MODEL,
+        "section_summary": GLM_GENERATION_MODEL,
+        "skeleton_check": GLM_GENERATION_MODEL,
+        "structure_fallback": GLM_GENERATION_MODEL,
+    }
+)
 
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
@@ -281,6 +312,10 @@ class LoCoMoProtocol:
     """Which adapter serves the answer agent; the CLI composes it from this."""
     judge_provider: ProviderKey = "openrouter"
     """Which adapter serves the judge; kept on OpenRouter for comparability."""
+    ingest_model_bindings: Mapping[str, str] = EXPECTED_INGEST_MODEL_BINDINGS
+    """Exact readiness model bindings this protocol ingests with. Variants that
+    swap ingest models override it; the runner checks readiness against the
+    selected protocol, never the module-global canonical map."""
 
 
 _FULL_V25 = LoCoMoProtocol(
@@ -353,11 +388,35 @@ _FULL_V25_CODEX_SUBSCRIPTION = LoCoMoProtocol(
     judge_provider="codex_subscription",
 )
 
+_FULL_V25_GLM = LoCoMoProtocol(
+    key=GLM_PROTOCOL_KEY,
+    name=GLM_PROTOCOL_NAME,
+    answer_agent_model=ANSWER_AGENT_MODEL,
+    judge_model=JUDGE_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=AnswerAgentStep,
+    judge_schema=JudgeOutput,
+    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
+    tool_catalog_sha256=tool_catalog_sha256(),
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=TEMPERATURE,
+    judge_temperature=TEMPERATURE,
+    judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
+    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
+    answer_word_cap=None,
+    ingest_model_bindings=GLM_INGEST_MODEL_BINDINGS,
+)
+
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
     {
         _FULL_V25.key: _FULL_V25,
         _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
         _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
+        _FULL_V25_GLM.key: _FULL_V25_GLM,
     }
 )
 

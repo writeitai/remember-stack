@@ -6004,3 +6004,31 @@ its pinned engine bump; per-tenant key management stays UMC-side later. Full con
 [inference capacity](plan/analysis/openrouter_inference_capacity_20260916.md). Evidence:
 R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
+## D128. GLM ingest variant of the v38 LoCoMo protocol
+
+**Status:** accepted 2026-09-17, binding when merged. Verifying the D127
+rotation fix requires rerunning the exact R14 failure mode -- GLM ingest over
+the shared OpenRouter pool -- as a scoreable protocol run, but v38 ingest pins
+Luna in a module-global map, so GLM cannot go through protocol ingest. Add the
+`full-v38-glm` (`RS-LoCoMo-Full-v38-GLM`) variant instead of a v39: same v38
+pipeline stages, component generations, prompts, tool catalog, budgets,
+embeddings, and frozen Luna answer agent and judge; only the ten ingest
+generation seats move to `z-ai/glm-5.3-flash` with reasoning effort `minimal`
+(the exact R14 model and effort pin). Ingest bindings become a per-protocol pin
+(`LoCoMoProtocol.ingest_model_bindings`, canonical map as default) and the
+runner checks readiness and pre-upload bindings against the prepared protocol,
+so a wrong-model deployment fails closed naming the expected protocol.
+Fingerprints are untouched, so existing v38 run dirs keep validating. Its
+scores are a new ingest-model family baseline, comparable only to other
+GLM-ingest runs, never to Luna-ingest v38 runs. The shard driver routes chat
+through the ordered shortlist DeepInfra → Relace → Wafer with fallbacks (the
+D127 deployment-level recommendation); pinning `CHAT_PROVIDER_ONLY` was
+rejected because a single-slug allowlist leaves rotation nowhere to advance.
+`REMEMBERSTACK_FACT_MODEL` gains a Compose passthrough (default Luna) because
+the fact-adjudication seat previously had no container-visible setting.
+Unpinning Luna silently was rejected (it would produce fake-comparable
+scores); a full v39 was rejected (a model swap is a variant per the
+Gemma-vertex/Codex-subscription precedent, not a pipeline change).
+
+**Authority:** [design](plan/designs/locomo_benchmark_design.md).
+

@@ -40,6 +40,7 @@ from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
+from benchmarks.locomo.protocol import GLM_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -49,6 +50,7 @@ from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from benchmarks.locomo.runner import _answer_one
 from benchmarks.locomo.runner import _judge_one
+from benchmarks.locomo.runner import _require_current_ingest_bindings
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ExecutionGuardError
@@ -1761,6 +1763,30 @@ def test_ingest_refuses_model_binding_drift_before_upload(
         raw_client.close()
 
     assert uploads == 0
+
+
+def test_ingest_bindings_gate_checks_the_prepared_protocol() -> None:
+    """Each protocol accepts its own ingest pins and names itself on drift."""
+    _require_current_ingest_bindings(
+        model_bindings=dict(EXPECTED_INGEST_MODEL_BINDINGS),
+        protocol_name="RS-LoCoMo-Full-v38",
+    )
+    _require_current_ingest_bindings(
+        model_bindings=dict(GLM_INGEST_MODEL_BINDINGS),
+        protocol_name="RS-LoCoMo-Full-v38-GLM",
+    )
+    with pytest.raises(
+        ExecutionGuardError, match="differ from RS-LoCoMo-Full-v38-GLM: "
+    ):
+        _require_current_ingest_bindings(
+            model_bindings=dict(EXPECTED_INGEST_MODEL_BINDINGS),
+            protocol_name="RS-LoCoMo-Full-v38-GLM",
+        )
+    with pytest.raises(ExecutionGuardError, match="differ from RS-LoCoMo-Full-v38: "):
+        _require_current_ingest_bindings(
+            model_bindings=dict(GLM_INGEST_MODEL_BINDINGS),
+            protocol_name="RS-LoCoMo-Full-v38",
+        )
 
 
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
