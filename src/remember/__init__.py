@@ -22,6 +22,7 @@ from remember.errors import RateLimited
 from remember.errors import Unauthenticated
 from remember.models import BillingStatus
 from remember.models import CapabilityReadiness
+from remember.models import ClaimValidPrecision
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
@@ -34,6 +35,7 @@ from remember.models import PipelineStageReadiness
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import SpendGate
+from remember.models import TemporalMatch
 from remember.models import ToolDescriptor
 from remember.models import VersionPipelineReadiness
 
@@ -48,6 +50,7 @@ except PackageNotFoundError:
 __all__ = (
     "BillingStatus",
     "CapabilityReadiness",
+    "ClaimValidPrecision",
     "Client",
     "ClientSettings",
     "CloudClient",
@@ -70,6 +73,7 @@ __all__ = (
     "ReadinessRequirements",
     "RememberClient",
     "SpendGate",
+    "TemporalMatch",
     "ToolDescriptor",
     "Unauthenticated",
     "VersionPipelineReadiness",

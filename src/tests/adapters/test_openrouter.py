@@ -1356,6 +1356,28 @@ def test_invalid_completion_capture_is_explicit_private_and_inspectable(
     assert stat.S_IMODE(captures[0].stat().st_mode) == 0o600
 
 
+def test_completion_decodes_leading_json_when_trailing_content_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the model emits concatenated JSON objects, the primary object decodes cleanly."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(
+            content='{"answer":"first"}\n\n{"answer":"fallback"}', finish="stop"
+        )
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+            response_type=_Answer,
+        )
+        assert response.output.answer == "first"
+    finally:
+        provider._client.close()
+
+
 def test_invalid_completion_capture_handles_unpaired_unicode_surrogate(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
