@@ -5980,6 +5980,27 @@ proxy was rejected per the D60/D61 library boundary.
 **Authority:** [design](plan/designs/jev_adjudication_design.md),
 [analysis](plan/analysis/jev_adjudication_analysis.md).
 
+## D127. Rotate OpenRouter chat providers on overload in the core engine
 
+**Status:** accepted 2026-09-17, binding when merged. R14 dead-lettered 45/997 work
+items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
+cause: DeepInfra 429 `engine_overloaded` on the shared OpenRouter pool. The chat seat pins
+providers with `allow_fallbacks: false` and never rotates, so adapter and work-ledger
+retries re-hit the same overloaded engine. Fix it in `adapters/openrouter.py`: an ordered chat shortlist with fallbacks (setting
+default `None`; DeepInfra → Relace → Wafer is the deployment-level GLM recommendation),
+rotation on overload signals, a dedicated throttle budget (Retry-After honor, jittered
+backoff) that does not consume work attempts, per-call serving-host recording (response
+`provider` field, else generation lookup, else targeted slug), and unconditional
+`data_collection: deny` with an opt-in ZDR flag. Routing settings stay out of
+`_model_bindings()` so `readiness.model_bindings`, `surface_manifest_hash`, and
+`protocol_fingerprint` are stable; the implementing PR asserts all three in tests.
 
+Locomo-only routing was rejected (it would fork benchmark behavior from product
+behavior), model switching on throttle was rejected (silent comparability break), and
+more parallelism was rejected (it feeds throttles). BYOK keys are the accepted ops
+complement; a first-party Z.AI adapter is a deferred follow-up. UMC consumes this via
+its pinned engine bump; per-tenant key management stays UMC-side later. Full contract:
+[design](plan/designs/openrouter_provider_rotation_design.md). Analysis:
+[inference capacity](plan/analysis/openrouter_inference_capacity_20260916.md). Evidence:
+R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
