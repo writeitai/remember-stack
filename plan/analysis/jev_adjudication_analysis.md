@@ -95,6 +95,11 @@ Candidate Facts:
 
 We map this directly into TypeSafe primitives over the prepared concise state:
 
+### Empty candidate short-circuit
+When `presentation["facts"]` is empty (new entity / first assertion), code immediately
+short-circuits to the deterministic `NEW` fact path (`_sole_new_fact`), consuming
+zero network calls and zero tokens.
+
 ### Question 1: Match selection (`Choice`)
 - **Instructions:**
   "You are adjudicating an incoming assertion against candidate stored facts for
@@ -109,19 +114,31 @@ We map this directly into TypeSafe primitives over the prepared concise state:
     target fact with contradictory stance.
   - If no candidate fact represents the exact proposition, select NEW."
 - **Criteria:**
-  - `"F1"`: Candidate fact statement + world dates.
-  - ...
+  - `"F1"`, `"F2"`...: Candidate fact statement + world dates.
   - `"NEW"`: "The assertion is a new proposition not represented by any candidate
     fact, or only shares general context without making the exact same claim."
 
 ### Question 2: Stance (`Choice`)
-- When `match != "NEW"`, determine stance:
+- **Instructions:**
+  "If the incoming assertion matches an existing candidate fact, evaluate whether
+  it affirms/supports the fact or contradicts it. If the assertion is NEW, select
+  not_applicable."
+- **Criteria:**
   - `"supports"`: Positive evidence affirming the same claim.
   - `"contradicts"`: Incompatible claim about the same property and time period.
+  - `"not_applicable"`: The assertion establishes a new, distinct fact.
 
-### Question 3: Date window replacement (`Noul` / `Choice`)
-- Evaluates whether the incoming claim's resolved world dates explicitly replace
-  or correct the candidate fact's window.
+### Question 3: Window action (`Choice`)
+- **Instructions:**
+  "If the incoming assertion matches an existing candidate fact, evaluate how the
+  fact's world-time validity window should be updated based on the incoming claim's
+  asserted validity. If the assertion is NEW, select keep."
+- **Criteria:**
+  - `"keep"`: Retain the existing fact's validity window unchanged.
+  - `"use_claim"`: Replace or update the validity window with the incoming claim's
+    explicitly asserted validity dates.
+  - `"clear"`: Clear/open the validity window because evidence shows the prior
+    bounding dates do not apply.
 
 ---
 
@@ -142,20 +159,24 @@ We map this directly into TypeSafe primitives over the prepared concise state:
 
 To maintain zero regression risk:
 1. **Configurable via environment variable:**
-   - `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`:
-     - `"prompt"` (default): existing generative LLM path (`ModelRequest` + `PromptFactDecision`).
-     - `"jev"`: System One Jev adjudication engine.
-2. **Standardized configuration:**
-   - `REMEMBERSTACK_TYPESAFE_API_KEY`: API key for `api.typesafe.ai`.
-   - `REMEMBERSTACK_TYPESAFE_MODEL`: default `"jev-latest"`.
-   - `REMEMBERSTACK_TYPESAFE_BASE_URL`: default `"https://api.typesafe.ai/v1"`.
-   - `REMEMBERSTACK_TYPESAFE_TIMEOUT_SECONDS`: default `30.0`.
-   - `REMEMBERSTACK_TYPESAFE_CONFIDENCE_FLOOR`: default `0.75`.
+   - `FactAdjudicationSettings` (`REMEMBERSTACK_FACT_` prefix):
+     - `engine`: `"prompt"` (default) vs `"jev"`.
+     - `confidence_floor`: float (default `0.75`).
+2. **TypeSafe settings (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`):**
+   - `api_key`: `str | None` (required when `engine="jev"`, fail-fast startup validation).
+   - `model`: default `"jev-latest"`.
+   - `base_url`: default `"https://api.typesafe.ai/v1"`.
+   - `timeout_s`: default `30.0`.
+   - `fallback_to_prompt`: default `False` (controls provider 5xx/timeout fallback).
 3. **Fail-safe fallback:**
-   - If Jev confidence is below the configured floor, or if an unexpected
-     provider error occurs, the engine can optionally fall back to the prompt
-     adjudicator or fail closed per worker retry policy.
+   - If Jev confidence is below `confidence_floor` (< 0.75), Jev strictly fail-safes
+     to `NEW` (creating a separate fact per D118 coexistence principle). Sub-floor
+     confidence does NOT fall back to prompt.
+   - If an unrecoverable provider error (5xx, timeout) occurs and `fallback_to_prompt`
+     is True, it delegates to the prompt adjudicator; otherwise it raises
+     `ProviderCallError` for worker retry/DLQ backstop.
 4. **Preservation of database contracts:**
-   - The Jev engine produces the exact same typed `FactApplicationDecision`
-     consumed by `apply_fact_decision()`. Postgres locking, CAS, and idempotency
-     remain 100% untouched.
+   - The Jev engine produces a standard `PromptFactDecision` which translates
+     through verified existing code into `FactApplicationDecision`. Postgres
+     locking, CAS, and idempotency remain 100% untouched.
+

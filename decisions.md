@@ -5944,19 +5944,30 @@ for the same entity. It does not synthesize new text, rewrite claims, or generat
 summaries. Using generative LLMs for this task introduces severe token inflation
 (34.5M input tokens, 97.7% of conv-42 ingestion spend), handle format
 rejections, and semantic drift (false-positive merges on shared topical context).
-The Jev engine replaces the generative chat completion step with calibrated
-`Choice` and `Noul` decision primitives evaluated in parallel over prepared
-concise snapshot state, translating the resulting choice and confidence directly
-into the canonical `FactApplicationDecision`.
+The Jev engine replaces the generative chat completion step with three parallel
+`Choice` decision primitives (`match`, `stance`, `window_action`) evaluated
+over prepared concise snapshot state (D121). An empty-candidate set short-circuits
+in code to `NEW` with zero network calls. The resulting choices translate directly
+into a canonical `PromptFactDecision` and then through verified existing mapping
+into `FactApplicationDecision`.
 
-Preserve existing database locking, compare-and-swap publication, revalidation,
-and idempotency contracts in `FactAdjudicator`. Sub-floor confidence matches
-fail-safe to creating a new fact rather than performing destructive merges.
-The generative prompt engine remains the default baseline. Replacing generative
-claim extraction or section summaries with System One was rejected because
-System One cannot generate freeform prose; placing the engine behind a Cloud
-proxy was rejected per the D60/D61 library boundary.
+Per the D118 streaming single-assertion placement contract, the streaming Jev
+path emits single-assertion placements; multi-assertion updates, predecessor caps,
+and re-linking remain empty tuples. Preserve existing database locking,
+compare-and-swap publication, revalidation, and idempotency contracts in
+`FactAdjudicator`. Sub-floor confidence matches (< 0.75) fail-safe to creating a
+new fact rather than performing destructive merges; prompt fallback is strictly
+limited to provider network errors/5xx. Settings split between
+`FactAdjudicationSettings` (`engine`, `confidence_floor`) and `TypeSafeSettings`
+(`REMEMBERSTACK_TYPESAFE_` prefix, `api_key: str | None`, `timeout_s: float = 30.0`,
+`extra="ignore"`), with fail-fast startup validation when `engine="jev"`.
+Fingerprinted via `JEV_ADJUDICATOR_VERSION` with `:jev` receipt keys and
+metered on tier `fact_adjudication_jev`. Replacing generative claim extraction
+or section summaries with System One was rejected because System One cannot
+generate freeform prose; placing the engine behind a Cloud proxy was rejected
+per the D60/D61 library boundary.
 
 **Authority:** [design](plan/designs/jev_adjudication_design.md),
 [analysis](plan/analysis/jev_adjudication_analysis.md).
+
 
