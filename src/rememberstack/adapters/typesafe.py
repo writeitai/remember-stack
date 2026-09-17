@@ -68,18 +68,23 @@ class TypeSafeSystemOneClient(SystemOnePort):
     def evaluate(
         self,
         *,
-        model: str,
+        model: str | None = None,
         state: Mapping[str, Any],
         questions: Mapping[str, Any],
         timeout_s: float | None = None,
     ) -> tuple[Mapping[str, Any], ProviderCallUsage]:
         """Evaluate state against typed questions, returning answers and usage."""
+        target_model = model or self._settings.model
         url = f"{self._settings.base_url.rstrip('/')}/systemone"
         headers = {
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": model, "state": dict(state), "questions": dict(questions)}
+        payload = {
+            "model": target_model,
+            "state": dict(state),
+            "questions": dict(questions),
+        }
         timeout = timeout_s if timeout_s is not None else self._settings.timeout_s
         retry_delays = (0.5, 1.0, 2.0)
         last_error: Exception | None = None

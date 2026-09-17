@@ -106,7 +106,7 @@ class _MockSystemOneClient(SystemOnePort):
     def evaluate(
         self,
         *,
-        model: str,
+        model: str | None = None,
         state: Mapping[str, Any],
         questions: Mapping[str, Any],
         timeout_s: float | None = None,
@@ -419,6 +419,92 @@ def test_typesafe_client_http_errors_raise_typesafe_provider_error() -> None:
 
     with pytest.raises(TypeSafeProviderError, match="TypeSafe returned 401"):
         ts_client.evaluate(model="jev-latest", state={}, questions={})
+
+
+def test_typesafe_client_retries_on_429_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client retries on HTTP 429 and succeeds on subsequent attempt."""
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, text="Rate limited")
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-latest",
+                "answers": {"match": {"choice": "NEW", "confidence": 0.9}},
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    ts_client = TypeSafeSystemOneClient(
+        settings=TypeSafeSettings(api_key="test-key"), client=client
+    )
+
+    answers, usage = ts_client.evaluate(
+        state={"text": "hello"}, questions={"match": {}}
+    )
+    assert call_count == 2
+    assert answers["match"]["choice"] == "NEW"
+    assert usage.tokens_in == 100
+
+
+def test_typesafe_client_retries_exhaustion_on_429_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client retries on 429 up to limit and raises TypeSafeProviderError upon exhaustion."""
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, text="Rate limited")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    ts_client = TypeSafeSystemOneClient(
+        settings=TypeSafeSettings(api_key="test-key"), client=client
+    )
+
+    with pytest.raises(TypeSafeProviderError, match="TypeSafe returned 429"):
+        ts_client.evaluate(state={}, questions={})
+
+    # Initial attempt + 3 retries = 4 attempts total
+    assert call_count == 4
+
+
+def test_typesafe_client_default_model_honored() -> None:
+    """When model is omitted in evaluate, TypeSafeSettings.model is honored."""
+    captured_payload: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_payload
+        captured_payload = json.loads(request.read())
+        return httpx.Response(
+            200,
+            json={
+                "answers": {"match": {"choice": "NEW"}},
+                "usage": {"input_tokens": 50, "output_tokens": 5},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    ts_client = TypeSafeSystemOneClient(
+        settings=TypeSafeSettings(api_key="test-key", model="custom-jev-model"),
+        client=client,
+    )
+
+    ts_client.evaluate(state={}, questions={})
+    assert captured_payload["model"] == "custom-jev-model"
 
 
 # ============================================================================
@@ -825,3 +911,120 @@ def test_adjudicate_jev_fallback_to_prompt_on_provider_error() -> None:
     assert len(mock_prompt_provider.calls) == 1
     assert decision.confidence == 0.95
     assert "Fallback prompt decision" in decision.rationale
+
+
+def test_adjudicate_jev_invalid_stance_raises_provider_invalid_response_error() -> None:
+    """Invalid stance choice raises ProviderInvalidResponseError."""
+    snap = _sample_snapshot(with_candidate=True)
+    presentation, mapping = project_concise_inputs(snapshot=snap)
+
+    mock_client = _MockSystemOneClient(
+        answers={
+            "match": {"choice": "F1", "confidence": 0.88},
+            "stance": {"choice": "invalid_stance", "confidence": 0.95},
+            "window_action": {"choice": "keep", "confidence": 0.90},
+        }
+    )
+    adjudicator = FactAdjudicator(
+        engine=None,  # type: ignore[arg-type]
+        model_provider=_MockModelProvider(),  # type: ignore[arg-type]
+        settings=FactAdjudicationSettings(engine="jev"),
+        systemone_provider=mock_client,
+    )
+    prepared = PreparedApplication(
+        application_id=UUID(snap["application"]["application_id"]),
+        attempt_id=uuid4(),
+        input_hash="hash1",
+        inputs=snap,
+        decision=None,
+    )
+
+    with pytest.raises(
+        ProviderInvalidResponseError, match="unrecognized stance: invalid_stance"
+    ):
+        adjudicator._adjudicate_jev(
+            prepared=prepared,
+            presentation=presentation,
+            mapping=mapping,
+            meter=_MockCostMeter(),
+            call_key="test_call",
+        )
+
+
+def test_adjudicate_jev_invalid_window_action_raises_provider_invalid_response_error() -> (
+    None
+):
+    """Invalid window_action choice raises ProviderInvalidResponseError."""
+    snap = _sample_snapshot(with_candidate=True)
+    presentation, mapping = project_concise_inputs(snapshot=snap)
+
+    mock_client = _MockSystemOneClient(
+        answers={
+            "match": {"choice": "F1", "confidence": 0.88},
+            "stance": {"choice": "supports", "confidence": 0.95},
+            "window_action": {"choice": "invalid_action", "confidence": 0.90},
+        }
+    )
+    adjudicator = FactAdjudicator(
+        engine=None,  # type: ignore[arg-type]
+        model_provider=_MockModelProvider(),  # type: ignore[arg-type]
+        settings=FactAdjudicationSettings(engine="jev"),
+        systemone_provider=mock_client,
+    )
+    prepared = PreparedApplication(
+        application_id=UUID(snap["application"]["application_id"]),
+        attempt_id=uuid4(),
+        input_hash="hash1",
+        inputs=snap,
+        decision=None,
+    )
+
+    with pytest.raises(
+        ProviderInvalidResponseError, match="unrecognized window action: invalid_action"
+    ):
+        adjudicator._adjudicate_jev(
+            prepared=prepared,
+            presentation=presentation,
+            mapping=mapping,
+            meter=_MockCostMeter(),
+            call_key="test_call",
+        )
+
+
+def test_adjudicate_jev_invalid_response_does_not_fallback_to_prompt() -> None:
+    """When fallback_to_prompt=True, ProviderInvalidResponseError does NOT trigger fallback."""
+    snap = _sample_snapshot(with_candidate=True)
+    presentation, mapping = project_concise_inputs(snapshot=snap)
+
+    mock_client = _MockSystemOneClient(
+        error=ProviderInvalidResponseError("Malformed TypeSafe answer structure")
+    )
+    mock_prompt_provider = _MockModelProvider()
+
+    adjudicator = FactAdjudicator(
+        engine=None,  # type: ignore[arg-type]
+        model_provider=mock_prompt_provider,  # type: ignore[arg-type]
+        settings=FactAdjudicationSettings(engine="jev", fallback_to_prompt=True),
+        systemone_provider=mock_client,
+    )
+    prepared = PreparedApplication(
+        application_id=UUID(snap["application"]["application_id"]),
+        attempt_id=uuid4(),
+        input_hash="hash1",
+        inputs=snap,
+        decision=None,
+    )
+
+    with pytest.raises(
+        ProviderInvalidResponseError, match="Malformed TypeSafe answer structure"
+    ):
+        adjudicator._adjudicate_jev(
+            prepared=prepared,
+            presentation=presentation,
+            mapping=mapping,
+            meter=_MockCostMeter(),
+            call_key="test_call",
+        )
+
+    # Fallback prompt provider was never called
+    assert len(mock_prompt_provider.calls) == 0

@@ -1608,6 +1608,12 @@ def _model_bindings() -> dict[str, str]:
     facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
     openrouter = OpenRouterSettings.model_validate({})
+    if facts.engine == "jev":
+        from rememberstack.adapters.typesafe import TypeSafeSettings
+
+        fact_adjudication_model = TypeSafeSettings.model_validate({}).model
+    else:
+        fact_adjudication_model = facts.model
     return {
         "structure_fallback": structurer.model,
         "skeleton_check": skeleton_check.model,
@@ -1618,7 +1624,8 @@ def _model_bindings() -> dict[str, str]:
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
-        "fact_adjudication": facts.model,
+        "fact_adjudication": fact_adjudication_model,
+        "fact_adjudication_engine": facts.engine,
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",

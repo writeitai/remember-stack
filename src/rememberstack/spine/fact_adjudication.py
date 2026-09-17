@@ -441,11 +441,13 @@ class FactAdjudicator:
 
         try:
             answers, usage = self._systemone_provider.evaluate(
-                model="jev-latest", state=presentation, questions=questions
+                state=presentation, questions=questions
             )
             meter.record(
                 call_key=jev_receipt_key, tier="fact_adjudication_jev", usage=usage
             )
+        except ProviderInvalidResponseError:
+            raise
         except ProviderCallError as error:
             if error.usage is not None:
                 meter.record(

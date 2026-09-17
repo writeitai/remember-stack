@@ -282,6 +282,20 @@ Pin explicit IDs for reproducible runs. Unset values fall back to deployment pro
 
 **Structure honesty:** routine skeleton construction is **deterministic**. Bounded summary/role/check calls still run; `STRUCTURER` is not “the whole document structure model.”
 
+### Fact adjudication engine (D126)
+
+Adjudication resolves propositional identity, stance, and validity windows for normalized assertions. The engine is configurable between the baseline generative LLM prompt (`prompt`) and TypeSafe AI System One (`jev`).
+
+| Variable | Description |
+| --- | --- |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | Adjudication engine: `prompt` (default) or `jev` |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | Minimum match confidence before conservative coexistence fallback (default `0.75`) |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | Whether provider 5xx/transport errors fall back to generative prompt adjudication (default `false`) |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | TypeSafe AI API key (required when `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`) |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | TypeSafe System One model identifier (default `jev-latest`) |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | TypeSafe API base URL (default `https://api.typesafe.ai/v1`) |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | TypeSafe HTTP timeout in seconds (default `30.0`) |
+
 Smoke conversion route is **Markdown** unless you register more converters on the deployment.
 
 ### P1 search indexes (D94)
