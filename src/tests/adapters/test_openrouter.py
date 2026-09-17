@@ -1958,3 +1958,29 @@ def test_invalid_schema_terminal_carries_host(monkeypatch: pytest.MonkeyPatch) -
 
     assert recorder.records[-1].outcome == "invalid"
     assert recorder.records[-1].provider_host == "wafer"
+
+
+def test_invalid_terminal_under_rotation_attributes_targeted_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a response provider field, rotation falls back to the slug."""
+    recorder = _FakeRecorder()
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[httpx.Response(200, json=_completion(content='{"wrong":"shape"}'))],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError, match="failed .* validation"):
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "deepinfra"

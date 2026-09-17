@@ -413,6 +413,7 @@ class OpenRouterModelProvider:
                 f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
                 ")",
                 usage=usage,
+                provider_host=provider_host,
             ) from err
         try:
             output = response_type.model_validate(decoded)
@@ -445,6 +446,7 @@ class OpenRouterModelProvider:
                 f"; {_validation_error_names(error=error)}"
                 ")",
                 usage=usage,
+                provider_host=provider_host,
             ) from None
         self._record_generation(
             request=request,
