@@ -18,7 +18,10 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
+from benchmarks.locomo.protocol import GLM_GENERATION_MODEL
+from benchmarks.locomo.protocol import GLM_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
 from benchmarks.locomo.protocol import official_f1
@@ -320,6 +323,16 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "may issue those two requests in parallel" in normalized_prompt
     assert "Use returned entity IDs" in normalized_prompt
     assert "Before any final answer" in normalized_prompt
+    assert (
+        "asserted_at is when the message was sent, NOT the event date"
+        in normalized_prompt
+    )
+    assert "never be used as a fallback event date" in normalized_prompt.lower()
+    assert 'what someone enjoys "most", "best"' in normalized_prompt
+    assert "complete union of all distinct matching values" in normalized_prompt
+    assert "shared, mutual, or collective attributes" in normalized_prompt
+    assert "unanswered question or reference directly relevant" in normalized_prompt
+    assert "deductive questions involving negative constraints" in normalized_prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
@@ -327,6 +340,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
         "full-v38",
         "full-v38-gemma-vertex",
         "full-v38-codex-subscription",
+        "full-v38-glm",
     )
     protocol = PROTOCOL_REGISTRY["full-v38"]
 
