@@ -114,7 +114,7 @@ zero network calls and zero tokens.
     target fact with contradictory stance.
   - If no candidate fact represents the exact proposition, select NEW."
 - **Criteria:**
-  - `"F1"`, `"F2"`...: Candidate fact statement + world dates.
+  - `"F1"`, `"F2"`...: Candidate fact statement (resolving `statement_ref` from `presentation["text"]` if factored) + world dates.
   - `"NEW"`: "The assertion is a new proposition not represented by any candidate
     fact, or only shares general context without making the exact same claim."
 
@@ -179,8 +179,10 @@ To maintain zero regression risk:
      and `OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"`.
    - `snapshot_hash` and `prepared` bind `engine` and `question_identity` (`active_question_identity(engine)`),
      called with identical arguments in `prepare()` and `apply()` to guarantee isolation.
+     Keeps existing prompt hash formula when `engine == "prompt"` for backward compatibility with in-flight attempts.
    - `:jev` suffix is the namespace suffix for `meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev")`.
-   - Usage records real `ProviderCallUsage` (`model_name`, `tokens_in`, `tokens_out`, `cost_usd`, `latency_ms`).
+   - Usage records real `ProviderCallUsage` (`model_name`, `tokens_in`, `tokens_out`, `cost_usd`, `latency_ms`),
+     raising `ProviderAccountingError` if TypeSafe returns a response lacking `usage` or `input_tokens`.
 4. **Fail-safe fallback:**
    - If Jev confidence is below `confidence_floor` (< 0.75), Jev strictly fail-safes
 

@@ -278,7 +278,7 @@ and idempotency checks identically to generative decisions.
 
 ## 5. D61 Substrate Seam, Metering, Fingerprinting, and Pipeline Generations
 
-### A. Generation Identity and Single Helper Authority
+### A. Generation Identity and Unified Call Sites
 To prevent cross-engine contamination and ensure that prompt and Jev cannot share
 prepared attempts or complete each other's in-flight rows, Jev binds distinct plane
 adjudicator versions:
@@ -301,16 +301,29 @@ defined in `src/rememberstack/spine/fact_adjudication.py`:
      `rel_ver, obs_ver = active_adjudicator_versions(engine)`
      `f"e3-obs-flush:entity-fanout-1:{FACT_NORMALIZER_VERSION}:{rel_ver}:{obs_ver}"`.
 
-**Every call site reads these helpers:**
-- **`workers/e3.py` (`E3Handler._stage_normalizations`)**: Stages `adjudicator_version`
-  matching `active_adjudicator_versions(settings.engine)`.
-- **`spine/fact_adjudication.py` (`FactAdjudicator.prepare`)**: Admits head applications
-  matching `adjudicator_versions=active_adjudicator_versions(self._settings.engine)`.
-- **`spine/work_ledger.py` (`register_version_applications_on` & `check_flush_barrier`)**:
-  Passes `active_adjudicator_versions(engine)` as `relation_version` and `observation_version`,
-  and matches `active_flush_version(engine)`.
+**Every live call site is wired to these helpers:**
+1. **`FactAdjudicator.prepare()` (`src/rememberstack/spine/fact_adjudication.py`)**:
+   - Calls `admit_head(..., adjudicator_versions=active_adjudicator_versions(self._settings.engine))`.
+   - Resolves `active_rel, active_obs = active_adjudicator_versions(self._settings.engine)` and validates:
+     `expected = active_rel if app["output_kind"] == "relation" else active_obs`.
+   - Calls `snapshot_hash(snapshot=snapshot, engine=self._settings.engine, question_identity=active_question_identity(self._settings.engine))`.
+2. **`FactAdjudicator.apply()` (`src/rememberstack/spine/fact_adjudication.py`)**:
+   - Calls `admit_head(..., adjudicator_versions=active_adjudicator_versions(self._settings.engine))` (guaranteeing Jev head rows are admitted during apply).
+   - Re-verifies `expected_hash = snapshot_hash(snapshot=snapshot, engine=self._settings.engine, question_identity=active_question_identity(self._settings.engine))`.
+3. **`workers/e3.py` (`E3Handler`)**:
+   - Reads `adjudication_engine = FactAdjudicationSettings().engine`.
+   - Stages application rows via `catalog.stage(..., adjudicator_version=active_rel if kind == "relation" else active_obs)` using `active_adjudicator_versions(adjudication_engine)`.
+   - Sets `obs_flush_component_version = active_flush_version(adjudication_engine)`.
+   - Flush worker component version check compares `work.component_version != active_flush_version(adjudication_engine)`.
+4. **`profiles/selfhost.py`**:
+   - Maps `_expected_components[PipelineStage.ADJUDICATE_OBSERVATIONS] = active_flush_version(FactAdjudicationSettings().engine)`.
+   - Constructs `FactAdjudicator` at both handler sites (~lines 1290 and 1304), wiring `systemone_provider=typesafe_client` when `engine == "jev"`.
+5. **`spine/work_ledger.py`**:
+   - Enqueues obs flush with `obs_flush_component_version=active_flush_version(FactAdjudicationSettings().engine)`.
+   - Empty-extract fanout enqueues using `active_flush_version(FactAdjudicationSettings().engine)`.
+   - Barrier readiness checks (`_SELECT_OBS_FLUSH_VERSION_STATE`, `_UPSERT_OBS_FLUSH_VERSION_STATE`) and `register_version_applications_on` pass `relation_version=active_rel`, `observation_version=active_obs` from `active_adjudicator_versions(FactAdjudicationSettings().engine)`.
 
-### B. Snapshot Hash & Attempt Fingerprinting
+### B. Snapshot Hash & Backwards-Compatible Attempt Fingerprinting
 `snapshot_hash` binds:
 ```python
 def snapshot_hash(
@@ -319,10 +332,16 @@ def snapshot_hash(
     engine: str = "prompt",
     question_identity: str = "fact-prompt-v1",
 ) -> str:
-    renderer_version = f"{PROMPT_RENDERER_VERSION}:{engine}:{question_identity}"
+    renderer_version = (
+        PROMPT_RENDERER_VERSION
+        if engine == "prompt" and question_identity == "fact-prompt-v1"
+        else f"{PROMPT_RENDERER_VERSION}:{engine}:{question_identity}"
+    )
     return sha256(canonical_json({"renderer_version": renderer_version, "snapshot": dict(snapshot)}).encode()).hexdigest()
 ```
-**Crucial invariant:** Both `FactAdjudicator.prepare()` and `FactAdjudicator.apply()`
+This guarantees that existing in-flight prompt attempts prepared before deployment
+keep their exact hash formula and are never wiped, while Jev attempts are strictly
+fingerprinted and isolated from prompt attempts. Both `prepare()` and `apply()`
 call `snapshot_hash` with the exact same arguments:
 ```python
 expected_hash = snapshot_hash(
@@ -331,8 +350,6 @@ expected_hash = snapshot_hash(
     question_identity=active_question_identity(self._settings.engine),
 )
 ```
-The prepared attempt records `engine` and `question_identity`. An in-flight prompt
-attempt cannot be CAS-published or applied by Jev, preventing cross-engine contamination.
 
 ### C. Meter Key Namespace
 The `:jev` suffix is specifically the `call_key` namespace suffix for
@@ -348,6 +365,7 @@ The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
 - `tokens_in = int(usage["input_tokens"])`
 - `tokens_out = int(usage.get("output_tokens", 0))`
 - `cost_usd = Decimal(str(round(Decimal(tokens_in) * Decimal("0.000000042"), 6)))`
+
   (TypeSafe pricing table: $0.042 per 1M input tokens, output tokens free).
 - `latency_ms = int(elapsed_s * 1000)`
 Recorded via `meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev", usage=usage)`.
