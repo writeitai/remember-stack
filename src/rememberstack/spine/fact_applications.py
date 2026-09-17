@@ -473,16 +473,26 @@ class FactApplicationCatalog:
             return result.scalar_one_or_none() is not None
 
 
-def snapshot_hash(*, snapshot: Mapping[str, Any]) -> str:
+def snapshot_hash(
+    *,
+    snapshot: Mapping[str, Any],
+    engine: str = "prompt",
+    question_identity: str = "fact-prompt-v1",
+) -> str:
     """Fingerprint complete domain inputs plus the projector that will render them.
 
     The renderer version is part of this attempt's identity: a new projector
     cannot reuse a frozen answer, and a retry of the same attempt rebuilds the
     same names from the same frozen rows.
     """
+    renderer_version = (
+        PROMPT_RENDERER_VERSION
+        if engine == "prompt" and question_identity == "fact-prompt-v1"
+        else f"{PROMPT_RENDERER_VERSION}:{engine}:{question_identity}"
+    )
     return sha256(
         canonical_json(
-            {"renderer_version": PROMPT_RENDERER_VERSION, "snapshot": dict(snapshot)}
+            {"renderer_version": renderer_version, "snapshot": dict(snapshot)}
         ).encode()
     ).hexdigest()
 

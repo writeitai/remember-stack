@@ -65,6 +65,7 @@ src/tests/packaging/test_pypi_release_cli.py
 src/tests/spine/test_catalog_lanes.py
 src/tests/spine/test_clustering_lock_policy.py
 src/tests/spine/test_entity_eligibility.py
+src/tests/spine/test_jev_adjudication.py
 src/tests/spine/test_profile_convergence.py
 src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
