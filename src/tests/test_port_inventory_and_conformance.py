@@ -5,6 +5,8 @@ from datetime import timezone
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+from typing import Mapping
 from typing import TypeVar
 from uuid import UUID
 from uuid import uuid4
@@ -32,6 +34,7 @@ from rememberstack.ports import KGitRemotePort
 from rememberstack.ports import ModelProviderPort
 from rememberstack.ports import MountPublisherPort
 from rememberstack.ports import ObjectStorePort
+from rememberstack.ports import SystemOnePort
 from rememberstack.ports import TaskQueuePort
 from rememberstack.ports import TelemetryPort
 import rememberstack.ports.auth as auth_module
@@ -44,6 +47,7 @@ import rememberstack.ports.object_store as object_store_module
 import rememberstack.ports.postgres_read as postgres_read_module
 import rememberstack.ports.purge as purge_module
 import rememberstack.ports.queue as queue_module
+import rememberstack.ports.systemone as systemone_module
 import rememberstack.ports.telemetry as telemetry_module
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -59,6 +63,7 @@ _PORT_MODULES: tuple[ModuleType, ...] = (
     postgres_read_module,
     queue_module,
     purge_module,
+    systemone_module,
     telemetry_module,
 )
 _PORT_EXPORTS = {
@@ -73,6 +78,7 @@ _PORT_EXPORTS = {
     "ObjectPurgePort",
     "PostgresReadPoolPort",
     "ProjectionPurgePort",
+    "SystemOnePort",
     "TaskQueuePort",
     "TelemetryPort",
 }
@@ -208,6 +214,24 @@ class FakeTaskQueue:
         """Accept delivery snapshots without assuming authority over their row."""
 
 
+class FakeSystemOne:
+    """Minimal fake structurally conforming to the SystemOnePort seam."""
+
+    def evaluate(
+        self,
+        *,
+        model: str | None = None,
+        state: Mapping[str, Any],
+        questions: Mapping[str, Any],
+        timeout_s: float | None = None,
+    ) -> tuple[Mapping[str, Any], ProviderCallUsage]:
+        """Return empty question evaluations with synthetic usage."""
+        return (
+            {key: None for key in questions},
+            _usage(model_name=model or "synthetic"),
+        )
+
+
 _object_store_assignment: ObjectStorePort = FakeObjectStore()
 _mount_assignment: MountPublisherPort = FakeMountPublisher()
 _git_assignment: KGitRemotePort = FakeKGitRemote()
@@ -215,6 +239,7 @@ _model_assignment: ModelProviderPort = FakeModelProvider()
 _telemetry_assignment: TelemetryPort = FakeTelemetry()
 _auth_assignment: AuthPerimeterPort = FakeAuthPerimeter(deployment_id=uuid4())
 _queue_assignment: TaskQueuePort = FakeTaskQueue()
+_systemone_assignment: SystemOnePort = FakeSystemOne()
 
 
 def _defined_protocols() -> set[type[object]]:
@@ -231,15 +256,15 @@ def _defined_protocols() -> set[type[object]]:
     return result
 
 
-def test_inventory_exports_exactly_thirteen_defined_protocols() -> None:
+def test_inventory_exports_exactly_fourteen_defined_protocols() -> None:
     """Keep D61/D74 seams plus bounded PostgreSQL read admission explicit."""
     assert set(ports.__all__) == _PORT_EXPORTS
     assert {protocol.__name__ for protocol in _defined_protocols()} == _PORT_EXPORTS
-    assert len(_defined_protocols()) == 13
+    assert len(_defined_protocols()) == 14
 
 
 def test_representative_fakes_conform_structurally() -> None:
-    """Exercise runtime structural conformance for all seven Protocol seams."""
+    """Exercise runtime structural conformance for all eight Protocol seams."""
     assert isinstance(_object_store_assignment, ObjectStorePort)
     assert isinstance(_mount_assignment, MountPublisherPort)
     assert isinstance(_git_assignment, KGitRemotePort)
@@ -247,6 +272,7 @@ def test_representative_fakes_conform_structurally() -> None:
     assert isinstance(_telemetry_assignment, TelemetryPort)
     assert isinstance(_auth_assignment, AuthPerimeterPort)
     assert isinstance(_queue_assignment, TaskQueuePort)
+    assert isinstance(_systemone_assignment, SystemOnePort)
 
 
 def test_object_store_fake_rejects_immutable_key_replacement() -> None:
