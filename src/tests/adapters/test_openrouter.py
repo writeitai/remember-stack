@@ -1612,7 +1612,7 @@ def test_chat_provider_order_sends_ordered_fallback_payload(
     provider, seen, _sleeps = _mock_chat_provider(
         monkeypatch=monkeypatch,
         settings=OpenRouterSettings(
-            api_key="test-key", chat_provider_order="deepinfra,relace,wafer"
+            api_key="test-key", chat_provider_order=["deepinfra", "relace", "wafer"]
         ),
         responses=[
             httpx.Response(200, json=_completion(content='{"answer":"Prague"}'))
@@ -1642,6 +1642,14 @@ def test_chat_provider_order_and_only_are_mutually_exclusive() -> None:
             chat_provider_only=["deepinfra"],
             chat_provider_order=["relace"],
         )
+
+
+def test_chat_provider_order_parses_comma_separated_env_string() -> None:
+    """Deployment env configures the ordered shortlist without code changes."""
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "chat_provider_order": "deepinfra,relace,wafer"}
+    )
+    assert settings.chat_provider_order == ["deepinfra", "relace", "wafer"]
 
 
 def test_zdr_flag_adds_zero_retention_restriction(
@@ -1742,21 +1750,23 @@ def test_throttle_budget_bounds_rotation_attempts(
     assert recorder.records[0].outcome == "transport_error"
     assert recorder.records[0].provider_host == "deepinfra"
     assert recorder.records[1].outcome == "transport_error"
-    assert recorder.records[1].provider_host is None
+    assert recorder.records[1].provider_host == "relace"
 
 
 def test_single_slug_exhaustion_raises_last_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No survivors left means the last overload error surfaces."""
-    provider, seen, _sleeps = _mock_chat_provider(
+    """The last survivor retries in place until the budget runs out, once each."""
+    recorder = _FakeRecorder()
+    provider, seen, sleeps = _mock_chat_provider(
         monkeypatch=monkeypatch,
         settings=OpenRouterSettings(
             api_key="test-key",
             chat_provider_order=["deepinfra"],
             chat_throttle_retries=5,
         ),
-        responses=[_overload_response()],
+        responses=[_overload_response() for _ in range(6)],
+        recorder=recorder,
     )
     try:
         with pytest.raises(OpenRouterProviderError, match="returned 429"):
@@ -1767,7 +1777,43 @@ def test_single_slug_exhaustion_raises_last_error(
     finally:
         provider._client.close()
 
-    assert len(seen) == 1
+    assert len(seen) == 6
+    assert [payload["provider"] for payload in seen] == [
+        {"order": ["deepinfra"], "allow_fallbacks": True, "data_collection": "deny"}
+    ] * 6
+    assert len(recorder.records) == 6
+    assert {record.provider_host for record in recorder.records} == {"deepinfra"}
+    assert len(sleeps) == 5
+
+
+def test_single_slug_recovers_on_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One configured host still spends the throttle budget before failing."""
+    recorder = _FakeRecorder()
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra"]
+        ),
+        responses=[
+            _overload_response(),
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}')),
+        ],
+        recorder=recorder,
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert response.output.answer == "Prague"
+    assert len(seen) == 2
+    assert [record.outcome for record in recorder.records] == [
+        "transport_error",
+        "succeeded",
+    ]
 
 
 def test_host_prefers_response_provider_field(monkeypatch: pytest.MonkeyPatch) -> None:

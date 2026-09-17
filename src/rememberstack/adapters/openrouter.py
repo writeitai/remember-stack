@@ -19,6 +19,7 @@ from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
 from pydantic import ValidationError
+from pydantic import ValidationInfo
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -208,11 +209,21 @@ class OpenRouterSettings(BaseSettings):
             value=value, field_name="embedding_provider_order"
         )
 
-    @field_validator("chat_provider_only", "chat_provider_order", mode="before")
+    @field_validator("chat_provider_only", mode="before")
     @classmethod
-    def parse_chat_provider_only(cls, value: object) -> object:
+    def parse_chat_provider_only(cls, value: object, info: ValidationInfo) -> object:
         """Parse comma-separated or JSON list of OpenRouter provider slugs."""
-        return _parse_provider_name_list(value=value, field_name="chat_provider_only")
+        return _parse_provider_name_list(
+            value=value, field_name=info.field_name or "chat_provider_only"
+        )
+
+    @field_validator("chat_provider_order", mode="before")
+    @classmethod
+    def parse_chat_provider_order(cls, value: object, info: ValidationInfo) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(
+            value=value, field_name=info.field_name or "chat_provider_order"
+        )
 
     @model_validator(mode="after")
     def require_single_chat_routing(self) -> "OpenRouterSettings":
@@ -274,6 +285,17 @@ class OpenRouterSettings(BaseSettings):
 
 class OpenRouterProviderError(ProviderCallError):
     """OpenRouter returned an error or an unusable response body."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: ProviderCallUsage | None = None,
+        provider_host: str | None = None,
+    ) -> None:
+        """Keep usage for the meter and the serving host for diagnosis."""
+        super().__init__(message, usage=usage)
+        self.provider_host = provider_host
 
 
 class OpenRouterInvalidResponseError(
@@ -359,6 +381,7 @@ class OpenRouterModelProvider:
                 error=str(error),
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=error.provider_host,
             )
             raise
 
@@ -593,18 +616,29 @@ class OpenRouterModelProvider:
         request: ModelRequest,
         slugs: tuple[str, ...],
     ) -> tuple[str, ProviderCallUsage, dict[str, Any], str | None]:
-        """Advance past overloaded chat providers, at most one attempt per slug."""
+        """Advance past overloaded chat providers, retrying the last survivor.
+
+        Distinct slugs are tried at most once each; when no survivors remain,
+        the last slug is retried in place until the throttle budget runs out
+        (preserving today's single-slug behavior). The terminal failure is
+        never recorded here and never slept on: it raises with its host
+        attached so ``generate()`` records it exactly once.
+        """
         settings = self._settings
         remaining = list(slugs)
         throttle_used = 0
         budget402_used = 0
         last_error = "no chat providers configured"
+        last_slug: str | None = None
         while remaining:
             slug = remaining[0]
+            last_slug = slug
             rotation_payload = self._chat_provider_payload_for(slugs=tuple(remaining))
             assert rotation_payload is not None  # slugs non-empty by loop guard
             payload["provider"] = rotation_payload
+            attempt_start_ns = time.monotonic_ns()
             response = self._post_once(path="/chat/completions", payload=payload)
+            attempt_ms = (time.monotonic_ns() - attempt_start_ns) // 1_000_000
             if response.status_code == 402:
                 retry_after = _in_flight_budget_retry_after(response=response)
                 if (
@@ -619,14 +653,15 @@ class OpenRouterModelProvider:
                     budget402_used += 1
                     continue
                 raise OpenRouterProviderError(
-                    f"OpenRouter /chat/completions returned 402: {response.text[:500]}"
+                    f"OpenRouter /chat/completions returned 402: {response.text[:500]}",
+                    provider_host=slug,
                 )
             if response.status_code == 429:
                 last_error = (
                     f"OpenRouter /chat/completions returned 429: {response.text[:500]}"
                 )
                 if throttle_used >= settings.chat_throttle_retries:
-                    raise OpenRouterProviderError(last_error)
+                    raise OpenRouterProviderError(last_error, provider_host=slug)
                 self._record_generation(
                     request=request,
                     response_type_name=response_type.__name__,
@@ -634,7 +669,7 @@ class OpenRouterModelProvider:
                     outcome="transport_error",
                     error=last_error,
                     usage=None,
-                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                    latency_ms=attempt_ms,
                     provider_host=slug,
                 )
                 wait_s = _throttle_wait_s(
@@ -642,17 +677,29 @@ class OpenRouterModelProvider:
                     response=response,
                     cap_s=settings.chat_upstream_overload_max_retry_after_s,
                 )
-                _logger.warning(
-                    "OpenRouter %s overloaded (429); rotating after %.1fs", slug, wait_s
-                )
-                time.sleep(wait_s)
-                remaining.pop(0)
+                if len(remaining) > 1:
+                    _logger.warning(
+                        "OpenRouter %s overloaded (429); rotating after %.1fs",
+                        slug,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+                    remaining.pop(0)
+                else:
+                    _logger.warning(
+                        "OpenRouter %s overloaded (429); retrying last "
+                        "survivor after %.1fs",
+                        slug,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
                 throttle_used += 1
                 continue
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
                     f"OpenRouter /chat/completions returned {response.status_code}: "
-                    f"{response.text[:500]}"
+                    f"{response.text[:500]}",
+                    provider_host=slug,
                 )
             body = response.json()
             usage = self._completion_usage(body=body, started_ns=started_ns)
@@ -669,7 +716,7 @@ class OpenRouterModelProvider:
                 body,
                 self._resolve_provider_host(body=body, targeted_slug=slug),
             )
-        raise OpenRouterProviderError(last_error)
+        raise OpenRouterProviderError(last_error, provider_host=last_slug)
 
     def _resolve_provider_host(
         self, *, body: dict[str, Any], targeted_slug: str | None
