@@ -148,13 +148,13 @@ Hub neighborhoods and large sets return ranked pages with **truncation markers a
 
 ### 3. Hydration drops are counted
 
-Projections may nominate candidates the spine rejects. `dropped_by_hydration` keeps ranking honest. Compound structures (paths) drop **as units**.
+Projections may nominate candidates the store rejects. `dropped_by_hydration` keeps ranking honest. Compound structures (paths) drop **as units**.
 
 ## Freshness block (shipped field names)
 
 | Field | What it tells the agent |
 | --- | --- |
-| `pg_live_ts` | Live spine clock for confirmed rows |
+| `pg_live_ts` | Live store clock for confirmed rows |
 | `p1_written_inline` | Whether P1 was written on the inline path (lag measurement evolves) |
 | `p1_believed_at_horizon` | Oldest system-time P1 can answer (`null` = unbounded) |
 | `k` | Compile time, stale flag, open evidence-change flags when K was consumed |

@@ -48,10 +48,10 @@ from rememberstack.model import WorkNotFoundError
 from rememberstack.model import WorkNotRunningError
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.catalog_contract import lane_is_valid
-from rememberstack.spine.fact_adjudication import FACT_FLUSH_VERSION
+from rememberstack.spine.fact_adjudication import active_adjudicator_versions
+from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
-from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
-from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_applications import register_version_applications_on
 from rememberstack.spine.fact_applications import version_applications_ready_on
 
@@ -1025,8 +1025,7 @@ def _enqueue_claim_normalize_fanout(
     """
     from rememberstack.model import ProcessingTarget
 
-    # Lazy import: workers.e3 does not import WorkLedger at module load.
-    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+    # OBS_FLUSH_VERSION generation is resolved via active_flush_version.
 
     rows = (
         connection.execute(
@@ -1044,6 +1043,7 @@ def _enqueue_claim_normalize_fanout(
     )
     if not rows:
         # Empty extract: skip claim grain; open empty obs-flush → super + embed.
+        adjudication_engine = FactAdjudicationSettings().engine
         return _enqueue_entity_obs_flush_fanout(
             connection=connection,
             deployment_id=deployment_id,
@@ -1052,7 +1052,7 @@ def _enqueue_claim_normalize_fanout(
             chunker_version=chunker_version,
             extractor_version=extractor_version,
             normalize_component_version=normalize_component_version,
-            obs_flush_component_version=OBS_FLUSH_VERSION,
+            obs_flush_component_version=active_flush_version(adjudication_engine),
             content_hash=content_hash,
             lane=lane,
             doc_id=None,
@@ -1092,6 +1092,7 @@ def _enqueue_claim_normalize_fanout(
         extractor_version=extractor_version,
         normalize_version=normalize_component_version,
     ):
+        adjudication_engine = FactAdjudicationSettings().engine
         outcomes.extend(
             _enqueue_entity_obs_flush_fanout(
                 connection=connection,
@@ -1101,7 +1102,7 @@ def _enqueue_claim_normalize_fanout(
                 chunker_version=chunker_version,
                 extractor_version=extractor_version,
                 normalize_component_version=normalize_component_version,
-                obs_flush_component_version=OBS_FLUSH_VERSION,
+                obs_flush_component_version=active_flush_version(adjudication_engine),
                 content_hash=content_hash,
                 lane=lane,
                 doc_id=UUID(str(doc_id)),
@@ -1148,9 +1149,13 @@ def _enqueue_entity_obs_flush_fanout(
     if existing is not None:
         return []
 
+    adjudication_engine = FactAdjudicationSettings().engine
+    expected_flush = active_flush_version(adjudication_engine)
+    active_rel, active_obs = active_adjudicator_versions(adjudication_engine)
+
     if (
         normalize_component_version != FACT_NORMALIZER_VERSION
-        or obs_flush_component_version != FACT_FLUSH_VERSION
+        or obs_flush_component_version != expected_flush
     ):
         raise ValueError(
             "obsolete fact application generation cannot open the D118 barrier"
@@ -1164,8 +1169,8 @@ def _enqueue_entity_obs_flush_fanout(
             "chunker_version": chunker_version,
             "extractor_version": extractor_version,
             "normalizer_version": normalize_component_version,
-            "relation_version": RELATION_APPLICATION_VERSION,
-            "observation_version": OBSERVATION_APPLICATION_VERSION,
+            "relation_version": active_rel,
+            "observation_version": active_obs,
         },
     )
 
@@ -1331,10 +1336,14 @@ def _entity_obs_flush_barrier_ready(
             "obs_flush_version": obs_flush_version,
         },
     ).scalar_one()
+    adjudication_engine = FactAdjudicationSettings().engine
+    expected_flush = active_flush_version(adjudication_engine)
+    active_rel, active_obs = active_adjudicator_versions(adjudication_engine)
+
     if (
         int(ready) != int(expected)
         or normalizer_version != FACT_NORMALIZER_VERSION
-        or obs_flush_version != FACT_FLUSH_VERSION
+        or obs_flush_version != expected_flush
     ):
         return False
     state = (
@@ -1360,8 +1369,8 @@ def _entity_obs_flush_barrier_ready(
             "representation_id": state["representation_id"],
             "chunker_version": state["chunker_version"],
             "extractor_version": state["extractor_version"],
-            "relation_version": RELATION_APPLICATION_VERSION,
-            "observation_version": OBSERVATION_APPLICATION_VERSION,
+            "relation_version": active_rel,
+            "observation_version": active_obs,
         },
     )
 

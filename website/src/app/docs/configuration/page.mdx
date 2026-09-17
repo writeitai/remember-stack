@@ -25,7 +25,7 @@ One deployment id = one trust domain. Changing `REMEMBERSTACK_SELFHOST_DEPLOYMEN
 | Distribution / Artifact | Role |
 | :--- | :--- |
 | `remember` (PyPI package) | Client SDK (`RememberClient`), platform CLI (`remember`), MCP server (`remember mcp`), and agent setup (`remember setup`). Sub-second install, zero C-extension compilation. |
-| `ghcr.io/writeitai/remember-stack` (Docker) | Pre-built engine container: HTTP API, workers (E0–E3), PostgreSQL 19 migrations, and bitemporal spine. |
+| `ghcr.io/writeitai/remember-stack` (Docker) | Pre-built engine container: HTTP API, workers (E0–E3), PostgreSQL 19 migrations, and bitemporal store. |
 | Docker Compose (`docker-compose.yml`) | Single-command local orchestration: PostgreSQL 19 + SQL/PGQ, MinIO object store, API, and workers. |
 | `remember[benchmark]` | LoCoMo / scorer deps |
 | `remember[observability]` | Sentry-protocol + Langfuse SDKs (still opt-in by env) |
@@ -165,7 +165,7 @@ deployment settings.
 | --- | --- |
 | `REMEMBERSTACK_POSTGRES_*` | Postgres user/password/db for the stack |
 | `REMEMBERSTACK_MINIO_*` | MinIO access keys for object storage |
-| `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the spine |
+| `REMEMBERSTACK_DATABASE_URL` | Used by local server-extra CLI tools (`budget`, `ops`) when connecting to the database |
 
 Replace every local-only secret before any non-isolated use.
 
@@ -281,6 +281,20 @@ Pin explicit IDs for reproducible runs. Unset values fall back to deployment pro
 | `REMEMBERSTACK_SUMMARY_MODEL` | Bottom-up section summaries + root placement reduction |
 
 **Structure honesty:** routine skeleton construction is **deterministic**. Bounded summary/role/check calls still run; `STRUCTURER` is not “the whole document structure model.”
+
+### Fact adjudication engine (D126)
+
+Adjudication resolves propositional identity, stance, and validity windows for normalized assertions. The engine is configurable between the baseline generative LLM prompt (`prompt`) and TypeSafe AI System One (`jev`).
+
+| Variable | Description |
+| --- | --- |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | Adjudication engine: `prompt` (default) or `jev` |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | Minimum match confidence before conservative coexistence fallback (default `0.75`) |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | Whether provider 5xx/transport errors fall back to generative prompt adjudication (default `false`) |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | TypeSafe AI API key (required when `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`) |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | TypeSafe System One model identifier (default `jev-latest`) |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | TypeSafe API base URL (default `https://api.typesafe.ai/v1`) |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | TypeSafe HTTP timeout in seconds (default `30.0`) |
 
 Smoke conversion route is **Markdown** unless you register more converters on the deployment.
 

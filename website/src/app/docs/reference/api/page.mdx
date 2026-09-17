@@ -388,7 +388,7 @@ highest version number would show somebody a document they had removed,
 labelled as fine. A lineage with no surviving version is not listed at all.
 
 Lineages the deployment has been asked to forget are not listed. The tombstone
-remains in the spine so an audit can tell "forgotten" from "never existed",
+remains in the store so an audit can tell "forgotten" from "never existed",
 but a customer's inventory is what they still hold.
 
 **Order.** Newest *document* first, by `first_seen_at` — when the lineage was
@@ -560,7 +560,7 @@ layer's current-validity verdict. The OpenAPI document carries the same
 descriptions on each field. Chunk results disclose an optional deterministic `context_prefix`
 (location header under the embedding-input policy) separately from body-only
 `chunk_text` and carry the current document, version,
-representation, offsets, and source timestamps confirmed by the live spine.
+representation, offsets, and source timestamps confirmed by live PostgreSQL.
 `facts_context` is a flat fact-grain envelope: `facts[]` contains the selected
 verdicts, `evidence[]` contains the backing testimony, `fact_evidence[]`
 explicitly maps each fact to each claim and stance, and `evidence_totals[]`

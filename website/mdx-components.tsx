@@ -1,5 +1,5 @@
 import type { MDXComponents } from "mdx/types";
-import type { AnchorHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, HTMLAttributes } from "react";
 import Link from "next/link";
 
 // Route internal links through next/link so they navigate client-side and pick
@@ -21,7 +21,7 @@ function MdxAnchor({
   return (
     <a
       href={href}
-      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       {...props}
     >
       {children}
@@ -29,8 +29,20 @@ function MdxAnchor({
   );
 }
 
+function MdxLead({
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLParagraphElement>) {
+  return (
+    <p className={["lead-statement", className].filter(Boolean).join(" ")} {...props}>
+      {children}
+    </p>
+  );
+}
+
 // Required by @next/mdx. Global MDX element styling is handled by the
 // `prose` classes on the docs <article>.
 export function useMDXComponents(components: MDXComponents): MDXComponents {
-  return { ...components, a: MdxAnchor };
+  return { ...components, a: MdxAnchor, Lead: MdxLead };
 }

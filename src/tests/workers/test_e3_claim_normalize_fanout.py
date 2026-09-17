@@ -25,16 +25,14 @@ def test_e3_version_includes_claim_fanout_suffix() -> None:
 
 
 def test_obs_flush_version_is_single_source_for_ledger_fanout() -> None:
-    """Ledger fan-out imports OBS_FLUSH_VERSION (no drifted literal)."""
+    """Ledger fan-out uses active_flush_version (no drifted literal)."""
     import inspect
 
     from rememberstack.spine import work_ledger
 
     source = inspect.getsource(work_ledger._enqueue_claim_normalize_fanout)
-    assert "OBS_FLUSH_VERSION" in source
-    assert "e3-obs-flush-2026.08a:claim-fanout-1" not in source.replace(
-        "OBS_FLUSH_VERSION", ""
-    )
+    assert "active_flush_version" in source
+    assert "e3-obs-flush-2026.08a:claim-fanout-1" not in source
 
 
 def test_normalize_barrier_uses_dedicated_advisory_lock() -> None:

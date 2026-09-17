@@ -1,31 +1,26 @@
 export const metadata = {
-  title: "RememberStack",
+  title: "Our mission",
   description:
-    "RememberStack is open-source memory infrastructure for AI agents: what sources said, what is currently true, and a full audit trail.",
+    "Centralize all your information in a single place. Expose that information to AI agents in the best possible way.",
 };
 
-# RememberStack
+# Our mission
 
-**RememberStack** is Apache-2.0 open-source memory infrastructure for AI agents. This repository is the complete engine.
+<Lead>
+  Centralize all your information in a single place. Expose that information
+  to AI agents in the best possible way.
+</Lead>
 
-**[remember.dev](https://remember.dev)** is the managed cloud product built around that same engine.
+Your information is scattered across your life / organization — email, Slack, documents, meeting notes, agent traces, and more.
 
-Most stacks answer *where did I read something like this?* Agents that act need a harder question: **what do we actually know — and what changed our mind?** RememberStack answers that question: ingest, resolve, supersede, retrieve. Nothing that determines correctness is withheld for a commercial tier.
+**RememberStack structures that information so AI agents can answer fast and well.** It knows what is true now and what was true a month ago. It accounts for what you know about a person, an event, or a company.
 
-The system is built to stay useful at **a million documents**. The default self-host profile routes **Markdown** out of the box; other MIME routes are engine-supported once registered. See [Project status](/docs/project-status) for what ships.
+**[RememberStack](https://github.com/writeitai/remember-stack)** is open-source memory infrastructure for AI agents. This repository is the complete engine.
 
 ## Start here
 
 1. [Getting started](/docs/getting-started) — `uvx remember setup`, a file in, an answer back.
-2. [Why this memory](/docs/why) — testimony vs truth, and why passage RAG is not enough.
-3. [Architecture](/docs/architecture) — the durable spine: what lives where, how reads and writes relate.
-
-## What this is not
-
-- Not a chat product.
-- Not passage RAG with extra metadata.
-- Not a web UI or a multi-tenant control plane. Those belong to the separate cloud product. Agent surfaces — API, CLI, MCP, and filesystem mounts — are the complete consumption story in this repo.
-- Not a paywalled core. Extraction, resolution, supersession, grounding, budgets, the dead-letter queue, and deletion all ship here.
-- Not a hosted SLA from these docs. Self-host is the full RememberStack engine; [remember.dev](https://remember.dev) is the managed cloud. See [Cloud architecture](/docs/cloud/architecture).
+2. [What is a memory system](/docs/why) — testimony vs truth, and why passage RAG is not enough.
+3. [Architecture](/docs/architecture) — the durable store: what lives where, how reads and writes relate.
 
 The vocabulary (claim, fact, grain, clocks) lives on [Concepts](/docs/concepts) when you need it.

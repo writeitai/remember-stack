@@ -5932,7 +5932,55 @@ building a managed mount/download service were also rejected. Full contract:
 [design](plan/designs/locomo_retrieval_ablation_design.md). Analysis:
 [retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).
 
-## D125. Rotate OpenRouter chat providers on overload in the core engine
+## D126. Configurable System One Jev fact adjudication engine
+
+**Status:** accepted 2026-09-17, binding when merged. Provide a dedicated,
+alternate fact adjudication engine powered by TypeSafe AI's System One model
+(`jev-latest`), selectable via the `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
+(or `REMEMBERSTACK_FACT_ENGINE`) environment variable (`"prompt"` vs `"jev"`).
+
+Fact adjudication reconciles staged assertions against existing candidate facts
+for the same entity. It does not synthesize new text, rewrite claims, or generate
+summaries. Using generative LLMs for this task introduces severe token inflation
+(34.5M input tokens, 97.7% of conv-42 ingestion spend), handle format
+rejections, and semantic drift (false-positive merges on shared topical context).
+The Jev engine replaces the generative chat completion step with three parallel
+`Choice` decision primitives (`match`, `stance`, `window_action`) evaluated
+over the complete prepared concise snapshot state (D121). An empty-candidate set
+short-circuits in code to `NEW` (`_sole_new_fact`) with zero network calls. The
+resulting choices translate deterministically into a canonical `PromptFactDecision`
+(with grounded claim window construction via `fact_window_from_raw` or cleared
+`FactWindow()`) and then through verified existing mapping into `FactApplicationDecision`.
+
+Per the D118 streaming single-assertion placement contract, the streaming Jev
+path emits single-assertion placements; multi-assertion updates, predecessor caps,
+and re-linking remain explicit empty tuples. Preserve existing database locking,
+compare-and-swap publication, revalidation, and idempotency contracts in
+`FactAdjudicator`. Sub-floor confidence matches (< 0.75) fail-safe to creating a
+new fact rather than performing destructive merges, aligned with `FactAdjudicator.apply()`'s
+coexist invariant; prompt fallback is strictly limited to provider network errors/5xx.
+Settings split between `FactAdjudicationSettings` (`model`, `engine` via `AliasChoices`,
+`confidence_floor`) and `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix,
+`api_key: str | None`, `timeout_s: float = 30.0`, `extra="ignore"`), with fail-fast
+startup validation (`ConfigurationError(ValueError)`) when `engine="jev"`.
+Strict D61/D62 architectural boundary: `FactAdjudicator` depends only on `SystemOnePort`
+protocol (`ports/systemone.py`), wired at composition roots (`profiles/selfhost.py`)
+so spine never imports adapters.
+Binds distinct plane versions (`RELATION_APPLICATION_VERSION_JEV`, `OBSERVATION_APPLICATION_VERSION_JEV`)
+and attempt fingerprints (`snapshot_hash` with engine and `active_question_identity`)
+to prevent cross-engine attempt contamination. All generation identity call sites
+(`NormalizeRelationsHandler`/`AdjudicateObservationsHandler`, `FactAdjudicator.prepare` and `apply`,
+`selfhost._expected_components`, and `work_ledger` barrier/enqueue checks) read unified active version
+helpers (`active_adjudicator_versions`, `active_flush_version`). Metered on tier `fact_adjudication_jev`
+with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
+Replacing generative claim extraction or section summaries with System One was rejected
+because System One cannot generate freeform prose; placing the engine behind a Cloud
+proxy was rejected per the D60/D61 library boundary.
+
+**Authority:** [design](plan/designs/jev_adjudication_design.md),
+[analysis](plan/analysis/jev_adjudication_analysis.md).
+
+## D127. Rotate OpenRouter chat providers on overload in the core engine
 
 **Status:** accepted 2026-09-17, binding when merged. R14 dead-lettered 45/997 work
 items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
@@ -5955,3 +6003,4 @@ its pinned engine bump; per-tenant key management stays UMC-side later. Full con
 [design](plan/designs/openrouter_provider_rotation_design.md). Analysis:
 [inference capacity](plan/analysis/openrouter_inference_capacity_20260916.md). Evidence:
 R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
+

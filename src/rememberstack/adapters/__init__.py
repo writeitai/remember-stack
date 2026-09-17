@@ -25,6 +25,13 @@ from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
 from rememberstack.adapters.routed import ModelRoutedProvider
+from rememberstack.adapters.typesafe import ConfigurationError
+from rememberstack.adapters.typesafe import (
+    ConfigurationError as TypeSafeConfigurationError,
+)
+from rememberstack.adapters.typesafe import TypeSafeProviderError
+from rememberstack.adapters.typesafe import TypeSafeSettings
+from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.adapters.vertex import VertexAccessError
 from rememberstack.adapters.vertex import VertexModelProvider
 from rememberstack.adapters.vertex import VertexProviderError
@@ -75,6 +82,11 @@ __all__ = (
     "OpenRouterProviderError",
     "OpenRouterSettings",
     "PostgresP1Index",
+    "ConfigurationError",
+    "TypeSafeConfigurationError",
+    "TypeSafeProviderError",
+    "TypeSafeSettings",
+    "TypeSafeSystemOneClient",
     "VertexAccessError",
     "VertexModelProvider",
     "VertexProviderError",

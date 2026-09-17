@@ -12,6 +12,7 @@ from rememberstack.ports.purge import KGitPurgePort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.ports.purge import ProjectionPurgePort
 from rememberstack.ports.queue import TaskQueuePort
+from rememberstack.ports.systemone import SystemOnePort
 from rememberstack.ports.telemetry import TelemetryPort
 
 __all__ = (
@@ -26,6 +27,7 @@ __all__ = (
     "PostgresReadPoolPort",
     "ObjectPurgePort",
     "ProjectionPurgePort",
+    "SystemOnePort",
     "TaskQueuePort",
     "TelemetryPort",
 )

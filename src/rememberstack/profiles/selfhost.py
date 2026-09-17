@@ -37,6 +37,8 @@ from rememberstack.adapters.selfhost import HashedBearerAuth
 from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
+from rememberstack.adapters.typesafe import TypeSafeSettings
+from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
@@ -50,6 +52,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
@@ -1275,6 +1278,7 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.NORMALIZE_RELATIONS:
             observation_settings = ObservationSettings.model_validate({})
+            fact_settings = FactAdjudicationSettings()
             return NormalizeRelationsHandler(
                 claim_catalog=claims,
                 chunk_catalog=chunks,
@@ -1290,7 +1294,12 @@ class SelfHostProfile:
                 observation_adjudicator=FactAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
-                    settings=FactAdjudicationSettings(),
+                    settings=fact_settings,
+                    systemone_provider=(
+                        TypeSafeSystemOneClient(settings=TypeSafeSettings())
+                        if fact_settings.engine == "jev"
+                        else None
+                    ),
                 ),
                 profile_refresher=profile_refresher,
                 model_provider=self._model_provider,
@@ -1299,12 +1308,18 @@ class SelfHostProfile:
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
             observation_settings = ObservationSettings.model_validate({})
+            fact_settings = FactAdjudicationSettings()
             return AdjudicateObservationsHandler(
                 facts=facts,
                 observation_adjudicator=FactAdjudicator(
                     engine=self._engine,
                     model_provider=self._model_provider,
-                    settings=FactAdjudicationSettings(),
+                    settings=fact_settings,
+                    systemone_provider=(
+                        TypeSafeSystemOneClient(settings=TypeSafeSettings())
+                        if fact_settings.engine == "jev"
+                        else None
+                    ),
                 ),
                 profile_refresher=profile_refresher,
                 chunk_catalog=chunks,
@@ -1505,7 +1520,6 @@ def _expected_components() -> dict[PipelineStage, str]:
     from rememberstack.workers import E1_EMBED_VERSION
     from rememberstack.workers import E2_EXTRACTOR_VERSION
     from rememberstack.workers import E3_NORMALIZER_VERSION
-    from rememberstack.workers import OBS_FLUSH_VERSION
     from rememberstack.workers import P1_EMBED_CLAIMS_VERSION
     from rememberstack.workers import RECONCILE_VERSION
     from rememberstack.workers.p1 import label_relation_component_version
@@ -1519,7 +1533,9 @@ def _expected_components() -> dict[PipelineStage, str]:
         PipelineStage.EXTRACT_CLAIMS: E2_EXTRACTOR_VERSION,
         PipelineStage.GROUND_CLAIMS: E2_EXTRACTOR_VERSION,
         PipelineStage.NORMALIZE_RELATIONS: E3_NORMALIZER_VERSION,
-        PipelineStage.ADJUDICATE_OBSERVATIONS: OBS_FLUSH_VERSION,
+        PipelineStage.ADJUDICATE_OBSERVATIONS: active_flush_version(
+            FactAdjudicationSettings().engine
+        ),
         PipelineStage.ADJUDICATE_SUPERSESSION: ADJUDICATOR_VERSION,
         PipelineStage.EMBED_CLAIM: P1_EMBED_CLAIMS_VERSION,
         PipelineStage.RECONCILE: RECONCILE_VERSION,
@@ -1592,6 +1608,12 @@ def _model_bindings() -> dict[str, str]:
     facts = FactAdjudicationSettings.model_validate({})
     p1 = P1Settings.model_validate({})
     openrouter = OpenRouterSettings.model_validate({})
+    if facts.engine == "jev":
+        from rememberstack.adapters.typesafe import TypeSafeSettings
+
+        fact_adjudication_model = TypeSafeSettings.model_validate({}).model
+    else:
+        fact_adjudication_model = facts.model
     return {
         "structure_fallback": structurer.model,
         "skeleton_check": skeleton_check.model,
@@ -1602,7 +1624,7 @@ def _model_bindings() -> dict[str, str]:
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
-        "fact_adjudication": facts.model,
+        "fact_adjudication": fact_adjudication_model,
         "p1_embedding": p1.embedding_model,
         "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",

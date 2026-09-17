@@ -1,12 +1,12 @@
 export const metadata = {
-  title: "Why this memory",
+  title: "What is a memory system",
   description:
-    "What RememberStack memory is and why agents that act need it: testimony vs truth, failure modes vs passage RAG, and a harder question than similar text.",
+    "What a memory system is and why agents that act need it: testimony vs truth, failure modes vs passage RAG, and a harder question than similar text.",
 };
 
-# Why this memory
+# What is a memory system
 
-**RememberStack** is a memory system for AI agents. Ingest documents into a structured spine and get back **navigable, auditable knowledge**: not just passages that *look* relevant, but an account of what sources said, what the system currently holds true, and how those two can differ.
+**RememberStack** is a memory system for AI agents. Ingest documents into a structured store and get back **navigable, auditable knowledge**: not just passages that *look* relevant, but an account of what sources said, what the system currently holds true, and how those two can differ.
 
 If your agent must **act** on memory — spend money, change state, or brief a human — those distinctions are load-bearing.
 
@@ -79,7 +79,7 @@ Dead inflation paths:
 
 Corroboration is an **external-source** property. Within-document emphasis is not.
 
-## Indexes nominate; the spine confirms
+## Indexes nominate; PostgreSQL confirms
 
 Search indexes may lag, so they **nominate** candidates. The live graph and
 authority views share one PostgreSQL snapshot and **confirm** validity,
@@ -91,13 +91,13 @@ Consequence:
 - A path with one invalidated edge is dropped **as a unit**, not returned with a hole.
 - The envelope reports `dropped_by_hydration` so ranking denominators stay honest.
 
-Mounted file reads are snapshot-by-construction; the consumption skill teaches: orient on mounts, **verify load-bearing facts on the spine**.
+Mounted file reads are snapshot-by-construction; the consumption skill teaches: orient on mounts, **verify load-bearing facts in the store**.
 
 ## No LLM *completion* on the query path
 
 Write-time intelligence (extraction, adjudication, compilation) is recorded and replayable. **The read path does not call a chat/completion model to invent an answer.** Assured operations, open SQL, live-graph helpers, and primitives are deterministic compositions.
 
-**Footnote (honesty):** semantic channels still **embed the query string** through the configured embedder. That is not “chat with your data,” but it is a provider round-trip on semantic paths. Lexical/BM25 and pure SQL spine reads do not need it.
+**Footnote (honesty):** semantic channels still **embed the query string** through the configured embedder. That is not “chat with your data,” but it is a provider round-trip on semantic paths. Lexical/BM25 and pure SQL store reads do not need it.
 
 Why agents care:
 
@@ -172,6 +172,6 @@ Apache-2.0. Correctness-determining behavior — extraction, entity resolution, 
 
 - [Getting started](/docs/getting-started) — run it.
 - [Concepts](/docs/concepts) — vocabulary (claim / fact / grain / clocks).
-- [Architecture](/docs/architecture) — the durable spine and how reads and writes relate.
+- [Architecture](/docs/architecture) — the durable store and how reads and writes relate.
 - [Ingestion](/docs/ingestion) — write path.
 - [Retrieval](/docs/retrieval) — read path.

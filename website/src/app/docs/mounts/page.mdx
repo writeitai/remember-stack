@@ -29,7 +29,7 @@ Agents that can navigate files should treat memory like a **read-only codebase**
 | Mounts available | `ls` / read / `grep` first |
 | Need current truth | Leave files; call `facts_context` or query `facts_current` |
 | Need source testimony | `claims_and_sources_context` or claims views — not claim validity as “true now” |
-| Load-bearing decision | Verify on the **spine** after any mount/K orientation |
+| Load-bearing decision | Verify in the **store** after any mount/K orientation |
 | No mounts | API/CLI/MCP carry full parity (including artifact handles) |
 
 Two truth layers never change: **claims** = testimony; **facts** = adjudicated current belief. Bridge: `fact_claim_evidence`.

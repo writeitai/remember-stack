@@ -1,16 +1,16 @@
 export const metadata = {
   title: "Architecture",
   description:
-    "RememberStack architecture: the durable memory spine — PostgreSQL, object storage, and git — and how writes and reads relate.",
+    "RememberStack architecture: the durable memory store — PostgreSQL, object storage, and git — and how writes and reads relate.",
 };
 
 # Architecture
 
-RememberStack does not treat a vector index as the database. A deployment’s memory lives in a **durable spine**: PostgreSQL rows that record what was ingested, what sources claimed, what the system currently holds true, and when those beliefs changed — plus object storage for the bytes those rows point at. Git holds compiled and authored knowledge pages beside that spine.
+RememberStack does not treat a vector index as the database. A deployment’s memory lives in a **durable store**: PostgreSQL rows that record what was ingested, what sources claimed, what the system currently holds true, and when those beliefs changed — plus object storage for the bytes those rows point at. Git holds compiled and authored knowledge pages beside that store.
 
-In the Compose self-host the spine is PostgreSQL 19 plus MinIO; another deployment uses the same engine schema on PostgreSQL plus an S3-compatible bucket. The rules do not change with the vendor.
+In the Compose self-host that store is PostgreSQL 19 plus MinIO; another deployment uses the same engine schema on PostgreSQL plus an S3-compatible bucket. The rules do not change with the vendor.
 
-**Hard rule:** validity and invalidation live **only** in PostgreSQL. Search indexes are derived state beside the authority rows. They **nominate** candidates; the spine **confirms** live truth. Neither a lagging index nor a knowledge page can become independent authority.
+**Hard rule:** validity and invalidation live **only** in PostgreSQL. Search indexes are derived state beside the authority rows. They **nominate** candidates; PostgreSQL **confirms** live truth. Neither a lagging index nor a knowledge page can become independent authority.
 
 ## What lives where
 
@@ -22,11 +22,11 @@ In the Compose self-host the spine is PostgreSQL 19 plus MinIO; another deployme
 | **Object storage — raw** | Original uploaded bytes | Byte authority |
 | **Object storage — artifacts** | Converted Markdown, structure, media sidecars | Representation authority (replayed, never regenerated in place) |
 | **Object storage — corpus tree** | P3 browsable filesystem | Derived; rebuild from Postgres + artifacts |
-| **Git** | Plane K compiled and authored pages | **Source of truth** for knowledge prose (authored words are irreducible; compiled pages recompile from the spine) |
+| **Git** | Plane K compiled and authored pages | **Source of truth** for knowledge prose (authored words are irreducible; compiled pages recompile from stored facts) |
 
 One line: **Postgres says what is true and when; object storage holds the bytes; git holds the prose we wrote about it.**
 
-## How the spine is shaped
+## How the store is shaped
 
 The store is a **DAG across three planes**, not a single ladder. The plane a component lives in fixes its rules: triggers, authority, mutability, rebuild semantics.
 
@@ -34,7 +34,7 @@ The store is a **DAG across three planes**, not a single ladder. The plane a com
   inputs (files, mail, web, audio, video, images)
       │
       ▼
-  E0 files ─→ E1 chunks ─→ E2 claims ─→ E3 facts     Plane E — evidence spine
+  E0 files ─→ E1 chunks ─→ E2 claims ─→ E3 facts     Plane E — evidence store
     │                                    │           (Postgres + object storage)
     │              ┌─────────────────────┤
     ▼              ▼                     ▼
@@ -52,7 +52,7 @@ The store is a **DAG across three planes**, not a single ladder. The plane a com
 
 **E is what we ingested, K is what we concluded, P is how we reach it — and P always rebuilds from E.** K pages and P3 cross-link as consumers of each other; K is never a structural input to P1 or graph reads.
 
-The conceptual *why* (testimony vs truth, two clocks, why indexes cannot be authority) is on [Why this memory](/docs/why). This page is the spine.
+The conceptual *why* (testimony vs truth, two clocks, why indexes cannot be authority) is on [What is a memory system](/docs/why). This page is that store.
 
 ## Writes: evidence accumulates
 
@@ -81,7 +81,7 @@ Exhaustive write path: [Ingestion](/docs/ingestion) · [Pipeline stages](/docs/i
 2. **Confirm** — hydration against live Postgres re-reads validity, invalidation, contradiction membership, and testimony currency.
 3. **Account** — the envelope states grain, freshness, drops, truncation, and typed negatives.
 
-Mounted file reads skip step 2 by construction (snapshot files). Rule: orient on mounts; **verify load-bearing facts on the spine**.
+Mounted file reads skip step 2 by construction (snapshot files). Rule: orient on mounts; **verify load-bearing facts in the store**.
 
 Agents reach the store through four surfaces with one precedence rule:
 
@@ -102,14 +102,14 @@ Open query is sandboxed SQL over the `memory_v1` views plus typed live-graph hel
 
 P1 can be repaired from authority and P3 can be rebuilt. The graph is a live relational view plus catalog metadata, so there is no graph snapshot to rebuild.
 
-## Knowledge sits beside the spine
+## Knowledge sits beside the store
 
 Git holds knowledge pages:
 
 - **Compiled** — LLM writers produce citation-bearing prose; a deterministic driver owns staleness, routing, and commits.
 - **Authored** — human/agent commitments (principles, plans). Evidence changes **flag** them; nothing rewrites them silently.
 
-Compiled pages are semantically regenerable from the spine plus recorded compile inputs. Authored words are irreducible. Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
+Compiled pages are semantically regenerable from stored facts plus recorded compile inputs. Authored words are irreducible. Agent contract and scopes: [Knowledge (Plane K)](/docs/knowledge).
 
 ## Registries (shared control data)
 
@@ -131,11 +131,11 @@ Adding an operation is inserting a row — surfaces stay in lockstep.
 
 ## Where deeper design lives
 
-This site documents **what ships**. Extended architecture notes for implementers live in the repository under [`plan/designs/`](https://github.com/writeitai/remember-stack/tree/main/plan/designs) (optional reading — not required to use the product). The spine schema contract is [`postgres_schema_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/postgres_schema_design.md); the three-plane map is [`overall_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/overall_design.md).
+This site documents **what ships**. Extended architecture notes for implementers live in the repository under [`plan/designs/`](https://github.com/writeitai/remember-stack/tree/main/plan/designs) (optional reading — not required to use the product). The PostgreSQL schema contract is [`postgres_schema_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/postgres_schema_design.md); the three-plane map is [`overall_design.md`](https://github.com/writeitai/remember-stack/blob/main/plan/designs/overall_design.md).
 
 ## Next
 
 - [Getting started](/docs/getting-started) if you have not run it yet
 - [Concepts](/docs/concepts) if vocabulary is still fuzzy
-- [Ingestion](/docs/ingestion) to follow a document through the spine
+- [Ingestion](/docs/ingestion) to follow a document through the store
 - [Retrieval](/docs/retrieval) to follow a query through nominate → confirm → account

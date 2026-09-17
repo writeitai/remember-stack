@@ -124,7 +124,7 @@ Parked work resumes when the window rolls — it is not a poison DLQ.
 
 | Check | Why |
 | --- | --- |
-| Readiness terminal for the version | Search before spine finish → empty |
+| Readiness terminal for the version | Search before processing finishes → empty |
 | Using `facts_context` vs `claims_and_sources_context` | Wrong grain for the question |
 | Operation body uses `query` / `name` | Wrong args → 422 or empty intent |
 | `resolve_entity` misspelling | Query resolve is **T0 exact** — use evidence search for fuzzy recall |
