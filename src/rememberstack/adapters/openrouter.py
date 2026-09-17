@@ -370,6 +370,7 @@ class OpenRouterModelProvider:
                 error=str(error),
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=error.provider_host,
             )
             raise
         except OpenRouterProviderError as error:
@@ -404,6 +405,7 @@ class OpenRouterModelProvider:
                 error=f"{response_type.__name__}: completion content is not JSON",
                 usage=usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=provider_host,
             )
             raise OpenRouterInvalidResponseError(
                 f"{response_type.__name__}: completion content is not JSON"
@@ -434,6 +436,7 @@ class OpenRouterModelProvider:
                 ),
                 usage=usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=provider_host,
             )
             raise OpenRouterInvalidResponseError(
                 f"completion body failed {response_type.__name__} validation"
@@ -592,6 +595,9 @@ class OpenRouterModelProvider:
                     f"{response_type.__name__}: provider returned no completion"
                     f" content ({_completion_diagnosis(body=body)})",
                     usage=usage,
+                    provider_host=self._resolve_provider_host(
+                        body=body, targeted_slug=None
+                    ),
                 )
             return (
                 content,
@@ -709,6 +715,9 @@ class OpenRouterModelProvider:
                     f"{response_type.__name__}: provider returned no completion"
                     f" content ({_completion_diagnosis(body=body)})",
                     usage=usage,
+                    provider_host=self._resolve_provider_host(
+                        body=body, targeted_slug=slug
+                    ),
                 )
             return (
                 content,
