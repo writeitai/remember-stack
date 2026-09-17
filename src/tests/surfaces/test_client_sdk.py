@@ -1043,3 +1043,121 @@ def test_body_cap_holds_when_the_app_is_mounted_under_a_prefix() -> None:
         content=b"small note",
     )
     assert accepted.status_code == 200
+
+
+def test_client_sdk_models_support_valid_precision_and_temporal_match() -> None:
+    """Ensure client SDK models mirror server-emitted valid_precision and temporal_match."""
+    from remember.client import _validated
+    from remember.models import ClaimValidPrecision
+    from remember.models import ContextBundleV2
+    from remember.models import FactResult as ClientFactResult
+    from remember.models import GraphEdge as ClientGraphEdge
+    from remember.models import TemporalMatch
+    from remember.models import Validity as ClientValidity
+
+    now_iso = datetime.now(UTC).isoformat()
+    fact_id = str(uuid4())
+    relation_id = str(uuid4())
+    subj_id = str(uuid4())
+    obj_id = str(uuid4())
+
+    # Validation through client SDK wire validation (_validated with strict=False)
+    validity = _validated(
+        ClientValidity,
+        {
+            "valid_from": now_iso,
+            "valid_until": now_iso,
+            "valid_precision": "day",
+            "ingested_at": now_iso,
+            "invalidated_at": None,
+        },
+        endpoint="test",
+    )
+    assert validity.valid_precision is ClaimValidPrecision.DAY
+
+    fact = _validated(
+        ClientFactResult,
+        {
+            "fact_id": fact_id,
+            "kind": "relation",
+            "label": "test relation",
+            "evidence_count": 1,
+            "validity": {
+                "valid_from": now_iso,
+                "valid_until": now_iso,
+                "valid_precision": "day",
+                "ingested_at": now_iso,
+                "invalidated_at": None,
+            },
+            "temporal_match": "confirmed",
+        },
+        endpoint="test",
+    )
+    assert fact.temporal_match is TemporalMatch.CONFIRMED
+
+    edge = _validated(
+        ClientGraphEdge,
+        {
+            "relation_id": relation_id,
+            "subject_id": subj_id,
+            "object_id": obj_id,
+            "predicate": "likes",
+            "fact": "test",
+            "evidence_count": 1,
+            "valid_from": now_iso,
+            "valid_until": now_iso,
+            "valid_precision": "month",
+            "ingested_at": now_iso,
+            "invalidated_at": None,
+        },
+        endpoint="test",
+    )
+    assert edge.valid_precision is ClaimValidPrecision.MONTH
+
+    # Full ContextBundleV2 wire deserialization
+    bundle_payload = {
+        "contract": "ContextBundle/v2",
+        "claims_and_sources": {
+            "grain": "evidence",
+            "temporal_scope": {
+                "mode": "current",
+                "evaluated_at": now_iso,
+                "believed_at": now_iso,
+                "identity_regime": "current",
+            },
+            "freshness": {"pg_live_ts": now_iso},
+            "evidence": [],
+        },
+        "facts": {
+            "grain": "fact",
+            "temporal_scope": {
+                "mode": "current",
+                "evaluated_at": now_iso,
+                "believed_at": now_iso,
+                "identity_regime": "current",
+            },
+            "freshness": {"pg_live_ts": now_iso},
+            "facts": [
+                {
+                    "fact_id": fact_id,
+                    "kind": "relation",
+                    "label": "test relation",
+                    "evidence_count": 1,
+                    "validity": {
+                        "valid_from": now_iso,
+                        "valid_until": now_iso,
+                        "valid_precision": "day",
+                        "ingested_at": now_iso,
+                        "invalidated_at": None,
+                    },
+                    "temporal_match": "confirmed",
+                }
+            ],
+        },
+    }
+    bundle = _validated(
+        ContextBundleV2, bundle_payload, endpoint="POST /operations/combined_context"
+    )
+    assert len(bundle.facts.facts) == 1
+    assert bundle.facts.facts[0].temporal_match is TemporalMatch.CONFIRMED
+    assert bundle.facts.facts[0].validity.valid_precision is ClaimValidPrecision.DAY

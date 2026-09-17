@@ -389,32 +389,41 @@ class OpenRouterModelProvider:
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError as err:
-            self._capture_invalid_completion(
-                body=body,
-                content=content,
-                failure_kind="json_decode",
-                request=request,
-                response_type=response_type,
-                usage=usage,
-            )
-            self._record_generation(
-                request=request,
-                response_type_name=response_type.__name__,
-                raw_content=content,
-                outcome="invalid",
-                error=f"{response_type.__name__}: completion content is not JSON",
-                usage=usage,
-                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-                provider_host=provider_host,
-            )
-            raise OpenRouterInvalidResponseError(
-                f"{response_type.__name__}: completion content is not JSON"
-                " ("
-                f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
-                ")",
-                usage=usage,
-                provider_host=provider_host,
-            ) from err
+            decoded = None
+            try:
+                stripped = content.strip()
+                if stripped.startswith("{") or stripped.startswith("["):
+                    decoded, _ = json.JSONDecoder().raw_decode(stripped)
+            except Exception:
+                decoded = None
+
+            if decoded is None:
+                self._capture_invalid_completion(
+                    body=body,
+                    content=content,
+                    failure_kind="json_decode",
+                    request=request,
+                    response_type=response_type,
+                    usage=usage,
+                )
+                self._record_generation(
+                    request=request,
+                    response_type_name=response_type.__name__,
+                    raw_content=content,
+                    outcome="invalid",
+                    error=f"{response_type.__name__}: completion content is not JSON",
+                    usage=usage,
+                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                    provider_host=provider_host,
+                )
+                raise OpenRouterInvalidResponseError(
+                    f"{response_type.__name__}: completion content is not JSON"
+                    " ("
+                    f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
+                    ")",
+                    usage=usage,
+                    provider_host=provider_host,
+                ) from err
         try:
             output = response_type.model_validate(decoded)
         except ValidationError as error:
