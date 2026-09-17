@@ -146,9 +146,9 @@ zero network calls and zero tokens.
 
 | Metric | Generative LLM (`gpt-5.6-luna` / `gemma-4-26b`) | System One Jev (`jev-latest`) |
 | :--- | :--- | :--- |
-| **Input tokens per assertion** | 15,000 – 30,000 (entire prompt + schema) | 300 – 800 (clean state + typed questions) |
-| **Output tokens per call** | 500 – 1,200 tokens (JSON schema) | ~20 – 40 tokens (typed decision) |
-| **Estimated conv-42 cost** | $9.16 (v28) | **< $0.20** (>95% reduction) |
+| **Input tokens per assertion** | 15,000 – 30,000 (entire prompt + schema) | Empirical estimate: 400 – 1,800 tokens depending on entity candidate set (clean state + typed questions) |
+| **Output tokens per call** | 500 – 1,200 tokens (JSON schema) | ~20 – 40 tokens (typed categorical decision) |
+| **Estimated conv-42 cost** | $9.16 (v28) | **< $0.20** (>95% reduction, based on $0.042 / 1M input tokens) |
 | **Proposition equivalence** | Prone to false merges on shared context | Calibrated against explicit exclusion criteria |
 | **Schema/Reference errors** | Common (`F2` invalid refs, formatting) | **Zero** (typed primitives owned by client) |
 | **Execution mode** | Sequential chat completion | Parallel question batching |
@@ -160,23 +160,35 @@ zero network calls and zero tokens.
 To maintain zero regression risk:
 1. **Configurable via environment variable:**
    - `FactAdjudicationSettings` (`REMEMBERSTACK_FACT_` prefix):
-     - `engine`: `"prompt"` (default) vs `"jev"`.
+     - `model`: default `"openai/gpt-5.6-luna"` (for the prompt baseline).
+     - `engine`: `"prompt"` (default) vs `"jev"`, reading `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
+       or `REMEMBERSTACK_FACT_ENGINE` via `AliasChoices`.
      - `confidence_floor`: float (default `0.75`).
 2. **TypeSafe settings (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`):**
-   - `api_key`: `str | None` (required when `engine="jev"`, fail-fast startup validation).
+   - `api_key`: `str | None` (required when `engine="jev"`, fail-fast startup validation with `ConfigurationError(ValueError)`).
    - `model`: default `"jev-latest"`.
    - `base_url`: default `"https://api.typesafe.ai/v1"`.
    - `timeout_s`: default `30.0`.
    - `fallback_to_prompt`: default `False` (controls provider 5xx/timeout fallback).
-3. **Fail-safe fallback:**
+3. **Distinct generation identity & attempt safety:**
+   - Jev engine binds distinct plane adjudicator versions:
+     `RELATION_APPLICATION_VERSION_JEV = "relation-adjudicator-2026.09a:jev-choice-match-3"`
+     `OBSERVATION_APPLICATION_VERSION_JEV = "obs-adjudicator-2026.09a:jev-choice-match-3"`
+     `JEV_ADJUDICATOR_VERSION = "jev-adjudicator-2026.09a:choice-match-3"`
+   - `snapshot_hash` and `prepared` bind `engine` and `question_identity` (`JEV_ADJUDICATOR_VERSION`),
+     preventing in-flight prompt attempts from being completed by Jev or vice-versa.
+   - `:jev` suffix is the namespace suffix for `meter.record` on tier `fact_adjudication_jev`.
+   - Usage records real `ProviderCallUsage` (`model_name`, `tokens_in`, `tokens_out`, `cost_usd`, `latency_ms`).
+4. **Fail-safe fallback:**
    - If Jev confidence is below `confidence_floor` (< 0.75), Jev strictly fail-safes
      to `NEW` (creating a separate fact per D118 coexistence principle). Sub-floor
      confidence does NOT fall back to prompt.
    - If an unrecoverable provider error (5xx, timeout) occurs and `fallback_to_prompt`
      is True, it delegates to the prompt adjudicator; otherwise it raises
      `ProviderCallError` for worker retry/DLQ backstop.
-4. **Preservation of database contracts:**
+5. **Preservation of database contracts:**
    - The Jev engine produces a standard `PromptFactDecision` which translates
      through verified existing code into `FactApplicationDecision`. Postgres
      locking, CAS, and idempotency remain 100% untouched.
+
 

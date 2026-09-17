@@ -5937,7 +5937,7 @@ building a managed mount/download service were also rejected. Full contract:
 **Status:** accepted 2026-09-17, binding when merged. Provide a dedicated,
 alternate fact adjudication engine powered by TypeSafe AI's System One model
 (`jev-latest`), selectable via the `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
-environment variable (`"prompt"` vs `"jev"`).
+(or `REMEMBERSTACK_FACT_ENGINE`) environment variable (`"prompt"` vs `"jev"`).
 
 Fact adjudication reconciles staged assertions against existing candidate facts
 for the same entity. It does not synthesize new text, rewrite claims, or generate
@@ -5946,28 +5946,33 @@ summaries. Using generative LLMs for this task introduces severe token inflation
 rejections, and semantic drift (false-positive merges on shared topical context).
 The Jev engine replaces the generative chat completion step with three parallel
 `Choice` decision primitives (`match`, `stance`, `window_action`) evaluated
-over prepared concise snapshot state (D121). An empty-candidate set short-circuits
-in code to `NEW` with zero network calls. The resulting choices translate directly
-into a canonical `PromptFactDecision` and then through verified existing mapping
-into `FactApplicationDecision`.
+over the complete prepared concise snapshot state (D121). An empty-candidate set
+short-circuits in code to `NEW` (`_sole_new_fact`) with zero network calls. The
+resulting choices translate deterministically into a canonical `PromptFactDecision`
+(with grounded claim window construction via `fact_window_from_raw` or cleared
+`FactWindow()`) and then through verified existing mapping into `FactApplicationDecision`.
 
 Per the D118 streaming single-assertion placement contract, the streaming Jev
 path emits single-assertion placements; multi-assertion updates, predecessor caps,
-and re-linking remain empty tuples. Preserve existing database locking,
+and re-linking remain explicit empty tuples. Preserve existing database locking,
 compare-and-swap publication, revalidation, and idempotency contracts in
 `FactAdjudicator`. Sub-floor confidence matches (< 0.75) fail-safe to creating a
-new fact rather than performing destructive merges; prompt fallback is strictly
-limited to provider network errors/5xx. Settings split between
-`FactAdjudicationSettings` (`engine`, `confidence_floor`) and `TypeSafeSettings`
-(`REMEMBERSTACK_TYPESAFE_` prefix, `api_key: str | None`, `timeout_s: float = 30.0`,
-`extra="ignore"`), with fail-fast startup validation when `engine="jev"`.
-Fingerprinted via `JEV_ADJUDICATOR_VERSION` with `:jev` receipt keys and
-metered on tier `fact_adjudication_jev`. Replacing generative claim extraction
-or section summaries with System One was rejected because System One cannot
-generate freeform prose; placing the engine behind a Cloud proxy was rejected
-per the D60/D61 library boundary.
+new fact rather than performing destructive merges, aligned with `FactAdjudicator.apply()`'s
+coexist invariant; prompt fallback is strictly limited to provider network errors/5xx.
+Settings split between `FactAdjudicationSettings` (`model`, `engine` via `AliasChoices`,
+`confidence_floor`) and `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix,
+`api_key: str | None`, `timeout_s: float = 30.0`, `extra="ignore"`), with fail-fast
+startup validation (`ConfigurationError(ValueError)`) when `engine="jev"`.
+Binds distinct plane versions (`RELATION_APPLICATION_VERSION_JEV`, `OBSERVATION_APPLICATION_VERSION_JEV`)
+and attempt fingerprints (`snapshot_hash` with engine and `JEV_ADJUDICATOR_VERSION`)
+to prevent cross-engine attempt contamination. Metered on tier `fact_adjudication_jev`
+with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
+Replacing generative claim extraction or section summaries with System One was rejected
+because System One cannot generate freeform prose; placing the engine behind a Cloud
+proxy was rejected per the D60/D61 library boundary.
 
 **Authority:** [design](plan/designs/jev_adjudication_design.md),
 [analysis](plan/analysis/jev_adjudication_analysis.md).
+
 
 
