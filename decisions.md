@@ -5931,3 +5931,25 @@ confound the retrieval comparison. Replacing Full-v30 before evidence and
 building a managed mount/download service were also rejected. Full contract:
 [design](plan/designs/locomo_retrieval_ablation_design.md). Analysis:
 [retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).
+
+## D125. Rotate OpenRouter chat providers on overload in the core engine
+
+**Status:** accepted 2026-09-17, binding when merged. R14 dead-lettered 45/997 work
+items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
+cause: DeepInfra 429 `engine_overloaded` on the shared OpenRouter pool. The chat seat pins
+providers with `allow_fallbacks: false` and never rotates, so adapter and work-ledger
+retries re-hit the same overloaded engine. Fix it in `adapters/openrouter.py`: an ordered
+chat shortlist with fallbacks (DeepInfra → Relace → Wafer default), rotation on overload
+signals, a throttle budget separate from work attempts (Retry-After honor, jittered
+backoff), per-call serving-host recording, and `data_collection: deny` with optional
+`zdr: true`. Rotating hosts under the same pinned model + params keeps benchmark
+comparability; the implementing PR must assert fingerprint stability.
+
+Locomo-only routing was rejected (it would fork benchmark behavior from product
+behavior), model switching on throttle was rejected (silent comparability break), and
+more parallelism was rejected (it feeds throttles). BYOK keys are the accepted ops
+complement; a first-party Z.AI adapter is a deferred follow-up. UMC consumes this via
+its pinned engine bump; per-tenant key management stays UMC-side later. Full contract:
+[design](plan/designs/openrouter_provider_rotation_design.md). Analysis:
+[inference capacity](plan/analysis/openrouter_inference_capacity_20260916.md). Evidence:
+R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
