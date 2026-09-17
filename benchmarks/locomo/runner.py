@@ -51,6 +51,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
 from benchmarks.locomo.model import ProtocolKey
+from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import RetrievedClaim
@@ -77,6 +78,7 @@ from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import protocol_for_name
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -256,7 +258,7 @@ def _readiness_matches_protocol(
     readiness: PipelineReadinessReport,
     version_ids: set[UUID],
     repository_revision: str,
-    protocol_name: str,
+    protocol_name: ProtocolName = PROTOCOL_NAME,
 ) -> bool:
     """Check exact E/P generations, model bindings, completion, and code identity.
 
@@ -432,7 +434,8 @@ def ingest_sample(
         )
         if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
             raise ExecutionGuardError(
-                "deployment document binding generation differs from RS-LoCoMo-Full-v38"
+                "deployment document binding generation differs from"
+                f" {context.configuration.protocol_name}"
             )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
@@ -1479,7 +1482,7 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
 
 
 def _require_current_ingest_bindings(
-    *, model_bindings: dict[str, str], protocol_name: str
+    *, model_bindings: dict[str, str], protocol_name: ProtocolName
 ) -> None:
     """Fail before upload unless the deployment serves the pinned ingest models."""
 

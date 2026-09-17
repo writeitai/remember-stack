@@ -50,6 +50,7 @@ from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from benchmarks.locomo.runner import _answer_one
 from benchmarks.locomo.runner import _judge_one
+from benchmarks.locomo.runner import _readiness_matches_protocol
 from benchmarks.locomo.runner import _require_current_ingest_bindings
 from benchmarks.locomo.runner import answer_sample
 from benchmarks.locomo.runner import BenchmarkRunError
@@ -80,6 +81,7 @@ from rememberstack.model import Freshness
 from rememberstack.model import GeneratedResponse
 from rememberstack.model import Grain
 from rememberstack.model import ModelRequest
+from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
@@ -1787,6 +1789,39 @@ def test_ingest_bindings_gate_checks_the_prepared_protocol() -> None:
             model_bindings=dict(GLM_INGEST_MODEL_BINDINGS),
             protocol_name="RS-LoCoMo-Full-v38",
         )
+
+
+def test_readiness_gate_checks_the_prepared_protocol() -> None:
+    """The answer-stage readiness gate accepts own pins, rejects foreign ones."""
+    report = PipelineReadinessReport.model_validate(_complete_readiness_payload())
+    version_ids = {version.version_id for version in report.versions}
+    assert _readiness_matches_protocol(
+        readiness=report,
+        version_ids=version_ids,
+        repository_revision="a" * 40,
+        protocol_name="RS-LoCoMo-Full-v38",
+    )
+    assert not _readiness_matches_protocol(
+        readiness=report,
+        version_ids=version_ids,
+        repository_revision="a" * 40,
+        protocol_name="RS-LoCoMo-Full-v38-GLM",
+    )
+    glm_payload = _complete_readiness_payload()
+    glm_payload["model_bindings"] = dict(GLM_INGEST_MODEL_BINDINGS)
+    glm_report = PipelineReadinessReport.model_validate(glm_payload)
+    assert _readiness_matches_protocol(
+        readiness=glm_report,
+        version_ids=version_ids,
+        repository_revision="a" * 40,
+        protocol_name="RS-LoCoMo-Full-v38-GLM",
+    )
+    assert not _readiness_matches_protocol(
+        readiness=glm_report,
+        version_ids=version_ids,
+        repository_revision="a" * 40,
+        protocol_name="RS-LoCoMo-Full-v38",
+    )
 
 
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
