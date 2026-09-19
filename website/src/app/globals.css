@@ -193,6 +193,11 @@
   letter-spacing: -0.025em;
   line-height: 1.35;
   color: var(--ink);
+  text-align: center;
+}
+
+.prose :where(p.lead-statement + p.lead-statement) {
+  margin-top: 0.35em;
 }
 
 .prose :where(a) {
