@@ -9,6 +9,7 @@
 - [Concepts](https://remember.dev/docs/concepts): Core vocabulary: claims, relations, observations, bitemporal clocks, and validity windows.
 - [Architecture](https://remember.dev/docs/architecture): RememberStack architecture — durable store (PostgreSQL, object storage, git), what is derived, and how writes and reads relate.
 - [Getting Started](https://remember.dev/docs/getting-started): 2-minute quickstart with `uvx remember setup`.
+- [Choose your path](https://remember.dev/docs/getting-started/choose-your-path): App, Python, CLI, MCP, or HTTP — what each surface ships today.
 - [Agent Harnesses](https://remember.dev/docs/harnesses): Connecting Cursor, Claude Code, Claude Desktop, Codex, and Google Antigravity.
 - [Python SDK Reference](https://remember.dev/docs/reference/sdk): Official `remember` Python package documentation (`RememberClient`).
 - [Platform CLI Reference](https://remember.dev/docs/reference/cli): Comprehensive manual for `remember setup`, `doctor`, `whoami`, `balance`, `projects`, `ingest`, and `query`.
@@ -17,6 +18,8 @@
 - [Response Envelope](https://remember.dev/docs/retrieval/envelope): Envelope structure, freshness timestamps, typed negatives, and evidence bridges.
 - [Open Query Space](https://remember.dev/docs/retrieval/open-query): AST-sandboxed SQL and graph traversal over the `memory_v1` public schema.
 - [Docker Compose Quickstart](https://remember.dev/docs/deployment): Self-hosting the full engine, PostgreSQL 19 with SQL/PGQ, and MinIO storage.
+- [How Remember Cloud works](https://remember.dev/docs/cloud/how-it-works): Organization, project, deployment, and credential audiences.
+- [Managed vs self-hosted](https://remember.dev/docs/cloud/managed-vs-self-hosted): What the public CLI will and will not do on each backend.
 - [Remember Cloud Platform](https://remember.dev/docs/cloud/architecture): Dedicated private database pods, AST query sandbox safety, and spend lease protection.
 - [Remember Cloud CLI](https://remember.dev/docs/cloud/cli): Terminal workflows for authentication, project context, switching, and console links.
 - [Billing & Credits](https://remember.dev/docs/cloud/billing): Transparent usage-based credit model and spend lease mechanics.

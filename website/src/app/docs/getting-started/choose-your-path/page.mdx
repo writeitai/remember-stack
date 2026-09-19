@@ -1,0 +1,116 @@
+export const metadata = {
+  title: "Choose your path",
+  description:
+    "The five surfaces that ship today: App, Python, CLI, MCP, and HTTP — what each one actually does.",
+};
+
+# Choose your path
+
+Five ways to talk to Remember that ship in the current `remember` package and the Remember Cloud console URLs the CLI already prints. Pick one and stay there until you need another.
+
+The **engine** (self-host Compose or a Cloud data-plane host) is the same memory. The **console** is only the human/org layer.
+
+First run: [Getting started](/docs/getting-started) (`uvx remember setup`). Cloud vs Compose: [Managed vs self-hosted](/docs/cloud/managed-vs-self-hosted).
+
+---
+
+## 1. App (web console)
+
+**Use it for:** creating a Cloud project pod, billing, and team seats.
+
+**URL the CLI already names:** [https://remember.dev/app](https://remember.dev/app) — plus `/app/projects`, `/app/billing`, `/app/team`.
+
+The public `remember` CLI does **not** provision pods, invite members, or change a subscription. Those commands exit and print the matching console URL.
+
+The console is **not** documented here as a query/ingest API. Agents use MCP, CLI, Python, or HTTP against the data-plane URL. A full App screen inventory is [unknown](/docs/project-status) from this repository alone.
+
+---
+
+## 2. Python (`remember`)
+
+**Use it for:** scripts, services, and CI that call one deployment.
+
+```bash
+pip install remember
+```
+
+```python
+from remember import RememberClient
+
+# Defaults to http://127.0.0.1:8000 when unset.
+# Cloud: set REMEMBER_DATA_PLANE_URL to the deployment URL and REMEMBER_API_KEY
+# to the data-plane bearer (or pass api_url= / api_key=).
+client = RememberClient()
+result = client.ingest(
+    filename="roster.md",
+    content=b"# Team Roster\nAlice is the CFO of Acme as of 2026.\n",
+    mime="text/markdown",
+)
+client.wait_for_readiness([result.version_id], timeout=30)
+envelope = client.facts_context("Who is the CFO of Acme?")
+```
+
+`RememberClient` is an alias of `Client`. `MemoryClient` remains the engine-shaped name. None of these read `~/.config/remember/credentials.json`.
+
+Org-level reads (billing, deployments, spend gate) use `CloudClient` with `REMEMBER_CLOUD_TOKEN` / `REMEMBER_CLOUD_ORG` — a **control-plane** token, not a data-plane one. See [How Remember Cloud works](/docs/cloud/how-it-works).
+
+Open SQL: `client.open_query(...)` hits `POST /query/sql`. That is **supported on self-host**. On Cloud it is planned / dogfood, not claimed as generally available.
+
+Full method list: [Python SDK](/docs/reference/sdk).
+
+---
+
+## 3. CLI (`remember`)
+
+**Use it for:** login, harness setup, ingest from a file, and one-off operations.
+
+```bash
+uvx remember setup          # Cloud or --self-hosted; writes MCP harness files
+remember doctor
+remember login              # device grant; default audience is the deployment
+remember ingest roster.md
+remember operations run facts_context --arg query="Who is the CFO of Acme?"
+remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current LIMIT 10;"
+```
+
+Other verbs that exist on the public CLI: `logout`, `whoami`, `balance` / `billing`, `projects list`, `switch`, `mcp`. `projects create` and `members *` only print console URLs.
+
+`remember ops`, `review`, and `budget` are not public-client tools (`ops` is container-internal; the other two are retired).
+
+Manual: [CLI reference](/docs/reference/cli) and [Cloud CLI](/docs/cloud/cli).
+
+---
+
+## 4. MCP (`remember mcp`)
+
+**Use it for:** Cursor, Claude Code, Claude Desktop, Codex, and Antigravity.
+
+`remember setup` registers a stdio server that launches `remember mcp` (durable absolute launcher path; no secrets in git). The process loads Cloud credentials from `~/.config/remember/credentials.json` at runtime, so `remember switch` is picked up without rewriting harness files.
+
+Tools that ship when the host composes them:
+
+| Goal | Tools |
+| --- | --- |
+| Write | `ingest`, `pipeline_readiness` (omit with `remember mcp --read-only`) |
+| Recall / resolve | `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context` |
+| Open query | Seven infrastructure tools (`query_sql`, `explain_sql`, `describe_query_space`, …) **when** the open-query facade is composed |
+
+Remote MCP treats `GET /operations` **404** as “registry not mounted” and still lists write tools. Auth failures still fail `tools/list`. A missing `GET /query/space` only omits open-query tools.
+
+Harness files: [Agent harnesses](/docs/harnesses). Tool contract: [MCP reference](/docs/reference/mcp).
+
+---
+
+## 5. HTTP (data-plane API)
+
+**Use it for:** generated clients and anything that is not Python.
+
+Point `Authorization: Bearer …` at the deployment URL. The four assured operations are `GET /operations` and `POST /operations/{name}`. Ingest is `POST /ingest`. Readiness is `POST /readiness`.
+
+The machine-readable contract is [`openapi.json`](https://github.com/writeitai/remember-stack/blob/main/openapi.json): it describes a **fully composed self-host** query API, not a Cloud ingress allowlist. A deployment does not serve `/openapi.json` itself.
+
+Open-query routes (`/query/sql`, `/query/space`, saved-query run, …) are on that self-host surface. Cloud status for those routes: planned / dogfood — see [project status](/docs/project-status).
+
+When a spend lease is composed on the engine, these paths reserve spend: `POST /ingest`, GET/POST `/search/claims` and `/search/chunks`, `POST /operations/{name}`, `POST /query/sql` and `/query/sql/explain`, `GET /query/space` and `/query/space/search`, and `POST /query/saved/…/run`. That is engine metering, not a statement that Cloud only allows those paths.
+
+Wire contract: [API reference](/docs/reference/api).
