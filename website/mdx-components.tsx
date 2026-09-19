@@ -41,8 +41,25 @@ function MdxLead({
   );
 }
 
+function MdxLeadBlock({
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={["not-prose", "lead-statement-block", className]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
 // Required by @next/mdx. Global MDX element styling is handled by the
 // `prose` classes on the docs <article>.
 export function useMDXComponents(components: MDXComponents): MDXComponents {
-  return { ...components, a: MdxAnchor, Lead: MdxLead };
+  return { ...components, a: MdxAnchor, Lead: MdxLead, LeadBlock: MdxLeadBlock };
 }
