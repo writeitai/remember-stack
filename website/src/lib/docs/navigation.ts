@@ -25,6 +25,7 @@ export const docsNavigation: NavItem[] = [
     href: "/docs/getting-started",
     children: [
       { title: "Getting started", href: "/docs/getting-started" },
+      { title: "Choose your path", href: "/docs/getting-started/choose-your-path" },
       { title: "Agent harnesses", href: "/docs/harnesses" },
     ],
   },
@@ -59,8 +60,10 @@ export const docsNavigation: NavItem[] = [
   },
   {
     title: "Remember Cloud Platform",
-    href: "/docs/cloud/architecture",
+    href: "/docs/cloud/how-it-works",
     children: [
+      { title: "How Remember Cloud works", href: "/docs/cloud/how-it-works" },
+      { title: "Managed vs self-hosted", href: "/docs/cloud/managed-vs-self-hosted" },
       { title: "Cloud architecture", href: "/docs/cloud/architecture" },
       { title: "Cloud CLI", href: "/docs/cloud/cli" },
       { title: "Billing & credits", href: "/docs/cloud/billing" },

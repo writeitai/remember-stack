@@ -1,0 +1,78 @@
+export const metadata = {
+  title: "Managed vs self-hosted",
+  description:
+    "What Remember Cloud will and will not do compared with a self-hosted engine, verified from the remember client and current in-repo cloud docs.",
+};
+
+# Managed vs self-hosted
+
+RememberStack is the open-source engine in this repository. **Remember Cloud** is the managed product at [remember.dev](https://remember.dev): it runs that engine for you and adds the organization layer the library does not ship.
+
+The same `remember` package talks to both. You choose the backend when you run `remember setup` (`--cloud` or `--self-hosted`) or when you point the SDK at a URL.
+
+This page states only what the current `remember-stack` client and in-repo cloud docs can support. It does **not** paste an archived compatibility matrix as fact. A living cloud-gateway allow/deny list was not readable from `writeitai/ultimate-memory-cloud` in the environment that wrote this page — treat anything not listed here as [unknown / see project status](/docs/project-status).
+
+---
+
+## 1. The two backends
+
+| | Self-hosted engine | Remember Cloud |
+| --- | --- | --- |
+| What you run | Docker Compose from this repo; API at `http://localhost:8000` (SDK default `http://127.0.0.1:8000`) | A dedicated per-project pod; you do not run Postgres or workers |
+| Who is the tenant | One local deployment | An **organization** with **projects** and **deployments** |
+| How you authenticate | Optional Bearer BIND or signed credentials; Compose stays open by default | Browser device grant: `remember login` against `https://api.remember.dev` |
+| Where memory answers | The URL you configured | The data-plane hostname the token host advertises (`https://{hostname}`) |
+| Org / billing / seats | Not in the engine | Control plane + [web console](https://remember.dev/app) |
+| Open SQL (`/query/sql` and MCP `query_sql`) | Supported on the engine | Planned / operator dogfood — check [project status](/docs/project-status) and [cloud architecture](/docs/cloud/architecture) |
+
+How the pieces fit: [How Remember Cloud works](/docs/cloud/how-it-works). How to pick a client surface: [Choose your path](/docs/getting-started/choose-your-path).
+
+---
+
+## 2. Same client, different admin
+
+These data-plane commands are the same against Cloud or Compose, once you have a URL and a credential that that host accepts:
+
+- `remember ingest`
+- `remember operations list` / `run` (the four assured operations)
+- `remember query …` (including `query sql` — **supported on self-host**; Cloud availability is planned, not claimed here as generally available)
+- `remember mcp`
+- `remember doctor`
+
+Python `RememberClient` / `Client` calls the same HTTP paths. It reads `REMEMBER_DATA_PLANE_URL` and `REMEMBER_API_KEY` (and the older `REMEMBERSTACK_*` aliases). It does **not** read `~/.config/remember/credentials.json`.
+
+---
+
+## 3. What will not run as a managed Cloud CLI action
+
+These are refusals in the public `remember` CLI (D108), not a guessed HTTP denylist:
+
+| Command | What happens on Cloud | What happens on self-host |
+| --- | --- | --- |
+| `remember projects create <name>` | Exits 1 and prints [remember.dev/app/projects](https://remember.dev/app/projects). Pods are not provisioned from a data-plane session. | Exits 1. The engine is a single local project namespace. |
+| `remember members list` / `invite` | Exits 1 and prints [remember.dev/app/team](https://remember.dev/app/team). | Exits 1. Seats are a cloud service. |
+| `remember balance` without a control-plane token | Exits 1 and points at [remember.dev/app/billing](https://remember.dev/app/billing). With a control-plane token it GETs `/v1/orgs/{org_id}/billing/status` (or `/v1/billing/balance` if no org id is stored). | Exits 1. Credits are a cloud service. |
+| `remember switch` | Updates the active project in the local credential file. | Exits 1. There is nothing to switch. |
+| `remember ops` | Refused unless `REMEMBERSTACK_INTERNAL_OPS` is set (container-internal). Use `remember operations`. | Same public-client refusal. |
+| `remember review` / `remember budget` | Retired on the public CLI. Adjudication is autonomous; credits are `remember balance` or the console. | Same. |
+
+`remember projects list` on Cloud prefers a live control-plane GET (`/v1/orgs/{org_id}/deployments` or `/v1/deployments`) and otherwise prints locally cached projects. On self-host it prints one `local` / `self-hosted` row.
+
+---
+
+## 4. What this page does not claim
+
+- **A complete managed HTTP allow/deny.** The engine’s published [OpenAPI](/docs/reference/api) describes a fully composed **self-host** query API. Whether a Cloud ingress currently forwards every path — including `/query/*`, `/documents`, `/connectors`, graph helpers — is not verified here. Open query on Cloud is documented as planned / dogfood, not as generally available.
+- **Prices, dates, or a complimentary tier.** Current billing copy: planned public managed offering is a **paid Alpha with no complimentary tier**. Numbers live on [Billing](/docs/cloud/billing) only if they ship there.
+- **Helm / Kubernetes as a shipped self-host path.** What this repo documents for self-host is [Docker Compose](/docs/deployment).
+- **App screens beyond the console URLs the CLI already prints** (`/app`, `/app/projects`, `/app/billing`, `/app/team`).
+
+If a Cloud route 404s or a tool is missing from `remember mcp` `tools/list`, believe the running host and [project status](/docs/project-status).
+
+---
+
+## 5. When to use which
+
+**Self-host** when you want the full engine on your machine, zero Cloud billing, and the published self-host query surface (including open SQL). Start at [Docker Compose](/docs/deployment).
+
+**Remember Cloud** when you want a dedicated pod, device-grant login, organization billing, and team seats without running Postgres. Start at `remember login`, then [How Remember Cloud works](/docs/cloud/how-it-works).

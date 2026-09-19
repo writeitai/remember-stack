@@ -96,6 +96,7 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | --- | --- |
 | `/docs` | Mission landing — centralize information, expose it to agents, Start here |
 | `/docs/getting-started` | Install, first ingest, first assured queries |
+| `/docs/getting-started/choose-your-path` | App / Python / CLI / MCP / HTTP — what ships today |
 | `/docs/why` | What is a memory system — testimony vs truth, why agents that act need it |
 | `/docs/concepts` | Claims / facts / grains / two clocks / counting |
 | `/docs/architecture` | RememberStack architecture: durable store, what lives where, write vs read |
@@ -113,6 +114,8 @@ copy-pasteable surfaces); humans get the same pages with diagrams and plain lang
 | `/docs/troubleshooting` | Stuck work, empty retrieval, DLQ, readiness |
 | `/docs/evaluation` | Skill checks, golden sets, LoCoMo posture |
 | `/docs/project-status` | What exists vs designed |
+| `/docs/cloud/how-it-works` | Org / project / deployment, keys, memory at its own address |
+| `/docs/cloud/managed-vs-self-hosted` | Cloud vs Compose: CLI refusals and unverified gateway lists |
 | `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
 
 Diagrams for top pages live under `public/docs/diagrams/`.
