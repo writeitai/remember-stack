@@ -42,6 +42,9 @@ from pydantic import model_validator
 from pydantic import SecretBytes
 
 from rememberstack import __version__
+from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
+from rememberstack.model import AdjacentChunksRequest
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
@@ -498,6 +501,27 @@ def build_api(
             query=body.query,
             k=body.k,
             channel=body.channel,
+        )
+
+    @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
+    def adjacent_chunks(
+        chunk_id: UUID,
+        window: Annotated[
+            int, Query(ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW)
+        ] = 1,
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        return engine.adjacent_chunks(
+            deployment_id=deployment_id, chunk_id=chunk_id, window=window
+        )
+
+    @app.post("/chunks/adjacent", response_model=Envelope)
+    def post_adjacent_chunks(
+        body: Annotated[AdjacentChunksRequest, Body()],
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        return engine.adjacent_chunks(
+            deployment_id=deployment_id, chunk_id=body.chunk_id, window=body.window
         )
 
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
@@ -1426,6 +1450,17 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     # no ceiling can stop.
     if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
         return ("search", None)
+    if method == "POST" and normalized == "/chunks/adjacent":
+        return ("search", None)
+    if method == "GET":
+        parts = normalized.split("/")
+        if (
+            len(parts) == 4
+            and parts[1] == "chunks"
+            and parts[3] == "adjacent"
+            and parts[2]
+        ):
+            return ("search", None)
     if method == "POST" and normalized.startswith("/operations/"):
         name = normalized.removeprefix("/operations/")
         if name and "/" not in name:

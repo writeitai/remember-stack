@@ -45,6 +45,8 @@ from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.temporal import inclusive_request
+from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AggregateBucket
 from rememberstack.model import AggregateReport
 from rememberstack.model import AtTemporalScope
@@ -1455,6 +1457,69 @@ class QueryEngine:
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation="no live source chunks match the query",
                 workaround="broaden the query or inspect the source artifacts",
+            ),
+        )
+
+    @_with_surface(SurfaceCostKind.SEARCH)
+    def adjacent_chunks(
+        self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
+            raise ValueError(
+                f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
+            )
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            target = (
+                connection.execute(
+                    _TARGET_CHUNK_COORDINATES,
+                    {"deployment_id": deployment_id, "chunk_id": chunk_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if target is None:
+                return _envelope(
+                    grain=Grain.EVIDENCE,
+                    chunks=(),
+                    freshness=_freshness(),
+                    negative=Negative(
+                        kind=NegativeKind.UNKNOWN_ENTITY,
+                        explanation=f"chunk {chunk_id} does not exist or is not visible",
+                        workaround="verify the chunk_id from a prior search result",
+                    ),
+                )
+            rows = (
+                connection.execute(
+                    _ADJACENT_CHUNKS,
+                    {
+                        "deployment_id": deployment_id,
+                        "doc_id": target["doc_id"],
+                        "version_id": target["version_id"],
+                        "ordinal_start": target["ordinal"] - window,
+                        "ordinal_end": target["ordinal"] + window,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        adjacent_ids = tuple(UUID(str(row["chunk_id"])) for row in rows)
+        chunks, dropped, _ = self._confirm_chunks(
+            deployment_id=deployment_id, chunk_ids=adjacent_ids
+        )
+        return _envelope(
+            grain=Grain.EVIDENCE,
+            chunks=chunks,
+            freshness=_freshness(),
+            dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
+                workaround="verify that neighboring chunks are indexed in storage",
             ),
         )
 
@@ -4077,6 +4142,27 @@ _CONFIRM_CHUNKS_SCOPED = text(
     ) AS scope ON scope.coverage > 0
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
+    """
+)
+
+_TARGET_CHUNK_COORDINATES = text(
+    """
+    SELECT doc_id, version_id, ordinal
+    FROM memory_v1.chunks_live
+    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
+    """
+)
+
+_ADJACENT_CHUNKS = text(
+    """
+    SELECT chunk_id
+    FROM memory_v1.chunks_live
+    WHERE deployment_id = :deployment_id
+      AND doc_id = :doc_id
+      AND version_id = :version_id
+      AND ordinal >= :ordinal_start
+      AND ordinal <= :ordinal_end
+    ORDER BY ordinal ASC
     """
 )
 

@@ -13,6 +13,7 @@ from datetime import UTC
 from enum import StrEnum
 from typing import Annotated
 from typing import Any
+from typing import Final
 from typing import Literal
 from typing import Self
 from typing import TypeAlias
@@ -281,6 +282,18 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4096)
     k: int = Field(default=10, ge=1, le=400)
     channel: Literal["semantic", "bm25"] = "semantic"
+
+
+ADJACENT_CHUNKS_MIN_WINDOW: Final = 1
+ADJACENT_CHUNKS_MAX_WINDOW: Final = 2
+
+
+class AdjacentChunksRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_id: UUID
+    window: int = Field(
+        default=1, ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW
+    )
 
 
 class ReadinessRequirements(BaseModel):

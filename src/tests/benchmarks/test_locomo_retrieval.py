@@ -472,6 +472,12 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
                 "valid_at": datetime(2026, 8, 7, tzinfo=timezone.utc).isoformat(),
             },
         )
+        adjacent = dispatch_answer_tool(
+            client=client,
+            p3=None,
+            name="adjacent_chunks",
+            arguments={"chunk_id": str(_ENTITY_ID), "window": 1},
+        )
     finally:
         raw.close()
 
@@ -479,7 +485,8 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
     assert isinstance(transcript, Envelope)
     assert isinstance(observations, Envelope)
     assert isinstance(relations, Envelope)
-    assert len(answer_tool_catalog()) == 21
+    assert isinstance(adjacent, Envelope)
+    assert len(answer_tool_catalog()) == 22
     assert observed[0] == (
         "POST",
         "/query/sql",
@@ -488,6 +495,7 @@ def test_complete_catalog_dispatches_open_query_and_direct_primitives() -> None:
     assert observed[1][:2] == ("GET", f"/transcript/relation/{_RELATION_ID}")
     assert observed[2][:2] == ("GET", "/lookup/observations")
     assert observed[3][:2] == ("GET", "/lookup/relations")
+    assert observed[4][:2] == ("GET", f"/chunks/{_ENTITY_ID}/adjacent")
 
 
 def test_assured_dispatch_omits_an_empty_optional_entity_scope() -> None:

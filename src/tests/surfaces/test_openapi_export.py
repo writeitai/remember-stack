@@ -108,6 +108,7 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 #: caught: not by the machine, but by the edit being visible.
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
+        ("GET", "/chunks/{chunk_id}/adjacent"),
         ("GET", "/deployment"),
         ("GET", "/documents"),
         ("GET", "/hydrate/relation/{relation_id}"),
@@ -122,6 +123,7 @@ _SURFACE: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/search/chunks"),
         ("GET", "/search/claims"),
         ("GET", "/transcript/relation/{relation_id}"),
+        ("POST", "/chunks/adjacent"),
         ("POST", "/graph/citation-path"),
         ("POST", "/graph/neighborhood"),
         ("POST", "/graph/path"),
@@ -261,7 +263,12 @@ def test_the_schema_carries_the_shapes_those_routes_answer_with() -> None:
     door.
     """
     schemas = _exported().get("components", {}).get("schemas", {})
-    for name in ("DocumentPage", "DocumentSummary", "DocumentVersionSummary"):
+    for name in (
+        "DocumentPage",
+        "DocumentSummary",
+        "DocumentVersionSummary",
+        "AdjacentChunksRequest",
+    ):
         assert name in schemas, f"{name} is missing from the published schema"
     assert "SearchRequest" in schemas, (
         "SearchRequest is missing; the POST search bodies would generate untyped"

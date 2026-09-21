@@ -164,6 +164,13 @@ Executes an AST-sandboxed, read-only SQL query against the `memory_v1` view sche
 remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current WHERE predicate = 'works_at' LIMIT 10;"
 ```
 
+### `remember query adjacent-chunks <chunk_id> [--window 1]`
+Fetches surrounding source chunks in document order within a symmetric window (1–2, default 1) around a target chunk:
+
+```bash
+remember query adjacent-chunks 57000000-0000-0000-0000-000000000001 --window 1
+```
+
 ### `remember mcp`
 Launches the Model Context Protocol stdio server for AI coding agents:
 

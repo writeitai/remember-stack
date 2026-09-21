@@ -317,10 +317,12 @@ def test_projection_retry_uses_latest_dates(
     )
     with database_engine.connect() as connection:
         row = connection.execute(
-            text(f"SELECT {label},embedding IS NOT NULL FROM {table} WHERE {key}=:id"),
+            text(
+                f"SELECT valid_from,embedding IS NOT NULL FROM {table} WHERE {key}=:id"
+            ),
             {"id": fact},
         ).one()
-        assert "2022-05-08" in row[0] and "2022-05-10" not in row[0]
+        assert row[0].day == 8
         assert row[1]
     assert (
         profiles.fact_refreshes

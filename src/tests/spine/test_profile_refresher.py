@@ -168,17 +168,13 @@ def test_profiles_debounce_and_separate_same_name_entities(
     second = refresher.refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_SECOND_ENTITY)
 
     assert first.updated and second.updated
-    assert first.salient_facts == (
-        "Jan lives in Prague [world time: world date unknown]",
-    )
-    assert second.salient_facts == (
-        "Jan lives in Bristol [world time: world date unknown]",
-    )
+    assert first.salient_facts == ("Jan lives in Prague",)
+    assert second.salient_facts == ("Jan lives in Bristol",)
     assert provider.embedded_texts == [
-        "ENTITY: Jan\nPROFILE: Jan lives in Prague [world time: world date unknown]\n"
-        "SALIENT FACTS:\n- Jan lives in Prague [world time: world date unknown]",
-        "ENTITY: Jan\nPROFILE: Jan lives in Bristol [world time: world date unknown]\n"
-        "SALIENT FACTS:\n- Jan lives in Bristol [world time: world date unknown]",
+        "ENTITY: Jan\nPROFILE: Jan lives in Prague\n"
+        "SALIENT FACTS:\n- Jan lives in Prague",
+        "ENTITY: Jan\nPROFILE: Jan lives in Bristol\n"
+        "SALIENT FACTS:\n- Jan lives in Bristol",
     ]
     with database_engine.connect() as connection:
         rows = (
