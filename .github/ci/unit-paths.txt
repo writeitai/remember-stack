@@ -69,6 +69,7 @@ src/tests/spine/test_jev_adjudication.py
 src/tests/spine/test_profile_convergence.py
 src/tests/spine/test_query_space_manifest.py
 src/tests/spine/test_rank_embed_cache.py
+src/tests/surfaces/test_adjacent_chunks.py
 src/tests/surfaces/test_assured_operation_authorities.py
 src/tests/surfaces/test_browser_origin_cors.py
 src/tests/surfaces/test_cli_platform.py
