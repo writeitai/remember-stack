@@ -83,7 +83,7 @@ class _NullSearchIndex:
         """Hydrate chunk bodies for chunk evidence tests."""
         return {
             cid: P1ChunkText(
-                chunk_id=UUID(cid), section_role=None, indexed_text=f"Text for {cid}"
+                chunk_id=UUID(cid), section_role="body", indexed_text=f"Text for {cid}"
             )
             for cid in chunk_ids
         }
