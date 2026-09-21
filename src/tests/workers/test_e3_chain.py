@@ -859,7 +859,7 @@ def test_p1_channels_carry_claims_and_labeled_facts(rig: _E3Rig) -> None:
     assert stamped == 2
     assert (
         relation["fact_label"]
-        == "Alice Novak works for Acme [world time: world date unknown]"
+        == "Alice Novak works for Acme"
     )
     assert relation["fact_label_version"] is not None
     assert relation["embedded"] is True

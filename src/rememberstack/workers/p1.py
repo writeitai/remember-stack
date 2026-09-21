@@ -18,7 +18,6 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core.fact_label import deterministic_fact_label
-from rememberstack.core.fact_windows import describe_fact_window
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import NonRetryableHandlerError
@@ -40,7 +39,7 @@ from rememberstack.workers.base import HandlerOutcome
 P1_EMBED_CLAIMS_VERSION: Final = "p1-embed-claims-2026.07"
 """The claim-embed stage's component version (the model rides settings)."""
 
-FACT_LABEL_VERSION: Final = "p1-fact-label-2026.09:chosen-window"
+FACT_LABEL_VERSION: Final = "p1-fact-label-2026.09b:clean-temporal"
 """Fact-label generation: deterministic predicate surface templates (S4/S1)."""
 
 
@@ -205,7 +204,6 @@ class LabelFactsHandler:
                     valid_until=relation.valid_until,
                     valid_precision=relation.valid_precision,
                 )
-                label = f"{label} [world time: {describe_fact_window(window=window)}]"
                 self._facts.record_fact_label(
                     relation_id=relation.relation_id,
                     label=label,
@@ -247,10 +245,10 @@ class LabelFactsHandler:
                     valid_until=observation.valid_until,
                     valid_precision=observation.valid_precision,
                 )
-                label = f"{observation.obs_label} [world time: {describe_fact_window(window=window)}]"
+                label = observation.obs_label.strip()
                 self._facts.record_observation_label(
                     observation_id=observation.observation_id,
-                    statement=observation.obs_label,
+                    statement=label,
                     label=label,
                     window=window,
                 )

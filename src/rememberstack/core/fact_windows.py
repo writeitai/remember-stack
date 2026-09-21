@@ -72,31 +72,37 @@ def fact_match_history(
     return TemporalMatch.CONFIRMED if window.is_complete else TemporalMatch.POSSIBLE
 
 
+def _format_boundary(value: datetime, precision: ClaimValidPrecision) -> str:
+    """Format a boundary timestamp matching its declared precision without inventing noise."""
+    if precision == ClaimValidPrecision.YEAR:
+        return str(value.year)
+    if precision == ClaimValidPrecision.QUARTER:
+        return f"{value.year} Q{(value.month - 1) // 3 + 1}"
+    if precision == ClaimValidPrecision.MONTH:
+        return value.strftime("%Y-%m")
+    if precision in (ClaimValidPrecision.DAY, ClaimValidPrecision.OPEN):
+        return value.date().isoformat()
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def describe_fact_window(*, window: FactWindow) -> str:
     """Render dated historical prose whose meaning does not depend on today's clock."""
     from datetime import timedelta
-
-    def boundary(value: datetime) -> str:
-        """Format a known unit without inventing a finer date precision."""
-        precision = window.valid_precision
-        if precision == ClaimValidPrecision.YEAR:
-            return str(value.year)
-        if precision == ClaimValidPrecision.QUARTER:
-            return f"{value.year} Q{(value.month - 1) // 3 + 1}"
-        if precision == ClaimValidPrecision.MONTH:
-            return value.strftime("%Y-%m")
-        if precision == ClaimValidPrecision.DAY:
-            return value.date().isoformat()
-        return value.isoformat()
 
     if window.valid_precision == ClaimValidPrecision.UNKNOWN:
         return "world date unknown"
     if window.valid_precision == ClaimValidPrecision.OPEN:
         assert window.valid_from is not None
-        return f"since {boundary(window.valid_from)}; no end recorded"
-    start = boundary(window.valid_from) if window.valid_from is not None else None
+        return f"since {_format_boundary(window.valid_from, window.valid_precision)}; no end recorded"
+    start = (
+        _format_boundary(window.valid_from, window.valid_precision)
+        if window.valid_from is not None
+        else None
+    )
     end = (
-        boundary(window.valid_until - timedelta(microseconds=1))
+        _format_boundary(
+            window.valid_until - timedelta(microseconds=1), window.valid_precision
+        )
         if window.valid_until is not None
         else None
     )
@@ -108,3 +114,36 @@ def describe_fact_window(*, window: FactWindow) -> str:
         return f"start {start}; end unknown ({window.valid_precision.value} precision)"
     period = start if start == end else f"{start} through {end}"
     return f"{period} ({window.valid_precision.value} precision)"
+
+
+def format_fact_temporal_annotation(*, window: FactWindow) -> str:
+    """Render canonical prompt serialization for dated facts: e.g. ' (valid: 2022-01-21)'.
+
+    If the date is unknown, returns empty string so undated facts remain clean prose.
+    """
+    if window.valid_precision == ClaimValidPrecision.UNKNOWN:
+        return ""
+    from datetime import timedelta
+
+    if window.valid_precision == ClaimValidPrecision.OPEN:
+        assert window.valid_from is not None
+        return f" (valid: since {_format_boundary(window.valid_from, window.valid_precision)}, ongoing)"
+    start = (
+        _format_boundary(window.valid_from, window.valid_precision)
+        if window.valid_from is not None
+        else None
+    )
+    end = (
+        _format_boundary(
+            window.valid_until - timedelta(microseconds=1), window.valid_precision
+        )
+        if window.valid_until is not None
+        else None
+    )
+    if start is None:
+        return f" (valid: through {end})"
+    if end is None:
+        return f" (valid: from {start})"
+    period = start if start == end else f"{start} through {end}"
+    return f" (valid: {period})"
+

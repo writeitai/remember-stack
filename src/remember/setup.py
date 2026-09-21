@@ -37,8 +37,15 @@ Before making architectural decisions, refactoring core subsystems, or answering
 questions about past codebase designs, consult Remember bitemporal memory via the
 available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`).
 
-- Use `facts_context` or `combined_context` to retrieve attested facts and evidence.
-- Use `query_sql` to run sandboxed SQL against `facts_current` or `graph_edges_current`.
+## Retrieval Discipline
+1. **Resolve entities first:** Use `resolve_entity` to obtain canonical entity IDs for people, projects, modules, or concepts.
+2. **Query facts first:** Use `facts_context` (with `time.mode="history"` for historical context or achievements) as the primary authority for adjudicated truth.
+3. **Fall back to claims only when needed:** Use `claims_and_sources_context` if facts are missing or verbatim source text is required.
+4. **Use `query_sql`** to run sandboxed SQL against `facts_current` or `graph_edges_current`.
+
+## Temporal Semantics
+- `valid_from` / `valid_until`: When the fact was true in the real world. Granularity is given by `valid_precision` (`instant`, `day`, `month`, `quarter`, `year`, `open`, `unknown`). `open` indicates an ongoing state with a known start date and no recorded end date.
+- `asserted_at`: Strictly when the source made the statement (message sent / page published). Unresolved relative phrases in claim text (e.g. "last week", "yesterday") are relative to `asserted_at`. Never confuse speech time (`asserted_at`) with event validity (`valid_from`/`valid_until`).
 - Check past decisions and bitemporal validity before asserting assumptions.
 - Never guess historical rationale when it is recorded in Remember.
 """
@@ -54,10 +61,28 @@ You have access to Remember, an open bitemporal memory infrastructure for AI age
 Use the Remember MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`, `describe_query_space`)
 to query past system decisions, architectural records, and entity-relationship knowledge graphs.
 
-## Core Guidelines
-1. Query attested facts using `facts_context` or `query_sql`.
-2. Inspect bitemporal validity ranges (`valid_at`, `believed_at`) when examining changes.
-3. Trust attested records over unverified guesswork.
+## Preferred Retrieval Flow
+1. **Entity resolution first (`resolve_entity`)**: When an inquiry involves a named person, organization, module, file, or concept, resolve it first with `resolve_entity` to obtain the canonical `entity_id`.
+2. **Fact layer first (`facts_context`)**: Query `facts_context` (anchored by `entity_ids` when available, or by semantic text query) as the primary authority for established facts, biography, attributes, relationships, and history.
+   - Use `time.mode="history"` for biography, achievements, and "has ever" questions so historical and completed facts remain visible.
+   - Use `time.mode="current"` or `"at"` for what holds at an instant, and `"overlap"` for a requested interval.
+3. **Sources fallback (`claims_and_sources_context`)**: Only fall back to `claims_and_sources_context` if `facts_context` lacks the answer, or if the inquiry specifically demands verbatim quotes, speaker dialogue details, or raw source context.
+4. **Combined context (`combined_context`)**: Use when both adjudicated facts and source claims are needed side by side.
+
+## Dates and Temporal Semantics
+Do not collapse distinct temporal dimensions into a single generic date:
+
+- **Facts carry `validity` with `valid_from`, `valid_until`, and `valid_precision`:**
+  - `valid_from` / `valid_until`: Real-world event or state validity ("When did this happen or hold true in the world?"). Answer event-time questions using these bounds.
+  - `valid_precision`: The granularity of the validity window (`instant`, `day`, `month`, `quarter`, `year`, `open`, or `unknown`).
+  - `open`: Represents an ongoing state with a known start date and no recorded end date (still true/current).
+  - `unknown`: No usable real-world date was given in the source. Undated facts are clean prose without temporal bracket annotations.
+- **Evidence rows (claims) carry `asserted_at`:**
+  - `asserted_at`: Strictly **when the source made this statement** (when the message was sent, conversation occurred, or page was published).
+  - Unresolved relative phrases: If claim text still contains a relative phrase (*"last week"*, *"yesterday"*, *"two months ago"*), evaluate it relative to that row's `asserted_at`.
+  - **Never confuse speech time (`asserted_at`) with real-world event validity (`valid_from` / `valid_until`).**
+- **System transaction timestamps (`ingested_at`, `invalidated_at`):**
+  - Record when the database learned or superseded the record. Never present system ingestion time as an event or conversation date.
 """
 
 

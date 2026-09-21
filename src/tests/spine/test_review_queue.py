@@ -391,12 +391,12 @@ def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
     original_summary = profiles[survivor][1]
     assert isinstance(original_summary, str)
     assert set(original_summary.split("; ")) == {
-        "R. Klein works at Acme [world time: world date unknown]",
-        "Robert lives in Prague [world time: world date unknown]",
+        "R. Klein works at Acme",
+        "Robert lives in Prague",
     }
     assert profiles[absorbed] == (
         "merged",
-        "R. Klein works at Acme [world time: world date unknown]",
+        "R. Klein works at Acme",
         5,
     )
 
@@ -494,7 +494,7 @@ def test_merge_resolves_a_stale_survivor_to_its_live_terminal_root(
     assert roots[queued_survivor] == live_root
     assert roots[absorbed] == live_root
     assert roots[live_root] == live_root
-    assert summary == "Target evidence [world time: world date unknown]"
+    assert summary == "Target evidence"
 
 
 def test_merge_rejects_a_target_absorbed_by_another_cluster(
@@ -814,7 +814,7 @@ def test_terminal_review_verdicts_rebuild_then_clear_published_profiles(
                 {"deployment": _DEPLOYMENT_ID},
             ).scalars()
         )
-    assert restored == ("Alice works for Acme [world time: world date unknown]",) * 2
+    assert restored == ("Alice works for Acme",) * 2
 
     invalidate_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
