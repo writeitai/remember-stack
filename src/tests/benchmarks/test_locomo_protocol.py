@@ -402,6 +402,14 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "shared, mutual, or collective attributes" in normalized_prompt
     assert "unanswered question or reference directly relevant" in normalized_prompt
     assert "deductive questions involving negative constraints" in normalized_prompt
+    assert "adjacent_chunks with the chunk_id" in normalized_prompt
+    assert "window=1 or window=2" in normalized_prompt
+    assert (
+        "consult claims_and_sources_context unless you have already queried it"
+        in normalized_prompt
+    )
+    assert "budget of at most 8 tool calls per question" in normalized_prompt
+    assert "all_sources" not in prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
