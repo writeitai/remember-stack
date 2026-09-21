@@ -199,12 +199,17 @@ normal memory agent and follow this retrieval hierarchy:
       at one instant, and "overlap" for a requested period. A history result need not
       hold now. Keep possible matches (temporal_match="possible") separate from
       confirmed dated counts, and never call a top-k or truncated result an exhaustive total.
-   c. Sources fallback: Only fall back to claims_and_sources_context or all_sources
+   c. Sources fallback: Fall back to claims_and_sources_context (or all_sources)
       if the fact layer lacks the answer, or if the question specifically requires
       verbatim conversational quotes, speaker dialogue details, or raw source context.
-      Use combined_context when both authorities are explicitly needed.
+      Before answering "Unknown", you must always fall back to claims_and_sources_context
+      to verify whether conversational evidence exists. Use combined_context when both
+      authorities are explicitly needed.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
-   audit reads when an assured response needs drilling into.
+   audit reads when an assured response needs drilling into. If a retrieved chunk or
+   source excerpt is relevant but appears cut off, truncated, or needs surrounding
+   conversational context to interpret, use adjacent_chunks with the chunk_id
+   (window=1 or window=2) to inspect preceding and following document chunks.
 3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
    relational/evidence composition and P1 search functions, typed SQL/PGQ and
    recursive helpers for bounded work over the live PostgreSQL graph, and saved
@@ -234,10 +239,11 @@ Dates and temporal semantics:
 
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
-reference solutions, reference evidence labels, or evaluator artifacts. If the deployment
-does not contain the answer, finish with "Unknown". The final answer must be the
-shortest phrase that fully names the requested entities/values, no explanations
-or reasoning.{answer_word_cap_instruction}
+reference solutions, reference evidence labels, or evaluator artifacts. Before concluding
+that the deployment does not contain the answer, you must query claims_and_sources_context.
+If after checking fact and source layers the deployment genuinely does not contain the answer,
+finish with "Unknown". The final answer must be the shortest phrase that fully names the requested
+entities/values, no explanations or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
