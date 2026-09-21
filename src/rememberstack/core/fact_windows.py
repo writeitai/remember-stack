@@ -146,4 +146,3 @@ def format_fact_temporal_annotation(*, window: FactWindow) -> str:
         return f" (valid: from {start})"
     period = start if start == end else f"{start} through {end}"
     return f" (valid: {period})"
-

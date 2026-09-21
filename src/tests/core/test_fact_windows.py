@@ -226,10 +226,12 @@ def test_format_fact_temporal_annotation_all_precisions() -> None:
 
     # Open precision -> clean YYYY-MM-DD date without timestamp noise
     open_win = FactWindow(
-        valid_from=_at("2022-05-12T00:00:00"),
-        valid_precision=ClaimValidPrecision.OPEN,
+        valid_from=_at("2022-05-12T00:00:00"), valid_precision=ClaimValidPrecision.OPEN
     )
-    assert format_fact_temporal_annotation(window=open_win) == " (valid: since 2022-05-12, ongoing)"
+    assert (
+        format_fact_temporal_annotation(window=open_win)
+        == " (valid: since 2022-05-12, ongoing)"
+    )
 
     # Single day
     single_day = FactWindow(
@@ -245,7 +247,10 @@ def test_format_fact_temporal_annotation_all_precisions() -> None:
         valid_until=_at("2022-05-16T00:00:00"),
         valid_precision=ClaimValidPrecision.DAY,
     )
-    assert format_fact_temporal_annotation(window=day_range) == " (valid: 2022-05-10 through 2022-05-15)"
+    assert (
+        format_fact_temporal_annotation(window=day_range)
+        == " (valid: 2022-05-10 through 2022-05-15)"
+    )
 
     # Month
     month_win = FactWindow(
@@ -277,7 +282,10 @@ def test_format_fact_temporal_annotation_all_precisions() -> None:
         valid_until=_at("2023-01-01T00:00:00"),
         valid_precision=ClaimValidPrecision.YEAR,
     )
-    assert format_fact_temporal_annotation(window=year_range) == " (valid: 2019 through 2022)"
+    assert (
+        format_fact_temporal_annotation(window=year_range)
+        == " (valid: 2019 through 2022)"
+    )
 
     # Unbounded start
     unbounded_start = FactWindow(
@@ -285,14 +293,17 @@ def test_format_fact_temporal_annotation_all_precisions() -> None:
         valid_until=_at("2023-01-01T00:00:00"),
         valid_precision=ClaimValidPrecision.YEAR,
     )
-    assert format_fact_temporal_annotation(window=unbounded_start) == " (valid: through 2022)"
+    assert (
+        format_fact_temporal_annotation(window=unbounded_start)
+        == " (valid: through 2022)"
+    )
 
     # Instant (with Z suffix)
     instant = _at("2022-05-10T14:30:00")
     instant_win = fact_window_from_raw(
-        valid_from=instant,
-        valid_until=instant,
-        precision=ClaimValidPrecision.INSTANT,
+        valid_from=instant, valid_until=instant, precision=ClaimValidPrecision.INSTANT
     )
-    assert format_fact_temporal_annotation(window=instant_win) == " (valid: 2022-05-10T14:30:00Z)"
-
+    assert (
+        format_fact_temporal_annotation(window=instant_win)
+        == " (valid: 2022-05-10T14:30:00Z)"
+    )

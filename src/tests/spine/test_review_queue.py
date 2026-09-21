@@ -394,11 +394,7 @@ def test_merge_rebuilds_survivor_from_the_full_redirect_closure(
         "R. Klein works at Acme",
         "Robert lives in Prague",
     }
-    assert profiles[absorbed] == (
-        "merged",
-        "R. Klein works at Acme",
-        5,
-    )
+    assert profiles[absorbed] == ("merged", "R. Klein works at Acme", 5)
 
     # A lost response after the database verdict but before profile refresh is
     # repairable by the identical retry without minting another merge event.

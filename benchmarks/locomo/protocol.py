@@ -573,10 +573,7 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
                 "ranking": True,
                 "facts": {
                     "__all__": {
-                        "validity": {
-                            "ingested_at": True,
-                            "invalidated_at": True,
-                        }
+                        "validity": {"ingested_at": True, "invalidated_at": True}
                     }
                 },
             },
@@ -591,10 +588,7 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
                     "ranking": True,
                     "facts": {
                         "__all__": {
-                            "validity": {
-                                "ingested_at": True,
-                                "invalidated_at": True,
-                            }
+                            "validity": {"ingested_at": True, "invalidated_at": True}
                         }
                     },
                 },
