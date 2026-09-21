@@ -14,7 +14,9 @@ import pytest
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterProviderError
 from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters.generation_recorder import GenerationRecord
 from rememberstack.adapters.openrouter import _strict_json_schema
+from rememberstack.adapters.openrouter import _throttle_wait_s
 from rememberstack.adapters.openrouter import _usage
 from rememberstack.adapters.openrouter import StrictSchemaError
 from rememberstack.model import ClaimifyResponse
@@ -1151,14 +1153,18 @@ def test_generation_forwards_chat_provider_allowlist(
             ],
         )
     )
-    observed: dict[str, object] = {}
+    seen: list[dict[str, object]] = []
 
-    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
-        assert path == "/chat/completions"
-        observed.update(payload)
-        return _completion(content='{"answer":"Prague"}')
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=_completion(content='{"answer":"Prague"}'))
 
-    monkeypatch.setattr(provider, "_post", post)
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", lambda _s: None)
     try:
         response = provider.generate(
             request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
@@ -1167,9 +1173,10 @@ def test_generation_forwards_chat_provider_allowlist(
     finally:
         provider._client.close()
 
-    assert observed["provider"] == {
+    assert seen[0]["provider"] == {
         "only": ["deepinfra", "relace", "wafer", "streamlake", "gmicloud", "reka"],
         "allow_fallbacks": False,
+        "data_collection": "deny",
     }
     assert response.output.answer == "Prague"
 
@@ -1347,6 +1354,28 @@ def test_invalid_completion_capture_is_explicit_private_and_inspectable(
     assert artifact["content_length"] == 22
     assert len(artifact["content_sha256"]) == 64
     assert stat.S_IMODE(captures[0].stat().st_mode) == 0o600
+
+
+def test_completion_decodes_leading_json_when_trailing_content_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the model emits concatenated JSON objects, the primary object decodes cleanly."""
+    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="test-key"))
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return _completion(
+            content='{"answer":"first"}\n\n{"answer":"fallback"}', finish="stop"
+        )
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+            response_type=_Answer,
+        )
+        assert response.output.answer == "first"
+    finally:
+        provider._client.close()
 
 
 def test_invalid_completion_capture_handles_unpaired_unicode_surrogate(
@@ -1536,3 +1565,444 @@ def test_strict_schema_preserves_temporal_enum_descriptions_without_ref_siblings
         "year",
         "open",
     ]
+
+
+class _FakeRecorder:
+    """Collect generation records without any network sink."""
+
+    def __init__(self) -> None:
+        """Start with an empty record list."""
+        self.records: list[GenerationRecord] = []
+
+    def record(self, *, record: GenerationRecord) -> None:
+        """Append one generation record."""
+        self.records.append(record)
+
+    def flush(self) -> None:
+        """No-op flush for the in-memory sink."""
+        return None
+
+
+def _overload_response(*, provider_name: str = "DeepInfra") -> httpx.Response:
+    """One upstream-overloaded 429 shaped like the R14 failures."""
+    return httpx.Response(
+        429,
+        json={
+            "error": {
+                "message": "Provider returned error",
+                "code": 429,
+                "metadata": {
+                    "provider_name": provider_name,
+                    "provider_error_code": "engine_overloaded",
+                },
+            }
+        },
+    )
+
+
+def _mock_chat_provider(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: OpenRouterSettings,
+    responses: list[httpx.Response],
+    recorder: _FakeRecorder | None = None,
+) -> tuple[OpenRouterModelProvider, list[dict[str, object]], list[float]]:
+    """Bind a provider to scripted chat responses, capturing payloads and sleeps."""
+    provider = OpenRouterModelProvider(settings=settings, recorder=recorder)
+    seen: list[dict[str, object]] = []
+    sleeps: list[float] = []
+    queue = list(responses)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            seen.append(json.loads(request.content.decode("utf-8")))
+        return queue.pop(0)
+
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://openrouter.invalid/api/v1",
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setattr("rememberstack.adapters.openrouter.time.sleep", sleeps.append)
+    return provider, seen, sleeps
+
+
+def test_chat_provider_order_sends_ordered_fallback_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ordered shortlist routes with fallbacks and denies data collection."""
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace", "wafer"]
+        ),
+        responses=[
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}'))
+        ],
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert seen[0]["provider"] == {
+        "order": ["deepinfra", "relace", "wafer"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
+    assert response.output.answer == "Prague"
+
+
+def test_chat_provider_order_and_only_are_mutually_exclusive() -> None:
+    """One chat routing wins; two configured lists fail fast at startup."""
+    with pytest.raises(ValidationError):
+        OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_only=["deepinfra"],
+            chat_provider_order=["relace"],
+        )
+
+
+def test_chat_provider_order_parses_comma_separated_env_string() -> None:
+    """Deployment env configures the ordered shortlist without code changes."""
+    settings = OpenRouterSettings.model_validate(
+        {"api_key": "test-key", "chat_provider_order": "deepinfra,relace,wafer"}
+    )
+    assert settings.chat_provider_order == ["deepinfra", "relace", "wafer"]
+
+
+def test_zdr_flag_adds_zero_retention_restriction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ZDR flag restricts routing without changing the allowlist."""
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_only=["deepinfra"], zdr=True
+        ),
+        responses=[
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}'))
+        ],
+    )
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert seen[0]["provider"] == {
+        "only": ["deepinfra"],
+        "allow_fallbacks": False,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+
+
+def test_rotation_retires_overloaded_slug_and_records_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 retires its slug, the survivor serves, both attempts are recorded."""
+    recorder = _FakeRecorder()
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[
+            _overload_response(),
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}')),
+        ],
+        recorder=recorder,
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert response.output.answer == "Prague"
+    assert len(seen) == 2
+    assert seen[1]["provider"] == {
+        "order": ["relace"],
+        "allow_fallbacks": True,
+        "data_collection": "deny",
+    }
+    assert len(sleeps) == 1
+    assert [record.outcome for record in recorder.records] == [
+        "transport_error",
+        "succeeded",
+    ]
+    assert recorder.records[0].provider_host == "deepinfra"
+    assert recorder.records[1].provider_host == "relace"
+
+
+def test_throttle_budget_bounds_rotation_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exhausting the throttle budget raises without touching every slug."""
+    recorder = _FakeRecorder()
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_order=["deepinfra", "relace", "wafer"],
+            chat_throttle_retries=1,
+        ),
+        responses=[_overload_response(), _overload_response()],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError, match="returned 429"):
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert len(seen) == 2
+    assert len(recorder.records) == 2
+    assert recorder.records[0].outcome == "transport_error"
+    assert recorder.records[0].provider_host == "deepinfra"
+    assert recorder.records[1].outcome == "transport_error"
+    assert recorder.records[1].provider_host == "relace"
+
+
+def test_single_slug_exhaustion_raises_last_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The last survivor retries in place until the budget runs out, once each."""
+    recorder = _FakeRecorder()
+    provider, seen, sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key",
+            chat_provider_order=["deepinfra"],
+            chat_throttle_retries=5,
+        ),
+        responses=[_overload_response() for _ in range(6)],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError, match="returned 429"):
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert len(seen) == 6
+    assert [payload["provider"] for payload in seen] == [
+        {"order": ["deepinfra"], "allow_fallbacks": True, "data_collection": "deny"}
+    ] * 6
+    assert len(recorder.records) == 6
+    assert {record.provider_host for record in recorder.records} == {"deepinfra"}
+    assert len(sleeps) == 5
+
+
+def test_single_slug_recovers_on_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One configured host still spends the throttle budget before failing."""
+    recorder = _FakeRecorder()
+    provider, seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra"]
+        ),
+        responses=[
+            _overload_response(),
+            httpx.Response(200, json=_completion(content='{"answer":"Prague"}')),
+        ],
+        recorder=recorder,
+    )
+    try:
+        response = provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert response.output.answer == "Prague"
+    assert len(seen) == 2
+    assert [record.outcome for record in recorder.records] == [
+        "transport_error",
+        "succeeded",
+    ]
+
+
+def test_host_prefers_response_provider_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The response-body provider wins over the targeted slug, with no lookup."""
+    recorder = _FakeRecorder()
+    body = _completion(content='{"answer":"Prague"}')
+    body["provider"] = "novita"
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[httpx.Response(200, json=body)],
+        recorder=recorder,
+    )
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].provider_host == "novita"
+
+
+def test_host_falls_back_to_generation_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a response field, the generation id resolves the host."""
+    recorder = _FakeRecorder()
+    body = _completion(content='{"answer":"Prague"}')
+    body["id"] = "gen-test-123"
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(api_key="test-key"),
+        responses=[httpx.Response(200, json={"provider_name": "relace"})],
+        recorder=recorder,
+    )
+
+    def handle_post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        assert path == "/chat/completions"
+        return body
+
+    monkeypatch.setattr(provider, "_post", handle_post)
+    try:
+        provider.generate(
+            request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+            response_type=_Answer,
+        )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].provider_host == "relace"
+
+
+def test_throttle_wait_clamps_retry_after_and_jitters_backoff() -> None:
+    """Explicit waits obey the cap; silent throttles back off exponentially."""
+    capped = httpx.Response(
+        429, json={"error": {"metadata": {"headers": {"Retry-After": "120"}}}}
+    )
+    assert _throttle_wait_s(throttle_used=0, response=capped, cap_s=30.0) == 30.0
+    silent = httpx.Response(429, json={"error": {"message": "busy"}})
+    for used, bound in ((0, 1.0), (1, 2.0), (2, 4.0)):
+        wait = _throttle_wait_s(throttle_used=used, response=silent, cap_s=30.0)
+        assert 0.0 <= wait <= bound
+
+
+def test_invalid_no_content_terminal_carries_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content="", finish="length")
+    body["provider"] = "novita"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="no completion content"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "novita"
+
+
+def test_invalid_json_terminal_carries_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-JSON completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content="I cannot answer that.")
+    body["provider"] = "relace"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="not JSON"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "relace"
+
+
+def test_invalid_schema_terminal_carries_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A schema-rejected completion still names the host that served it."""
+    recorder = _FakeRecorder()
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(api_key="test-key"), recorder=recorder
+    )
+    body = _completion(content='{"wrong":"shape"}')
+    body["provider"] = "wafer"
+
+    def post(*, path: str, payload: dict[str, object]) -> dict[str, object]:
+        return body
+
+    monkeypatch.setattr(provider, "_post", post)
+    try:
+        with pytest.raises(OpenRouterProviderError, match="failed .* validation"):
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-4o-mini", prompt="x"),
+                response_type=FactLabelResponse,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "wafer"
+
+
+def test_invalid_terminal_under_rotation_attributes_targeted_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a response provider field, rotation falls back to the slug."""
+    recorder = _FakeRecorder()
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="test-key", chat_provider_order=["deepinfra", "relace"]
+        ),
+        responses=[httpx.Response(200, json=_completion(content='{"wrong":"shape"}'))],
+        recorder=recorder,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError, match="failed .* validation"):
+            provider.generate(
+                request=ModelRequest(model="z-ai/glm-5.3-flash", prompt="Where?"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+
+    assert recorder.records[-1].outcome == "invalid"
+    assert recorder.records[-1].provider_host == "deepinfra"

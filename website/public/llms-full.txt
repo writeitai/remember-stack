@@ -26,6 +26,8 @@ Remember is an open memory infrastructure designed for autonomous AI agents. Unl
 uvx remember setup
 ```
 
+Surfaces: [Choose your path](https://remember.dev/docs/getting-started/choose-your-path) — App console, Python SDK, CLI, MCP, HTTP.
+
 The setup wizard:
 - Connects to **Remember Cloud** (`https://api.remember.dev`) or **Self-Hosted Engine** (`http://localhost:8000`).
 - Auto-configures agent harnesses using durable absolute paths without credential leaks in git:
@@ -80,9 +82,9 @@ query_res = client.open_query("SELECT fact_id, predicate, fact_label FROM facts_
 - `remember logout`: Terminate session and revoke cloud credentials.
 - `remember whoami`: Display authenticated user, organization, and active project.
 - `remember balance` / `remember billing`: Display credit balance and monthly spend.
-- `remember projects list` / `create`: Manage isolated workspace projects.
-- `remember switch <project-id>`: Set default project context.
-- `remember members list` / `invite`: Manage team seats and roles.
+- `remember projects list`: List org deployments (live control-plane GET) or cached projects. `create` only prints the console URL.
+- `remember switch <project-id>`: Set default project context in the local credential file.
+- `remember members list` / `invite`: Print the team console URL; they do not invite from the CLI.
 - `remember ingest <file>`: Ingest document into bitemporal store.
 - `remember query sql <sql>`: Execute sandboxed SQL statement against `memory_v1`.
 - `remember operations list` / `run`: Run assured operations (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`).
@@ -131,6 +133,8 @@ Runs:
 
 ## 8. Remember Cloud Platform
 
+- **How it works**: [How Remember Cloud works](https://remember.dev/docs/cloud/how-it-works) — organization (`org_id`), project (CLI switch), deployment (`deployment_id` + advertised data-plane hostname). Control tokens (`umc_cp_`) stay on the token host; data-plane tokens stay on the deployment URL.
+- **Managed vs self-hosted**: [Managed vs self-hosted](https://remember.dev/docs/cloud/managed-vs-self-hosted). Project create, members, and billing writes are console-only. Open SQL is supported on self-host; Cloud status is planned / dogfood.
 - **Physical Database Isolation**: Every project runs against a dedicated PostgreSQL database instance. Zero shared multi-tenant tables.
 - **Spend Leases (D46)**: Ephemeral spend lease reservation on request admission; commit on HTTP 2xx; automatic release on failure or timeout.
 - **Secret Isolation**: Strict separation between control-plane user session tokens and per-project data-plane tokens. Workspace harness configurations remain secret-free.

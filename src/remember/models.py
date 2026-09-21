@@ -457,6 +457,25 @@ class FactSupport(StrEnum):
     WITHDRAWN = "withdrawn"
 
 
+class ClaimValidPrecision(StrEnum):
+    """How narrow an author's stated validity window was (D48)."""
+
+    UNKNOWN = "unknown"
+    INSTANT = "instant"
+    DAY = "day"
+    MONTH = "month"
+    QUARTER = "quarter"
+    YEAR = "year"
+    OPEN = "open"
+
+
+class TemporalMatch(StrEnum):
+    """Whether a fact definitely or possibly overlapped the query window."""
+
+    CONFIRMED = "confirmed"
+    POSSIBLE = "possible"
+
+
 class Negative(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: NegativeKind
@@ -468,6 +487,7 @@ class Validity(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 
@@ -519,6 +539,7 @@ class FactResult(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    temporal_match: TemporalMatch = TemporalMatch.POSSIBLE
     contradiction_group: UUID | None = None
     contradiction: Contradiction | None = None
     support: FactSupport = FactSupport.CURRENT
@@ -641,6 +662,7 @@ class GraphEdge(BaseModel):
     evidence_count: int
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
     support: FactSupport = FactSupport.CURRENT

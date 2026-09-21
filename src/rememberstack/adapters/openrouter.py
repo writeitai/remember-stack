@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 import time
 from typing import Any
 from typing import Final
@@ -16,7 +17,9 @@ from typing import TypeVar
 import httpx
 from pydantic import Field
 from pydantic import field_validator
+from pydantic import model_validator
 from pydantic import ValidationError
+from pydantic import ValidationInfo
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -130,6 +133,36 @@ class OpenRouterSettings(BaseSettings):
     marketplace fallback: ``allow_fallbacks`` is False, so a request the
     listed hosts cannot serve fails instead of routing to an unapproved host.
     """
+    chat_provider_order: list[str] | None = None
+    """Ordered OpenRouter chat providers (``provider.order`` + fallbacks).
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER`` as a comma-separated
+    list of *provider slugs* (same slug rules as the embedding order). Default
+    ``None`` keeps automatic routing: a hardcoded list here would break every
+    other model on this shared adapter, so per-model orders (e.g. GLM) belong
+    in deployment configuration, not in code. Mutually exclusive with
+    ``chat_provider_only``.
+    """
+    chat_throttle_retries: int = Field(default=3, ge=0)
+    """Dedicated 429 attempts per rotating chat call, separate from the ledger.
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES``. Throttles delay
+    work (rotate + wait); they never consume the caller's attempt budget.
+    Unconfigured routing keeps the historic in-post bound (numerically
+    identical at this default), so this setting only bites once slugs exist.
+    """
+    chat_upstream_overload_max_retry_after_s: float = Field(default=30.0, gt=0)
+    """Per-wait cap for upstream-overload backoff.
+
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S``. An explicit
+    Retry-After below the cap wins; anything larger is clamped to the cap.
+    """
+    zdr: bool = False
+    """Restrict chat routing to zero-data-retention endpoints when true.
+
+    Env: ``REMEMBERSTACK_OPENROUTER_ZDR``. Sends ``zdr: true``; provider picks
+    already exclude retaining hosts separately — this flag is the enforcement.
+    """
     reasoning_effort: ReasoningEffort | None = None
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
@@ -178,9 +211,28 @@ class OpenRouterSettings(BaseSettings):
 
     @field_validator("chat_provider_only", mode="before")
     @classmethod
-    def parse_chat_provider_only(cls, value: object) -> object:
+    def parse_chat_provider_only(cls, value: object, info: ValidationInfo) -> object:
         """Parse comma-separated or JSON list of OpenRouter provider slugs."""
-        return _parse_provider_name_list(value=value, field_name="chat_provider_only")
+        return _parse_provider_name_list(
+            value=value, field_name=info.field_name or "chat_provider_only"
+        )
+
+    @field_validator("chat_provider_order", mode="before")
+    @classmethod
+    def parse_chat_provider_order(cls, value: object, info: ValidationInfo) -> object:
+        """Parse comma-separated or JSON list of OpenRouter provider slugs."""
+        return _parse_provider_name_list(
+            value=value, field_name=info.field_name or "chat_provider_order"
+        )
+
+    @model_validator(mode="after")
+    def require_single_chat_routing(self) -> "OpenRouterSettings":
+        """Reject a chat allowlist together with an ordered shortlist."""
+        if self.chat_provider_only and self.chat_provider_order:
+            raise ValueError(
+                "chat_provider_only and chat_provider_order are mutually exclusive"
+            )
+        return self
 
     @field_validator("max_completion_tokens", mode="before")
     @classmethod
@@ -233,6 +285,17 @@ class OpenRouterSettings(BaseSettings):
 
 class OpenRouterProviderError(ProviderCallError):
     """OpenRouter returned an error or an unusable response body."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: ProviderCallUsage | None = None,
+        provider_host: str | None = None,
+    ) -> None:
+        """Keep usage for the meter and the serving host for diagnosis."""
+        super().__init__(message, usage=usage)
+        self.provider_host = provider_host
 
 
 class OpenRouterInvalidResponseError(
@@ -292,8 +355,11 @@ class OpenRouterModelProvider:
             payload["provider"] = provider
 
         try:
-            content, usage, body = self._completion_text(
-                payload=payload, response_type=response_type, started_ns=started_ns
+            content, usage, body, provider_host = self._completion_text(
+                payload=payload,
+                response_type=response_type,
+                started_ns=started_ns,
+                request=request,
             )
         except OpenRouterInvalidResponseError as error:
             self._record_generation(
@@ -304,6 +370,7 @@ class OpenRouterModelProvider:
                 error=str(error),
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=error.provider_host,
             )
             raise
         except OpenRouterProviderError as error:
@@ -315,36 +382,48 @@ class OpenRouterModelProvider:
                 error=str(error),
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=error.provider_host,
             )
             raise
 
         try:
             decoded = json.loads(content)
         except json.JSONDecodeError as err:
-            self._capture_invalid_completion(
-                body=body,
-                content=content,
-                failure_kind="json_decode",
-                request=request,
-                response_type=response_type,
-                usage=usage,
-            )
-            self._record_generation(
-                request=request,
-                response_type_name=response_type.__name__,
-                raw_content=content,
-                outcome="invalid",
-                error=f"{response_type.__name__}: completion content is not JSON",
-                usage=usage,
-                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-            )
-            raise OpenRouterInvalidResponseError(
-                f"{response_type.__name__}: completion content is not JSON"
-                " ("
-                f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
-                ")",
-                usage=usage,
-            ) from err
+            decoded = None
+            try:
+                stripped = content.strip()
+                if stripped.startswith("{") or stripped.startswith("["):
+                    decoded, _ = json.JSONDecoder().raw_decode(stripped)
+            except Exception:
+                decoded = None
+
+            if decoded is None:
+                self._capture_invalid_completion(
+                    body=body,
+                    content=content,
+                    failure_kind="json_decode",
+                    request=request,
+                    response_type=response_type,
+                    usage=usage,
+                )
+                self._record_generation(
+                    request=request,
+                    response_type_name=response_type.__name__,
+                    raw_content=content,
+                    outcome="invalid",
+                    error=f"{response_type.__name__}: completion content is not JSON",
+                    usage=usage,
+                    latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                    provider_host=provider_host,
+                )
+                raise OpenRouterInvalidResponseError(
+                    f"{response_type.__name__}: completion content is not JSON"
+                    " ("
+                    f"{_invalid_completion_diagnosis(body=body, content=content, request=request, usage=usage)}"
+                    ")",
+                    usage=usage,
+                    provider_host=provider_host,
+                ) from err
         try:
             output = response_type.model_validate(decoded)
         except ValidationError as error:
@@ -367,6 +446,7 @@ class OpenRouterModelProvider:
                 ),
                 usage=usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+                provider_host=provider_host,
             )
             raise OpenRouterInvalidResponseError(
                 f"completion body failed {response_type.__name__} validation"
@@ -375,6 +455,7 @@ class OpenRouterModelProvider:
                 f"; {_validation_error_names(error=error)}"
                 ")",
                 usage=usage,
+                provider_host=provider_host,
             ) from None
         self._record_generation(
             request=request,
@@ -384,6 +465,7 @@ class OpenRouterModelProvider:
             error=None,
             usage=usage,
             latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            provider_host=provider_host,
         )
         return GeneratedResponse(output=output, usage=usage)
 
@@ -397,11 +479,14 @@ class OpenRouterModelProvider:
         error: str | None,
         usage: ProviderCallUsage | None,
         latency_ms: int,
+        provider_host: str | None = None,
     ) -> None:
         """Report one generation to the opt-in recorder, if any is bound.
 
         A failing recorder must never turn a good generation into an
         exception, nor replace the provider error the ledger needs.
+        ``provider_host`` names the serving host when known (rotated attempt
+        or resolved response); ``None`` records no host rather than a guess.
         """
         if self._recorder is None:
             return
@@ -419,6 +504,7 @@ class OpenRouterModelProvider:
                     usage=usage,
                     latency_ms=latency_ms,
                     run_tag="",
+                    provider_host=provider_host,
                 )
             )
         except Exception as emit_error:
@@ -497,23 +583,192 @@ class OpenRouterModelProvider:
         payload: dict[str, object],
         response_type: type[ResponseT],
         started_ns: int,
-    ) -> tuple[str, ProviderCallUsage, dict[str, Any]]:
-        """Post once and return usable completion text, or raise saying why.
+        request: ModelRequest,
+    ) -> tuple[str, ProviderCallUsage, dict[str, Any], str | None]:
+        """Post, rotate past overloaded providers, and return usable completion text.
 
-        One provider call per logical call: usage accounting stays one-to-one and
-        a caller cannot be billed twice for work it asked for once. Retrying is
-        the work ledger's job, which already grants each item several attempts.
+        Without configured chat slugs this is one logical call: usage accounting
+        stays one-to-one and 429s draw from the dedicated throttle budget. With
+        slugs, each overloaded host is retired after one attempt and the call
+        advances to the next survivor; every absorbed 429 is recorded with
+        ``outcome="transport_error"`` so throttles stay visible as attempts,
+        never as gaps. Retrying a terminal failure remains the work ledger's
+        job. Returns the serving host alongside the parsed triple; ``None``
+        when the host could not be determined.
         """
-        body = self._post(path="/chat/completions", payload=payload)
-        usage = self._completion_usage(body=body, started_ns=started_ns)
-        content = _completion_content(body=body)
-        if content is None:
-            raise OpenRouterInvalidResponseError(
-                f"{response_type.__name__}: provider returned no completion"
-                f" content ({_completion_diagnosis(body=body)})",
-                usage=usage,
+        slugs = self._chat_rotation_slugs()
+        if not slugs:
+            body = self._post(path="/chat/completions", payload=payload)
+            usage = self._completion_usage(body=body, started_ns=started_ns)
+            content = _completion_content(body=body)
+            if content is None:
+                raise OpenRouterInvalidResponseError(
+                    f"{response_type.__name__}: provider returned no completion"
+                    f" content ({_completion_diagnosis(body=body)})",
+                    usage=usage,
+                    provider_host=self._resolve_provider_host(
+                        body=body, targeted_slug=None
+                    ),
+                )
+            return (
+                content,
+                usage,
+                body,
+                self._resolve_provider_host(body=body, targeted_slug=None),
             )
-        return content, usage, body
+        return self._completion_text_rotating(
+            payload=payload,
+            response_type=response_type,
+            started_ns=started_ns,
+            request=request,
+            slugs=slugs,
+        )
+
+    def _completion_text_rotating(
+        self,
+        *,
+        payload: dict[str, object],
+        response_type: type[ResponseT],
+        started_ns: int,
+        request: ModelRequest,
+        slugs: tuple[str, ...],
+    ) -> tuple[str, ProviderCallUsage, dict[str, Any], str | None]:
+        """Advance past overloaded chat providers, retrying the last survivor.
+
+        Distinct slugs are tried at most once each; when no survivors remain,
+        the last slug is retried in place until the throttle budget runs out
+        (preserving today's single-slug behavior). The terminal failure is
+        never recorded here and never slept on: it raises with its host
+        attached so ``generate()`` records it exactly once.
+        """
+        settings = self._settings
+        remaining = list(slugs)
+        throttle_used = 0
+        budget402_used = 0
+        last_error = "no chat providers configured"
+        last_slug: str | None = None
+        while remaining:
+            slug = remaining[0]
+            last_slug = slug
+            rotation_payload = self._chat_provider_payload_for(slugs=tuple(remaining))
+            assert rotation_payload is not None  # slugs non-empty by loop guard
+            payload["provider"] = rotation_payload
+            attempt_start_ns = time.monotonic_ns()
+            response = self._post_once(path="/chat/completions", payload=payload)
+            attempt_ms = (time.monotonic_ns() - attempt_start_ns) // 1_000_000
+            if response.status_code == 402:
+                retry_after = _in_flight_budget_retry_after(response=response)
+                if (
+                    retry_after is not None
+                    and budget402_used < _IN_FLIGHT_BUDGET_RETRIES
+                ):
+                    _logger.warning(
+                        "OpenRouter in-flight budget exhausted; retrying after %.1fs",
+                        retry_after,
+                    )
+                    time.sleep(retry_after)
+                    budget402_used += 1
+                    continue
+                raise OpenRouterProviderError(
+                    f"OpenRouter /chat/completions returned 402: {response.text[:500]}",
+                    provider_host=slug,
+                )
+            if response.status_code == 429:
+                last_error = (
+                    f"OpenRouter /chat/completions returned 429: {response.text[:500]}"
+                )
+                if throttle_used >= settings.chat_throttle_retries:
+                    raise OpenRouterProviderError(last_error, provider_host=slug)
+                self._record_generation(
+                    request=request,
+                    response_type_name=response_type.__name__,
+                    raw_content=None,
+                    outcome="transport_error",
+                    error=last_error,
+                    usage=None,
+                    latency_ms=attempt_ms,
+                    provider_host=slug,
+                )
+                wait_s = _throttle_wait_s(
+                    throttle_used=throttle_used,
+                    response=response,
+                    cap_s=settings.chat_upstream_overload_max_retry_after_s,
+                )
+                if len(remaining) > 1:
+                    _logger.warning(
+                        "OpenRouter %s overloaded (429); rotating after %.1fs",
+                        slug,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+                    remaining.pop(0)
+                else:
+                    _logger.warning(
+                        "OpenRouter %s overloaded (429); retrying last "
+                        "survivor after %.1fs",
+                        slug,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+                throttle_used += 1
+                continue
+            if response.status_code >= 400:
+                raise OpenRouterProviderError(
+                    f"OpenRouter /chat/completions returned {response.status_code}: "
+                    f"{response.text[:500]}",
+                    provider_host=slug,
+                )
+            body = response.json()
+            usage = self._completion_usage(body=body, started_ns=started_ns)
+            content = _completion_content(body=body)
+            if content is None:
+                raise OpenRouterInvalidResponseError(
+                    f"{response_type.__name__}: provider returned no completion"
+                    f" content ({_completion_diagnosis(body=body)})",
+                    usage=usage,
+                    provider_host=self._resolve_provider_host(
+                        body=body, targeted_slug=slug
+                    ),
+                )
+            return (
+                content,
+                usage,
+                body,
+                self._resolve_provider_host(body=body, targeted_slug=slug),
+            )
+        raise OpenRouterProviderError(last_error, provider_host=last_slug)
+
+    def _resolve_provider_host(
+        self, *, body: dict[str, Any], targeted_slug: str | None
+    ) -> str | None:
+        """Identify the serving host: response field, lookup, targeted slug.
+
+        The response-body ``provider`` field wins when present. Otherwise a
+        generation lookup by response id returns the authoritative
+        ``provider_name`` — attempted only when a recorder is bound, so
+        production calls pay no extra request. The targeted rotation slug is
+        the last resort (a hint under ``allow_fallbacks``, not proof).
+        """
+        provider = body.get("provider")
+        if isinstance(provider, str) and provider:
+            return provider
+        if self._recorder is not None:
+            generation_id = body.get("id")
+            if isinstance(generation_id, str) and generation_id:
+                try:
+                    metadata = self._get_generation(generation_id=generation_id)
+                except OpenRouterProviderError:
+                    metadata = None
+                if isinstance(metadata, dict):
+                    name = metadata.get("provider_name")
+                    if isinstance(name, str) and name:
+                        return name
+                    data = metadata.get("data")
+                    if isinstance(data, dict):
+                        name = data.get("provider_name")
+                        if isinstance(name, str) and name:
+                            return name
+        return targeted_slug
 
     def _completion_usage(
         self, *, body: dict[str, Any], started_ns: int
@@ -524,16 +779,55 @@ class OpenRouterModelProvider:
         )
 
     def _chat_provider_payload(self) -> dict[str, object] | None:
-        """Build the hard OpenRouter chat allowlist, or leave routing alone.
+        """Build the chat provider routing from settings, or leave it alone.
 
+        ``chat_provider_order`` names an ordered shortlist with fallbacks;
         ``chat_provider_only`` names approved hosts with no marketplace
         escape; unset keeps automatic routing (and keeps the embedding pin
-        from constraining chat, as before).
+        from constraining chat, as before). Every emitted dict carries
+        ``data_collection: deny``; ``zdr`` adds the zero-retention restriction.
         """
-        only = self._settings.chat_provider_only
-        if not only:
+        return self._chat_provider_payload_for(slugs=None)
+
+    def _chat_provider_payload_for(
+        self, *, slugs: tuple[str, ...] | None
+    ) -> dict[str, object] | None:
+        """Build one chat provider routing dict, optionally pruned to survivors.
+
+        ``slugs=None`` uses the configured lists verbatim (the initial
+        attempt); a tuple restricts routing to those survivors (one rotation
+        step). Returns ``None`` only when nothing is configured and ZDR is off.
+        """
+        settings = self._settings
+        order = settings.chat_provider_order
+        only = settings.chat_provider_only
+        if slugs is None:
+            if order:
+                slugs = tuple(order)
+            elif only:
+                slugs = tuple(only)
+            else:
+                slugs = ()
+        if not slugs and not settings.zdr:
             return None
-        return {"only": list(only), "allow_fallbacks": False}
+        payload: dict[str, object] = {"data_collection": "deny"}
+        if order:
+            payload["order"] = list(slugs)
+            payload["allow_fallbacks"] = True
+        elif only:
+            payload["only"] = list(slugs)
+            payload["allow_fallbacks"] = False
+        if settings.zdr:
+            payload["zdr"] = True
+        return payload
+
+    def _chat_rotation_slugs(self) -> tuple[str, ...]:
+        """Return the chat slugs eligible for overload rotation, in order."""
+        order = self._settings.chat_provider_order
+        if order:
+            return tuple(order)
+        only = self._settings.chat_provider_only
+        return tuple(only) if only else ()
 
     def _embedding_provider_payload(self) -> dict[str, object] | None:
         """Build OpenRouter provider routing for embedding requests.
@@ -597,9 +891,15 @@ class OpenRouterModelProvider:
         return EmbeddingResponse(vectors=vectors, usage=usage)
 
     def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
-        """POST one JSON request; non-2xx responses become typed errors."""
+        """POST one JSON request; non-2xx responses become typed errors.
+
+        Call shape is pinned by adapter tests: unconfigured chat routing and
+        embeddings share this historic bound (numerically identical to the
+        default chat throttle budget). Rotation uses ``_post_once`` plus the
+        dedicated throttle budget instead.
+        """
         for attempt in range(_IN_FLIGHT_BUDGET_RETRIES + 1):
-            response = self._client.post(path, json=payload)
+            response = self._post_once(path=path, payload=payload)
             retry_after = _in_flight_budget_retry_after(response=response)
             if retry_after is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
                 _logger.warning(
@@ -625,6 +925,10 @@ class OpenRouterModelProvider:
                 )
             return response.json()
         raise AssertionError("bounded OpenRouter POST retry loop did not return")
+
+    def _post_once(self, *, path: str, payload: dict[str, object]) -> httpx.Response:
+        """POST once and return the raw response for the caller to classify."""
+        return self._client.post(path, json=payload)
 
     def _get_generation(self, *, generation_id: str) -> dict[str, Any]:
         """Fetch metadata for one already-created generation without its content."""
@@ -663,18 +967,8 @@ def _in_flight_budget_retry_after(*, response: httpx.Response) -> float | None:
     return min(parsed, _IN_FLIGHT_BUDGET_MAX_RETRY_AFTER_S)
 
 
-def _upstream_overload_retry_after(
-    *, response: httpx.Response, attempt: int
-) -> float | None:
-    """Return one bounded wait for a transient upstream 429 overload.
-
-    Only 429 responses are retried; anything else falls through to the typed
-    error. An explicit Retry-After (header or provider metadata) wins, capped
-    at the bound; otherwise a small linear backoff keeps a hot shared pool
-    from being hammered while the worker's own attempt budget still applies.
-    """
-    if response.status_code != 429:
-        return None
+def _response_retry_after_s(*, response: httpx.Response) -> float | None:
+    """Parse an explicit Retry-After from headers or provider metadata."""
     retry_after: object = response.headers.get("Retry-After")
     try:
         body = response.json()
@@ -692,10 +986,41 @@ def _upstream_overload_retry_after(
             float(retry_after) if isinstance(retry_after, (int, float, str)) else None
         )
     except (TypeError, ValueError):
-        parsed = None
+        return None
+    return parsed
+
+
+def _upstream_overload_retry_after(
+    *, response: httpx.Response, attempt: int
+) -> float | None:
+    """Return one bounded wait for a transient upstream 429 overload.
+
+    Only 429 responses are retried; anything else falls through to the typed
+    error. An explicit Retry-After (header or provider metadata) wins, capped
+    at the bound; otherwise a small linear backoff keeps a hot shared pool
+    from being hammered while the worker's own attempt budget still applies.
+    """
+    if response.status_code != 429:
+        return None
+    parsed = _response_retry_after_s(response=response)
     if parsed is None or parsed < 0:
         parsed = min(2.0 * (attempt + 1), _UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S)
     return min(parsed, _UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S)
+
+
+def _throttle_wait_s(
+    *, throttle_used: int, response: httpx.Response, cap_s: float
+) -> float:
+    """Return one bounded, jittered wait for an upstream-overload throttle.
+
+    An explicit non-negative Retry-After wins, clamped to ``cap_s``; otherwise
+    exponential backoff with full jitter keeps retries from marching in lockstep
+    into the same hot pool.
+    """
+    parsed = _response_retry_after_s(response=response)
+    if parsed is not None and parsed >= 0:
+        return min(parsed, cap_s)
+    return min(cap_s, random.uniform(0.0, 2.0**throttle_used))
 
 
 def _strict_json_schema(response_type: type[StructuredResponseModel]) -> dict[str, Any]:

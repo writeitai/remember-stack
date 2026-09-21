@@ -184,8 +184,16 @@
   letter-spacing: -0.025em;
 }
 
-/* Hero statement under a page title — same display face as headings, larger and bold. */
-.prose :where(p.lead-statement) {
+/*
+ * Hero statement under a page title. `:where()` on the old per-paragraph
+ * rule zeroed specificity, so Tailwind Typography (`h1 + *`, default `p`
+ * size) could treat the first row after the heading differently from the
+ * second. `not-prose` plus one wrapper size — children inherit — keeps
+ * both rows identical.
+ */
+.lead-statement-block {
+  margin: 1.25em 0 1.75em;
+  text-align: center;
   font-family:
     var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   font-size: 1.35rem;
@@ -193,6 +201,21 @@
   letter-spacing: -0.025em;
   line-height: 1.35;
   color: var(--ink);
+}
+
+.lead-statement-block > p {
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+
+.lead-statement-block > p + p {
+  margin-top: 0.35em;
 }
 
 .prose :where(a) {

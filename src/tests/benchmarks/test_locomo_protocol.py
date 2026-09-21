@@ -18,9 +18,12 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
+from benchmarks.locomo.protocol import GLM_GENERATION_MODEL
+from benchmarks.locomo.protocol import GLM_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import PROTOCOL_NAME
@@ -388,6 +391,16 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "resolve it with resolve_entity first" in normalized_prompt
     assert "Use returned entity IDs" in normalized_prompt
     assert "Before any final answer" in normalized_prompt
+    assert (
+        "asserted_at is when the message was sent, NOT the event date"
+        in normalized_prompt
+    )
+    assert "never be used as a fallback event date" in normalized_prompt.lower()
+    assert 'what someone enjoys "most", "best"' in normalized_prompt
+    assert "complete union of all distinct matching values" in normalized_prompt
+    assert "shared, mutual, or collective attributes" in normalized_prompt
+    assert "unanswered question or reference directly relevant" in normalized_prompt
+    assert "deductive questions involving negative constraints" in normalized_prompt
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
@@ -395,6 +408,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
         "full-v38",
         "full-v38-gemma-vertex",
         "full-v38-codex-subscription",
+        "full-v38-glm",
     )
     protocol = PROTOCOL_REGISTRY["full-v38"]
 
@@ -620,6 +634,76 @@ def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
     assert DEFAULT_PROTOCOL_KEY == "full-v38"
 
 
+def test_glm_variant_swaps_only_the_ingest_generation_seats() -> None:
+    """The variant replays the R14 generation model under v38 pipeline pins, so
+    its scores are a new ingest-model family baseline, never Luna-v38 scores."""
+    base = PROTOCOL_REGISTRY["full-v38"]
+    variant = PROTOCOL_REGISTRY["full-v38-glm"]
+
+    assert variant.name == "RS-LoCoMo-Full-v38-GLM"
+    assert GLM_GENERATION_MODEL == "z-ai/glm-5.3-flash"
+    assert dict(variant.ingest_model_bindings) == dict(GLM_INGEST_MODEL_BINDINGS)
+    assert dict(base.ingest_model_bindings) == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    changed = {
+        name
+        for name in set(variant.ingest_model_bindings) | set(base.ingest_model_bindings)
+        if variant.ingest_model_bindings.get(name)
+        != base.ingest_model_bindings.get(name)
+    }
+    assert changed == {
+        "claim_extraction",
+        "context_prefix",
+        "fact_label",
+        "entity_resolution",
+        "fact_adjudication",
+        "openrouter_reasoning_effort_map",
+        "relation_normalization",
+        "section_role",
+        "section_summary",
+        "skeleton_check",
+        "structure_fallback",
+    }
+    for name in changed - {"openrouter_reasoning_effort_map"}:
+        assert variant.ingest_model_bindings[name] == GLM_GENERATION_MODEL
+    assert (
+        variant.ingest_model_bindings["openrouter_reasoning_effort_map"]
+        == '{"z-ai/glm-5.3-flash": "minimal"}'
+    )
+    assert variant.answer_agent_model == base.answer_agent_model
+    assert variant.judge_model == base.judge_model
+    assert variant.answer_agent_provider == base.answer_agent_provider == "openrouter"
+    assert variant.judge_provider == base.judge_provider == "openrouter"
+    assert variant.answer_agent_reasoning_effort == base.answer_agent_reasoning_effort
+    assert variant.judge_reasoning_effort == base.judge_reasoning_effort
+    assert prompt_sha256(template=variant.answer_prompt_template) == prompt_sha256(
+        template=base.answer_prompt_template
+    )
+    assert prompt_sha256(template=variant.judge_prompt_template) == prompt_sha256(
+        template=base.judge_prompt_template
+    )
+    assert variant.answer_schema is base.answer_schema
+    assert variant.judge_schema is base.judge_schema
+    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
+    assert variant.surface_manifest_hash == base.surface_manifest_hash
+    assert (
+        variant.max_tool_calls_per_question,
+        variant.max_agent_calls_per_question,
+        variant.answer_reader_retry_budget,
+        variant.answer_agent_temperature,
+        variant.judge_temperature,
+        variant.judge_repetitions,
+        variant.answer_word_cap,
+    ) == (
+        base.max_tool_calls_per_question,
+        base.max_agent_calls_per_question,
+        base.answer_reader_retry_budget,
+        base.answer_agent_temperature,
+        base.judge_temperature,
+        base.judge_repetitions,
+        base.answer_word_cap,
+    )
+
+
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
     """Persist the minimum run identity the CLI reads to compose providers."""
     protocol = PROTOCOL_REGISTRY[protocol_key]  # type: ignore[index]
@@ -821,3 +905,25 @@ def test_discriminated_schema_branches_carry_only_their_own_keys() -> None:
     }
     assert set(branches["answer"]["required"]) == {"action", "answer"}
     assert schema["discriminator"]["propertyName"] == "action"
+
+
+def test_chat_routing_transport_settings_leave_fingerprints_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider rotation must not move the surface or catalog fingerprints.
+
+    The benchmark pins models, not hosts: ordering, throttle budgets, and the
+    ZDR flag change neither the tool catalog hash nor the surface hash.
+    """
+    baseline_catalog = tool_catalog_sha256()
+    baseline_surface = EXPECTED_SURFACE_MANIFEST_HASH
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    assert tool_catalog_sha256() == baseline_catalog
+    assert EXPECTED_SURFACE_MANIFEST_HASH == baseline_surface
