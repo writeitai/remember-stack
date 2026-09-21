@@ -222,6 +222,17 @@ def test_sdk_adjacent_chunks_validates_window_locally() -> None:
         raw.close()
 
 
+def test_sdk_adjacent_chunks_validates_chunk_id_uuid() -> None:
+    """MemoryClient.adjacent_chunks rejects invalid UUID string before dispatching."""
+    raw = httpx.Client(base_url="http://memory.test")
+    client = MemoryClient(client=raw)
+    try:
+        with pytest.raises(ValueError):
+            client.adjacent_chunks(chunk_id="not-a-valid-uuid", window=1)
+    finally:
+        raw.close()
+
+
 def test_cli_query_adjacent_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     """CLI subcommand remember query adjacent-chunks executes and outputs JSON."""
     now = datetime.now(UTC)
@@ -247,6 +258,7 @@ def test_cli_query_adjacent_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "rememberstack.surfaces.cli._cli_memory_client", lambda _args: _StubClient()
     )
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: _StubClient())
     stdout = StringIO()
     monkeypatch.setattr("sys.stdout", stdout)
 

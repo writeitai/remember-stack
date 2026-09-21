@@ -1075,7 +1075,7 @@ stay inside the normal P3 mount.
 
 For each question:
 
-1. Render the frozen answer-agent prompt with the question, all 21 tool
+1. Render the frozen answer-agent prompt with the question, all 22 tool
    descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
 3. For `action="tool"`, validate the name against the catalog, decode

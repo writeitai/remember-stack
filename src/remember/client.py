@@ -604,6 +604,7 @@ class MemoryClient:
 
     def adjacent_chunks(self, *, chunk_id: UUID | str, window: int = 1) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        chunk_uuid = UUID(str(chunk_id))
         if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
             raise ValueError(
                 f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
@@ -611,9 +612,9 @@ class MemoryClient:
         return _validated(
             Envelope,
             self._json(
-                "GET", f"/chunks/{chunk_id}/adjacent", params={"window": window}
+                "GET", f"/chunks/{chunk_uuid}/adjacent", params={"window": window}
             ),
-            endpoint=f"GET /chunks/{chunk_id}/adjacent",
+            endpoint=f"GET /chunks/{chunk_uuid}/adjacent",
         )
 
     def hydrate_relation(self, *, relation_id: UUID) -> Envelope:

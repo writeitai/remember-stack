@@ -19,6 +19,8 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
+from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import ContextBundleV2
 from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
@@ -725,7 +727,11 @@ def _dispatch_primitive(
         return client.adjacent_chunks(
             chunk_id=_uuid(value=arguments.get("chunk_id")),
             window=_optional_bounded_int(
-                arguments=arguments, field="window", default=1, minimum=1, maximum=2
+                arguments=arguments,
+                field="window",
+                default=1,
+                minimum=ADJACENT_CHUNKS_MIN_WINDOW,
+                maximum=ADJACENT_CHUNKS_MAX_WINDOW,
             ),
         )
     if name == "hydrate_relation":
@@ -807,7 +813,12 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             description="Read the surrounding chunks for one chunk ordered by document sequence.",
             properties={
                 "chunk_id": uuid,
-                "window": {"type": "integer", "minimum": 1, "maximum": 2, "default": 1},
+                "window": {
+                    "type": "integer",
+                    "minimum": ADJACENT_CHUNKS_MIN_WINDOW,
+                    "maximum": ADJACENT_CHUNKS_MAX_WINDOW,
+                    "default": 1,
+                },
             },
             required=("chunk_id",),
             output_grain="evidence",
