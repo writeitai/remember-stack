@@ -86,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                     "list-saved",
                     "describe-saved",
                     "run-saved",
+                    "adjacent-chunks",
                 }
                 has_subcmd = any(
                     arg in known_query_subcmds for arg in effective_argv[1:]
@@ -1220,6 +1221,10 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
                     default=str,
                 )
             )
+            return 0
+        if command == "adjacent-chunks":
+            res = client.adjacent_chunks(chunk_id=args.chunk_id, window=args.window)
+            print(res.model_dump_json(indent=2))
             return 0
     except (ValueError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -2356,6 +2361,18 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--parameters", help="JSON array of positional bound parameters"
     )
     run_saved.add_argument("--max-rows", type=int)
+    adjacent_chunks = query_commands.add_parser(
+        "adjacent-chunks",
+        parents=[client_flags],
+        help="fetch surrounding source chunks within a window around a target chunk",
+    )
+    adjacent_chunks.add_argument("chunk_id", help="the target chunk UUID")
+    adjacent_chunks.add_argument(
+        "--window",
+        type=int,
+        default=1,
+        help="window size in chunks before and after (1-2, default 1)",
+    )
 
     ingest = commands.add_parser(
         "ingest", parents=[client_flags], help="push a file through E0"

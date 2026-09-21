@@ -1,6 +1,28 @@
 {
   "components": {
     "schemas": {
+      "AdjacentChunksRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "window": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Window",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunk_id"
+        ],
+        "title": "AdjacentChunksRequest",
+        "type": "object"
+      },
       "AggregateBucket": {
         "additionalProperties": false,
         "description": "One group in an enumerated aggregate (retrieval \u00a79): a key and its count.\n\n`key` is the group label \u2014 a predicate, an object entity, a timeline\nperiod, or an entity id rendered as text \u2014 and `null` for the single\nbucket of a plain count. `entity_id` is populated when the group IS an\nentity (group-by-object, delta-top-entities, typed-absence), so the\nagent can hop straight to it without re-resolving the label.",
@@ -3328,6 +3350,142 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/chunks/adjacent": {
+      "post": {
+        "description": "Fetch surrounding source chunks within a window around a target chunk in document order.",
+        "operationId": "post_adjacent_chunks_chunks_adjacent_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjacentChunksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Adjacent Chunks"
+      }
+    },
+    "/chunks/{chunk_id}/adjacent": {
+      "get": {
+        "description": "Fetch surrounding source chunks within a window around a target chunk in document order.",
+        "operationId": "adjacent_chunks_chunks__chunk_id__adjacent_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 2,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adjacent Chunks"
+      }
+    },
     "/deployment": {
       "get": {
         "description": "Report which code and model bindings are serving, before any work.",

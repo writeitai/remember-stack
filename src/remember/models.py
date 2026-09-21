@@ -283,6 +283,12 @@ class SearchRequest(BaseModel):
     channel: Literal["semantic", "bm25"] = "semantic"
 
 
+class AdjacentChunksRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_id: UUID
+    window: int = Field(default=1, ge=1, le=2)
+
+
 class ReadinessRequirements(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     pipeline: bool

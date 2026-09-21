@@ -2628,6 +2628,7 @@ def _has_content_bearing_attempt(*, trace: list[ToolCallRecord]) -> bool:
         "lookup_observations",
         "search_claims",
         "search_chunks",
+        "adjacent_chunks",
         "hydrate_relation",
         "p3_search",
         "p3_read",

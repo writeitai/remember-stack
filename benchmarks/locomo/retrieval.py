@@ -35,6 +35,7 @@ PRIMITIVE_TOOL_NAMES: Final = (
     "lookup_observations",
     "search_claims",
     "search_chunks",
+    "adjacent_chunks",
     "hydrate_relation",
 )
 P3_TOOL_NAMES: Final = ("p3_list", "p3_search", "p3_read")
@@ -95,7 +96,7 @@ def assured_tool_catalog() -> tuple[ToolDescriptor, ...]:
 
 
 def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact 21-tool read catalog exposed to the v17 answer seat."""
+    """Return the exact 22-tool read catalog exposed to the v17 answer seat."""
     tools = (
         *assured_tool_catalog(),
         *_primitive_tool_descriptors(),
@@ -717,6 +718,16 @@ def _dispatch_primitive(
         if name == "search_claims":
             return client.search_claims(query=query, k=k, channel=typed_channel)
         return client.search_chunks(query=query, k=k, channel=typed_channel)
+    if name == "adjacent_chunks":
+        _require_keys(
+            arguments=arguments, allowed={"chunk_id", "window"}, required={"chunk_id"}
+        )
+        return client.adjacent_chunks(
+            chunk_id=_uuid(value=arguments.get("chunk_id")),
+            window=_optional_bounded_int(
+                arguments=arguments, field="window", default=1, minimum=1, maximum=2
+            ),
+        )
     if name == "hydrate_relation":
         _require_keys(
             arguments=arguments, allowed={"relation_id"}, required={"relation_id"}
@@ -728,7 +739,7 @@ def _dispatch_primitive(
 
 
 def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
-    """Describe the exact seven public direct primitive endpoints."""
+    """Describe the exact eight public direct primitive endpoints."""
     uuid = {"type": "string", "format": "uuid"}
     return (
         _descriptor(
@@ -788,6 +799,17 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             description="Search live source passages through one independent semantic or BM25 P1 channel.",
             properties=_search_properties(),
             required=("query",),
+            output_grain="evidence",
+            answer_intent="source_context",
+        ),
+        _descriptor(
+            name="adjacent_chunks",
+            description="Read the surrounding chunks for one chunk ordered by document sequence.",
+            properties={
+                "chunk_id": uuid,
+                "window": {"type": "integer", "minimum": 1, "maximum": 2, "default": 1},
+            },
+            required=("chunk_id",),
             output_grain="evidence",
             answer_intent="source_context",
         ),

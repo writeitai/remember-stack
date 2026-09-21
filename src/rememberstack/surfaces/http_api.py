@@ -42,6 +42,7 @@ from pydantic import model_validator
 from pydantic import SecretBytes
 
 from rememberstack import __version__
+from rememberstack.model import AdjacentChunksRequest
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
@@ -498,6 +499,24 @@ def build_api(
             query=body.query,
             k=body.k,
             channel=body.channel,
+        )
+
+    @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
+    def adjacent_chunks(
+        chunk_id: UUID, window: Annotated[int, Query(ge=1, le=2)] = 1
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        return engine.adjacent_chunks(
+            deployment_id=deployment_id, chunk_id=chunk_id, window=window
+        )
+
+    @app.post("/chunks/adjacent", response_model=Envelope)
+    def post_adjacent_chunks(
+        body: Annotated[AdjacentChunksRequest, Body()],
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        return engine.adjacent_chunks(
+            deployment_id=deployment_id, chunk_id=body.chunk_id, window=body.window
         )
 
     @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
@@ -1425,6 +1444,14 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     # route missing from this map would be a search nobody is charged for and
     # no ceiling can stop.
     if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
+        return ("search", None)
+    if method == "POST" and normalized == "/chunks/adjacent":
+        return ("search", None)
+    if (
+        method == "GET"
+        and normalized.startswith("/chunks/")
+        and normalized.endswith("/adjacent")
+    ):
         return ("search", None)
     if method == "POST" and normalized.startswith("/operations/"):
         name = normalized.removeprefix("/operations/")

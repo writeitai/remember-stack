@@ -600,6 +600,18 @@ class MemoryClient:
             endpoint="GET /search/chunks",
         )
 
+    def adjacent_chunks(self, *, chunk_id: UUID | str, window: int = 1) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        if window < 1 or window > 2:
+            raise ValueError("window must be between 1 and 2")
+        return _validated(
+            Envelope,
+            self._json(
+                "GET", f"/chunks/{chunk_id}/adjacent", params={"window": window}
+            ),
+            endpoint=f"GET /chunks/{chunk_id}/adjacent",
+        )
+
     def hydrate_relation(self, *, relation_id: UUID) -> Envelope:
         """Hydrate a relation through evidence to its source documents."""
         return _validated(

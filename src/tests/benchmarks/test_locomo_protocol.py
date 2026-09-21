@@ -320,7 +320,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
         tool.name: tool.implementation_plan_hash for tool in assured
     } == expected_chain_hashes
     tools = answer_tool_catalog()
-    assert len(tools) == 21
+    assert len(tools) == 22
     assert {tool.name for tool in tools} == {
         "combined_context",
         "facts_context",
@@ -332,6 +332,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
         "lookup_observations",
         "search_claims",
         "search_chunks",
+        "adjacent_chunks",
         "hydrate_relation",
         "query_sql",
         "explain_sql",
