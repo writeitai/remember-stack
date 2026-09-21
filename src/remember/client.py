@@ -42,6 +42,8 @@ from remember.errors import MemoryApiError
 from remember.errors import NotPermitted
 from remember.errors import RateLimited
 from remember.errors import Unauthenticated
+from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
+from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import BillingStatus
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
@@ -602,8 +604,10 @@ class MemoryClient:
 
     def adjacent_chunks(self, *, chunk_id: UUID | str, window: int = 1) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
-        if window < 1 or window > 2:
-            raise ValueError("window must be between 1 and 2")
+        if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
+            raise ValueError(
+                f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
+            )
         return _validated(
             Envelope,
             self._json(

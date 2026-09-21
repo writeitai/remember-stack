@@ -21,6 +21,8 @@ from rememberstack.surfaces.route_scope import routes_that_decide_for_themselves
         ("GET", "/search/claims"),
         ("GET", "/resolve"),
         ("GET", "/operations"),
+        ("GET", "/chunks/57000000-0000-0000-0000-000000000001/adjacent"),
+        ("POST", "/chunks/adjacent"),
         # POST, and still reads. This is the case a method-based rule gets
         # wrong, and getting it wrong denies the browser its entire purpose.
         ("POST", "/graph/neighborhood"),

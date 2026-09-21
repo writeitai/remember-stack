@@ -6,6 +6,8 @@ Backwards-compatibility re-export of models from remember.models and remember.er
 from __future__ import annotations
 
 from remember.errors import ConnectorNotFoundError
+from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
+from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import AdjacentChunksRequest
 from remember.models import CapabilityReadiness
 from remember.models import ConnectorCreate
@@ -24,6 +26,8 @@ from remember.models import ToolDescriptor
 from remember.models import VersionPipelineReadiness
 
 __all__ = (
+    "ADJACENT_CHUNKS_MAX_WINDOW",
+    "ADJACENT_CHUNKS_MIN_WINDOW",
     "AdjacentChunksRequest",
     "CapabilityReadiness",
     "ConnectorCreate",

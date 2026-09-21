@@ -258,3 +258,23 @@ def test_cli_query_adjacent_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     assert parsed["grain"] == "evidence"
     assert len(parsed["chunks"]) == 1
     assert parsed["chunks"][0]["chunk_id"] == str(_CHUNK_ID)
+
+
+def test_query_engine_adjacent_chunks_validates_window() -> None:
+    """QueryEngine.adjacent_chunks validates window before database connection."""
+    from rememberstack.surfaces.query_engine import QueryEngine
+
+    engine = QueryEngine(
+        engine=None,  # type: ignore[arg-type]
+        search_index=None,  # type: ignore[arg-type]
+        model_provider=None,  # type: ignore[arg-type]
+        embedding_model="toy",
+    )
+    with pytest.raises(ValueError, match="window must be between 1 and 2"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=_CHUNK_ID, window=0
+        )
+    with pytest.raises(ValueError, match="window must be between 1 and 2"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=_CHUNK_ID, window=3
+        )

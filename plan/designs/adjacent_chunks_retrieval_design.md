@@ -22,7 +22,7 @@
    * Result chunks are instances of `ChunkEvidenceResult` ordered by `ordinal ASC`.
    * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.KNOWN_EMPTY)`.
 4. **Simplicity Over Complex Grammar:**
-   * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and MCP.
+   * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and benchmark harness.
    * No database migrations are required; the PostgreSQL table `chunks` already indexes `deployment_id`, `doc_id`, `version_id`, and `ordinal`.
 
 ---
@@ -45,7 +45,7 @@ def adjacent_chunks(
 ```
 
 **Implementation Steps:**
-1. Validate `1 <= window <= 2`; raise `ValueError("window must be between 1 and 2")` if out of bounds.
+1. Validate `ADJACENT_CHUNKS_MIN_WINDOW <= window <= ADJACENT_CHUNKS_MAX_WINDOW`; raise `ValueError` if out of bounds.
 2. Execute target lookup over `memory_v1.chunks_live`:
    ```sql
    SELECT doc_id, version_id, ordinal
@@ -65,7 +65,7 @@ def adjacent_chunks(
    ORDER BY ordinal ASC
    ```
 4. Confirm and hydrate chunks using existing `self._confirm_chunks(deployment_id=deployment_id, chunk_ids=adjacent_ids)`.
-5. Return `_envelope(grain=Grain.EVIDENCE, chunks=chunks, freshness=_freshness(), dropped_by_hydration=dropped)`.
+5. Return `_envelope(grain=Grain.EVIDENCE, chunks=chunks, freshness=_freshness(), dropped_by_hydration=dropped, negative=...)`.
 
 ### 2.2 HTTP API (`rememberstack.surfaces.http_api`)
 
@@ -100,15 +100,15 @@ Add subcommand under `remember query`:
 ```bash
 remember query adjacent-chunks <chunk_id> [--window 1]
 ```
-Outputs formatted `ChunkEvidenceResult` list with ordinal and document titles.
+Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list ordered by ordinal).
 
-### 2.5 Tool & MCP Surface
+### 2.5 Benchmark Harness & Surface Boundary
 
 1. **Benchmark Tool Descriptor (`benchmarks/locomo/retrieval.py`):**
    * Register `adjacent_chunks` in `_primitive_tool_descriptors()` with properties `chunk_id` (uuid) and `window` (int, default 1, 1..2).
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
-2. **MCP Server (`remember.remote_mcp` & `rememberstack.surfaces.mcp`):**
-   * Expose `adjacent_chunks` as an available tool in MCP `tools/list` and dispatch in `tools/call`.
-3. **Agent Skill (`src/remember/setup.py` & `src/rememberstack/core/consumption_skill.py`):**
-   * Document `adjacent_chunks` as the designated primitive for expanding context when a retrieved chunk is truncated or part of an ongoing conversational dialogue.
+2. **Top-level MCP Scope Boundary (D50, D83, D87):**
+   * Raw primitives do not mint top-level MCP tools; the MCP tool surface remains strictly closed to the four platform-owned assured operations.
+3. **Agent Prompt Guidance:**
+   * Benchmark answer agent prompt instructions document `adjacent_chunks` for expanding truncated chunks or multi-turn conversational transcripts.

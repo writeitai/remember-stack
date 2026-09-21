@@ -42,6 +42,8 @@ from pydantic import model_validator
 from pydantic import SecretBytes
 
 from rememberstack import __version__
+from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AdjacentChunksRequest
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
@@ -503,7 +505,10 @@ def build_api(
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
     def adjacent_chunks(
-        chunk_id: UUID, window: Annotated[int, Query(ge=1, le=2)] = 1
+        chunk_id: UUID,
+        window: Annotated[
+            int, Query(ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW)
+        ] = 1,
     ) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
         return engine.adjacent_chunks(
@@ -1447,12 +1452,15 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         return ("search", None)
     if method == "POST" and normalized == "/chunks/adjacent":
         return ("search", None)
-    if (
-        method == "GET"
-        and normalized.startswith("/chunks/")
-        and normalized.endswith("/adjacent")
-    ):
-        return ("search", None)
+    if method == "GET":
+        parts = normalized.split("/")
+        if (
+            len(parts) == 4
+            and parts[1] == "chunks"
+            and parts[3] == "adjacent"
+            and parts[2]
+        ):
+            return ("search", None)
     if method == "POST" and normalized.startswith("/operations/"):
         name = normalized.removeprefix("/operations/")
         if name and "/" not in name:

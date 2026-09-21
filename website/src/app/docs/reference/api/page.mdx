@@ -508,7 +508,7 @@ with MemoryClient.from_settings() as memory:
 
 The SDK also exposes typed `resolve`, `lookup_relations`,
 `transcript_relation`, `lookup_observations`, `search_claims`, `search_chunks`,
-`hydrate_relation`, and connector-management methods. Network and non-success
+`adjacent_chunks`, `hydrate_relation`, and connector-management methods. Network and non-success
 HTTP responses raise `MemoryApiError` with the status, optional public error
 code, and deployment-provided detail.
 
@@ -526,6 +526,8 @@ plans. Each returns the envelope.
 | `GET /search/chunks?query=&k=&channel=semantic\|bm25` | semantic or token/BM25-ranked search over live source passages; returns `chunks[]` as separately typed **evidence**, never claims or facts; `k` is 1–400 |
 | `POST /search/claims` | the same claim search with `{query, k, channel}` in the body, so the terms never reach the request line |
 | `POST /search/chunks` | the same chunk search with `{query, k, channel}` in the body |
+| `GET /chunks/{chunk_id}/adjacent?window=` | fetch surrounding source chunks within a window (1–2, default 1) around a target chunk in document order; returns `chunks[]` as typed **evidence** |
+| `POST /chunks/adjacent` | the same adjacent-chunk query with `{chunk_id, window}` in the body |
 | `GET /hydrate/relation/{relation_id}` | the audit chain: a relation → its evidence claims → source documents |
 | `GET /transcript/relation/{relation_id}` | the decision history: why the system believes what it believes |
 

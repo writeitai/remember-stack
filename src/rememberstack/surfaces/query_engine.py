@@ -45,6 +45,8 @@ from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.temporal import inclusive_request
+from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AggregateBucket
 from rememberstack.model import AggregateReport
 from rememberstack.model import AtTemporalScope
@@ -1463,8 +1465,10 @@ class QueryEngine:
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
     ) -> Envelope:
         """Fetch surrounding source chunks within a window around a target chunk in document order."""
-        if window < 1 or window > 2:
-            raise ValueError("window must be between 1 and 2")
+        if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
+            raise ValueError(
+                f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
+            )
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -1510,6 +1514,13 @@ class QueryEngine:
             chunks=chunks,
             freshness=_freshness(),
             dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
+                workaround="verify that neighboring chunks are indexed in storage",
+            ),
         )
 
     @_with_surface(SurfaceCostKind.LIBRARY)

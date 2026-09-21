@@ -76,9 +76,18 @@ class _NullSearchIndex:
         """Never called by these primitives."""
         return ()
 
-    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
-        """Never called by these primitives."""
-        return {}
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ) -> dict[str, P1ChunkText]:
+        """Hydrate chunk bodies for chunk evidence tests."""
+        return {
+            cid: P1ChunkText(
+                chunk_id=UUID(cid),
+                section_role=None,
+                indexed_text=f"Text for {cid}",
+            )
+            for cid in chunk_ids
+        }
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
@@ -521,6 +530,86 @@ class _Corpus:
             ),
             {"c": uuid4(), "d": _DEPLOYMENT_ID, "a": fresh, "at": _COMPILE},
         )
+
+    def _seed_chunks_document(self, count: int = 5) -> tuple[UUID, list[UUID]]:
+        """Seed a live document with multiple ordered chunks."""
+        doc_id = uuid4()
+        version_id = uuid4()
+        representation_id = uuid4()
+        content_hash = f"test-hash-{doc_id}"
+        chunk_ids = [uuid4() for _ in range(count)]
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, title, current_version_id) VALUES (:doc, :deployment, 'upload', :ref, :title, :version)"
+                ),
+                {
+                    "doc": doc_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "ref": f"ref-{doc_id}",
+                    "title": f"Doc {doc_id}",
+                    "version": version_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_objects (deployment_id, content_hash, mime, raw_uri)"
+                    " VALUES (:deployment, :hash, 'text/plain', :uri)"
+                ),
+                {
+                    "deployment": _DEPLOYMENT_ID,
+                    "hash": content_hash,
+                    "uri": f"mem://{content_hash}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                    " content_hash, version_no, status, current_representation_id) VALUES (:version, :deployment,"
+                    " :doc, :hash, 1, 'ready', :rep)"
+                ),
+                {
+                    "version": version_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "doc": doc_id,
+                    "hash": content_hash,
+                    "rep": representation_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_representations (representation_id, deployment_id,"
+                    " version_id, route, status) VALUES (:rep, :deployment,"
+                    " :version, 'passthrough', 'ready')"
+                ),
+                {
+                    "rep": representation_id,
+                    "deployment": _DEPLOYMENT_ID,
+                    "version": version_id,
+                },
+            )
+            for ordinal, chunk_id in enumerate(chunk_ids):
+                connection.execute(
+                    text(
+                        "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                        " representation_id, ordinal, block_start, block_end,"
+                        " chunk_content_hash, extraction_input_hash, char_start, char_end,"
+                        " created_at) VALUES (:chunk, :deployment, :doc, :version,"
+                        " :rep, :ordinal, 0, 0, :hash, :hash, 0, 32, :at)"
+                    ),
+                    {
+                        "chunk": chunk_id,
+                        "deployment": _DEPLOYMENT_ID,
+                        "doc": doc_id,
+                        "version": version_id,
+                        "rep": representation_id,
+                        "ordinal": ordinal,
+                        "hash": f"{content_hash}-{ordinal}",
+                        "at": _COMPILE,
+                    },
+                )
+        return doc_id, chunk_ids
 
 
 @pytest.fixture()
@@ -1069,3 +1158,51 @@ def test_scan_and_aggregate_reject_nonpositive_bounds(corpus: _Corpus) -> None:
         next(engine.scan(deployment_id=_DEPLOYMENT_ID, kind="relation", batch_size=0))
     with pytest.raises(ValueError, match="limit"):
         engine.aggregate(deployment_id=_DEPLOYMENT_ID, form="count", limit=0)
+
+
+def test_adjacent_chunks_window_and_ordering(corpus: _Corpus) -> None:
+    """adjacent_chunks returns surrounding chunks ordered by ordinal within window."""
+    engine = _engine(corpus)
+    doc_id, chunk_ids = corpus._seed_chunks_document(count=5)
+
+    # Window 1 around middle chunk (ordinal 2) -> ordinals 1, 2, 3
+    result_w1 = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=chunk_ids[2], window=1
+    )
+    assert result_w1.grain == "evidence"
+    assert result_w1.negative is None
+    assert [c.chunk_id for c in result_w1.chunks] == [
+        chunk_ids[1],
+        chunk_ids[2],
+        chunk_ids[3],
+    ]
+
+    # Window 2 around middle chunk (ordinal 2) -> ordinals 0, 1, 2, 3, 4
+    result_w2 = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=chunk_ids[2], window=2
+    )
+    assert [c.chunk_id for c in result_w2.chunks] == chunk_ids
+
+    # Window 1 around boundary chunk (ordinal 0) -> ordinals 0, 1
+    result_edge = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=chunk_ids[0], window=1
+    )
+    assert [c.chunk_id for c in result_edge.chunks] == [chunk_ids[0], chunk_ids[1]]
+
+    # Unknown chunk -> Negative KNOWN_EMPTY
+    unknown_result = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=uuid4(), window=1
+    )
+    assert unknown_result.negative is not None
+    assert unknown_result.negative.kind == NegativeKind.KNOWN_EMPTY
+    assert len(unknown_result.chunks) == 0
+
+    # Window parameter validation
+    with pytest.raises(ValueError, match="window must be between"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=chunk_ids[0], window=0
+        )
+    with pytest.raises(ValueError, match="window must be between"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=chunk_ids[0], window=3
+        )
