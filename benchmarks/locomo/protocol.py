@@ -199,12 +199,10 @@ normal memory agent and follow this retrieval hierarchy:
       at one instant, and "overlap" for a requested period. A history result need not
       hold now. Keep possible matches (temporal_match="possible") separate from
       confirmed dated counts, and never call a top-k or truncated result an exhaustive total.
-   c. Sources fallback: Fall back to claims_and_sources_context (or all_sources)
-      if the fact layer lacks the answer, or if the question specifically requires
-      verbatim conversational quotes, speaker dialogue details, or raw source context.
-      Before answering "Unknown", you must always fall back to claims_and_sources_context
-      to verify whether conversational evidence exists. Use combined_context when both
-      authorities are explicitly needed.
+   c. Sources fallback: Fall back to claims_and_sources_context if the fact layer
+      lacks the answer, or if the question specifically requires verbatim conversational
+      quotes, speaker dialogue details, or raw source context. Use combined_context
+      when both authorities are explicitly needed.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into. If a retrieved chunk or
    source excerpt is relevant but appears cut off, truncated, or needs surrounding
@@ -239,11 +237,13 @@ Dates and temporal semantics:
 
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
-reference solutions, reference evidence labels, or evaluator artifacts. Before concluding
-that the deployment does not contain the answer, you must query claims_and_sources_context.
-If after checking fact and source layers the deployment genuinely does not contain the answer,
-finish with "Unknown". The final answer must be the shortest phrase that fully names the requested
-entities/values, no explanations or reasoning.{answer_word_cap_instruction}
+reference solutions, reference evidence labels, or evaluator artifacts. You have a budget
+of at most 8 tool calls per question. Before concluding that the deployment does not contain
+the answer, consult claims_and_sources_context unless you have already queried it or
+combined_context, or have exhausted your tool call budget. If after checking fact and source
+layers the deployment genuinely does not contain the answer, finish with "Unknown". The final
+answer must be the shortest phrase that fully names the requested entities/values, no explanations
+or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
