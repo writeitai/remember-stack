@@ -290,3 +290,34 @@ def test_query_engine_adjacent_chunks_validates_window() -> None:
         engine.adjacent_chunks(
             deployment_id=_DEPLOYMENT_ID, chunk_id=_CHUNK_ID, window=3
         )
+
+
+def test_query_engine_adjacent_chunks_missing_target_returns_unknown_entity() -> None:
+    """When target chunk is not found, QueryEngine returns NegativeKind.UNKNOWN_ENTITY."""
+    from unittest.mock import MagicMock
+
+    from rememberstack.model import NegativeKind
+    from rememberstack.surfaces.query_engine import QueryEngine
+
+    mock_connection = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.mappings.return_value.one_or_none.return_value = None
+    mock_connection.execute.return_value = mock_cursor
+
+    mock_db_engine = MagicMock()
+    mock_db_engine.connect.return_value.execution_options.return_value.__enter__.return_value = mock_connection
+
+    engine = QueryEngine(
+        engine=mock_db_engine,
+        search_index=None,  # type: ignore[arg-type]
+        model_provider=None,  # type: ignore[arg-type]
+        embedding_model="toy",
+    )
+    result = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=_CHUNK_ID, window=1
+    )
+    assert result.grain == "evidence"
+    assert len(result.chunks) == 0
+    assert result.negative is not None
+    assert result.negative.kind == NegativeKind.UNKNOWN_ENTITY
+    assert "does not exist or is not visible" in result.negative.explanation

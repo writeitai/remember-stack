@@ -80,13 +80,8 @@ class _NullSearchIndex:
     def chunk_texts(
         self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
     ) -> dict[str, P1ChunkText]:
-        """Hydrate chunk bodies for chunk evidence tests."""
-        return {
-            cid: P1ChunkText(
-                chunk_id=UUID(cid), section_role="body", indexed_text=f"Text for {cid}"
-            )
-            for cid in chunk_ids
-        }
+        """Never called by these primitives."""
+        raise NotImplementedError
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
@@ -1079,9 +1074,28 @@ def test_scan_and_aggregate_reject_nonpositive_bounds(corpus: _Corpus) -> None:
         engine.aggregate(deployment_id=_DEPLOYMENT_ID, form="count", limit=0)
 
 
+class _AdjacentSearchIndex(_NullSearchIndex):
+    """Scoped search index that hydrates chunk bodies for adjacent_chunks testing."""
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ) -> dict[str, P1ChunkText]:
+        return {
+            cid: P1ChunkText(
+                chunk_id=UUID(cid), section_role="body", indexed_text=f"Text for {cid}"
+            )
+            for cid in chunk_ids
+        }
+
+
 def test_adjacent_chunks_window_and_ordering(corpus: _Corpus) -> None:
     """adjacent_chunks returns surrounding chunks ordered by ordinal within window."""
-    engine = _engine(corpus)
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=_AdjacentSearchIndex(),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
     chunk_ids = tuple(uuid4() for _ in range(5))
     with corpus.engine.begin() as connection:
         lineage = seed_live_document_lineage(
@@ -1118,12 +1132,12 @@ def test_adjacent_chunks_window_and_ordering(corpus: _Corpus) -> None:
         lineage.chunk_ids[1],
     ]
 
-    # Unknown chunk -> Negative KNOWN_EMPTY
+    # Unknown chunk -> Negative UNKNOWN_ENTITY
     unknown_result = engine.adjacent_chunks(
         deployment_id=_DEPLOYMENT_ID, chunk_id=uuid4(), window=1
     )
     assert unknown_result.negative is not None
-    assert unknown_result.negative.kind == NegativeKind.KNOWN_EMPTY
+    assert unknown_result.negative.kind == NegativeKind.UNKNOWN_ENTITY
     assert len(unknown_result.chunks) == 0
 
     # Window parameter validation

@@ -8,7 +8,7 @@
 
 ## 1. Problem and scope
 
-The canonical LoCoMo answer loop exposes a benchmark-composed 21-tool catalog.
+The canonical LoCoMo answer loop exposes a benchmark-composed 22-tool catalog.
 It does not tell us how a normal MCP surface compares with direct access to the
 P3 corpus. P3 is the published, navigable corpus snapshot: an ordinary directory
 tree whose `.snapshot-version` identifies the immutable publication.

@@ -1,5 +1,15 @@
 # LoCoMo full-system benchmark design
 
+> **v38 retrieval adjacent-chunks amendment (2026-09-21).** Direct retrieval
+> primitives expand from 7 to 8 with `adjacent_chunks` (symmetric window
+> `1 <= window <= 2`), bringing the complete benchmark answer catalog from 21
+> to 22 tools. Tool catalog SHA-256 and protocol fingerprints roll accordingly.
+> Pipeline stages, component generations, prompts, budgets, models, live graph,
+> dataset, and judge remain identical to Full-v38; stores ingested under v38
+> remain fully compatible and do not need re-ingestion. Existing in-flight v38
+> runs updating answers/judges must update their protocol fingerprint and catalog
+> hash pins to match the 22-tool catalog. Decision: [D130](../../decisions.md).
+>
 > **v38 GLM ingest variant (2026-09-17).** `full-v38-glm`
 > (`RS-LoCoMo-Full-v38-GLM`) replays the R14 generation model
 > (`z-ai/glm-5.3-flash` via OpenRouter, reasoning effort `minimal`) under the
@@ -332,6 +342,15 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v38 retrieval adjacent-chunks amendment (2026-09-21 — adjacent_chunks primitive):**
+Direct retrieval primitives expand from 7 to 8 with `adjacent_chunks`
+(window bounded by `1 <= window <= 2`), bringing the complete answer catalog to
+22 descriptors. The tool catalog SHA-256 and protocol fingerprints roll together.
+Pipeline stages, prompts, models, budgets, live graph schema, and stores
+ingested under v38 are unchanged and compatible. In-flight v38 run directories
+regenerating answers update their `tool_catalog_sha256` and `protocol_fingerprint`
+pins to reflect the 22-tool catalog.
 
 **v37 → v38 (2026-09-15 — adjudication rejection feedback):** Relation and
 observation application generations include `rej-feedback-1`. The fact

@@ -1486,7 +1486,7 @@ class QueryEngine:
                     chunks=(),
                     freshness=_freshness(),
                     negative=Negative(
-                        kind=NegativeKind.KNOWN_EMPTY,
+                        kind=NegativeKind.UNKNOWN_ENTITY,
                         explanation=f"chunk {chunk_id} does not exist or is not visible",
                         workaround="verify the chunk_id from a prior search result",
                     ),
