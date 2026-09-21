@@ -35,8 +35,8 @@ Add a dedicated retrieval primitive to the RememberStack query surface that acce
 
 **Pros:**
 * Clean, deterministic, surgical.
-* Uses existing database indexes on `(doc_id, version_id, ordinal)`. No schema migration required.
-* Exposable across all surfaces: HTTP API, Python SDK, CLI, MCP tools, and benchmark runner.
+* Uses existing database index `ix_chunks_doc (deployment_id, doc_id)`. No schema migration required.
+* Exposable across primitive surfaces: HTTP API, Python SDK, CLI, and benchmark runner (preserving the D50/D83/D87 MCP boundary for assured operations).
 * Bounded token footprint: `window=1` returns $\le 3$ contiguous chunks (~750–1,000 tokens), preventing context blow-up.
 
 **Cons:**
@@ -68,4 +68,4 @@ Instead of a symmetric `window: int = 1`, provide asymmetric parameters `previou
 Adopt **Option 1 (`adjacent_chunks` with symmetric `window`)**.
 * Keep parameters minimal: `chunk_id: UUID` (required) and `window: int = 1` (default 1, minimum 1, maximum 2).
 * Return standard `Envelope` with `chunks: tuple[ChunkEvidenceResult, ...]`, ordered by `ordinal`.
-* Expose across the full surface hierarchy: engine -> REST API -> SDK (`MemoryClient`) -> CLI -> MCP -> answer agent catalog.
+* Expose across primitive surfaces: engine -> REST API -> SDK (`MemoryClient`) -> CLI -> benchmark tool catalog (preserving D50/D83/D87 MCP boundary for assured operations).

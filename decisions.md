@@ -6062,9 +6062,9 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 2. Given a target `chunk_id`, the engine looks up its `(doc_id, version_id, ordinal)` in `memory_v1.chunks_live` and queries all live chunks within `[ordinal - window, ordinal + window]` for that document version, returning hydrated chunks in document order (`ordinal ASC`).
 3. Bound `window` strictly between 1 and 2 (default 1), preventing context flooding while providing immediate preceding/succeeding dialogue turns.
 4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and does not mint a top-level MCP tool (D50, D83, D87).
-5. Update benchmark retrieval tool catalog and answer-agent prompt instructions to utilize `adjacent_chunks` for expanding truncated chunks or multi-turn dialogues.
+5. Register `adjacent_chunks` in the benchmark tool catalog (expanding to 22 tools) and execution dispatch table.
 
-**Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL indexes on `(doc_id, version_id, ordinal)` are leveraged directly without schema migrations.
+**Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL index `ix_chunks_doc (deployment_id, doc_id)` prefixes the lookup and per-document row counts are bounded, requiring no schema migrations.
 
 **Authority:** [design](plan/designs/adjacent_chunks_retrieval_design.md),
 [analysis](plan/analysis/adjacent_chunks_retrieval_analysis.md).

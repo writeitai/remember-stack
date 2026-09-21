@@ -23,7 +23,7 @@
    * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.KNOWN_EMPTY)`.
 4. **Simplicity Over Complex Grammar:**
    * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and benchmark harness.
-   * No database migrations are required; the PostgreSQL table `chunks` already indexes `deployment_id`, `doc_id`, `version_id`, and `ordinal`.
+   * No database migrations are required; the PostgreSQL table `chunks` is indexed by `ix_chunks_doc (deployment_id, doc_id)` and per-document chunk counts are bounded.
 
 ---
 
@@ -105,10 +105,8 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
 ### 2.5 Benchmark Harness & Surface Boundary
 
 1. **Benchmark Tool Descriptor (`benchmarks/locomo/retrieval.py`):**
-   * Register `adjacent_chunks` in `_primitive_tool_descriptors()` with properties `chunk_id` (uuid) and `window` (int, default 1, 1..2).
+   * Register `adjacent_chunks` in `_primitive_tool_descriptors()` with properties `chunk_id` (uuid) and `window` (int, default 1, 1..2), expanding the catalog from 21 to 22 tools.
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
 2. **Top-level MCP Scope Boundary (D50, D83, D87):**
    * Raw primitives do not mint top-level MCP tools; the MCP tool surface remains strictly closed to the four platform-owned assured operations.
-3. **Agent Prompt Guidance:**
-   * Benchmark answer agent prompt instructions document `adjacent_chunks` for expanding truncated chunks or multi-turn conversational transcripts.
