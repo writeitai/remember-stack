@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import TextClause
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.entity_profile_input import entity_profile_embedding_input
 from rememberstack.core.fact_label import deterministic_fact_label
-from rememberstack.core.fact_windows import describe_fact_window
+from rememberstack.core.fact_windows import format_fact_temporal_annotation
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model.fact_windows import FactWindow
 from rememberstack.ports.cost_meter import CostMeterPort
@@ -702,9 +702,8 @@ def _load_salient_facts_many(
         window = FactWindow(
             valid_from=start, valid_until=end, valid_precision=precision
         )
-        normalized = " ".join(
-            f"{value} [world time: {describe_fact_window(window=window)}]".split()
-        )
+        temporal = format_fact_temporal_annotation(window=window)
+        normalized = " ".join(f"{value}{temporal}".split())
         if normalized and normalized not in statements:
             statements.append(normalized)
     return {

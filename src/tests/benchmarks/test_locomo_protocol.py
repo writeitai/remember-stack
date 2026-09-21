@@ -193,6 +193,74 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert call.response.ranking  # durable raw record is unchanged
 
 
+def test_reader_trace_excludes_system_transaction_timestamps_from_facts() -> None:
+    """Facts serialized into reader trace retain valid_from/valid_precision but drop ingested_at and invalidated_at."""
+    from rememberstack.model import ContextBundleV2
+    from rememberstack.model import FactResult
+    from rememberstack.model import Validity
+    from rememberstack.model.claims import ClaimValidPrecision
+
+    now = datetime(2026, 7, 30, tzinfo=timezone.utc)
+    v = Validity(
+        valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        valid_until=None,
+        valid_precision=ClaimValidPrecision.DAY,
+        ingested_at=now,
+        invalidated_at=None,
+    )
+    fact = FactResult(
+        fact_id=uuid4(),
+        kind="relation",
+        label="Alice lives in Prague",
+        evidence_count=1,
+        validity=v,
+    )
+    fact_env = Envelope(
+        grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=now),
+        facts=(fact,),
+        freshness=Freshness(pg_live_ts=now),
+    )
+    call_facts = ToolCallRecord(
+        name="facts_context",
+        arguments={"entity_id": str(uuid4())},
+        latency_ms=1,
+        response=fact_env,
+    )
+    prompt_facts = render_answer_agent_prompt(
+        question="Where does Alice live?", tools=(), trace=(call_facts,)
+    )
+    assert "Alice lives in Prague" in prompt_facts
+    assert "2024-01-01" in prompt_facts
+    assert "ingested_at" not in prompt_facts
+    assert "invalidated_at" not in prompt_facts
+    assert isinstance(call_facts.response, Envelope)
+    assert call_facts.response.facts[0].validity.ingested_at == now
+
+    # ContextBundleV2
+    bundle = ContextBundleV2(
+        claims_and_sources=Envelope(
+            grain=Grain.EVIDENCE,
+            temporal_scope=current_temporal_scope(evaluated_at=now),
+            freshness=Freshness(pg_live_ts=now),
+        ),
+        facts=fact_env,
+    )
+    call_bundle = ToolCallRecord(
+        name="combined_context",
+        arguments={"query": "Alice"},
+        latency_ms=1,
+        response=bundle,
+    )
+    prompt_bundle = render_answer_agent_prompt(
+        question="Where does Alice live?", tools=(), trace=(call_bundle,)
+    )
+    assert "Alice lives in Prague" in prompt_bundle
+    assert "2024-01-01" in prompt_bundle
+    assert "ingested_at" not in prompt_bundle
+    assert "invalidated_at" not in prompt_bundle
+
+
 def test_protocol_pins_the_shipping_structure_generation() -> None:
     """Readiness rejects a store structured under a different fallback wire contract."""
     assert EXPECTED_INGEST_COMPONENT_VERSIONS["structure"] == E0_STRUCTURE_VERSION
@@ -297,9 +365,9 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "The final answer must contain at most 20 words." in capped
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
-    assert "asserted_at is when the source\nmade this statement" in prompt
-    assert "when the claim says it happened or was true" in prompt
-    assert "read it relative to that row's asserted_at" in prompt
+    assert "asserted_at is when the source made this statement" in normalized_prompt
+    assert "when the claim says it happened or was true" in normalized_prompt
+    assert "relative to that row's asserted_at" in normalized_prompt
     assert "Use timestamps to resolve relative dates" not in prompt
     assert "Open query" in prompt
     assert "P3 mount" in prompt
@@ -320,7 +388,7 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "Never use outside knowledge" not in normalized_prompt
     assert "Never seek or inspect benchmark reference solutions" in normalized_prompt
     assert "person, organization, place, or other entity" in normalized_prompt
-    assert "may issue those two requests in parallel" in normalized_prompt
+    assert "resolve it with resolve_entity first" in normalized_prompt
     assert "Use returned entity IDs" in normalized_prompt
     assert "Before any final answer" in normalized_prompt
     assert (

@@ -194,14 +194,8 @@ def test_profiles_debounce_and_separate_same_name_entities(
             .mappings()
             .all()
         )
-    assert (
-        rows[0]["profile_summary"]
-        == "Jan lives in Prague [world time: world date unknown]"
-    )
-    assert (
-        rows[1]["profile_summary"]
-        == "Jan lives in Bristol [world time: world date unknown]"
-    )
+    assert rows[0]["profile_summary"] == "Jan lives in Prague"
+    assert rows[1]["profile_summary"] == "Jan lives in Bristol"
     assert rows[0]["vector"] != rows[1]["vector"]
     assert {row["embedding_input_policy_version"] for row in rows} == {
         ENTITY_INPUT_POLICY
@@ -240,28 +234,16 @@ def test_refresh_discards_a_vector_when_evidence_changes_during_provider_call(
     ).refresh_many(deployment_id=_DEPLOYMENT_ID, entity_ids=(_FIRST_ENTITY,))[0]
 
     assert result.updated
-    assert result.salient_facts == (
-        "Jan now lives in Brno [world time: world date unknown]",
-        "Jan lives in Prague [world time: world date unknown]",
-    )
+    assert result.salient_facts == ("Jan now lives in Brno", "Jan lives in Prague")
     assert len(provider.embedded_texts) == 2
-    assert (
-        "Jan now lives in Brno [world time: world date unknown]"
-        not in provider.embedded_texts[0]
-    )
-    assert (
-        "Jan now lives in Brno [world time: world date unknown]"
-        in provider.embedded_texts[1]
-    )
+    assert "Jan now lives in Brno" not in provider.embedded_texts[0]
+    assert "Jan now lives in Brno" in provider.embedded_texts[1]
     with database_engine.connect() as connection:
         summary = connection.execute(
             text("SELECT profile_summary FROM entities WHERE entity_id = :entity"),
             {"entity": _FIRST_ENTITY},
         ).scalar_one()
-    assert (
-        summary
-        == "Jan now lives in Brno [world time: world date unknown]; Jan lives in Prague [world time: world date unknown]"
-    )
+    assert summary == "Jan now lives in Brno; Jan lives in Prague"
 
 
 def test_provider_failure_leaves_changed_profile_cache_empty(
@@ -380,10 +362,7 @@ def test_relation_prose_is_salient_for_both_endpoints(database_engine: Engine) -
         deployment_id=_DEPLOYMENT_ID, entity_ids=(_SECOND_ENTITY, _FIRST_ENTITY)
     )
 
-    assert all(
-        result.salient_facts == ("Jan works for Jan [world time: world date unknown]",)
-        for result in results
-    )
+    assert all(result.salient_facts == ("Jan works for Jan",) for result in results)
     assert len(provider.embedded_texts) == 2
 
 
@@ -440,12 +419,8 @@ def test_merged_member_relation_profile_keeps_its_local_name(
     )
 
     facts = {result.entity_id: result.salient_facts for result in results}
-    assert facts[_FIRST_ENTITY] == (
-        "Robert Klein works for Acme [world time: world date unknown]",
-    )
-    assert facts[_SECOND_ENTITY] == (
-        "R. Klein works for Acme [world time: world date unknown]",
-    )
+    assert facts[_FIRST_ENTITY] == ("Robert Klein works for Acme",)
+    assert facts[_SECOND_ENTITY] == ("R. Klein works for Acme",)
 
 
 def test_merged_sibling_relation_profiles_keep_both_local_names(
@@ -502,10 +477,8 @@ def test_merged_sibling_relation_profiles_keep_both_local_names(
     ).refresh_many(deployment_id=_DEPLOYMENT_ID, entity_ids=(_SECOND_ENTITY, sibling))
 
     facts = {result.entity_id: result.salient_facts for result in results}
-    assert facts[_SECOND_ENTITY] == (
-        "Alice works for Bob [world time: world date unknown]",
-    )
-    assert facts[sibling] == ("Alice works for Bob [world time: world date unknown]",)
+    assert facts[_SECOND_ENTITY] == ("Alice works for Bob",)
+    assert facts[sibling] == ("Alice works for Bob",)
     assert all(
         "Survivor" not in fact
         for entity_id in (_SECOND_ENTITY, sibling)
@@ -589,7 +562,7 @@ def test_profile_keeps_dated_history_beside_an_open_fact(
     assert len(result.salient_facts) == 2
     assert any("2022-05-10" in fact for fact in result.salient_facts)
     assert any("since 2022-05-12" in fact for fact in result.salient_facts)
-    assert all("[world time:" in fact for fact in result.salient_facts)
+    assert all("(valid:" in fact for fact in result.salient_facts)
 
 
 def test_backfill_batches_active_entities_and_debounces_on_retry(
@@ -632,9 +605,9 @@ def test_backfill_batches_active_entities_and_debounces_on_retry(
     assert second.with_evidence == 2
     assert provider.batch_sizes == [2]
     assert provider.embedded_texts == [
-        "ENTITY: Jan\nPROFILE: Jan is a bank [world time: world date unknown]\nSALIENT FACTS:\n- Jan is a bank [world time: world date unknown]",
-        "ENTITY: Jan\nPROFILE: Jan is an engineer [world time: world date unknown]\n"
-        "SALIENT FACTS:\n- Jan is an engineer [world time: world date unknown]",
+        "ENTITY: Jan\nPROFILE: Jan is a bank\nSALIENT FACTS:\n- Jan is a bank",
+        "ENTITY: Jan\nPROFILE: Jan is an engineer\n"
+        "SALIENT FACTS:\n- Jan is an engineer",
     ]
 
 

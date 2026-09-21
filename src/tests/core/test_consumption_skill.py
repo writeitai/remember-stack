@@ -110,8 +110,9 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
     assert "**when the source made this statement**" in skill.content
     assert "**when the claim says it happened or was true**" in skill.content
     assert "interpret it relative to `asserted_at`" in skill.content
-    assert "never defaulting to `asserted_at`" in skill.content
-    assert "Did I answer event-date questions using world-validity" in skill.content
+    assert "Never confuse speech time with real-world" in skill.content
+    assert "Did I resolve named entities first with `resolve_entity`?" in skill.content
+    assert "explicitly ongoing interval (known start, no recorded end)" in skill.content
     # The old intent-first steering is gone.
     assert "Default motion: orient, verify, audit" not in skill.content
 

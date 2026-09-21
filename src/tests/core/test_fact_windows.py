@@ -215,3 +215,95 @@ def test_inclusive_query_bounds_preserve_the_existing_overlap_contract() -> None
         )
         is None
     )
+
+
+def test_format_fact_temporal_annotation_all_precisions() -> None:
+    """Format fact temporal annotation renders clean strings and omits unknown."""
+    from rememberstack.core.fact_windows import format_fact_temporal_annotation
+
+    # Unknown precision -> clean empty string
+    assert format_fact_temporal_annotation(window=FactWindow()) == ""
+
+    # Open precision -> clean YYYY-MM-DD date without timestamp noise
+    open_win = FactWindow(
+        valid_from=_at("2022-05-12T00:00:00"), valid_precision=ClaimValidPrecision.OPEN
+    )
+    assert (
+        format_fact_temporal_annotation(window=open_win)
+        == " (valid: since 2022-05-12, ongoing)"
+    )
+
+    # Single day
+    single_day = FactWindow(
+        valid_from=_at("2022-05-10T00:00:00"),
+        valid_until=_at("2022-05-11T00:00:00"),
+        valid_precision=ClaimValidPrecision.DAY,
+    )
+    assert format_fact_temporal_annotation(window=single_day) == " (valid: 2022-05-10)"
+
+    # Day range
+    day_range = FactWindow(
+        valid_from=_at("2022-05-10T00:00:00"),
+        valid_until=_at("2022-05-16T00:00:00"),
+        valid_precision=ClaimValidPrecision.DAY,
+    )
+    assert (
+        format_fact_temporal_annotation(window=day_range)
+        == " (valid: 2022-05-10 through 2022-05-15)"
+    )
+
+    # Month
+    month_win = FactWindow(
+        valid_from=_at("2022-05-01T00:00:00"),
+        valid_until=_at("2022-06-01T00:00:00"),
+        valid_precision=ClaimValidPrecision.MONTH,
+    )
+    assert format_fact_temporal_annotation(window=month_win) == " (valid: 2022-05)"
+
+    # Quarter
+    quarter_win = FactWindow(
+        valid_from=_at("2022-04-01T00:00:00"),
+        valid_until=_at("2022-07-01T00:00:00"),
+        valid_precision=ClaimValidPrecision.QUARTER,
+    )
+    assert format_fact_temporal_annotation(window=quarter_win) == " (valid: 2022 Q2)"
+
+    # Single year
+    year_win = FactWindow(
+        valid_from=_at("2022-01-01T00:00:00"),
+        valid_until=_at("2023-01-01T00:00:00"),
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+    assert format_fact_temporal_annotation(window=year_win) == " (valid: 2022)"
+
+    # Year range
+    year_range = FactWindow(
+        valid_from=_at("2019-01-01T00:00:00"),
+        valid_until=_at("2023-01-01T00:00:00"),
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+    assert (
+        format_fact_temporal_annotation(window=year_range)
+        == " (valid: 2019 through 2022)"
+    )
+
+    # Unbounded start
+    unbounded_start = FactWindow(
+        valid_from=None,
+        valid_until=_at("2023-01-01T00:00:00"),
+        valid_precision=ClaimValidPrecision.YEAR,
+    )
+    assert (
+        format_fact_temporal_annotation(window=unbounded_start)
+        == " (valid: through 2022)"
+    )
+
+    # Instant (with Z suffix)
+    instant = _at("2022-05-10T14:30:00")
+    instant_win = fact_window_from_raw(
+        valid_from=instant, valid_until=instant, precision=ClaimValidPrecision.INSTANT
+    )
+    assert (
+        format_fact_temporal_annotation(window=instant_win)
+        == " (valid: 2022-05-10T14:30:00Z)"
+    )

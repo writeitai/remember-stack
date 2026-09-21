@@ -6032,3 +6032,23 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Authority:** [design](plan/designs/locomo_benchmark_design.md).
 
+## D129. Clean temporal facts and entity-first cognitive retrieval
+
+**Status:** accepted. **Date:** 2026-09-21.
+
+**Context.** Ingestion worker P1 appended a bracketed string (`[world time: ...]`) to `obs_label` and `fact_label` before saving to PostgreSQL and generating vector embeddings (`P1FactRow`). This caused severe vector embedding pollution: every undated observation (~80% of facts) contained the identical 5-token suffix `[world time: world date unknown]`, creating artificial semantic clustering among unrelated facts. Simultaneously, the answering agent prompt instructed agents to query `question_context` / claims first, bypassing entity resolution and the de-duplicated, Jev-adjudicated fact layer. In `conv-42/qa/0011` ("What is Joanna allergic to?"), all 4 allergies were present in the database, but vector top-15 truncation missed dairy because the agent did not query entity observations.
+
+**Decision.**
+1. P1 removes bracketed temporal formatting from `obs_label` and `fact_label`. In PostgreSQL and in vector embeddings, labels contain only the clean statement or relation prose.
+2. Temporal bounds (`valid_from`, `valid_until`, `valid_precision`) remain first-class typed columns in PostgreSQL and structured fields in `FactResult.validity` and `EvidenceResult`, preserving exact database column naming across the API, Python SDK, CLI, and TypeScript models.
+3. The answering agent prompt is updated to bind an entity-first, fact-first cognitive retrieval hierarchy:
+   - Resolve named entities first (`resolve_entity`) and query the fact layer (`facts_context`) for entity-anchored attributes.
+   - Query the fact layer before falling back to source passages (`claims_and_sources_context`), which is reserved for verbatim quotes or tone.
+   - Explicitly instruct the agent on temporal semantics: `valid_from`/`valid_until` denote real-world event validity ("When did X happen?"), `asserted_at` denotes conversation time (for relative expressions like "last Friday"), and `valid_precision` sets granularity without fabrication.
+
+**Alternatives and consequences.** Stripping bracketed strings at the API layer was rejected because it would leave vector embeddings polluted. Keeping claims-first retrieval was rejected because it wastes adjudicated facts and causes top-K truncation across multi-session dialogues. Bumping the fact-labeler component version ensures deterministic re-labeling and re-embedding.
+
+**Authority:** [design](plan/designs/clean_temporal_facts_and_retrieval_flow_design.md),
+[analysis](plan/analysis/clean_temporal_facts_and_retrieval_flow_analysis.md).
+
+

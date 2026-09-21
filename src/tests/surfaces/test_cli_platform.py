@@ -65,6 +65,9 @@ def test_setup_cursor_configuration(tmp_path: Path) -> None:
     rule_text = rule_file.read_text(encoding="utf-8")
     assert "facts_context" in rule_text
     assert "bitemporal" in rule_text
+    assert "Resolve entities first" in rule_text
+    assert "valid_from" in rule_text
+    assert "asserted_at" in rule_text
 
 
 def test_setup_antigravity_configuration(tmp_path: Path) -> None:
@@ -86,6 +89,16 @@ def test_setup_antigravity_configuration(tmp_path: Path) -> None:
 
     skill_text = skill_file.read_text(encoding="utf-8")
     assert "name: remember" in skill_text
+    assert "Preferred Retrieval Flow" in skill_text
+    assert "Entity resolution first (`resolve_entity`)" in skill_text
+    assert "Fact layer first (`facts_context`)" in skill_text
+    assert "valid_from" in skill_text
+    assert "valid_precision" in skill_text
+    assert "asserted_at" in skill_text
+    assert (
+        "Never confuse speech time (`asserted_at`) with real-world event validity"
+        in skill_text
+    )
 
 
 def test_setup_codex_configuration(tmp_path: Path) -> None:

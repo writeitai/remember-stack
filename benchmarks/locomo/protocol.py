@@ -38,7 +38,7 @@ from rememberstack.model import ToolDescriptor
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38"
 DEFAULT_PROTOCOL_KEY: Final = "full-v38"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
-"""Adapter identity for Full-v38: v36 pins plus adjudication target-discipline sentences."""
+"""Adapter identity for Full-v38: clean-temporal fact labels, entity-first retrieval hierarchy, and concise adjudication."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -102,7 +102,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "embed_claim": "p1-embed-claims-2026.07",
         "reconcile": "reconcile-2026.07",
         "label_relation": (
-            "p1-fact-label-2026.09:chosen-window+qwen/qwen3-embedding-8b"
+            "p1-fact-label-2026.09b:clean-temporal+qwen/qwen3-embedding-8b"
         ),
     }
 )
@@ -185,18 +185,24 @@ GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
 
 ANSWER_AGENT_PROMPT_TEMPLATE: Final = """You answer a question using one ordinary
 RememberStack deployment. You may call any read tool listed below. Work as a
-normal memory agent and choose the cheapest suitable path:
+normal memory agent and follow this retrieval hierarchy:
 
-1. Assured operations: claims_and_sources_context for what sources said,
-   facts_context for current or historical adjudicated truth, combined_context
-   when both authorities are useful, and resolve_entity for exact names.
-   Explicitly choose time.mode=history for biography, achievements, and "has ever"
-   questions so completed facts remain visible. Choose current/at for what holds
-   at one instant, and overlap for a requested period. A history result need not
-   hold now. Fact dates are the chosen world window; asserted_at is source time.
-   temporal_match=possible identifies missing date information, not a disputed
-   fact. Keep possible matches separate from confirmed dated counts, and never
-   call a top-k or truncated result an exhaustive total.
+1. Preferred retrieval flow:
+   a. Entity resolution first: When a named person, organization, place, or other
+      entity can narrow retrieval, resolve it first with resolve_entity to obtain its
+      canonical entity_id and profile.
+   b. Fact layer first: Query facts_context (anchored by entity_id when available,
+      or by semantic text query) as the primary authority for established facts,
+      biography, attributes, relationships, and history. Explicitly choose
+      time.mode="history" for biography, achievements, and "has ever" questions so
+      completed facts remain visible. Choose time.mode="current" or "at" for what holds
+      at one instant, and "overlap" for a requested period. A history result need not
+      hold now. Keep possible matches (temporal_match="possible") separate from
+      confirmed dated counts, and never call a top-k or truncated result an exhaustive total.
+   c. Sources fallback: Only fall back to claims_and_sources_context or all_sources
+      if the fact layer lacks the answer, or if the question specifically requires
+      verbatim conversational quotes, speaker dialogue details, or raw source context.
+      Use combined_context when both authorities are explicitly needed.
 2. Direct primitives: targeted entity, fact, testimony, source-passage, and
    audit reads when an assured response needs drilling into.
 3. Open query: discover schema/examples before unfamiliar SQL; use SQL for live
@@ -212,28 +218,31 @@ dropped_by_hydration fields. Evidence says what a source asserted; it is not
 automatically current fact. Do not confuse people mentioned in a memory with
 the conversation speakers.
 
-Each evidence row carries two kinds of time. asserted_at is when the source
-made this statement (when the message was sent). claim_valid_from and
-claim_valid_until are when the claim says it happened or was true, as the
-source asserted it; claim_valid_kind names which: event_time = when the
-claimed event happened, effective_period or proposition_validity = when the
-claimed state was true, measurement_period = the period a claimed figure
-covers; claim_valid_precision says how exact those bounds are, and unknown
-means the source gave no usable date. A date the extractor could resolve is
-already written into claim_text and repeated in those bounds. If claim_text
-still contains a relative phrase such as "last week", the extractor could not
-resolve it: read it relative to that row's asserted_at and do not invent more
-precision than the source gives. asserted_at is when the message was sent, NOT
-the event date, and must NEVER be used as a fallback event date. When a question
-asks when an event happened, was completed, or took place, answer with the event
-date (from claim_valid_from, [world time: ...], or the resolved date in claim_text),
-NOT the date the message was sent.
+Dates and temporal semantics:
+- Facts carry validity with valid_from, valid_until, and valid_precision.
+  valid_from and valid_until record when the event or state was true in the real world.
+  valid_precision indicates granularity: unknown, instant, day, month, quarter, year, or open.
+  "open" means an ongoing state with a known start date and no recorded end date (still true).
+  "unknown" means the source gave no usable real-world date.
+- Evidence rows carry asserted_at, claim_valid_from, claim_valid_until, and claim_valid_precision.
+  asserted_at is when the source made this statement (when the message was sent or page
+  was published). claim_valid_from and claim_valid_until are when the claim says it happened or was true.
+  If claim_text contains an unresolved relative phrase (e.g., "last week", "yesterday"), evaluate
+  it relative to that row's asserted_at. asserted_at is when the message was sent, NOT the event date,
+  and must NEVER be used as a fallback event date. Never confuse speech time (asserted_at) with real-world
+  event validity (valid_from/valid_until).
+
+General knowledge may help interpret retrieved evidence, but RememberStack evidence is
+the authority for conversation-specific claims. Never seek or inspect benchmark
+reference solutions, reference evidence labels, or evaluator artifacts. If the deployment
+does not contain the answer, finish with "Unknown". The final answer must be the
+shortest phrase that fully names the requested entities/values, no explanations
+or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
-resolve it while also starting an independent content read. A runtime that
-supports multiple reads may issue those two requests in parallel; in a one-step
-interface, request them in consecutive steps. Use returned entity IDs to make
-follow-up reads precise. Identity lookup does not replace content retrieval.
+resolve it with resolve_entity first. Use returned entity IDs to make follow-up
+reads (such as facts_context) precise. Identity lookup alone does not answer content
+questions; always retrieve facts or claims for that entity.
 
 For hypothetical or counterfactual questions, reason from causal or
 motivational relationships in the retrieved evidence even when the source does
@@ -270,13 +279,7 @@ that the information is missing or answering prematurely.
 For deductive questions involving negative constraints (e.g. finding options
 that avoid stated allergies, conflicts, or restrictions), deduce the compatible
 choices from the stated constraints using sound reasoning rather than answering
-"Unknown". General
-knowledge may help interpret retrieved evidence, but RememberStack evidence is
-the authority for conversation-specific claims. Never seek or inspect benchmark
-reference solutions, reference evidence labels, or evaluator artifacts. If the deployment
-does not contain the answer, finish with "Unknown". The final answer must be the
-shortest phrase that fully names the requested entities/values, no explanations
-or reasoning.{answer_word_cap_instruction}
+"Unknown".
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
@@ -564,13 +567,32 @@ def _reader_trace_record(*, record: ToolCallRecord) -> dict[str, object]:
     """
     if isinstance(record.response, (Envelope, RememberEnvelope)):
         response: object = record.response.model_dump(
-            mode="json", exclude_none=True, exclude={"ranking"}
+            mode="json",
+            exclude_none=True,
+            exclude={
+                "ranking": True,
+                "facts": {
+                    "__all__": {
+                        "validity": {"ingested_at": True, "invalidated_at": True}
+                    }
+                },
+            },
         )
     elif isinstance(record.response, (ContextBundleV2, RememberContextBundleV2)):
         response = record.response.model_dump(
             mode="json",
             exclude_none=True,
-            exclude={"claims_and_sources": {"ranking"}, "facts": {"ranking"}},
+            exclude={
+                "claims_and_sources": {"ranking": True},
+                "facts": {
+                    "ranking": True,
+                    "facts": {
+                        "__all__": {
+                            "validity": {"ingested_at": True, "invalidated_at": True}
+                        }
+                    },
+                },
+            },
         )
     else:
         response = record.response

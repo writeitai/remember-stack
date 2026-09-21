@@ -572,10 +572,8 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     ).json()
     assert relations["grain"] == "fact"
     (fact,) = relations["facts"]
-    assert (
-        fact["label"]
-        == "Alice Novak works for Acme [world time: since 2024-01-01T00:00:00+00:00; no end recorded]"
-    )
+    assert fact["label"] == "Alice Novak works for Acme"
+    assert fact["validity"]["valid_from"] is not None
     assert fact["evidence_count"] == 1
     assert fact["validity"]["invalidated_at"] is None
     assert relations["freshness"]["pg_live_ts"] is not None
