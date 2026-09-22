@@ -309,6 +309,48 @@ def _readiness_matches_protocol(
     )
 
 
+def _readiness_fingerprint(*, readiness: PipelineReadinessReport) -> str:
+    """Deterministic hash of deployment readiness identity, excluding volatile check timestamps."""
+    canonical = {
+        "ready": readiness.ready,
+        "document_binding_generation": readiness.document_binding_generation,
+        "model_bindings": dict(sorted(readiness.model_bindings.items())),
+        "build_revision": readiness.build_revision,
+        "versions": sorted(
+            [
+                {
+                    "version_id": str(v.version_id),
+                    "ready": v.ready,
+                    "stages": [
+                        {
+                            "stage": s.stage,
+                            "component_version": s.component_version,
+                            "status": s.status,
+                        }
+                        for s in v.stages
+                    ],
+                }
+                for v in readiness.versions
+            ],
+            key=lambda x: str(x["version_id"]),
+        ),
+        "capabilities": {
+            name: {
+                "required": cap.required,
+                "ready": cap.ready,
+                "reason": cap.reason,
+                "version": cap.version,
+                "built_at": cap.built_at.isoformat() if cap.built_at else None,
+                "published_at": (
+                    cap.published_at.isoformat() if cap.published_at else None
+                ),
+            }
+            for name, cap in sorted(readiness.capabilities.items())
+        },
+    }
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+
+
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
 
 
@@ -612,7 +654,9 @@ def answer_sample(
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
-    if prior_readiness is not None and prior_readiness != readiness:
+    if prior_readiness is not None and _readiness_fingerprint(
+        readiness=prior_readiness
+    ) != _readiness_fingerprint(readiness=readiness):
         raise ExecutionGuardError(
             "deployment readiness fingerprint changed after it was checkpointed"
         )
