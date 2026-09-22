@@ -863,6 +863,32 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
         )
 
 
+def test_cli_clears_ambient_chat_provider_order_and_applies_allowlist_to_ingest_and_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Protocol chat_provider_only is applied to ingest preflight and answer, clearing ambient order."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-luna-pro")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "openai,anthropic"
+    )
+
+    ingest_provider = cli._provider(run_dir=tmp_path, stage="ingest")
+    assert isinstance(ingest_provider, OpenRouterModelProvider)
+    assert ingest_provider._settings.chat_provider_only == ["openai/flex"]
+    assert ingest_provider._settings.chat_provider_order is None
+
+    answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
+    assert isinstance(answer_provider, OpenRouterModelProvider)
+    assert answer_provider._settings.chat_provider_only == ["openai/flex"]
+    assert answer_provider._settings.chat_provider_order is None
+
+    judge_provider = cli._provider(run_dir=tmp_path, stage="judge")
+    assert isinstance(judge_provider, OpenRouterModelProvider)
+    assert judge_provider._settings.chat_provider_only is None
+    assert judge_provider._settings.chat_provider_order == ["openai", "anthropic"]
+
+
 def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

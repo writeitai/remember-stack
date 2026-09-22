@@ -196,7 +196,11 @@ def _provider(
     protocol = run_protocol(run_dir=run_dir)
     codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
     if stage == "ingest":
-        openrouter = _seat_provider(provider_key="openrouter", recorder=recorder)
+        openrouter = _seat_provider(
+            provider_key="openrouter",
+            recorder=recorder,
+            chat_provider_only=protocol.chat_provider_only,
+        )
         if protocol.answer_agent_provider == "openrouter":
             return openrouter
         answer_provider = _seat_provider(
@@ -233,6 +237,7 @@ def _seat_provider(
         overrides: dict[str, object] = {}
         if chat_provider_only:
             overrides["chat_provider_only"] = list(chat_provider_only)
+            overrides["chat_provider_order"] = None
         return OpenRouterModelProvider(
             settings=OpenRouterSettings.model_validate(overrides), recorder=recorder
         )
