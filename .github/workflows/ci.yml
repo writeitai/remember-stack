@@ -251,9 +251,9 @@ jobs:
               bucket="remember-raw", settings=MinIOSettings.model_validate({})
           )
           key = ObjectKey("ci/immutable-object")
-          store.write_bytes(key=key, content=b"first")
+          store.write_bytes(key=key, content=b"first", storage_class="cold")
           try:
-              store.write_bytes(key=key, content=b"replacement")
+              store.write_bytes(key=key, content=b"replacement", storage_class="cold")
           except ObjectAlreadyExistsError:
               pass
           else:

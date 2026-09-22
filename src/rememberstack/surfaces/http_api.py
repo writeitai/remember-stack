@@ -49,6 +49,7 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
+from rememberstack.model import ContentDetectionError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentPage
@@ -1318,6 +1319,8 @@ def _mount_ingest(
                 )
             except ManagedTextClassificationError as error:
                 raise _managed_text_http_error(error=error) from error
+            except ContentDetectionError as error:
+                raise HTTPException(status_code=422, detail=error.code) from error
         try:
             return ingest.ingest_observed(
                 deployment_id=deployment_id,
@@ -1332,6 +1335,8 @@ def _mount_ingest(
             )
         except ManagedTextClassificationError as error:
             raise _managed_text_http_error(error=error) from error
+        except ContentDetectionError as error:
+            raise HTTPException(status_code=422, detail=error.code) from error
 
 
 def _mount_connectors(

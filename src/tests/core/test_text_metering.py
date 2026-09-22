@@ -55,6 +55,15 @@ def test_mime_does_not_hide_native_text_or_change_quantity() -> None:
     assert result.canonical_source_bytes == 6
 
 
+def test_csv_and_bom_text_share_plain_text_metering() -> None:
+    """Text flavour and BOM do not create a different billing class."""
+    result = classify_doc_text(
+        content=b"\xef\xbb\xbfalpha,beta\r\n1,2", declared_mime="text/csv"
+    )
+    assert result.canonical_mime == "text/plain"
+    assert result.normalized_character_count == len("alpha,beta 1,2")
+
+
 @pytest.mark.parametrize(
     ("payload", "mime"),
     [
@@ -62,7 +71,6 @@ def test_mime_does_not_hide_native_text_or_change_quantity() -> None:
         (b"<!doctype html><p>hello</p>", "text/plain"),
         (b"<svg><text>hello</text></svg>", "application/octet-stream"),
         (b"JVBERi0xLjQK", "text/plain"),
-        (b"a,b,c\n1,2,3", "text/csv"),
     ],
 )
 def test_structured_or_armoured_text_is_not_native_doc_text(
@@ -72,6 +80,36 @@ def test_structured_or_armoured_text_is_not_native_doc_text(
     with pytest.raises(ManagedTextClassificationError) as raised:
         classify_doc_text(content=payload, declared_mime=mime)
     assert raised.value.code == "rate_class_ambiguous"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        b"<html><p>text</p>",
+        b"{\\rtf1 formatted}",
+        b"<svg><text>text</text></svg>",
+        b"<?xml version='1.0'?><root/>",
+        b"JVBERi0xLjQK",
+    ),
+)
+@pytest.mark.parametrize(
+    "prefix", (b"\xef\xbb\xbf", b"\r\n\xef\xbb\xbf", b"\xef\xbb\xbf\xef\xbb\xbf")
+)
+def test_bom_cannot_hide_structured_or_armoured_text(
+    payload: bytes, prefix: bytes
+) -> None:
+    """Repeated or whitespace-separated BOMs preserve text exclusions."""
+    with pytest.raises(ManagedTextClassificationError) as raised:
+        classify_doc_text(content=prefix + payload, declared_mime="text/plain")
+    assert raised.value.code == "rate_class_ambiguous"
+
+
+def test_prefixed_pdf_cannot_enter_managed_text_rate() -> None:
+    """PDF body tokens remain unavailable even with preamble and tail padding."""
+    content = b"\n%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n" + b" " * 2049
+    with pytest.raises(ManagedTextClassificationError) as raised:
+        classify_doc_text(content=content, declared_mime="text/plain")
+    assert raised.value.code == "rate_class_unavailable"
 
 
 def test_bound_exceed_is_typed_before_any_source_version() -> None:

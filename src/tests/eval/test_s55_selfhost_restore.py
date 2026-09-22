@@ -161,7 +161,9 @@ def _seed_projections(*, snapshot_store: LocalFSObjectStore, mount_root: Path) -
     for prefix, content in ((_PROJECTION_PREFIX, _TOKEN), (_CONTROL_PREFIX, _CONTROL)):
         try:
             snapshot_store.write_bytes(
-                key=ObjectKey(f"{prefix.root}/data"), content=content.encode()
+                key=ObjectKey(f"{prefix.root}/data"),
+                content=content.encode(),
+                storage_class="cold",
             )
         except ObjectAlreadyExistsError:
             pass
@@ -203,8 +205,10 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
     mount_root = tmp_path / "mount"
     repository = tmp_path / "knowledge"
     backup = _seed_git(repository=repository)
-    objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode())
-    objects.write_bytes(key=_CONTROL_KEY, content=_CONTROL.encode())
+    objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode(), storage_class="cold")
+    objects.write_bytes(
+        key=_CONTROL_KEY, content=_CONTROL.encode(), storage_class="cold"
+    )
     _seed_projections(snapshot_store=snapshots, mount_root=mount_root)
     projection_catalog = _ProjectionCatalog()
     git = LocalGitRepository(
@@ -257,7 +261,9 @@ def test_real_selfhost_stores_rehonor_independent_restores(tmp_path: Path) -> No
     assert_s55()
 
     def restore_objects() -> None:
-        objects.write_bytes(key=_OBJECT_KEY, content=_TOKEN.encode())
+        objects.write_bytes(
+            key=_OBJECT_KEY, content=_TOKEN.encode(), storage_class="cold"
+        )
 
     def restore_projections() -> None:
         projection_catalog.prefixes.add(_PROJECTION_PREFIX.root)

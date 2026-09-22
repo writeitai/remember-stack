@@ -12,6 +12,8 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.storage_routing import COLD
+from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -162,10 +164,12 @@ class MinIOObjectStore:
             body.close()
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Create immutable bytes atomically, refusing an occupied key."""
-        metadata = {} if storage_class is None else {"storage-class": storage_class}
+        if storage_class not in {HOT, COLD}:
+            raise ValueError("invalid storage class")
+        metadata = {"storage-class": storage_class}
         try:
             self._client.put_object(
                 Bucket=self._bucket,

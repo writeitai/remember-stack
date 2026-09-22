@@ -60,6 +60,14 @@ from remember.models import SpendGate
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
+
+def _mime_hint_for_path(*, path: Path) -> str | None:
+    """Give Markdown a stable hint across OS MIME databases."""
+    if path.suffix.lower() in {".md", ".markdown"}:
+        return "text/markdown"
+    return mimetypes.guess_type(path.name)[0]
+
+
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
@@ -804,7 +812,7 @@ class MemoryClient:
         elif isinstance(source, Path):
             payload_bytes = source.read_bytes()
             filename = filename or source.name
-            mime = mime or mimetypes.guess_type(source.name)[0]
+            mime = mime or _mime_hint_for_path(path=source)
         elif isinstance(source, bytes):
             payload_bytes = source
         elif isinstance(source, str):
@@ -812,7 +820,7 @@ class MemoryClient:
             if p.is_file():
                 payload_bytes = p.read_bytes()
                 filename = filename or p.name
-                mime = mime or mimetypes.guess_type(p.name)[0]
+                mime = mime or _mime_hint_for_path(path=p)
             else:
                 raise ValueError(f"file not found: {source}")
         else:

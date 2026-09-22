@@ -21,7 +21,7 @@ from rememberstack.model import DerivationRange
 from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
 
-PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.08"
+PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.09-bom"
 """Pins the passthrough route's behavior: strict UTF-8 decode, no rewriting,
 D65 envelope emission (manifest + total labeling). A contract change here
 must bump this so replay never reuses artifacts from the old shape."""
@@ -148,7 +148,7 @@ class MarkdownPassthroughConverter:
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Decode the bytes as UTF-8 text; undecodable input is a typed failure."""
         try:
-            document_md = content.decode("utf-8")
+            document_md = content.decode("utf-8-sig")
         except UnicodeDecodeError as err:
             raise ConversionError(
                 f"input declared {mime!r} is not valid UTF-8 text"

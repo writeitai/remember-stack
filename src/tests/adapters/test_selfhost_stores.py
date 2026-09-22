@@ -26,10 +26,10 @@ def test_object_store_round_trip_and_immutability(tmp_path: Path) -> None:
     assert isinstance(store, ObjectStorePort)
     key = ObjectKey("raw/doc-1/original.pdf")
 
-    store.write_bytes(key=key, content=b"immutable bytes")
+    store.write_bytes(key=key, content=b"immutable bytes", storage_class="cold")
     assert store.read_bytes(key=key) == b"immutable bytes"
     with pytest.raises(ObjectAlreadyExistsError):
-        store.write_bytes(key=key, content=b"replacement")
+        store.write_bytes(key=key, content=b"replacement", storage_class="cold")
     assert store.read_bytes(key=key) == b"immutable bytes"
 
 
@@ -37,7 +37,21 @@ def test_object_store_refuses_keys_that_escape_the_root(tmp_path: Path) -> None:
     """A traversal key can never resolve outside the store root."""
     store = LocalFSObjectStore(root=tmp_path / "objects")
     with pytest.raises(ObjectKeyEscapesRootError):
-        store.write_bytes(key=ObjectKey("../outside.txt"), content=b"nope")
+        store.write_bytes(
+            key=ObjectKey("../outside.txt"), content=b"nope", storage_class="cold"
+        )
+
+
+def test_object_store_refuses_unlabelled_dynamic_write(tmp_path: Path) -> None:
+    """An untyped caller cannot bypass the required metadata with None."""
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    with pytest.raises(ValueError, match="invalid storage class"):
+        store.write_bytes(
+            key=ObjectKey("raw/unknown"),
+            content=b"bytes",
+            storage_class=None,  # type: ignore[arg-type]
+        )
+    assert not (tmp_path / "objects/raw/unknown").exists()
 
 
 def test_mount_publisher_creates_the_four_views(tmp_path: Path) -> None:

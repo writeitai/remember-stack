@@ -17,6 +17,8 @@ Target release coordinate: [`v0.17.0`](https://github.com/writeitai/remember-sta
 - Frozen Selection results share bounded, source-backed references with later extraction; version reuse covers all cited ranges and earlier context inputs
 - Testimony currency and lineage-based evidence counting when documents change or extractors re-run
 - Watched sources and versioned document lineages (including a local directory watcher)
+- Byte-based file-class detection at ingest, with typed refusals for conflicting MIME declarations
+- Explicit storage classes on raw, derived, snapshot, and internal object writes
 
 Facts use one mutable chosen world-time window with explicit precision. Contextual
 adjudication handles identity and date corrections together; immutable source

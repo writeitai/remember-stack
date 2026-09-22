@@ -21,6 +21,7 @@ from pydantic_settings import SettingsConfigDict
 from rememberstack.core import knowledge_planning_input_hash
 from rememberstack.core import knowledge_summary_hash
 from rememberstack.core import primary_knowledge_plan_trigger
+from rememberstack.core.storage_routing import storage_class_for_internal
 from rememberstack.model import KnowledgeAgentSessionResult
 from rememberstack.model import KnowledgePlanDecisionResult
 from rememberstack.model import KnowledgePlannerSessionRequest
@@ -296,7 +297,11 @@ class KnowledgePlannerWorker:
             f"{self._settings.transcript_prefix}/{snapshot.deployment_id}/"
             f"{run_kind.value}/{self._clock().date().isoformat()}/{session_id}.json"
         )
-        self._transcript_store.write_bytes(key=key, content=transcript.encode("utf-8"))
+        self._transcript_store.write_bytes(
+            key=key,
+            content=transcript.encode("utf-8"),
+            storage_class=storage_class_for_internal(),
+        )
         return key.root
 
 

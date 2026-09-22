@@ -182,7 +182,9 @@ def test_raw_reads_are_attributed_and_logged(tmp_path: Path) -> None:
     """D51 guardrail 2: the audit property comes from LOGGING — so an
     unattributed read is refused, and every real read leaves a record."""
     raw_store = LocalFSObjectStore(root=tmp_path / "raw")
-    raw_store.write_bytes(key=ObjectKey("doc/original.pdf"), content=b"%PDF-1.7 ...")
+    raw_store.write_bytes(
+        key=ObjectKey("doc/original.pdf"), content=b"%PDF-1.7 ...", storage_class="cold"
+    )
     reader = AuditedRawReader(
         raw_store=raw_store, audit_log=tmp_path / "audit" / "raw-access.jsonl"
     )
@@ -227,7 +229,7 @@ def test_views_point_at_the_real_stores(deployment: Engine, tmp_path: Path) -> N
     artifacts = tmp_path / "stores" / "artifacts"
     raw = tmp_path / "stores" / "raw"
     LocalFSObjectStore(root=artifacts).write_bytes(
-        key=ObjectKey("doc/document.md"), content=b"# Body"
+        key=ObjectKey("doc/document.md"), content=b"# Body", storage_class="cold"
     )
     LocalFSObjectStore(root=raw).write_bytes(
         key=ObjectKey("doc/original.pdf"), content=b"%PDF", storage_class="cold"
@@ -286,7 +288,7 @@ def test_parked_original_is_readable_from_configured_mount(
     from rememberstack.spine import ForgetCatalog
     from rememberstack.workers import UploadIngestor
 
-    original = b"\x00unconverted original\xff"
+    original = b"%PDF-1.7\nunconverted original"
     raw_root = tmp_path / "provider-raw"
     raw_store = LocalFSObjectStore(root=raw_root)
     ingested = UploadIngestor(
@@ -297,7 +299,7 @@ def test_parked_original_is_readable_from_configured_mount(
     ).ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="original.bin", mime="application/x-unknown", content=original
+            filename="original.pdf", mime="application/pdf", content=original
         ),
     )
     with deployment.connect() as connection:

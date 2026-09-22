@@ -41,3 +41,7 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 For conversational anaphora and question-affirmation resolution across dialogue turns,
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
+
+For byte-authoritative ingest MIME and explicit classes on every object write,
+see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--gcs-holds-bodies-postgres-holds-the-index)
+and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
