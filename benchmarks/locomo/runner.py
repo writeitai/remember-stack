@@ -142,6 +142,14 @@ class ProviderInfrastructureError(BenchmarkRunError):
     """Provider credit or availability failed before a terminal item checkpoint."""
 
 
+class _RunnerEnvironmentSettings(BaseSettings):
+    """Optional runner deployment environment settings."""
+
+    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_", extra="ignore")
+
+    build_revision: str | None = None
+
+
 class _LangfuseActivationSettings(BaseSettings):
     """Standard Langfuse bindings used only to decide whether to load the shim."""
 
@@ -2841,6 +2849,9 @@ def _category_literal(category: int) -> RetainedCategory:
 
 def _repository_revision() -> str:
     """Read the exact Git commit used in the protocol fingerprint."""
+    override = _RunnerEnvironmentSettings.model_validate({}).build_revision
+    if override and override.strip():
+        return override.strip()
     result = subprocess.run(
         ("git", "rev-parse", "HEAD"), check=True, capture_output=True, text=True
     )
