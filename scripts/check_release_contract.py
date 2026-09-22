@@ -147,6 +147,8 @@ def _validate_postgres_release(*, root: Path) -> None:
         "platforms: linux/amd64,linux/arm64",
         f"type=raw,value={base}-${{{{ needs.prepare.outputs.version }}}}",
         "postgres-image-digests.json",
+        "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
+        "docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2",
     ):
         if required not in workflow:
             raise ValueError(
@@ -155,7 +157,15 @@ def _validate_postgres_release(*, root: Path) -> None:
 
 
 def _validate_terminal_package_release(*, root: Path) -> None:
-    """Validate that the terminal transition package is one-time gated on v0.17.0 (D108)."""
+    """Validate the one-time, non-public transition package contract (D108)."""
+    with (root / "pyproject.toml").open("rb") as pyproject:
+        canonical_document = tomllib.load(pyproject)
+    canonical_scripts = canonical_document.get("project", {}).get("scripts", {})
+    if "rememberstack" in canonical_scripts:
+        raise ValueError(
+            "the canonical remember distribution must not install a rememberstack command"
+        )
+
     terminal_pyproject = root / "packages" / "rememberstack" / "pyproject.toml"
     if not terminal_pyproject.is_file():
         raise ValueError(f"missing terminal package manifest: {terminal_pyproject}")
@@ -170,6 +180,9 @@ def _validate_terminal_package_release(*, root: Path) -> None:
     deps = project.get("dependencies", [])
     if "remember>=0.17.0" not in deps:
         raise ValueError("packages/rememberstack must depend on 'remember>=0.17.0'")
+    classifiers = project.get("classifiers", [])
+    if "Development Status :: 7 - Inactive" not in classifiers:
+        raise ValueError("packages/rememberstack must be marked inactive")
 
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
@@ -181,6 +194,20 @@ def _validate_terminal_package_release(*, root: Path) -> None:
     if "skip-existing: true" not in workflow:
         raise ValueError(
             "release workflow publish-pypi step must set skip-existing: true"
+        )
+    for required in (
+        "name: remember ${{ needs.prepare.outputs.version }}",
+        "dist/remember-*",
+        "fail_on_unmatched_files: true",
+    ):
+        if required not in workflow:
+            raise ValueError(
+                f"release workflow is missing canonical remember presentation {required!r}"
+            )
+    github_release = workflow.split("github-release:", maxsplit=1)[1]
+    if "dist/*" in github_release or "dist/rememberstack" in github_release:
+        raise ValueError(
+            "GitHub releases must not expose the terminal rememberstack distribution"
         )
 
 

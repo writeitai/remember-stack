@@ -172,6 +172,9 @@ pip install remember
 # Run the full server engine via Docker: ghcr.io/writeitai/remember-stack
 ```
 
+`remember` is the sole current Python distribution. The GitHub repository and
+self-hosted container retain the `remember-stack` name.
+
 ---
 
 ## Open source = full engine

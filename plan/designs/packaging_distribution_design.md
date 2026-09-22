@@ -16,6 +16,13 @@
 > budget inspection are retired from public interfaces; autonomous bitemporal adjudication
 > (D3/D43/D107) is the sole engine truth authority. Full specification:
 > `plan/designs/unified_remember_distribution_design.md`.
+>
+> **D108 release-identity clarification (2026-09-22).** GitHub release titles and
+> attached Python artifacts expose only `remember`; the repository and container
+> retain `remember-stack`. The terminal `rememberstack==0.17.0` migration forwarder
+> is published once to PyPI and then the project is archived. It is not a GitHub
+> release attachment and is never versioned again. Analysis:
+> `plan/analysis/remember_release_identity_and_pypi_retirement.md`.
 
 
 What the open-source library *ships as*, how work physically executes on both deployment

@@ -158,14 +158,8 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
     compat_launcher = environment / "bin" / "rememberstack"
     status_launcher = environment / "bin" / "remember-status"
     assert executable.exists()
-    assert compat_launcher.exists()
+    assert not compat_launcher.exists()
     assert status_launcher.exists()
-
-    compat_run = subprocess.run(
-        [str(compat_launcher), "--version"], check=True, capture_output=True, text=True
-    )
-    assert "DeprecationWarning: 'rememberstack' CLI is deprecated" in compat_run.stderr
-    assert compat_run.stdout.strip() == f"remember {_declared_version()}"
 
     status_run = subprocess.run(
         [str(status_launcher), "--help"], check=True, capture_output=True, text=True
@@ -363,7 +357,7 @@ def test_terminal_rememberstack_migration_and_coexistence(tmp_path: Path) -> Non
     )
 
     # Check model identity and client re-exports
-    subprocess.run(
+    import_result = subprocess.run(
         [
             str(python_clean),
             "-I",
@@ -383,6 +377,8 @@ def test_terminal_rememberstack_migration_and_coexistence(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
     )
+    assert "FutureWarning" in import_result.stderr
+    assert "pip install remember" in import_result.stderr
 
     # Check CLI launchers
     rem_bin = venv_clean / "bin" / "remember"

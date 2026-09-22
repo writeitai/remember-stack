@@ -12,6 +12,17 @@
 > adjudication (D3/D43/D107) is the sole engine truth authority. The `remember` CLI operates as a developer
 > and data-plane tool supporting authentication and project context (`login`, `whoami`, `switch`) and data-plane
 > operations (`setup`, `ingest`, `query`, `mcp`), while administrative management tasks (`projects create`, `members list|invite`, `balance` billing top-ups) provide direct web console guidance to `https://remember.dev/app/...`.
+>
+> **D108 release-identity clarification (2026-09-22).** The repository remains
+> `writeitai/remember-stack`, and all existing GitHub tags and releases remain
+> historical records. New GitHub releases are titled `remember <version>` and
+> attach only the canonical `remember` Python artifacts plus container deployment
+> inputs. The canonical wheel installs no `rememberstack` executable. A terminal
+> `rememberstack==0.17.0` forwarder is published to PyPI without being featured as
+> a GitHub release asset, after which the PyPI project is archived and receives no
+> further versions. The project is not deleted because deletion would break old
+> pins and release the trusted name. Supporting analysis:
+> `plan/analysis/remember_release_identity_and_pypi_retirement.md`.
 
 
 ---
@@ -239,8 +250,9 @@ Decoupling client delivery from internal engine implementation requires strict, 
    - Restructure repository root to house the `remember` client package alongside engine modules (or clean `packages/remember` layout).
    - Ensure `pyproject.toml` for `remember` declares only `httpx`, `pydantic`, and `pydantic-settings`.
 2. **Phase 2: PyPI Cutover**:
-   - Release `remember 0.4.0` owning the `remember` CLI binary.
-   - Release a final `rememberstack` update (e.g. `0.16.1` or `1.0.0`) containing a clear terminal deprecation warning directing users to `remember` for client usage and Docker Compose for server deployments.
+   - Release `remember 0.17.0` owning the `remember` CLI binary and presenting `remember 0.17.0` as the GitHub release title.
+   - Release `rememberstack 0.17.0` once as an inactive PyPI-only transition forwarder with a visible warning directing users to `remember` for client usage and Docker Compose for server deployments.
+   - Archive the `rememberstack` PyPI project after publication. Do not delete it, attach it to the GitHub release, or publish another version.
 3. **Phase 3: Docs & Quickstart Updates**:
    - Update `remember.dev/docs` and `docs.remember.dev` quickstart guides to feature `uvx remember setup` as the primary onboarding command.
    - Deprecate bare-metal pip install instructions for self-hosters; standardize all self-hosted guides on Docker Compose.

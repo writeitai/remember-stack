@@ -324,10 +324,10 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_sha }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@49b3bc8e6bdd4480b82837b51a6a34a65b0cfa14 # v3.2.0
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514310cf821e50f8fce2cf61da37718ccd58 # v3.10.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -444,15 +444,25 @@ jobs:
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.1
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
+          name: remember ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ needs.prepare.outputs.source_sha }}
           generate_release_notes: true
+          body: |
+            ## Install
+
+            Python SDK, CLI, and MCP server: [`remember==${{ needs.prepare.outputs.version }}`](https://pypi.org/project/remember/${{ needs.prepare.outputs.version }}/)
+
+            Self-hosted engine: [`ghcr.io/writeitai/remember-stack:${{ needs.prepare.outputs.version }}`](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack)
+
+            The repository remains `writeitai/remember-stack`; `remember` is its sole current Python distribution.
           files: |
-            dist/*
+            dist/remember-*
             release-evidence/postgres-image-digests.json
             release-evidence/application-image-digest.json
             compose.yaml
             .env.example
             openapi.json
+          fail_on_unmatched_files: true
       - name: Revisit main changes that arrived during publication
         env:
           GH_TOKEN: ${{ github.token }}
