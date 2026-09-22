@@ -42,6 +42,18 @@ def test_object_store_refuses_keys_that_escape_the_root(tmp_path: Path) -> None:
         )
 
 
+def test_object_store_refuses_unlabelled_dynamic_write(tmp_path: Path) -> None:
+    """An untyped caller cannot bypass the required metadata with None."""
+    store = LocalFSObjectStore(root=tmp_path / "objects")
+    with pytest.raises(ValueError, match="invalid storage class"):
+        store.write_bytes(
+            key=ObjectKey("raw/unknown"),
+            content=b"bytes",
+            storage_class=None,  # type: ignore[arg-type]
+        )
+    assert not (tmp_path / "objects/raw/unknown").exists()
+
+
 def test_mount_publisher_creates_the_four_views(tmp_path: Path) -> None:
     """Publishing yields exactly the P3, artifacts, raw, and knowledge views."""
     publisher: MountPublisherPort = LocalMountPublisher(

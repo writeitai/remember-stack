@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from rememberstack.core.storage_routing import COLD
+from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -29,8 +31,23 @@ class LocalFSObjectStore:
         cloud adapter turns the same value into a real class, and either
         way an operator can see what each original was routed to.
         """
+        if storage_class not in {HOT, COLD}:
+            raise ValueError("invalid storage class")
         path = self._path_for(key=key)
         path.parent.mkdir(parents=True, exist_ok=True)
+        marker = path.with_name(f"{path.name}.storage-class")
+        try:
+            with marker.open(mode="x", encoding="utf-8") as handle:
+                handle.write(storage_class)
+        except FileExistsError:
+            if path.exists():
+                raise ObjectAlreadyExistsError(
+                    f"object key {key.root!r} is already occupied; objects are immutable"
+                ) from None
+            if marker.read_text(encoding="utf-8") != storage_class:
+                raise ValueError(
+                    "orphaned object has a different storage class"
+                ) from None
         try:
             with path.open(mode="xb") as handle:
                 handle.write(content)
@@ -38,9 +55,6 @@ class LocalFSObjectStore:
             raise ObjectAlreadyExistsError(
                 f"object key {key.root!r} is already occupied; objects are immutable"
             ) from err
-        path.with_name(f"{path.name}.storage-class").write_text(
-            storage_class, encoding="utf-8"
-        )
 
     def storage_class_of(self, *, key: ObjectKey) -> str | None:
         """The class one object was routed to, when the writer declared it."""

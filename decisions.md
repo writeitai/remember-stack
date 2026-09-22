@@ -5707,6 +5707,10 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
+**Refined by D132.** "Otherwise admissible" now requires a recognizable byte
+class and no contradictory declared class; only those accepted originals park
+when a conversion route is absent.
+
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
 **Context.** Accepting an unsupported format previously stored it and then

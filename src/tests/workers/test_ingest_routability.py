@@ -19,6 +19,7 @@ from pydantic import SecretStr
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
+from rememberstack.model import ContentDetectionError
 from rememberstack.model import DeferReason
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
@@ -41,6 +42,7 @@ class _RecordingCatalog:
         """Start with nothing recorded."""
         self.calls = 0
         self.defer_reason: DeferReason | None = None
+        self.recorded_mime: str | None = None
 
     def record_upload(
         self,
@@ -54,6 +56,7 @@ class _RecordingCatalog:
         """Record the scheduling decision and return a fixed receipt."""
         _ = convert_component_version, lane, metering
         self.calls += 1
+        self.recorded_mime = record.mime
         self.defer_reason = (
             None
             if routable_mimes is None or record.mime in routable_mimes
@@ -88,6 +91,7 @@ class _CountingStore:
     def __init__(self) -> None:
         """Start with no writes."""
         self.writes = 0
+        self.classes: list[str] = []
 
     def read_bytes(self, *, key: ObjectKey) -> bytes:
         """Reject reads during ingest."""
@@ -98,6 +102,7 @@ class _CountingStore:
     ) -> None:
         """Record one raw write."""
         self.writes += 1
+        self.classes.append(storage_class)
 
 
 def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingStore]:
@@ -152,6 +157,71 @@ def test_routable_input_is_scheduled_immediately(observed: bool) -> None:
     """The control: a type the deployment converts is not deferred at all."""
     catalog, _ = _ingest("text/plain", observed=observed)
     assert catalog.defer_reason is None
+
+
+@pytest.mark.parametrize("observed", (False, True))
+def test_bytes_control_stored_mime_and_raw_class(observed: bool) -> None:
+    """A generic declaration cannot steer the catalog or object class."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    upload = DocumentUpload(
+        filename="opaque.bin",
+        mime="application/octet-stream",
+        content=b"ID3\x04\x00\x00\x00\x00\x00\x00",
+    )
+    if observed:
+        ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="audio-1",
+            upload=upload,
+            versioning_mode="living",
+            source_modified_at=None,
+            source_version_ref=None,
+            sync_cycle_id=None,
+        )
+    else:
+        ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert catalog.recorded_mime == "audio/mpeg"
+    assert catalog.defer_reason is DeferReason.NO_ROUTE
+    assert store.classes == ["hot"]
+
+
+@pytest.mark.parametrize("observed", (False, True))
+def test_mismatch_refuses_before_any_raw_or_catalog_write(observed: bool) -> None:
+    """Neither ingestion entry point persists a contradictory declaration."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    upload = DocumentUpload(
+        filename="fake.txt", mime="text/plain", content=b"%PDF-1.7\n"
+    )
+    with pytest.raises(ContentDetectionError) as raised:
+        if observed:
+            ingestor.ingest_observed(
+                deployment_id=_DEPLOYMENT_ID,
+                source_kind="drive",
+                source_ref="pdf-1",
+                upload=upload,
+                versioning_mode="living",
+                source_modified_at=None,
+                source_version_ref=None,
+                sync_cycle_id=None,
+            )
+        else:
+            ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert raised.value.code == "content_type_mismatch"
+    assert store.writes == 0
+    assert catalog.calls == 0
 
 
 def test_matching_uses_decided_mime_for_ingest_and_router() -> None:

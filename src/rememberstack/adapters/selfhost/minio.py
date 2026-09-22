@@ -12,6 +12,8 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.storage_routing import COLD
+from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -165,6 +167,8 @@ class MinIOObjectStore:
         self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Create immutable bytes atomically, refusing an occupied key."""
+        if storage_class not in {HOT, COLD}:
+            raise ValueError("invalid storage class")
         metadata = {"storage-class": storage_class}
         try:
             self._client.put_object(
