@@ -205,7 +205,7 @@ def _validate_terminal_package_release(*, root: Path) -> None:
                 f"release workflow is missing canonical remember presentation {required!r}"
             )
     github_release = workflow.split("github-release:", maxsplit=1)[1]
-    if "dist/*" in github_release:
+    if "dist/*" in github_release or "dist/rememberstack" in github_release:
         raise ValueError(
             "GitHub releases must not expose the terminal rememberstack distribution"
         )
