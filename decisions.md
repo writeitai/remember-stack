@@ -1590,6 +1590,10 @@ access-isolation arm; `retrieval_design.md` §9.)
 
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
+**Refined by D132.** The original MIME class is decided from bytes before this
+raw routing rule runs. D132 also requires explicit classes on derived, snapshot,
+and internal object writes; D51's hot-media/cold-audit split for originals remains.
+
 **Decision.** The primary consumers are **agentic coding harnesses** (Claude Code, Codex,
 OpenCode). Four surfaces mount read-only where the environment allows: **P3** (navigate first),
 **E0 artifacts** (Markdown + structure + *derived* media — figures, thumbnails, transcripts),
@@ -6091,3 +6095,34 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 **Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
+## D132. Decide ingest class from bytes and label every object write
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** Declared MIME could select conversion, metering, and storage for a
+contradictory file. D51 labelled raw originals but left derived and private
+object writes unlabelled, which a managed object gateway rejected.
+
+**Decision.** E0 classifies bytes before any raw write or catalog transaction.
+Signatures identify PDF, image, audio, and video; office ZIP member names and
+legacy OLE signatures identify office; strict UTF-8 identifies text. Unknown
+binary or a declaration contradicting the detected class raises a typed client
+error. For formats indistinguishable within a class, the declaration is only a
+hint: Markdown vs plain/CSV/code affects rendering but not text billing, while
+legacy OLE needs a declared office subtype. Store the resulting MIME, and use
+it consistently for the conversion route, original storage class, and managed
+text metering. Every object-store write must provide a class: raw media hot,
+other raw originals cold; query-facing derived objects and P3 snapshots hot;
+retry checkpoints and private K transcripts cold. Make the port argument
+required so future omissions fail before storage.
+
+**Alternatives and consequences.** Standard-library signatures and ZIP metadata
+avoid another licence, supply-chain, or wheel-size cost. Generic magic-only
+classification cannot reliably distinguish office ZIPs or UTF-8 text; a native
+libmagic dependency increases deployment and wheel-platform complexity.
+Signatures identify the class but do not replace converter validation of full
+format structure. Unknown binary is refused rather than assigned an optimistic
+rate. Existing rows retain their recorded MIME until re-ingested.
+
+**Authority:** [design](plan/designs/e0_files_design.md),
+[analysis](plan/analysis/content_detection_and_object_classes_20260923.md).

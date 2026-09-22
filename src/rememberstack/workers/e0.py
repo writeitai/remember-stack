@@ -51,6 +51,8 @@ from rememberstack.core import SKELETON_PARSER_VERSION
 from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
+from rememberstack.core.content_detection import detect_content_mime
+from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
 from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
@@ -208,6 +210,13 @@ class UploadIngestor:
             source_ref=content_hash,
             content_hash=content_hash,
         )
+        upload = upload.model_copy(
+            update={
+                "mime": detect_content_mime(
+                    content=upload.content, declared_mime=upload.mime
+                )
+            }
+        )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
@@ -272,6 +281,13 @@ class UploadIngestor:
             source_kind=source_kind,
             source_ref=source_ref,
             content_hash=content_hash,
+        )
+        upload = upload.model_copy(
+            update={
+                "mime": detect_content_mime(
+                    content=upload.content, declared_mime=upload.mime
+                )
+            }
         )
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
@@ -555,7 +571,11 @@ class ConvertHandler:
         if source_map_bytes is not None:
             artifacts[f"{base}/source_map.json"] = source_map_bytes
         for uri, payload_bytes in artifacts.items():
-            self._artifact_store.write_bytes(key=ObjectKey(uri), content=payload_bytes)
+            self._artifact_store.write_bytes(
+                key=ObjectKey(uri),
+                content=payload_bytes,
+                storage_class=storage_class_for_derived(),
+            )
 
         self._catalog.record_representation(
             record=RepresentationRecord(
@@ -1335,7 +1355,9 @@ class StructureHandler:
         )
         try:
             self._artifact_store.write_bytes(
-                key=ObjectKey(persisted.pageindex_uri), content=payload
+                key=ObjectKey(persisted.pageindex_uri),
+                content=payload,
+                storage_class=storage_class_for_derived(),
             )
         except ObjectAlreadyExistsError:
             pass

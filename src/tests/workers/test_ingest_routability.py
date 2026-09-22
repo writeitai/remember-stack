@@ -94,7 +94,7 @@ class _CountingStore:
         raise AssertionError(f"unexpected read of {key.root}")
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Record one raw write."""
         self.writes += 1
@@ -109,7 +109,8 @@ def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingS
         admission=_AllowingAdmission(),
         routable_mimes=frozenset(_ROUTES),
     )
-    upload = DocumentUpload(filename="input.bin", mime=mime, content=b"hello")
+    content = b"ID3\x04\x00\x00\x00\x00\x00\x00" if mime == "audio/mpeg" else b"hello"
+    upload = DocumentUpload(filename="input.bin", mime=mime, content=content)
     if observed:
         ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
@@ -153,17 +154,10 @@ def test_routable_input_is_scheduled_immediately(observed: bool) -> None:
     assert catalog.defer_reason is None
 
 
-def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
-    """A parameterised MIME parks, because the router would not route it.
-
-    `ConversionRouter.converter_for` is an exact dict lookup. If ingest
-    normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
-    did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D117 exists to remove. Normalisation belongs in the router,
-    where both callers inherit it.
-    """
+def test_matching_uses_decided_mime_for_ingest_and_router() -> None:
+    """A parameterized text hint is normalized before catalog scheduling."""
     catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
-    assert catalog.defer_reason is DeferReason.NO_ROUTE
+    assert catalog.defer_reason is None
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:

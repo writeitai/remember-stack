@@ -162,10 +162,10 @@ class MinIOObjectStore:
             body.close()
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Create immutable bytes atomically, refusing an occupied key."""
-        metadata = {} if storage_class is None else {"storage-class": storage_class}
+        metadata = {"storage-class": storage_class}
         try:
             self._client.put_object(
                 Bucket=self._bucket,

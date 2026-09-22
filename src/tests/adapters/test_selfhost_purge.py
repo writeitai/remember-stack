@@ -45,9 +45,9 @@ def test_local_object_purge_is_exact_prefix_aware_and_idempotent(
     similar_prefix = ObjectKey("artifacts/forgotten-extra/control.json")
     survivor = ObjectKey("raw/control.bin")
     store.write_bytes(key=exact, content=b"forgotten", storage_class="cold")
-    store.write_bytes(key=under_prefix, content=b"forgotten")
-    store.write_bytes(key=similar_prefix, content=b"control")
-    store.write_bytes(key=survivor, content=b"control")
+    store.write_bytes(key=under_prefix, content=b"forgotten", storage_class="cold")
+    store.write_bytes(key=similar_prefix, content=b"control", storage_class="cold")
+    store.write_bytes(key=survivor, content=b"control", storage_class="cold")
 
     adapter.purge_objects(keys=(exact,), prefixes=(ObjectKey("artifacts/forgotten"),))
     adapter.purge_objects(keys=(exact,), prefixes=(ObjectKey("artifacts/forgotten"),))
@@ -87,7 +87,9 @@ def test_projection_purge_removes_durable_registry_and_local_copies(
     object_store = LocalFSObjectStore(root=tmp_path / "snapshots")
     prefix = ObjectKey("graph/snapshots/old-version")
     object_store.write_bytes(
-        key=ObjectKey(f"{prefix.root}/MANIFEST.json"), content=b"old"
+        key=ObjectKey(f"{prefix.root}/MANIFEST.json"),
+        content=b"old",
+        storage_class="cold",
     )
     p3_copy = tmp_path / "mounts" / str(_DEPLOYMENT_ID) / "p3-old-version"
     p3_copy.mkdir(parents=True)

@@ -57,7 +57,7 @@ class RecordingStore:
         raise AssertionError(f"unexpected read of {key.root}")
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         self.writes += 1
 

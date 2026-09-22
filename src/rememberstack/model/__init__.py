@@ -91,6 +91,7 @@ from rememberstack.model.consumption import ConsumptionScope
 from rememberstack.model.consumption import ConsumptionSkillContext
 from rememberstack.model.consumption import RenderedConsumptionSkill
 from rememberstack.model.consumption import S58Answer
+from rememberstack.model.content_detection import ContentDetectionError
 from rememberstack.model.conversion import ConversionCoverage
 from rememberstack.model.conversion import ConversionError
 from rememberstack.model.conversion import ConversionResult
@@ -517,6 +518,7 @@ __all__ = (
     "ManagedIngestMeasurementV2",
     "ManagedMeterScope",
     "ManagedTextClassificationError",
+    "ContentDetectionError",
     "ManagedTextMeasurementDraft",
     "MeterAdmissionResult",
     "MeterReceiptConflict",

@@ -1,0 +1,44 @@
+# Byte-authoritative ingest and object classes (2026-09-23)
+
+## Problem and constraints
+
+An uploader can call a PDF `text/plain`, causing the wrong converter, rate class,
+and raw storage class. D51 routes original media by MIME but derived and private
+objects currently leave the object-store port with no class. The managed gateway
+requires a label for every write. D117 still requires a valid but unrouted
+original to be retained and parked.
+
+## Choices
+
+The Python standard library can inspect fixed binary signatures and ZIP package
+member names, then validate remaining text as UTF-8. This adds no dependency,
+wheel bytes, or licence beyond Python. Reading ZIP names avoids decompressing
+untrusted document bodies. Its limit is that a signature is a class assertion,
+not full format validation; converters still validate their inputs. Unknown
+binary and an unrecognized ZIP must fail closed because treating either as text
+could select a cheaper rate or a wrong route. A single magic-only `filetype`
+dependency would still need office package inspection and Unicode validation.
+A libmagic binding has broad signature coverage but adds a system library and
+platform-specific packaging to both OSS and managed deployments. Neither
+changes the need for a typed mismatch check.
+
+Text flavours cannot be inferred reliably from bytes. Markdown, CSV, source
+code, and plain text therefore share one byte class, one text rate, and the
+passthrough converter. The declaration may select Markdown rendering; other
+text hints normalize to plain text. UTF-8 BOM and CRLF remain valid. Existing
+managed text exclusions for structured or armoured text still apply after
+class detection.
+
+Derived representation objects and P3 snapshots are frequently opened by
+queries, mounts, and browse operations, so `hot` avoids cold retrieval charges.
+Lane checkpoints and private K transcripts are retry/replay records outside the
+query path, so `cold` is appropriate. Originals retain D51's media-hot and
+audit/reconversion-cold split. Requiring the class on the port makes omissions
+a type or runtime error, including in a new writer.
+
+## Failure and migration behavior
+
+Detection runs before any raw write or catalog transaction. Contradictions and
+unknown binary return a stable typed error at HTTP 422. Existing rows keep their
+recorded MIME and class; changing historical evidence would require explicit
+re-ingestion. No dependency or schema migration is required.

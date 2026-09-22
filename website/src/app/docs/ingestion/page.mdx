@@ -51,6 +51,14 @@ Deep dive: [Pipeline stages](/docs/ingestion/pipeline).
 
 One deployment is one trust domain. Auth (when configured) gates the API perimeter before any write.
 
+E0 checks file bytes before storing an upload. The detected file class controls
+conversion, metering, and original storage. A declared MIME that contradicts
+the bytes returns HTTP 422 (`content_type_mismatch`); unknown binary returns
+`unsupported_binary_content`. Markdown, CSV, code, and plain UTF-8 text share
+the text class; a Markdown declaration remains a rendering hint. UTF-8 BOM and
+CRLF text are accepted. Valid files without a configured conversion route are
+stored and parked until that route is available.
+
 ## Guarantees you can rely on
 
 ### 1. Idempotent by content

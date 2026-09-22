@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 
+from rememberstack.model import ContentDetectionError
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
@@ -131,6 +132,53 @@ def _post(client: TestClient, **headers: str) -> Response:
         content=b"hello",
         headers=headers,
     )
+
+
+def test_content_mismatch_is_a_typed_client_error() -> None:
+    """The API exposes the ingest detector's stable reason on both entry paths."""
+
+    class RejectingIngest(_RecordingIngest):
+        """Simulate a byte classifier refusing a contradictory upload."""
+
+        def ingest(
+            self,
+            *,
+            deployment_id: UUID,
+            upload: DocumentUpload,
+            ingested_by: IngestPrincipal | None = None,
+        ) -> IngestedVersion:
+            """Refuse a one-shot upload."""
+            raise ContentDetectionError(code="content_type_mismatch")
+
+        def ingest_observed(
+            self,
+            *,
+            deployment_id: UUID,
+            source_kind: str,
+            source_ref: str,
+            upload: DocumentUpload,
+            versioning_mode: str,
+            source_modified_at: datetime | None,
+            source_version_ref: str | None,
+            sync_cycle_id: UUID | None,
+            ingested_by: IngestPrincipal | None = None,
+        ) -> IngestedVersion:
+            """Refuse a watched observation."""
+            raise ContentDetectionError(code="content_type_mismatch")
+
+    client = _client(RejectingIngest())
+    for params in (
+        {"filename": "fake.txt", "mime": "text/plain"},
+        {
+            "filename": "fake.txt",
+            "mime": "text/plain",
+            "source_kind": "drive",
+            "source_ref": "item-1",
+        },
+    ):
+        response = client.post("/ingest", params=params, content=b"%PDF-1.7\n")
+        assert response.status_code == 422
+        assert response.json()["detail"] == "content_type_mismatch"
 
 
 def _attribution(kind: str | None = None, ref: str | None = None) -> dict[str, str]:

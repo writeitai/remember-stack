@@ -20,7 +20,7 @@ class LocalFSObjectStore:
         return self._path_for(key=key).read_bytes()
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Create immutable bytes, failing rather than replacing an occupied key.
 
@@ -38,10 +38,9 @@ class LocalFSObjectStore:
             raise ObjectAlreadyExistsError(
                 f"object key {key.root!r} is already occupied; objects are immutable"
             ) from err
-        if storage_class is not None:
-            path.with_name(f"{path.name}.storage-class").write_text(
-                storage_class, encoding="utf-8"
-            )
+        path.with_name(f"{path.name}.storage-class").write_text(
+            storage_class, encoding="utf-8"
+        )
 
     def storage_class_of(self, *, key: ObjectKey) -> str | None:
         """The class one object was routed to, when the writer declared it."""
