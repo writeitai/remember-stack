@@ -7,7 +7,7 @@ warnings.warn(
     "Please migrate to 'remember' (pip install remember) for the Python SDK and platform CLI, "
     "or use the official Docker image 'ghcr.io/writeitai/remember-stack' for self-hosted engine deployments. "
     "See https://remember.dev/docs/project-status/ for details.",
-    DeprecationWarning,
+    FutureWarning,
     stacklevel=2,
 )
 

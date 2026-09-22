@@ -245,12 +245,12 @@ def test_release_contract_can_print_the_validated_version_for_ci() -> None:
 
 
 def test_github_release_completion_requires_every_attachment() -> None:
-    """A matching tag alone cannot suppress recovery of a partial release upload."""
+    """Recovery requires canonical assets without advertising the terminal shim."""
     required = _required_assets(version="0.17.0")
     assert "application-image-digest.json" in required
     assert "postgres-image-digests.json" in required
     assert "remember-0.17.0-py3-none-any.whl" in required
-    assert "rememberstack-0.17.0-py3-none-any.whl" in required
+    assert "rememberstack-0.17.0-py3-none-any.whl" not in required
     assert len(required - {"application-image-digest.json"}) > 0
 
 

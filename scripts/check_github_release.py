@@ -23,8 +23,8 @@ def main() -> None:
 
 
 def _required_assets(*, version: str) -> set[str]:
-    """Return exact release asset names for one canonical distribution version."""
-    required = {
+    """Return exact public assets for one canonical ``remember`` release."""
+    return {
         f"remember-{version}-py3-none-any.whl",
         f"remember-{version}.tar.gz",
         "application-image-digest.json",
@@ -33,11 +33,6 @@ def _required_assets(*, version: str) -> set[str]:
         "default.env.example",
         "openapi.json",
     }
-    if version == "0.17.0":
-        required.update(
-            {"rememberstack-0.17.0-py3-none-any.whl", "rememberstack-0.17.0.tar.gz"}
-        )
-    return required
 
 
 def _parser() -> argparse.ArgumentParser:

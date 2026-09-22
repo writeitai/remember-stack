@@ -20,8 +20,10 @@ ordinary PostgreSQL transactions; there is no separate search-store or index
 maintenance process. The one-shot `setup` service applies every migration,
 provisions object buckets, bootstraps the deployment, and seeds
 the four canonical assured operations plus the `examples.*` saved queries.
-The RememberStack, `rememberstack`, and `remember` names used here are final. Do
-not expose this stack to untrusted traffic.
+The repository and container retain the RememberStack / `remember-stack` name.
+Python clients install only the `remember` distribution; internal Python module
+and environment-variable names are not installation instructions. Do not expose
+this stack to untrusted traffic.
 
 Model seats are per-deployment environment bindings. The document-structure
 stage uses four: `REMEMBERSTACK_SKELETON_CHECK_MODEL` (the bounded skeleton

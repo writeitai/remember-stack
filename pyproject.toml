@@ -61,7 +61,6 @@ observability = [
 
 [project.scripts]
 remember = "remember.cli:main"
-rememberstack = "remember.cli:rememberstack_main"
 remember-status = "remember.cli:main_status"
 
 [project.urls]

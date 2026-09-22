@@ -5,6 +5,13 @@ architecture lives in `designs/`; research in `analysis/` is non-binding.
 `plans/` owns build order. The canonical numbered authority log is
 [decisions.md](../decisions.md). Design acceptance does not establish shipped behavior.
 
+For package and release identity, start with [D108's unified distribution
+design](designs/unified_remember_distribution_design.md). The
+[release-identity analysis](analysis/remember_release_identity_and_pypi_retirement.md)
+explains why GitHub preserves the `remember-stack` history while public Python
+releases expose only `remember`, and why the retired PyPI name is archived
+rather than deleted.
+
 For the temporal program, start with [D118 mutable fact windows](designs/mutable_fact_windows_design.md)
 and the [implementation sequence](plans/temporal_clocks.md). The
 [analysis](analysis/lean_mutable_fact_windows.md) explains the independent audits
@@ -34,4 +41,3 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 For conversational anaphora and question-affirmation resolution across dialogue turns,
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
-
