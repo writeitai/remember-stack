@@ -63,10 +63,12 @@ When the answer agent queried `facts_context(entity_ids=[Joanna_id], k=15, query
 
 ### 2.1 The Asymmetry Between Selection and Claimify
 The two-stage extraction architecture (D31/D119) separates proposition selection from claim formulation:
-- **Selection** evaluates each candidate span within the target chunk. It correctly drops questions (`drop_question`) because a question does not assert a fact.
-- **Claimify** takes the kept propositions and formulates standalone claims.
+- **Selection** evaluates each candidate span within the target chunk. It correctly drops questions (`drop_question`) because a question does not assert a fact. Dropping a question from Selection means it will not become a standalone claim origin.
+- **Claimify** receives the kept propositions alongside the full target chunk bundle, same-section neighbours, and passage catalog. Crucially, the dropped question's text remains fully visible in Claimify's target chunk bundle!
 
-However, in conversational dialogue, an answering turn often contains anaphora (`"this"`, `"that"`, `"it"`, `"one"`) whose referent was established in the *preceding question turn*. When Nate asked *"Is that your third one?"*, the referent (*"her third screenplay"*) was established. When Joanna responded *"Yep! I chose to write about this..."*, she explicitly affirmed Nate's question.
+The failure in `conv-42/qa/0094` was therefore not *lost* context, but *inadequate utilization of available conversational context*. In multi-turn dialogue, an answering turn often contains anaphora (`"this"`, `"that"`, `"it"`, `"one"`) whose referent was established in the preceding question turn. When Nate asked *"Is that your third one?"*, the referent (*"her third screenplay"*) was established. When Joanna responded *"Yep! I chose to write about this..."*, she explicitly affirmed Nate's question.
+
+Because Claimify lacked explicit instructions for cross-turn conversational anaphora and question-affirmations, models treated demonstratives without explicit local antecedents as risky candidates. Fearing unverified additions or hallucination, models defaulted to generic nouns (*"a story"*), stripping the specific ordinal (*"third"*) and work kind (*"screenplay"*).
 
 ### 2.2 Why Existing Guidance Failed
 In PR #400 (`plan/designs/multi_span_claim_extraction_design.md`) and `src/rememberstack/workers/e2.py`, the prompt contained:
