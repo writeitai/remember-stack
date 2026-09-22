@@ -409,6 +409,20 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
         in normalized_prompt
     )
     assert "budget of at most 8 tool calls per question" in normalized_prompt
+    assert "Temporal filtering and event anchoring:" in prompt
+    assert 'time={{"mode": "at", "at": "<timestamp>"}}' in prompt
+    assert 'time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}' in prompt
+    assert 'time={{"mode": "history"}}' in prompt
+    assert (
+        "anchor your answer to the evidence asserted during the timeframe"
+        in normalized_prompt
+    )
+    assert "prefer the speaker's specific verbatim terms" in normalized_prompt
+    assert (
+        "distinguish activities explicitly stated as personal hobbies"
+        in normalized_prompt
+    )
+    assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
     assert "all_sources" not in prompt
 
 
