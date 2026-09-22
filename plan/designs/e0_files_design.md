@@ -84,15 +84,16 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
 E0 inspects file signatures and header fields, ISO BMFF file-type brands
 (distinguishing common MP4 video, M4A audio, and HEIC/AVIF images), and, for
 office ZIP packages, their member names. Printable prefix strings alone do
-not establish a binary class; a PDF token after a preamble requires PDF body
-and end markers.
+not establish a binary class; a PDF token after a bounded preamble requires a
+PDF object body and end marker, even if the file has trailing padding.
 Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
 and CRLF are valid. It detects text, PDF, image, audio, video, and office
 classes. A contradictory declared class or unrecognized binary is a typed
 ingest refusal, surfaced as HTTP 422. The stored `content_objects.mime` is the
 decided MIME and drives the D38 route, D51 original class, and managed text
 metering. Text flavours cannot be settled by bytes: Markdown may remain a
-rendering hint; CSV, code, and plain text share the plain-text route and rate.
+rendering hint; CSV, code (including textual `application/javascript`), JSON,
+and plain text share the plain-text route and rate.
 For legacy OLE office containers, bytes establish the office class and the
 declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
 container is refused. This check identifies the class; a converter still

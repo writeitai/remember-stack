@@ -25,18 +25,22 @@ def _docx_bytes() -> bytes:
     return output.getvalue()
 
 
-def _bmff_bytes(*, brand: bytes) -> bytes:
-    """Build the minimum complete file-type box with one major brand."""
-    return b"\x00\x00\x00\x10ftyp" + brand + b"\x00\x00\x00\x00"
+def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
+    """Build a file-type box with major and optional compatible brands."""
+    size = 20 if compatible is not None else 16
+    return size.to_bytes(4, "big") + b"ftyp" + brand + b"\x00" * 4 + (compatible or b"")
 
 
 @pytest.mark.parametrize(
     ("content", "declared", "expected"),
     [
         (b"hello\r\nworld", "text/csv", "text/plain"),
+        (b"const answer = 42;\n", "application/javascript", "text/plain"),
+        (b'{"answer":42}\n', "application/json", "text/plain"),
         (b"\xef\xbb\xbf# Heading\r\n", "text/markdown", "text/markdown"),
         (b"%PDF-1.7\n" + b"x" * 1_000_000, "application/pdf", "application/pdf"),
         (b"\x89PNG\r\n\x1a\n" + b"bytes", "image/png", "image/png"),
+        (b"GIF89a\x01\x00\x01\x00\x80\x00\x00;", "image/gif", "image/gif"),
         (
             b"BM"
             + (26).to_bytes(4, "little")
@@ -53,7 +57,10 @@ def _bmff_bytes(*, brand: bytes) -> bytes:
         (_bmff_bytes(brand=b"isom"), "video/mp4", "video/mp4"),
         (_bmff_bytes(brand=b"M4A "), "audio/mp4", "audio/mp4"),
         (_bmff_bytes(brand=b"M4A "), "application/octet-stream", "audio/mp4"),
+        (_bmff_bytes(brand=b"isom", compatible=b"M4A "), "audio/mp4", "audio/mp4"),
+        (_bmff_bytes(brand=b"mp42", compatible=b"M4A "), "audio/x-m4a", "audio/mp4"),
         (_bmff_bytes(brand=b"heic"), "image/heic", "image/heic"),
+        (_bmff_bytes(brand=b"heic"), "image/heif", "image/heic"),
         (_bmff_bytes(brand=b"heic"), "application/octet-stream", "image/heic"),
         (
             _docx_bytes(),
@@ -144,6 +151,25 @@ def test_ascii_prefixed_pdf_at_header_boundary_remains_pdf() -> None:
         detect_content_mime(content=content, declared_mime="application/octet-stream")
         == "application/pdf"
     )
+
+
+def test_shifted_pdf_with_long_trailing_padding_stays_pdf() -> None:
+    """A shifted PDF cannot fall through to the cheaper text class."""
+    content = b"x" * 1025 + b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n" + b" " * 2049
+    assert (
+        detect_content_mime(content=content, declared_mime="application/octet-stream")
+        == "application/pdf"
+    )
+    with pytest.raises(ContentDetectionError) as raised:
+        detect_content_mime(content=content, declared_mime="text/plain")
+    assert raised.value.code == "content_type_mismatch"
+
+
+@pytest.mark.parametrize("declared", ("text/plain", "application/octet-stream"))
+@pytest.mark.parametrize("content", (b"GIF89a is a format", b"GIF89a\r\nhello there"))
+def test_printable_gif_prefix_remains_text(content: bytes, declared: str) -> None:
+    """A GIF prefix alone is not an image header."""
+    assert detect_content_mime(content=content, declared_mime=declared) == "text/plain"
 
 
 @pytest.mark.parametrize("declared", ("image/jpg", "image/pjpeg"))

@@ -25,15 +25,18 @@ changes the need for a typed mismatch check.
 
 Short printable prefixes such as `BM` and `ID3` are insufficient evidence of a
 binary class, and `%PDF-` mentioned inside a text document or another format
-must not override its true class. Prefixed PDF headers require PDF body and end
-markers. These checks limit false refusals without decoding full media bodies.
+must not override its true class. Prefixed PDF headers require a PDF object body
+and end marker, with the header searched in a bounded 8 KiB preamble (an
+implementation starting point); trailing padding does not erase the marker.
+These checks limit false refusals without decoding full media bodies.
 
 Text flavours cannot be inferred reliably from bytes. Markdown, CSV, source
-code, and plain text therefore share one byte class, one text rate, and the
+code (including `application/javascript`), JSON, and plain text therefore share
+one byte class, one text rate, and the
 passthrough converter. The declaration may select Markdown rendering; other
 text hints normalize to plain text. UTF-8 BOM and CRLF remain valid. Existing
 managed text exclusions for structured or armoured text still apply after
-stripping a leading BOM and after
+stripping repeated or whitespace-separated leading BOMs and after
 class detection.
 
 Derived representation objects and P3 snapshots are frequently opened by

@@ -20,11 +20,24 @@ _OFFICE_MIMES = {
     "application/vnd.oasis.opendocument.presentation",
 }
 _TEXT_HINTS = {"text/markdown", "text/x-markdown"}
+_TEXT_APPLICATION_HINTS = {
+    "application/javascript",
+    "application/ecmascript",
+    "application/json",
+    "application/ld+json",
+    "application/x-ndjson",
+    "application/x-yaml",
+    "application/yaml",
+    "application/toml",
+    "application/x-sh",
+}
 _IMAGE_MIME_ALIASES = {
     "image/jpg": "image/jpeg",
     "image/pjpeg": "image/jpeg",
     "image/x-png": "image/png",
+    "image/heif": "image/heic",
 }
+_AUDIO_MIME_ALIASES = {"audio/x-m4a": "audio/mp4"}
 
 
 def _looks_like_bmp(*, content: bytes) -> bool:
@@ -63,6 +76,14 @@ def _looks_like_gif(*, content: bytes) -> bool:
         and content[:6] in {b"GIF87a", b"GIF89a"}
         and int.from_bytes(content[6:8], "little") > 0
         and int.from_bytes(content[8:10], "little") > 0
+        and (
+            any(byte < 32 or byte > 126 for byte in content[10:13])
+            or (
+                len(content) >= 15
+                and content[13] in {0x21, 0x2C}
+                and content.endswith(b"\x3b")
+            )
+        )
     )
 
 
@@ -146,29 +167,29 @@ def _looks_like_adts(*, content: bytes) -> bool:
 
 
 def _bmff_mime(*, content: bytes) -> str | None:
-    """Classify ISO BMFF by its validated file-type box and major brand."""
+    """Classify ISO BMFF by validated major and compatible file-type brands."""
     if len(content) < 16 or content[4:8] != b"ftyp":
         return None
     size = int.from_bytes(content[:4], "big")
     if not 16 <= size <= len(content):
         return None
-    brand = content[8:12]
-    if brand in {b"M4A ", b"M4B ", b"M4P "}:
-        return "audio/mp4"
-    if brand in {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"}:
+    brands = {content[8:12]}
+    brands.update(content[offset : offset + 4] for offset in range(16, size, 4))
+    if brands & {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"}:
         return "image/heic"
-    if brand in {b"avif", b"avis"}:
+    if brands & {b"avif", b"avis"}:
         return "image/avif"
+    if brands & {b"M4A ", b"M4B ", b"M4P "}:
+        return "audio/mp4"
     return "video/mp4"
 
 
-def _has_shifted_pdf_header(*, content: bytes) -> bool:
-    """Recognize a prefixed PDF only with body and terminal PDF structure."""
-    header = re.search(rb"%PDF-[12]\.\d", content[:1032])
+def has_pdf_body(*, content: bytes) -> bool:
+    """Find a PDF header in a bounded preamble followed by an object body."""
+    header = re.search(rb"%PDF-[12]\.\d", content[:8200])
     return bool(
         header is not None
-        and 0 < header.start() <= 1024
-        and b"%%EOF" in content[-2048:]
+        and header.start() <= 8192
         and re.search(rb"\d+\s+\d+\s+obj\b", content[header.end() :])
     )
 
@@ -252,8 +273,10 @@ def _detected_mime(*, content: bytes) -> str:
         raise ContentDetectionError(code="unsupported_binary_content")
     if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "application/x-ole-office"
-    if _has_shifted_pdf_header(content=content):
-        return "application/pdf"
+    if has_pdf_body(content=content):
+        if b"%%EOF" in content:
+            return "application/pdf"
+        raise ContentDetectionError(code="unsupported_binary_content")
     try:
         decoded = content.decode("utf-8-sig")
     except UnicodeDecodeError as error:
@@ -271,9 +294,12 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
     detected = _detected_mime(content=content)
     declared = declared_mime.partition(";")[0].strip().lower()
     declared = _IMAGE_MIME_ALIASES.get(declared, declared)
+    declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected.startswith("text/"):
-        if declared not in {"", "application/octet-stream"} and not declared.startswith(
-            "text/"
+        if (
+            declared not in {"", "application/octet-stream"}
+            and declared not in _TEXT_APPLICATION_HINTS
+            and not declared.startswith("text/")
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return "text/markdown" if declared in _TEXT_HINTS else "text/plain"

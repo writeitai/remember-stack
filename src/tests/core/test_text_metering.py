@@ -92,11 +92,24 @@ def test_structured_or_armoured_text_is_not_native_doc_text(
         b"JVBERi0xLjQK",
     ),
 )
-def test_bom_cannot_hide_structured_or_armoured_text(payload: bytes) -> None:
-    """A leading UTF-8 BOM preserves all managed text exclusions."""
+@pytest.mark.parametrize(
+    "prefix", (b"\xef\xbb\xbf", b"\r\n\xef\xbb\xbf", b"\xef\xbb\xbf\xef\xbb\xbf")
+)
+def test_bom_cannot_hide_structured_or_armoured_text(
+    payload: bytes, prefix: bytes
+) -> None:
+    """Repeated or whitespace-separated BOMs preserve text exclusions."""
     with pytest.raises(ManagedTextClassificationError) as raised:
-        classify_doc_text(content=b"\xef\xbb\xbf" + payload, declared_mime="text/plain")
+        classify_doc_text(content=prefix + payload, declared_mime="text/plain")
     assert raised.value.code == "rate_class_ambiguous"
+
+
+def test_prefixed_pdf_cannot_enter_managed_text_rate() -> None:
+    """PDF body tokens remain unavailable even with preamble and tail padding."""
+    content = b"\n%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n" + b" " * 2049
+    with pytest.raises(ManagedTextClassificationError) as raised:
+        classify_doc_text(content=content, declared_mime="text/plain")
+    assert raised.value.code == "rate_class_unavailable"
 
 
 def test_bound_exceed_is_typed_before_any_source_version() -> None:
