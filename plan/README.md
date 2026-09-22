@@ -30,3 +30,8 @@ For coherent claims and distributed source evidence, start with
 [D119 multi-span extraction](designs/multi_span_claim_extraction_design.md).
 The [analysis](analysis/multi_span_claim_extraction.md) explains the LoCoMo
 findings and reuse constraints. Implementation is not implied by design acceptance.
+
+For conversational anaphora and question-affirmation resolution across dialogue turns,
+see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
+and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
+

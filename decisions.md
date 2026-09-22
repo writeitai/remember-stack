@@ -6068,3 +6068,24 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Authority:** [design](plan/designs/adjacent_chunks_retrieval_design.md),
 [analysis](plan/analysis/adjacent_chunks_retrieval_analysis.md).
+
+## D131. Cross-turn conversational anaphora and question-affirmation resolution in claim extraction
+
+**Status:** accepted. **Date:** 2026-09-22.
+
+**Context.** In multi-turn dialogue transcripts, speakers routinely respond to questions using anaphoric demonstratives or pronouns (e.g. Nate asks *"Is that your third one?"* $\to$ Joanna responds *"Yep! I chose to write about this because it's really personal. It's about loss, identity, and connection."*). In core extraction (D31/D119), Selection drops the question (`drop_question`) because it is not an assertion. However, Claimify lacked explicit instructions for cross-turn question-affirmations. Fearing that replacing `"this"` with `"her third screenplay"` would be rejected as unverified context, models defaulted to generic nouns (*"a story"*), completely dropping the ordinal (*"third"*) and work kind (*"screenplay"*). This caused severe downstream failure (e.g. `conv-42/qa/0094`): the third screenplay was never cataloged as an entity, the observation lacked identifying keywords, and semantic search surfaced facts about Joanna's *second* screenplay instead.
+
+**Decision.**
+1. Update `_CLAIMIFY_PROMPT` in `workers/e2.py` with explicit, binding instructions for cross-turn conversational anaphora and question-affirmation resolution:
+   - When an utterance affirms or answers a preceding question or dialogue turn, the affirmative response confirms the referent from the question.
+   - Demonstratives and pronouns (`"this"`, `"that"`, `"it"`, `"one"`) must be resolved to the specific antecedent established by the dialogue (e.g. `"her third screenplay"`), rather than degrading into a vague generic noun (`"a story"`).
+   - If the speaker negates, deflects, or expresses uncertainty, the model must NOT bind the question's premise as true.
+2. Require standalone completeness: standalone claims must preserve specific entity names, ordinal numbers, and qualifiers (`"third screenplay"`, `"second marathon"`), ensuring semantic search and entity resolution distinguish between different works and milestones. Never drop an established ordinal or specific noun in favor of a vague generalization.
+3. Source references (`source_refs`) must cite the preceding dialogue passage that establishes the antecedent alongside the origin passage.
+4. Token grounding invariants under D32/D119: antecedent text occurring in the target chunk or cited passages is grounded source context and passes deterministic token verification (`_failed_added_context_tokens`) without triggering `ADDED_CONTEXT_UNVERIFIED`.
+
+**Alternatives and consequences.** Relaxing Selection to keep questions was rejected because interrogatives are not factual assertions and would pollute the claim catalog. Query-time resolution was rejected because it violates D1/D48 and cannot repair top-$K$ truncation when the stored observation lacks keywords. The change adds zero extra LLM calls, zero schema migrations, and minimal prompt token overhead (~110 tokens).
+
+**Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
+[analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
+
