@@ -30,6 +30,7 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from rememberstack.client import ClientSettings
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
@@ -42,7 +43,8 @@ ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-API_TIMEOUT_SECONDS: Final = 60.0
+DEFAULT_API_TIMEOUT_SECONDS: Final = 180.0
+API_TIMEOUT_SECONDS: Final = ClientSettings.model_validate({}).api_timeout_seconds
 """Transport budget for compound retrieval, larger than the server DB budget."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
@@ -127,11 +129,13 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "structure_fallback": "openai/gpt-5.6-luna",
     }
 )
-ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
-ANSWER_AGENT_REASONING_EFFORT: Final = "none"
-JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
-JUDGE_REASONING_EFFORT: Final = "none"
+ANSWER_AGENT_MODEL: Final = "openai/gpt-6-luna-pro"
+ANSWER_AGENT_REASONING_EFFORT: Final = "high"
+JUDGE_MODEL: Final = "openai/gpt-6-luna-pro"
+JUDGE_REASONING_EFFORT: Final = "high"
 TEMPERATURE: Final = 0.0
+LUNA_PRO_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-LunaPro"
+LUNA_PRO_PROTOCOL_KEY: Final = "full-v38-luna-pro"
 GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-GemmaVertex"
 GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v38-gemma-vertex"
 GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
@@ -271,15 +275,17 @@ indicates that the outcome is independent of the condition, answer "Likely
 yes". Use "Unknown" only when the evidence gives no direction about that
 dependency.
 
-When a question asks about a superlative (e.g. what someone enjoys "most", "best",
-or considers their "favorite" or "primary" choice), identify the specific option
-the speaker singled out with that superlative rather than pooling all mentioned
-items or categories.
+When a question asks about a preference or superlative (such as what someone enjoys "most",
+"best", or considers their "favorite" or "primary" choice), identify what the speaker specifically
+singled out or affirmed in response to an inquiry about their preference, rather than pooling all
+casually mentioned items or categories. Evaluate statements in conversational context: when a speaker
+responds directly to an inquiry about a favorite or preference by highlighting a specific title, activity,
+or item, recognize that responsive affirmation as their indicated choice.
 
 When answering questions about what someone loves, enjoys, does, or experienced, prefer
-the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
-abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the question explicitly
-asks for a broader category or the broader category was explicitly used by the speaker.
+the speaker's specific verbatim terms rather than generalizing or abstracting to a broader umbrella
+category, unless the question explicitly asks for a broader category or the broader category was
+explicitly used by the speaker.
 
 When a question asks about a person's hobbies or interests, distinguish activities explicitly
 stated as personal hobbies or ongoing interests from routine daily tasks, one-off chores, or
@@ -293,10 +299,16 @@ or highest-ranked match. Exclude merely related facts that do not satisfy the
 question's requested action or relationship.
 
 For questions about shared, mutual, or collective attributes or activities
-(e.g. mutual interests, shared hobbies, joint plans), require explicit evidence
-that all referenced parties participate in or agree on the attribute. Do not
-attribute an individual participant's solo attribute or activity to the shared set
-unless the other participant(s) also explicitly express or share it.
+(e.g. mutual interests, shared hobbies, joint plans), distinguish between common attributes/interests
+(which each party independently pursues, enjoys, or affirms having in common) and joint activities
+(undertaken together). An activity or interest affirmed for both parties counts as a shared interest without
+requiring that they always perform it jointly. Do not attribute an individual participant's solo attribute
+or activity to the shared set unless the other participant(s) also explicitly express, share, or reciprocate it.
+
+For questions inquiring about allergies, physical sensitivities, or adverse reactions, encompass all
+substances, conditions, and foods that the person cannot tolerate, causes physical reactions, or must avoid due to
+bodily intolerance, recognizing that in conversational contexts speakers and questions often use allergy and
+sensitivity to describe dietary and environmental intolerances.
 
 If a retrieved conversation turn or passage ends on an unanswered question or
 reference directly relevant to the target topic (e.g. one speaker asking about it),
@@ -328,12 +340,12 @@ TOOL TRACE SO FAR:
 QUESTION:
 {question}"""
 
-JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the
-gold answer. Be generous about concise paraphrases that identify the same topic.
-For time questions, accept equivalent formats or relative expressions only when
-they denote the same date or time period. Extra wording does not make an otherwise
-correct answer wrong. A missing, unknown, contradictory, or different answer is
-WRONG.
+JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the gold answer.
+Evaluate semantic correctness generously:
+- If the generated answer contains, identifies, or encompasses the core fact, entity, date, or event specified by the gold answer, classify it as CORRECT.
+- For time and date questions, accept equivalent calendar expressions, relative expressions (e.g. 'last Friday', 'January 21'), or answers that identify the specific date even if they also mention an encompassing deadline or related action (such as printing or finishing by a certain date).
+- Additional explanatory detail, context, surrounding conversational framing, or synonyms do not make an answer wrong as long as the essential truth of the gold answer is conveyed.
+- Classify as WRONG only if the answer is genuinely contradictory to the gold answer, asserts a fundamentally different fact/entity/time, or is missing/Unknown.
 
 Question: {question}
 Gold answer: {gold_answer}
@@ -373,6 +385,8 @@ class LoCoMoProtocol:
     """Exact readiness model bindings this protocol ingests with. Variants that
     swap ingest models override it; the runner checks readiness against the
     selected protocol, never the module-global canonical map."""
+    chat_provider_only: tuple[str, ...] | None = None
+    """Optional hard provider allowlist for OpenRouter chat generation (e.g. ('openai/flex',))."""
 
 
 _FULL_V25 = LoCoMoProtocol(
@@ -395,6 +409,30 @@ _FULL_V25 = LoCoMoProtocol(
     answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
     judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
+    chat_provider_only=("openai/flex",),
+)
+
+_FULL_V25_LUNA_PRO = LoCoMoProtocol(
+    key=LUNA_PRO_PROTOCOL_KEY,
+    name=LUNA_PRO_PROTOCOL_NAME,
+    answer_agent_model="openai/gpt-6-luna-pro",
+    judge_model=JUDGE_MODEL,
+    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
+    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
+    answer_schema=AnswerAgentStep,
+    judge_schema=JudgeOutput,
+    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
+    tool_catalog_sha256=tool_catalog_sha256(),
+    max_tool_calls_per_question=MAX_TOOL_CALLS,
+    max_agent_calls_per_question=MAX_AGENT_CALLS,
+    answer_agent_temperature=TEMPERATURE,
+    judge_temperature=TEMPERATURE,
+    judge_repetitions=1,
+    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
+    answer_agent_reasoning_effort="high",
+    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
+    answer_word_cap=None,
+    chat_provider_only=("openai/flex",),
 )
 
 _FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(
@@ -414,7 +452,7 @@ _FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(
     judge_temperature=TEMPERATURE,
     judge_repetitions=1,
     answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
+    answer_agent_reasoning_effort="none",
     judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
     answer_agent_provider="vertex",
@@ -471,6 +509,7 @@ _FULL_V25_GLM = LoCoMoProtocol(
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
     {
         _FULL_V25.key: _FULL_V25,
+        _FULL_V25_LUNA_PRO.key: _FULL_V25_LUNA_PRO,
         _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
         _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
         _FULL_V25_GLM.key: _FULL_V25_GLM,

@@ -196,7 +196,11 @@ def _provider(
     protocol = run_protocol(run_dir=run_dir)
     codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
     if stage == "ingest":
-        openrouter = _seat_provider(provider_key="openrouter", recorder=recorder)
+        openrouter = _seat_provider(
+            provider_key="openrouter",
+            recorder=recorder,
+            chat_provider_only=protocol.chat_provider_only,
+        )
         if protocol.answer_agent_provider == "openrouter":
             return openrouter
         answer_provider = _seat_provider(
@@ -216,6 +220,9 @@ def _provider(
         codex_audit_path=codex_audit_path,
         codex_audit_stage=stage,
         recorder=recorder,
+        chat_provider_only=(
+            protocol.chat_provider_only if stage in ("answer", "judge") else None
+        ),
     )
 
 
@@ -225,11 +232,16 @@ def _seat_provider(
     codex_audit_path: Path | None = None,
     codex_audit_stage: str = "generation",
     recorder: GenerationRecorder | None = None,
+    chat_provider_only: tuple[str, ...] | None = None,
 ) -> ModelProviderPort:
     """Build one configured provider without reading unrelated credentials."""
     if provider_key == "openrouter":
+        overrides: dict[str, object] = {}
+        if chat_provider_only:
+            overrides["chat_provider_only"] = list(chat_provider_only)
+            overrides["chat_provider_order"] = None
         return OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({}), recorder=recorder
+            settings=OpenRouterSettings.model_validate(overrides), recorder=recorder
         )
     if provider_key == "vertex":
         return VertexModelProvider(

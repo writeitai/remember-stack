@@ -1046,7 +1046,7 @@ def test_answer_and_judge_refuse_provider_resolved_model_drift() -> None:
     assert answer.failure is not None
     assert answer.failure.kind == "accounting"
     assert "not-luna" in answer.failure.message
-    assert answer_provider.requests[0].reasoning_effort == "none"
+    assert answer_provider.requests[0].reasoning_effort == "high"
 
     judge_provider = _CostProvider(
         cost=Decimal("0.01"), resolved_model="openai/not-luna"
@@ -1102,7 +1102,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
     assert answer.agent_call_count == 2
     assert answer.reader_usage is not None
     assert answer.reader_usage.model_name == (
-        "mixed:openai/gpt-5.6-luna|openai/not-luna"
+        "mixed:openai/gpt-6-luna-pro|openai/not-luna"
     )
     assert answer.reader_usage.cost_usd == Decimal("0.02")
     assert state.evaluator_cost_usd == Decimal("0.02")
@@ -1113,17 +1113,28 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "protocol",
         "answer_agent_model",
         "judge_model",
-        "reasoning_effort",
+        "answer_reasoning_effort",
+        "judge_reasoning_effort",
         "temperature",
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
     (
-        ("full-v38", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
+        (
+            "full-v38",
+            "openai/gpt-6-luna-pro",
+            "openai/gpt-6-luna-pro",
+            "high",
+            "high",
+            0.0,
+            0,
+            2,
+        ),
         (
             "full-v38-codex-subscription",
             "gpt-5.6-luna",
             "gpt-5.6-luna",
+            "high",
             "high",
             None,
             0,
@@ -1135,7 +1146,8 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
     answer_agent_model: str,
     judge_model: str,
-    reasoning_effort: str | None,
+    answer_reasoning_effort: str | None,
+    judge_reasoning_effort: str | None,
     temperature: float | None,
     invalid_first_step_completions: int,
     invalid_reader_completions: int,
@@ -1216,7 +1228,7 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     assert first_answers == second_answers
     assert first_judges == second_judges
     assert preflight_provider.models == [answer_agent_model]
-    assert preflight_provider.requests[0].reasoning_effort == reasoning_effort
+    assert preflight_provider.requests[0].reasoning_effort == answer_reasoning_effort
     assert preflight_provider.requests[0].temperature == temperature
     expected_answer_calls = (
         2 + invalid_first_step_completions + invalid_reader_completions
@@ -1230,13 +1242,16 @@ def test_staged_mock_run_uses_prepared_protocol_and_resumes(
         for request in provider.requests[:expected_answer_calls]
     ]
     assert [payload.get("reasoning_effort") for payload in answer_payloads] == (
-        [reasoning_effort] * expected_answer_calls
+        [answer_reasoning_effort] * expected_answer_calls
     )
     assert all(
         "reasoning_effort" in request.model_fields_set
         for request in provider.requests[:expected_answer_calls]
     )
-    assert provider.requests[expected_answer_calls].reasoning_effort == reasoning_effort
+    assert (
+        provider.requests[expected_answer_calls].reasoning_effort
+        == judge_reasoning_effort
+    )
     assert (
         "reasoning_effort" in provider.requests[expected_answer_calls].model_fields_set
     )
@@ -1993,7 +2008,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v38","protocol_fingerprint":'
-        '"a8744c236a7e879e8ac49c089df4637f481380d99c8cd89f612df8e872c4fe4e",'
+        '"c70258989339d73fa3ae3f9218326a73faf426eba13be5a12b4fdca876212b48",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2213,8 +2228,8 @@ def test_prepared_protocol_pins_current_surface_and_luna(
     )
 
     assert prepared.protocol_name == "RS-LoCoMo-Full-v38"
-    assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
-    assert prepared.answer_agent_reasoning_effort == "none"
+    assert prepared.answer_agent_model == "openai/gpt-6-luna-pro"
+    assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
     assert prepared.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert prepared.tool_catalog_sha256 == tool_catalog_sha256()

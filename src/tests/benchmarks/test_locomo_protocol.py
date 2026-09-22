@@ -470,6 +470,7 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
         "full-v38",
+        "full-v38-luna-pro",
         "full-v38-gemma-vertex",
         "full-v38-codex-subscription",
         "full-v38-glm",
@@ -477,9 +478,10 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     protocol = PROTOCOL_REGISTRY["full-v38"]
 
     assert protocol.name == "RS-LoCoMo-Full-v38"
-    assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
-    assert protocol.answer_agent_reasoning_effort == "none"
-    assert protocol.judge_reasoning_effort == "none"
+    assert protocol.answer_agent_model == "openai/gpt-6-luna-pro"
+    assert protocol.answer_agent_reasoning_effort == "high"
+    assert protocol.judge_model == "openai/gpt-6-luna-pro"
+    assert protocol.judge_reasoning_effort == "high"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
@@ -860,6 +862,32 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
             cli._provider(run_dir=tmp_path, stage=stage),  # type: ignore[arg-type]
             OpenRouterModelProvider,
         )
+
+
+def test_cli_clears_ambient_chat_provider_order_and_applies_allowlist_to_ingest_and_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Protocol chat_provider_only is applied to ingest preflight and answer, clearing ambient order."""
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-luna-pro")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "openai,anthropic"
+    )
+
+    ingest_provider = cli._provider(run_dir=tmp_path, stage="ingest")
+    assert isinstance(ingest_provider, OpenRouterModelProvider)
+    assert ingest_provider._settings.chat_provider_only == ["openai/flex"]
+    assert ingest_provider._settings.chat_provider_order is None
+
+    answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
+    assert isinstance(answer_provider, OpenRouterModelProvider)
+    assert answer_provider._settings.chat_provider_only == ["openai/flex"]
+    assert answer_provider._settings.chat_provider_order is None
+
+    judge_provider = cli._provider(run_dir=tmp_path, stage="judge")
+    assert isinstance(judge_provider, OpenRouterModelProvider)
+    assert judge_provider._settings.chat_provider_only == ["openai/flex"]
+    assert judge_provider._settings.chat_provider_order is None
 
 
 def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
