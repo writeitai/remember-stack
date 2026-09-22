@@ -305,7 +305,7 @@ The complete operation catalog is:
 
 | Operation | Arguments | What it returns |
 | --- | --- | --- |
-| `resolve_entity` | `name` | ranked current entity candidates; exact-name ambiguity is returned, never guessed away |
+| `resolve_entity` | `name` | ranked current entity candidates from exact, trigram, phonetic, and embedding tiers; ambiguity is returned, never guessed away |
 | `claims_and_sources_context` | `query`; optional `entity_ids` (1–20 unique UUIDs), `k` (1–100, default 50), `candidate_k` (1–400, default 200) | current testimony only: confirmed claims and source chunks, never facts or entity candidates |
 | `facts_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `k` (1–30, default 15), `evidence_per_fact` (1–5, default 3), `time` | neighborhood-scoped relations and observations for `current` / `at`; anchor-scoped `overlap` / `history`; supporting and contradicting testimony |
 | `combined_context` | `query`; optional `entity_ids` (1–19 unique UUIDs), `hops` (1–2, default 1), free `predicate` (1–200 chars), `time` | `ContextBundle/v2`: complete `claims_and_sources_context` and neighborhood-aware `facts_context` child envelopes, never a blended result list |
@@ -603,9 +603,13 @@ pin the behavior that produced an answer. The current catalog is
 `combined_context@3`; the composite advanced again for its
 `ContextBundle/v2` field names after D97's default neighborhood change.
 
-`resolve` always returns every exact-name candidate. Supplying focal entities only
-reorders those candidates: a candidate related to more of the supplied entities
-ranks first, and each candidate discloses its `context_hits`. Context therefore
+`resolve` returns current survivors. An exact alias match returns every exact
+candidate. A miss continues through trigram and phonetic blocking, then profile
+embedding; those tiers stop at the write-path blocking width and set
+`truncation` when further matches were not returned. Nothing in the list is
+chosen for the caller. Supplying focal entities only reorders the candidates
+that were returned: a candidate related to more of the supplied entities ranks
+first, and each candidate discloses its `context_hits`. Context therefore
 helps with questions such as “which John from this project?” without converting a
 ranking hint into a hidden identity decision.
 

@@ -115,7 +115,7 @@ Entities live in a **canonical registry** with aliases and tiered resolution.
 | When | What ships today |
 | --- | --- |
 | **Write-time resolution** | Full cascade: exact/fuzzy/phonetic candidates → profile embedding → gated LLM residue |
-| **Query-time `resolve_entity`** | **T0 exact alias** match; ranked candidates on ambiguity — never a silent single guess |
+| **Query-time `resolve_entity`** | Exact alias, then trigram and phonetic blocking, then embedding search. Ranked candidates on ambiguity — never a silent single guess or an LLM adjudication |
 
 An entity profile is orientation, not identity or a type. It is a disposable
 projection of current supported observations and relations. Write-time T3
@@ -151,7 +151,7 @@ neighborhood for bounded convergence. Automatic merging remains off until its
 profile-space threshold is calibrated; equivalent open review proposals are
 deduplicated, and every accepted merge remains a reversible redirect.
 
-Merges follow survivor chains with redirects disclosed. For nickname/misspelling recall at read time, use evidence search (`claims_and_sources_context`) rather than assuming fuzzy resolve. There is no deployment-wide exact-name auto-accept switch in the shipped cascade.
+Merges follow survivor chains with redirects disclosed. Query-time resolve recalls inflections and spelling variants through trigram blocking, then phonetic blocking, then profile embedding. Evidence search remains the path for testimony that never became an alias. There is no deployment-wide exact-name auto-accept switch in the shipped cascade.
 
 ## Document identity (write path)
 

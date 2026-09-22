@@ -84,7 +84,7 @@ world dates are recreated, not converted; see
 | Markdown ingest | Supported |
 | PDF / HTML conversion | Engine-capable (`mistral_ocr`, `markitdown`); register routes — not auto-wired in the smoke profile |
 | Static image conversion | Engine-capable dual-lane route `image_ocr_description` (dedicated OCR + independent vision-LLM description for static `image/png` and `image/jpeg`); register routes and both provider keys — not auto-wired in the smoke profile. Video/audio conversion is not shipped |
-| Query-time entity resolve | Exact-name match; richer matching runs at write time |
+| Query-time entity resolve | Exact, trigram, phonetic, and embedding candidate tiers; write time still adjudicates |
 | Competitive benchmark scores | Operator-run protocols; not a continuous public scoreboard |
 
 ## What landed after v0.3.0 (in v0.4.0)
