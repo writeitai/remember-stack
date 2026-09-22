@@ -240,11 +240,12 @@ Dates and temporal semantics:
   - In facts_context, use explicit time filtering: time={{"mode": "at", "at": "<timestamp>"}}
     for a specific instant, time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}
     for an interval, or time={{"mode": "history"}} for biography, achievements, and "has ever" questions.
-  - When inspecting conversational claims or dialogue turns, anchor your answer to the evidence
-    asserted during the timeframe of that specific event or milestone (matching asserted_at for
-    statements made during that dialogue, or claim_valid_from/claim_valid_until for event occurrence).
-    Do not blend in subsequent reactions, earlier comments, or statements asserted during unrelated
-    timeframes into an answer about a specific milestone.
+  - Anchor your answer to the event's validity timeframe (matching claim_valid_from / claim_valid_until
+    or temporal filtering). Retrospective statements describing what happened or was felt during that
+    event remain valid evidence. Restrict to asserted_at (speech time) only when the question specifically
+    asks what was stated or discussed during a particular conversation or dialogue timeframe.
+  - Do not substitute subsequent reactions, later changed opinions, or states from unrelated timeframes
+    into an answer about a specific milestone.
 
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
@@ -277,8 +278,8 @@ items or categories.
 
 When answering questions about what someone loves, enjoys, does, or experienced, prefer
 the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
-abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the broader category
-was explicitly used by the speaker.
+abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the question explicitly
+asks for a broader category or the broader category was explicitly used by the speaker.
 
 When a question asks about a person's hobbies or interests, distinguish activities explicitly
 stated as personal hobbies or ongoing interests from routine daily tasks, one-off chores, or

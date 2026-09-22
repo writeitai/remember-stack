@@ -413,17 +413,58 @@ def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert 'time={{"mode": "at", "at": "<timestamp>"}}' in prompt
     assert 'time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}' in prompt
     assert 'time={{"mode": "history"}}' in prompt
+    assert "Anchor your answer to the event's validity timeframe" in normalized_prompt
     assert (
-        "anchor your answer to the evidence asserted during the timeframe"
+        "Retrospective statements describing what happened or was felt during that event remain valid evidence"
+        in normalized_prompt
+    )
+    assert (
+        "Restrict to asserted_at (speech time) only when the question specifically asks what was stated or discussed"
         in normalized_prompt
     )
     assert "prefer the speaker's specific verbatim terms" in normalized_prompt
+    assert (
+        "unless the question explicitly asks for a broader category"
+        in normalized_prompt
+    )
     assert (
         "distinguish activities explicitly stated as personal hobbies"
         in normalized_prompt
     )
     assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
     assert "all_sources" not in prompt
+
+
+def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
+    """Verify behavioral instructions for retrospective anchoring, speech time, and attributes."""
+    for protocol in PROTOCOL_REGISTRY.values():
+        rendered = render_answer_agent_prompt(
+            question="How did Caroline feel when submitting her screenplay?",
+            tools=(),
+            trace=(),
+            template=protocol.answer_prompt_template,
+        )
+        normalized = " ".join(rendered.split())
+        assert "Anchor your answer to the event's validity timeframe" in normalized
+        assert (
+            "Retrospective statements describing what happened or was felt during that event remain valid evidence"
+            in normalized
+        )
+        assert (
+            "Restrict to asserted_at (speech time) only when the question specifically asks what was stated or discussed"
+            in normalized
+        )
+        assert (
+            "Do not substitute subsequent reactions, later changed opinions, or states from unrelated timeframes"
+            in normalized
+        )
+        assert "prefer the speaker's specific verbatim terms" in normalized
+        assert (
+            "unless the question explicitly asks for a broader category" in normalized
+        )
+        assert (
+            "distinguish activities explicitly stated as personal hobbies" in normalized
+        )
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:

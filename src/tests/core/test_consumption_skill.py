@@ -119,6 +119,19 @@ def test_rendered_skill_opens_with_bound_headline_and_open_surface() -> None:
         'time: {"mode": "overlap", "from": "<start>", "to": "<end>"}' in skill.content
     )
     assert 'time: {"mode": "history"}' in skill.content
+    assert "anchor by the event's validity timeframe" in skill.content
+    assert (
+        "Retrospective statements describing what happened or was felt during the event remain valid evidence"
+        in skill.content
+    )
+    assert (
+        "Restrict to `asserted_at` (speech time) only when the question specifically asks what was discussed or stated"
+        in skill.content
+    )
+    assert (
+        'apply temporal filtering (with mode "at", "overlap", or "history")'
+        in skill.content
+    )
     # The old intent-first steering is gone.
     assert "Default motion: orient, verify, audit" not in skill.content
 

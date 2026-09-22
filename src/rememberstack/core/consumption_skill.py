@@ -241,9 +241,11 @@ def _time_and_media() -> str:
         "(default) for what holds at evaluation time.\n"
         "- When querying open SQL on `claims`, filter with `asserted_at` (speech time) or "
         "`claim_valid_from` / `claim_valid_until` (event validity).\n"
-        "- When evaluating evidence for questions tied to a specific event or milestone, anchor to "
-        "evidence asserted during the timeframe of that event (`asserted_at`) rather than blending "
-        "in statements from later or unrelated time periods.\n\n"
+        "- When evaluating evidence for questions tied to a specific event, milestone, or timeframe, anchor by "
+        "the event's validity timeframe (`valid_from` / `valid_until` or temporal filtering) rather than blending "
+        "in states or beliefs from different time periods. Retrospective statements describing what happened or was felt "
+        "during the event remain valid evidence. Restrict to `asserted_at` (speech time) only when the question specifically "
+        "asks what was discussed or stated during a particular conversation or dialogue timeframe.\n\n"
         "Fact `valid_precision` preserves "
         "the accepted granularity (`instant`, `day`, `month`, `quarter`, `year`, "
         "`open`, `unknown`). Missing endpoints stay unknown; only `open` "
@@ -324,7 +326,7 @@ def _working_rules() -> str:
         "1. Did I resolve named entities first with `resolve_entity`?\n"
         "2. Did I answer established-truth questions from the fact layer (`facts_context` or `facts_current`), falling back to claims only for missing info or verbatim quotes?\n"
         "3. Did I keep fact, evidence, and compiled grains labeled separately?\n"
-        '4. Did I interpret event dates using `valid_from` / `valid_until` rather than speech time (`asserted_at`) or system time (`ingested_at`), and apply temporal filtering (`time: {"mode": "at"|"overlap"|"history"}`) when inquiries target specific milestones, events, or timeframes?\n'
+        '4. Did I interpret event dates using `valid_from` / `valid_until` rather than speech time (`asserted_at`) or system time (`ingested_at`), and apply temporal filtering (with mode "at", "overlap", or "history") when inquiries target specific milestones, events, or timeframes?\n'
         "5. For graph traversal, did I inspect the terminal work-budget status?\n"
         "6. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
