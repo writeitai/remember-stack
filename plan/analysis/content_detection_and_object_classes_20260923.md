@@ -12,8 +12,10 @@ original to be retained and parked.
 
 The Python standard library can inspect fixed binary signatures, header fields,
 ISO BMFF file-type brands, and ZIP package member names, then validate remaining
-text as UTF-8. This adds no dependency,
-wheel bytes, or licence beyond Python. Reading ZIP names avoids decompressing
+text as UTF-8. The detector is about 12 KiB of source and adds no
+third-party dependency, dependency wheel, or separate licence beyond the
+existing Python runtime. Its standard-library pieces are maintained with
+Python releases. Reading ZIP names avoids decompressing
 untrusted document bodies. Its limit is that a signature is a class assertion,
 not full format validation; converters still validate their inputs. Unknown
 binary and an unrecognized ZIP must fail closed because treating either as text
