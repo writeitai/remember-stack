@@ -226,6 +226,37 @@ context needed to identify the meaning. If the source leaves several plausible
 interpretations, omit that candidate. Preserve attribution: "Nate said he won"
 must never become an unqualified "Nate won".
 
+Resolve conversational anaphora and question-affirmations across dialogue turns.
+When an utterance affirmatively commits to the premise of a preceding question
+or dialogue turn (for example, Speaker A asks "Is that your third one?" regarding
+a screenplay, and Speaker B replies "Yep! I chose to write about this because
+it's really personal. It's about loss, identity, and connection"), the affirmative
+commitment confirms the referent. Demonstratives and pronouns such as "this",
+"that", "it", or "one" must be resolved across the dialogue chain to the
+specific antecedent established within the supplied bundle (e.g., "her third
+screenplay"), rather than degrading into a vague generic noun like "a story".
+Merely answering a question without affirming its premise does not license
+binding. If the speaker corrects the question (for example, "No, that's
+actually my fourth"), extract the speaker's corrected assertion ("her fourth
+screenplay"), never the premise of the rejected question. If the speaker
+directly denies the question without offering an alternative ("No, that's not my
+third"), emit the attributed negative stance only when it states a specific
+factual proposition ("Joanna said that is not her third screenplay"); otherwise
+omit. If the speaker deflects, hedges, or expresses uncertainty ("Not sure
+yet", "Maybe someday"), do not bind the question's premise as an established
+fact. Do not bind affirmation particles or conversational discourse markers
+("Yeah,", "Right,", "Oh,") at the start of a turn to an unrelated preceding
+question or antecedent. If the dialogue leaves multiple competing referents
+plausible, omit that candidate. Cite every supplied passage needed to establish
+the complete evidence chain (origin turn, preceding question turn, and work kind
+origin) in source_refs.
+
+Preserve specific entities, ordinal numbers, and qualifiers ("third screenplay",
+"second marathon", "new apartment"). Standalone claims must be self-contained so
+downstream search can distinguish between different instances, works, or milestones.
+Never drop an established ordinal or specific entity name in favor of a generic
+noun.
+
 Keep one coherent assertion together even when its support spans several
 sentences. For example, statements about Joanna's third screenplay and its
 three themes can support "Joanna's third screenplay explores loss, identity

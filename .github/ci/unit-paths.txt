@@ -97,6 +97,7 @@ src/tests/test_smoke.py
 src/tests/workers/test_chunk_level_extract.py
 src/tests/workers/test_claim_valid_time.py
 src/tests/workers/test_claimify_loss_ledger.py
+src/tests/workers/test_cross_turn_anaphora_extraction.py
 src/tests/workers/test_d119_reuse.py
 src/tests/workers/test_d79_structure_route.py
 src/tests/workers/test_d79_summaries.py
