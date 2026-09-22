@@ -11,6 +11,10 @@ read it first:
 - `decisions.md` (root) — the architecture decision log (D1, D2, …), the canonical record
 
 When editing any of these, three rules are **non-negotiable**.
+Read [the design-corpus skill](.agents/skills/design-corpus/SKILL.md) before
+creating or editing planning and decision documents. Its current-state rule
+means `plan/designs/` must be reconciled when a design changes, and superseded
+decisions must be marked inside their original entries.
 
 ## Rule 1 — Design docs must be understandable by both future agents AND humans
 
