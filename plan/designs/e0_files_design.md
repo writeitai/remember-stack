@@ -81,7 +81,11 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   does not exist as testimony.
 
 **Byte-authoritative admission (D132).** Before raw storage or a catalog row,
-E0 inspects file signatures and, for office ZIP packages, their member names.
+E0 inspects file signatures and header fields, ISO BMFF file-type brands
+(distinguishing common MP4 video, M4A audio, and HEIC/AVIF images), and, for
+office ZIP packages, their member names. Printable prefix strings alone do
+not establish a binary class; a PDF token after a preamble requires PDF body
+and end markers.
 Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
 and CRLF are valid. It detects text, PDF, image, audio, video, and office
 classes. A contradictory declared class or unrecognized binary is a typed

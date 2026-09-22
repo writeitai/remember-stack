@@ -73,7 +73,7 @@ def classify_doc_text(*, content: bytes, declared_mime: str) -> ClassifiedText:
     mime = declared_mime.partition(";")[0].strip().lower()
     if mime not in _DOC_TEXT_MIMES and not mime.startswith("text/"):
         raise ManagedTextClassificationError(code="rate_class_ambiguous")
-    stripped = content.lstrip()
+    stripped = content.removeprefix(b"\xef\xbb\xbf").lstrip()
     if _STRUCTURED_TEXT_PREFIX.match(stripped) or stripped.startswith(b"JVBERi0"):
         raise ManagedTextClassificationError(code="rate_class_ambiguous")
     try:

@@ -82,6 +82,23 @@ def test_structured_or_armoured_text_is_not_native_doc_text(
     assert raised.value.code == "rate_class_ambiguous"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        b"<html><p>text</p>",
+        b"{\\rtf1 formatted}",
+        b"<svg><text>text</text></svg>",
+        b"<?xml version='1.0'?><root/>",
+        b"JVBERi0xLjQK",
+    ),
+)
+def test_bom_cannot_hide_structured_or_armoured_text(payload: bytes) -> None:
+    """A leading UTF-8 BOM preserves all managed text exclusions."""
+    with pytest.raises(ManagedTextClassificationError) as raised:
+        classify_doc_text(content=b"\xef\xbb\xbf" + payload, declared_mime="text/plain")
+    assert raised.value.code == "rate_class_ambiguous"
+
+
 def test_bound_exceed_is_typed_before_any_source_version() -> None:
     """The published v1 profile has a hard, byte-counted source ceiling."""
     with pytest.raises(ManagedTextClassificationError) as raised:

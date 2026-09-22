@@ -10,8 +10,9 @@ original to be retained and parked.
 
 ## Choices
 
-The Python standard library can inspect fixed binary signatures and ZIP package
-member names, then validate remaining text as UTF-8. This adds no dependency,
+The Python standard library can inspect fixed binary signatures, header fields,
+ISO BMFF file-type brands, and ZIP package member names, then validate remaining
+text as UTF-8. This adds no dependency,
 wheel bytes, or licence beyond Python. Reading ZIP names avoids decompressing
 untrusted document bodies. Its limit is that a signature is a class assertion,
 not full format validation; converters still validate their inputs. Unknown
@@ -22,11 +23,17 @@ A libmagic binding has broad signature coverage but adds a system library and
 platform-specific packaging to both OSS and managed deployments. Neither
 changes the need for a typed mismatch check.
 
+Short printable prefixes such as `BM` and `ID3` are insufficient evidence of a
+binary class, and `%PDF-` mentioned inside a text document or another format
+must not override its true class. Prefixed PDF headers require PDF body and end
+markers. These checks limit false refusals without decoding full media bodies.
+
 Text flavours cannot be inferred reliably from bytes. Markdown, CSV, source
 code, and plain text therefore share one byte class, one text rate, and the
 passthrough converter. The declaration may select Markdown rendering; other
 text hints normalize to plain text. UTF-8 BOM and CRLF remain valid. Existing
 managed text exclusions for structured or armoured text still apply after
+stripping a leading BOM and after
 class detection.
 
 Derived representation objects and P3 snapshots are frequently opened by
