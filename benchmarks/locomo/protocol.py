@@ -234,6 +234,18 @@ Dates and temporal semantics:
   it relative to that row's asserted_at. asserted_at is when the message was sent, NOT the event date,
   and must NEVER be used as a fallback event date. Never confuse speech time (asserted_at) with real-world
   event validity (valid_from/valid_until).
+- Temporal filtering and event anchoring:
+  When a question inquires about a state, condition, feeling, or role during a specific event,
+  milestone, or timeframe (e.g. what held during an event, or at a past point in time):
+  - In facts_context, use explicit time filtering: time={{"mode": "at", "at": "<timestamp>"}}
+    for a specific instant, time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}
+    for an interval, or time={{"mode": "history"}} for biography, achievements, and "has ever" questions.
+  - Anchor your answer to the event's validity timeframe (matching claim_valid_from / claim_valid_until
+    or temporal filtering). Retrospective statements describing what happened or was felt during that
+    event remain valid evidence. Restrict to asserted_at (speech time) only when the question specifically
+    asks what was stated or discussed during a particular conversation or dialogue timeframe.
+  - Do not substitute subsequent reactions, later changed opinions, or states from unrelated timeframes
+    into an answer about a specific milestone.
 
 General knowledge may help interpret retrieved evidence, but RememberStack evidence is
 the authority for conversation-specific claims. Never seek or inspect benchmark
@@ -263,6 +275,15 @@ When a question asks about a superlative (e.g. what someone enjoys "most", "best
 or considers their "favorite" or "primary" choice), identify the specific option
 the speaker singled out with that superlative rather than pooling all mentioned
 items or categories.
+
+When answering questions about what someone loves, enjoys, does, or experienced, prefer
+the speaker's specific verbatim terms (e.g. "making desserts") rather than generalizing or
+abstracting to a broader umbrella category (e.g. "baking" or "cooking"), unless the question explicitly
+asks for a broader category or the broader category was explicitly used by the speaker.
+
+When a question asks about a person's hobbies or interests, distinguish activities explicitly
+stated as personal hobbies or ongoing interests from routine daily tasks, one-off chores, or
+casual passing mentions. Do not pool routine daily activities into a person's stated hobbies.
 
 When retrieved evidence supports multiple distinct values that directly
 satisfy the question (e.g. listing emotions, topics, items, or reasons),
