@@ -629,13 +629,8 @@ def test_s5_sources_via_the_hydration_chain(rig: _ApiRig) -> None:
     assert source["markdown_uri"].endswith("/document.md")
 
 
-def test_s39_negative_taxonomy_distinguishes_unknown_from_empty(rig: _ApiRig) -> None:
-    """S39: unknown entity vs known entity with no facts are typed differently.
-
-    Profile vectors written by the deterministic fake embedder are not a
-    calibrated similarity space, so this proof clears them. A string miss
-    with no admissible embedding neighbor stays `unknown_entity`.
-    """
+def _clear_uncalibrated_entity_profiles(*, rig: _ApiRig) -> None:
+    """Remove fake vectors so negative canaries exercise an honest T3 miss."""
     with rig.engine.begin() as connection:
         connection.execute(
             text(
@@ -646,6 +641,16 @@ def test_s39_negative_taxonomy_distinguishes_unknown_from_empty(rig: _ApiRig) ->
             ),
             {"deployment": _DEPLOYMENT_ID},
         )
+
+
+def test_s39_negative_taxonomy_distinguishes_unknown_from_empty(rig: _ApiRig) -> None:
+    """S39: unknown entity vs known entity with no facts are typed differently.
+
+    Profile vectors written by the deterministic fake embedder are not a
+    calibrated similarity space, so this proof clears them. A string miss
+    with no admissible embedding neighbor stays `unknown_entity`.
+    """
+    _clear_uncalibrated_entity_profiles(rig=rig)
     unknown = rig.client.get("/resolve", params={"name": "Contoso"}).json()
     assert unknown["negative"]["kind"] == "unknown_entity"
     assert unknown["entities"] == []
@@ -1100,6 +1105,10 @@ def test_wp17_skeleton_eval_suite_runs_green_and_blocks_on_breakage(
     from rememberstack.model import EvalSuite
     from rememberstack.workers import P1Settings as _P1Settings
 
+    # The deterministic fake embedder is not a calibrated similarity space;
+    # without this fixture normalization every arbitrary unknown can exceed
+    # the production T3 floor against an unrelated entity profile.
+    _clear_uncalibrated_entity_profiles(rig=rig)
     seed_skeleton_canaries(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
     seed_skeleton_canaries(  # idempotent: re-seeding never duplicates
         engine=rig.engine, deployment_id=_DEPLOYMENT_ID
