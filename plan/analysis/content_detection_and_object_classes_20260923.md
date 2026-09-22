@@ -32,16 +32,15 @@ These checks limit false refusals without decoding full media bodies.
 
 Text flavours cannot be inferred reliably from bytes. Markdown, CSV, source
 code (including `application/javascript`), JSON, and plain text therefore share
-one byte class, one text rate, and the
-passthrough converter. The declaration may select Markdown rendering; other
-text hints normalize to plain text. UTF-8 BOM and CRLF remain valid. Existing
-HTML markup is distinguishable from native text and keeps its separate
+one byte class, one text rate, and the passthrough converter. The declaration
+may select Markdown rendering; other text hints normalize to plain text.
+UTF-8 BOM and CRLF remain valid. HTML markup is distinguishable from native
+text and keeps its separate
 `text/html` conversion route. Empty bytes are assigned the text class for
 self-host pipeline compatibility, while managed text metering still refuses
-an empty measured source. Existing
-managed text exclusions for structured or armoured text still apply after
-stripping repeated or whitespace-separated leading BOMs and after
-class detection.
+an empty measured source. Existing managed text exclusions for structured or
+armoured text still apply after stripping repeated or whitespace-separated
+leading BOMs and after class detection.
 
 Derived representation objects and P3 snapshots are frequently opened by
 queries, mounts, and browse operations, so `hot` avoids cold retrieval charges.

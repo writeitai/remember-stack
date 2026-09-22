@@ -97,6 +97,7 @@ and plain text share the plain-text route and rate. Recognizable HTML markup
 retains `text/html` for its separate MarkItDown converter, and an empty upload
 is valid text in the self-host profile (the managed text profile rejects an
 empty measured source).
+
 For legacy OLE office containers, bytes establish the office class and the
 declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
 container is refused. This check identifies the class; a converter still
