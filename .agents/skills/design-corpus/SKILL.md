@@ -25,8 +25,11 @@ current contract and understand why it was chosen. Read `CLAUDE.md` and
   pointer where inbound links need continuity. Preserve history in analysis,
   the decision log, and git. A supersession banner alone does not make a
   contradictory body acceptable.
-- `design/proposals/` holds live, unchosen alternatives. State the trigger
-  that would justify adopting each one; do not present a proposal as binding.
+- `plan/proposals/` holds unchosen alternatives to the planning architecture;
+  `design/proposals/` holds unchosen operational, efficiency, and architecture
+  tracks. Use the directory closest to the affected binding topic. Each live
+  proposal states its adoption trigger; do not present it as binding. Mark
+  adopted proposals as historical and link their accepted design.
 - `plan/plans/` owns implementation sequence, not architectural truth.
 - Root `decisions.md` is the numbered log of consequential architectural and
   product choices. Put detailed operating contracts in the binding design;
@@ -52,7 +55,8 @@ Before writing or materially changing a binding design:
    external facts. Resolve substantive disagreements in writing.
 3. Update the current binding design, not just a new standalone document.
    Record high-level decisions in the log and keep viable unchosen paths in
-   proposals. Put delivery order in `plan/plans/`.
+   `plan/proposals/` or `design/proposals/` according to the affected topic.
+   Put delivery order in `plan/plans/`.
 
 The test is whether a skeptical reader can reconstruct the choice from the
 corpus alone. Follow `CLAUDE.md`: designs describe the full intended engine,
