@@ -216,6 +216,7 @@ def _provider(
         codex_audit_path=codex_audit_path,
         codex_audit_stage=stage,
         recorder=recorder,
+        chat_provider_only=(protocol.chat_provider_only if stage == "answer" else None),
     )
 
 
@@ -225,11 +226,15 @@ def _seat_provider(
     codex_audit_path: Path | None = None,
     codex_audit_stage: str = "generation",
     recorder: GenerationRecorder | None = None,
+    chat_provider_only: tuple[str, ...] | None = None,
 ) -> ModelProviderPort:
     """Build one configured provider without reading unrelated credentials."""
     if provider_key == "openrouter":
+        overrides: dict[str, object] = {}
+        if chat_provider_only:
+            overrides["chat_provider_only"] = list(chat_provider_only)
         return OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({}), recorder=recorder
+            settings=OpenRouterSettings.model_validate(overrides), recorder=recorder
         )
     if provider_key == "vertex":
         return VertexModelProvider(
