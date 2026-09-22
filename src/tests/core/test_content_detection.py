@@ -35,6 +35,8 @@ def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
     ("content", "declared", "expected"),
     [
         (b"hello\r\nworld", "text/csv", "text/plain"),
+        (b"", "text/markdown", "text/markdown"),
+        (b"<html><p>Hello</p></html>", "text/html", "text/html"),
         (b"const answer = 42;\n", "application/javascript", "text/plain"),
         (b'{"answer":42}\n', "application/json", "text/plain"),
         (b"\xef\xbb\xbf# Heading\r\n", "text/markdown", "text/markdown"),

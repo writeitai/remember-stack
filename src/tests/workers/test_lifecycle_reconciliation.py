@@ -1102,9 +1102,9 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
         source_kind="watched_directory",
         source_ref="maybe-moved.bin",
         upload=DocumentUpload(
-            filename="maybe-moved.bin",
-            mime="application/x-unknown",
-            content=b"unconverted testimony",
+            filename="maybe-moved.jpg",
+            mime="image/jpeg",
+            content=b"\xff\xd8\xff\xe0unconverted testimony",
         ),
         versioning_mode="living",
         source_modified_at=None,

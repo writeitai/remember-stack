@@ -281,11 +281,14 @@ def _detected_mime(*, content: bytes) -> str:
         decoded = content.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         raise ContentDetectionError(code="unsupported_binary_content") from error
-    if not decoded or any(
+    if any(
         (ord(char) < 32 and char not in "\t\r\n") or ord(char) == 127
         for char in decoded
     ):
         raise ContentDetectionError(code="unsupported_binary_content")
+    stripped_text = decoded.lstrip("\ufeff \t\r\n")
+    if re.match(r"(?:<!doctype\s+html\b|<html(?:\s|>))", stripped_text, re.IGNORECASE):
+        return "text/html"
     return "text/plain"
 
 
@@ -296,6 +299,10 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
     declared = _IMAGE_MIME_ALIASES.get(declared, declared)
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
     if detected.startswith("text/"):
+        if detected == "text/html":
+            if declared not in {"", "application/octet-stream", "text/html"}:
+                raise ContentDetectionError(code="content_type_mismatch")
+            return detected
         if (
             declared not in {"", "application/octet-stream"}
             and declared not in _TEXT_APPLICATION_HINTS

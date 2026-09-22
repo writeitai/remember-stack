@@ -76,6 +76,11 @@ _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("60000000-0000-0000-0000-000000000001")
 
 _MARKDOWN_SOURCE = "# Quarterly report\n\nRevenue grew nine percent.\n\n- steady\n"
+_PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
+_PNG_BYTES = b"\x89PNG\r\n\x1a\nimage"
+_JPEG_BYTES = b"\xff\xd8\xff\xe0image"
+_MP3_BYTES = b"ID3\x04\x00\x00\x00\x00\x00\x00"
+_MP4_BYTES = b"\x00\x00\x00\x10ftypisom\x00\x00\x00\x00"
 
 
 @pytest.fixture(scope="module")
@@ -278,10 +283,10 @@ class _E0Rig:
             "text/markdown": MarkdownPassthroughConverter(),
             "text/plain": MarkdownPassthroughConverter(),
             "text/html": MarkitdownConverter(),
-            "application/x-fake-scan": _FakeScanConverter(),
-            "application/x-unlabeled": _UnlabeledConverter(),
-            "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
-            "application/x-transient": _TransientlyFailingConverter(),
+            "application/pdf": _FakeScanConverter(),
+            "image/png": _UnlabeledConverter(),
+            "audio/mpeg": _InvalidEnvelopeConverter(),
+            "video/mp4": _TransientlyFailingConverter(),
         }
         self.ingestor = UploadIngestor(
             catalog=self.catalog,
@@ -483,9 +488,7 @@ def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> N
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="scan.fake",
-            mime="application/x-fake-scan",
-            content=b"raw-scan-bytes",
+            filename="scan.pdf", mime="application/pdf", content=_PDF_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
@@ -548,7 +551,7 @@ def test_unlabeled_converter_output_dead_letters(rig: _E0Rig) -> None:
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="silent.fake", mime="application/x-unlabeled", content=b"raw-bytes"
+            filename="silent.png", mime="image/png", content=_PNG_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
@@ -565,9 +568,7 @@ def test_invalid_envelope_models_dead_letter_as_converter_bug(rig: _E0Rig) -> No
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="broken.fake",
-            mime="application/x-invalid-envelope",
-            content=b"raw-bytes",
+            filename="broken.mp3", mime="audio/mpeg", content=_MP3_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
@@ -585,7 +586,7 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="flaky.fake", mime="application/x-transient", content=b"raw-bytes"
+            filename="flaky.mp4", mime="video/mp4", content=_MP4_BYTES
         ),
     )
     outcome = rig.run(stage=PipelineStage.CONVERT)
@@ -607,7 +608,7 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     work = rig.row(
@@ -634,7 +635,7 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     duplicate = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     assert duplicate.created is False
@@ -664,7 +665,7 @@ def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
     other = parked_ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="later.bin", mime="application/x-other", content=b"other"
+            filename="later.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     assert (
@@ -698,16 +699,13 @@ def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
 
 
 @pytest.mark.parametrize(
-    "first_mime, second_mime, expected",
-    [
-        ("application/x-unknown", "text/plain", "no_route"),
-        ("text/plain", "application/x-unknown", None),
-    ],
+    "first_mime, second_mime",
+    [("text/markdown", "text/plain"), ("text/plain", "text/markdown")],
 )
-def test_parking_uses_first_write_content_mime(
-    rig: _E0Rig, first_mime: str, second_mime: str, expected: str | None
+def test_first_write_content_mime_is_canonical_within_text_class(
+    rig: _E0Rig, first_mime: str, second_mime: str
 ) -> None:
-    """A second lineage with identical bytes schedules against stored MIME."""
+    """A second lineage reuses the first text flavour for identical bytes."""
     rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
@@ -730,7 +728,7 @@ def test_parking_uses_first_write_content_mime(
         sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
         params={"id": observed.version_id},
     )
-    assert work["defer_reason"] == expected
+    assert work["defer_reason"] is None
     assert work["attempts"] == 0
     assert rig.catalog.convert_source(version_id=observed.version_id).mime == first_mime
 
@@ -744,12 +742,12 @@ def test_a_released_row_whose_route_is_still_missing_reparks(
         catalog=rig.catalog,
         raw_store=rig.raw_store,
         admission=ForgetCatalog(engine=rig.engine),
-        routable_mimes=frozenset({"application/x-unknown"}),
+        routable_mimes=frozenset({"image/jpeg"}),
     )
     ingested = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     if prior_attempts:
@@ -1881,7 +1879,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
     version = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="removed.bin", mime="application/x-unknown", content=b"removed"
+            filename="removed.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     statements = {
@@ -1893,7 +1891,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
         connection.execute(text(statements[tombstone]), {"id": version.version_id})
     assert (
         rig.ledger.resume_no_route(
-            deployment_id=_DEPLOYMENT_ID, routable_mimes={"application/x-unknown"}
+            deployment_id=_DEPLOYMENT_ID, routable_mimes={"image/jpeg"}
         )
         == ()
     )

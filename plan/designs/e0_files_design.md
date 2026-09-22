@@ -93,7 +93,10 @@ ingest refusal, surfaced as HTTP 422. The stored `content_objects.mime` is the
 decided MIME and drives the D38 route, D51 original class, and managed text
 metering. Text flavours cannot be settled by bytes: Markdown may remain a
 rendering hint; CSV, code (including textual `application/javascript`), JSON,
-and plain text share the plain-text route and rate.
+and plain text share the plain-text route and rate. Recognizable HTML markup
+retains `text/html` for its separate MarkItDown converter, and an empty upload
+is valid text in the self-host profile (the managed text profile rejects an
+empty measured source).
 For legacy OLE office containers, bytes establish the office class and the
 declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
 container is refused. This check identifies the class; a converter still
