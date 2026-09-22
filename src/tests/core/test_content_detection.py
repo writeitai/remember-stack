@@ -97,3 +97,9 @@ def test_every_production_object_write_declares_a_class() -> None:
             keywords = {argument.arg for argument in call.keywords}
             if "key" in keywords:
                 assert "storage_class" in keywords, f"{path}:{call.lineno}"
+    workflow = Path(__file__).parents[3] / ".github/workflows/ci.yml"
+    for line_number, line in enumerate(
+        workflow.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if "store.write_bytes(key=" in line:
+            assert "storage_class=" in line, f"{workflow}:{line_number}"

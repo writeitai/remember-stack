@@ -288,7 +288,7 @@ def test_parked_original_is_readable_from_configured_mount(
     from rememberstack.spine import ForgetCatalog
     from rememberstack.workers import UploadIngestor
 
-    original = b"\x00unconverted original\xff"
+    original = b"%PDF-1.7\nunconverted original"
     raw_root = tmp_path / "provider-raw"
     raw_store = LocalFSObjectStore(root=raw_root)
     ingested = UploadIngestor(
@@ -299,7 +299,7 @@ def test_parked_original_is_readable_from_configured_mount(
     ).ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="original.bin", mime="application/x-unknown", content=original
+            filename="original.pdf", mime="application/pdf", content=original
         ),
     )
     with deployment.connect() as connection:
