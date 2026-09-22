@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
 from functools import wraps
@@ -74,6 +75,8 @@ from rememberstack.model import OverlapTemporalScope
 from rememberstack.model import PageRef
 from rememberstack.model import ProviderCallError
 from rememberstack.model import RankedItem
+from rememberstack.model import ResolutionThresholds
+from rememberstack.model import ResolverConfig
 from rememberstack.model import ScanRow
 from rememberstack.model import SourceRecord
 from rememberstack.model import TranscriptEntry
@@ -129,6 +132,32 @@ limit."""
 
 RESOLVE_CONTEXT_LIMIT: Final = 8
 """Maximum focal entities in WP-5.6's bounded S51 context tie-break."""
+
+QUERY_RESOLVE_TRIGRAM_FLOOR: Final = float(
+    ResolverConfig.model_fields["trigram_floor"].default
+)
+"""Shipped T1 recall floor. The write path constructs ResolverConfig with these defaults."""
+
+QUERY_RESOLVE_CANDIDATE_LIMIT: Final = int(
+    ResolverConfig.model_fields["blocking_limit"].default
+)
+"""Shipped blocking width. Query resolve discloses this cap instead of hiding it."""
+
+QUERY_RESOLVE_T3_FLOOR: Final = float(
+    ResolutionThresholds.model_fields["t3_reject"].default
+)
+"""Shipped T3 reject band. Scores at or below it are not query candidates."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolveHit:
+    """One current survivor a query-time tier is willing to show."""
+
+    entity_id: UUID
+    canonical_name: str
+    tier: str
+    score: float
+
 
 INTERACTIVE_HYDRATION_BATCH_SIZE: Final = 256
 """Maximum ids in one WP-5.6-measured Postgres confirmation hop."""
@@ -339,6 +368,7 @@ class QueryEngine:
             connection.exec_driver_sql("SELECT 1")
             yield connection
 
+    @_with_surface(SurfaceCostKind.LOOKUP)
     def resolve(
         self,
         *,
@@ -346,73 +376,73 @@ class QueryEngine:
         name: str,
         context_entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
-        """Resolve a name to ranked current entities (T0 in the skeleton).
+        """Resolve a name to ranked current entities over T0–T3, never T4.
 
-        Nothing resolving is the `unknown_entity` negative (S39) — the agent
-        widens resolution or searches; it never gets a silent guess (S51).
-        Optional focal entities only reorder exact-name candidates by current
-        relation adjacency; every candidate remains visible, so context can
-        narrow ambiguity without becoming a silent identity verdict.
+        T0 is an exact match on a current alias and returns the whole homonym
+        set. A miss falls through to the write path's trigram and phonetic
+        blockers (T1/T2), and only an empty block embeds the query string and
+        searches entity profile vectors (T3). That embed is metered on
+        ``resolve_entity``; it is not an LLM call, and an outer request scope
+        keeps its own surface. Nothing here adjudicates: every survivor the
+        tier returns stays visible, and more than one candidate is ambiguity
+        rather than a guess (S51). Fuzzy and embedding tiers stop at the
+        write-path blocking width and disclose that cap. Focal entities only
+        reorder the returned set by how many distinct current relations touch
+        them.
         """
         context_entity_ids = tuple(dict.fromkeys(context_entity_ids))
         if len(context_entity_ids) > RESOLVE_CONTEXT_LIMIT:
             raise ValueError(
                 f"resolve context accepts at most {RESOLVE_CONTEXT_LIMIT} entities"
             )
+        lemma = normalized_lemma(surface=name)
+        if not lemma:
+            return _unknown_entity(name=name)
         with self._engine.connect() as connection:
-            rows = (
-                connection.execute(
-                    _RESOLVE_T0,
-                    {
-                        "deployment_id": deployment_id,
-                        "lemma": normalized_lemma(surface=name),
-                    },
+            hits, truncated = _string_resolve_hits(
+                connection=connection, deployment_id=deployment_id, lemma=lemma
+            )
+        if not hits:
+            embedding = self._embedding_resolve_hits(
+                deployment_id=deployment_id, name=name
+            )
+            if isinstance(embedding, Envelope):
+                return embedding
+            hits, truncated = embedding
+        context_hits: dict[UUID, int] = {}
+        if context_entity_ids:
+            with self._engine.connect() as connection:
+                context_hits = _context_hit_counts(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    candidate_ids=tuple(hit.entity_id for hit in hits),
+                    context_entity_ids=context_entity_ids,
                 )
-                .mappings()
-                .all()
-            )
-            candidate_ids = tuple(row["entity_id"] for row in rows)
-            context_hits = (
-                {
-                    row["candidate_id"]: int(row["context_hits"])
-                    for row in connection.execute(
-                        _RESOLVE_CONTEXT_HITS,
-                        {
-                            "deployment_id": deployment_id,
-                            "candidate_ids": list(candidate_ids),
-                            "context_entity_ids": list(context_entity_ids),
-                        },
-                    ).mappings()
-                }
-                if candidate_ids and context_entity_ids
-                else {}
-            )
         candidates = tuple(
             EntityCandidate(
-                entity_id=row["entity_id"],
-                canonical_name=row["canonical_name"],
-                tier="T0",
-                context_hits=context_hits.get(row["entity_id"], 0),
+                entity_id=hit.entity_id,
+                canonical_name=hit.canonical_name,
+                tier=hit.tier,
+                context_hits=context_hits.get(hit.entity_id, 0),
             )
-            for row in sorted(
-                rows,
-                key=lambda row: (
-                    -context_hits.get(row["entity_id"], 0),
-                    str(row["canonical_name"]),
-                    row["entity_id"].bytes,
+            for hit in sorted(
+                hits,
+                key=lambda hit: (
+                    -context_hits.get(hit.entity_id, 0),
+                    -hit.score,
+                    hit.canonical_name,
+                    hit.entity_id.bytes,
                 ),
             )
         )
+        if not candidates:
+            return _unknown_entity(name=name)
         return _envelope(
             grain=Grain.FACT,
             entities=candidates,
             freshness=_freshness(),
-            negative=None
-            if candidates
-            else Negative(
-                kind=NegativeKind.UNKNOWN_ENTITY,
-                explanation=f"nothing resolves for {name!r}",
-                workaround="check spelling, try search over claims or chunks",
+            truncation=_resolve_truncation(
+                returned=len(candidates), truncated=truncated
             ),
         )
 
@@ -2607,7 +2637,7 @@ class QueryEngine:
     ) -> tuple[UUID | None, Envelope | None]:
         """Apply principle 9 to one string entity parameter.
 
-        The T0 ladder may return no candidate, exactly one, or an ambiguity.
+        The resolve cascade may return no candidate, exactly one, or an ambiguity.
         Context retrieval never silently takes the first ambiguity: candidates remain in
         ``entities[]`` and the negative names the boundary.
         """
@@ -2616,21 +2646,32 @@ class QueryEngine:
             return None, _envelope(
                 grain=grain, freshness=_freshness(), negative=resolved.negative
             )
-        if len(resolved.entities) > 1:
+        if len(resolved.entities) > 1 or (
+            resolved.truncation is not None and resolved.truncation.truncated
+        ):
             names = ", ".join(
                 f"{candidate.canonical_name} ({candidate.entity_id})"
                 for candidate in resolved.entities
+            )
+            explanation = (
+                f"{entity!r} is ambiguous between these candidates: {names}"
+                if len(resolved.entities) > 1
+                else (
+                    f"{entity!r} matched more candidates than the resolve limit;"
+                    f" the visible candidate is {names}"
+                )
             )
             return None, _envelope(
                 grain=grain,
                 entities=resolved.entities,
                 freshness=_freshness(),
+                truncation=resolved.truncation,
                 negative=Negative(
                     kind=NegativeKind.BOUNDARY,
-                    explanation=(
-                        f"{entity!r} is ambiguous between these candidates: {names}"
+                    explanation=explanation,
+                    workaround=(
+                        "retry with an unambiguous alias or resolve an entity UUID first"
                     ),
-                    workaround="retry with an unambiguous alias or resolve an entity UUID first",
                 ),
             )
         return next(iter(resolved.entities)).entity_id, None
@@ -3049,6 +3090,76 @@ class QueryEngine:
             if observation_id in confirmed
         )
         return results, len(observation_ids) - len(results)
+
+    def _embedding_resolve_hits(
+        self, *, deployment_id: UUID, name: str
+    ) -> tuple[tuple[_ResolveHit, ...], bool] | Envelope:
+        """Return T3 profile neighbors, or a terminal negative when none qualify.
+
+        The semantic channel embeds the query string and ranks current entity
+        profiles. A score at or below the write-path reject band is not a
+        candidate. Several scores above it stay ranked candidates; this path
+        never calls the adjudicator. An unpublished entity channel is a
+        boundary, because the tier did not run.
+        """
+        search_entities = getattr(self._search_index, "search_entities_scored", None)
+        if not callable(search_entities):
+            return _embedding_channel_boundary()
+        channel_ready = getattr(self._search_index, "entity_semantic_ready", None)
+        if callable(channel_ready) and not channel_ready(
+            deployment_id=str(deployment_id)
+        ):
+            return _embedding_channel_boundary()
+        try:
+            nominations = cast(
+                "tuple[P1Nomination, ...]",
+                search_entities(
+                    deployment_id=str(deployment_id),
+                    vector=self._embed(
+                        query=name,
+                        call_site=SurfaceCallSite.RESOLVE_ENTITY,
+                        deployment_id=deployment_id,
+                    ),
+                    k=QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
+                ),
+            )
+        except P1SearchUnavailableError:
+            return _embedding_channel_boundary()
+        # The channel returns this window in descending score order. Once the
+        # tail is at or below the reject band, every later neighbor is too, so
+        # a below-band row does not hide an above-band candidate past the cap.
+        kept = tuple(
+            nomination
+            for nomination in nominations
+            if nomination.score > QUERY_RESOLVE_T3_FLOOR
+        )
+        truncated = len(kept) > QUERY_RESOLVE_CANDIDATE_LIMIT
+        kept = kept[:QUERY_RESOLVE_CANDIDATE_LIMIT]
+        if not kept:
+            return _unknown_entity(name=name)
+        score_by_id = {UUID(item.item_id): item.score for item in kept}
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _CONFIRM_CONTEXT_ENTITIES,
+                    {"deployment_id": deployment_id, "entity_ids": list(score_by_id)},
+                )
+                .mappings()
+                .all()
+            )
+        hits = tuple(
+            _ResolveHit(
+                entity_id=row["entity_id"],
+                canonical_name=row["canonical_name"],
+                tier="T3",
+                score=score_by_id[row["entity_id"]],
+            )
+            for row in rows
+            if row["entity_id"] in score_by_id
+        )
+        if not hits:
+            return _unknown_entity(name=name)
+        return hits, truncated
 
     def _embed(
         self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
@@ -3766,6 +3877,133 @@ _CHUNK_NEIGHBORS = text(
     """
 )
 
+
+def _embedding_channel_boundary() -> Envelope:
+    """The embedding tier was required and the semantic channel cannot answer."""
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation=(
+                "entity embedding resolution is not published for this deployment"
+            ),
+            workaround="check spelling, or search claims and chunks",
+        ),
+    )
+
+
+def _unknown_entity(*, name: str) -> Envelope:
+    """The typed miss after every available non-LLM tier has run."""
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        negative=Negative(
+            kind=NegativeKind.UNKNOWN_ENTITY,
+            explanation=f"nothing resolves for {name!r}",
+            workaround="check spelling, try search over claims or chunks",
+        ),
+    )
+
+
+def _resolve_truncation(*, returned: int, truncated: bool) -> Truncation | None:
+    """Disclose a blocking cap without inventing an exact remainder."""
+    if not truncated:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=returned + 1,
+        total_is_exact=False,
+        reason="resolve_candidate_limit",
+    )
+
+
+def _string_resolve_hits(
+    *, connection: Connection, deployment_id: UUID, lemma: str
+) -> tuple[tuple[_ResolveHit, ...], bool]:
+    """Exact alias hits, or the write path's trigram/phonetic block when none.
+
+    Exact hits are not capped: same-name ambiguity must stay visible (S51).
+    The fuzzy block reuses the write-path floor and width, against current
+    survivor aliases only, and reports when that width hid further blockers.
+    Trigram hits outrank phonetic hits for the same survivor, so a name that
+    reaches both tiers is returned once, as T1.
+    """
+    exact = (
+        connection.execute(
+            _RESOLVE_T0, {"deployment_id": deployment_id, "lemma": lemma}
+        )
+        .mappings()
+        .all()
+    )
+    if exact:
+        return (
+            tuple(
+                _ResolveHit(
+                    entity_id=row["entity_id"],
+                    canonical_name=row["canonical_name"],
+                    tier="T0",
+                    score=1.0,
+                )
+                for row in exact
+            ),
+            False,
+        )
+    connection.execute(
+        _SET_TRGM_THRESHOLD, {"floor": format(QUERY_RESOLVE_TRIGRAM_FLOOR, "f")}
+    )
+    blocked = (
+        connection.execute(
+            _RESOLVE_T1_T2,
+            {
+                "deployment_id": deployment_id,
+                "lemma": lemma,
+                "floor": QUERY_RESOLVE_TRIGRAM_FLOOR,
+                "limit": QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    truncated = len(blocked) > QUERY_RESOLVE_CANDIDATE_LIMIT
+    return (
+        tuple(
+            _ResolveHit(
+                entity_id=row["entity_id"],
+                canonical_name=row["canonical_name"],
+                tier=row["tier"],
+                score=float(row["trigram_score"]),
+            )
+            for row in blocked[:QUERY_RESOLVE_CANDIDATE_LIMIT]
+        ),
+        truncated,
+    )
+
+
+def _context_hit_counts(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    candidate_ids: tuple[UUID, ...],
+    context_entity_ids: tuple[UUID, ...],
+) -> dict[UUID, int]:
+    """Count distinct current neighbors among the caller's focal entities."""
+    if not candidate_ids or not context_entity_ids:
+        return {}
+    return {
+        row["candidate_id"]: int(row["context_hits"])
+        for row in connection.execute(
+            _RESOLVE_CONTEXT_HITS,
+            {
+                "deployment_id": deployment_id,
+                "candidate_ids": list(candidate_ids),
+                "context_entity_ids": list(context_entity_ids),
+            },
+        ).mappings()
+    }
+
+
 _RESOLVE_T0_SQL = """
     SELECT DISTINCT entity.entity_id, entity.canonical_name
     FROM memory_v1.entity_aliases_current AS alias
@@ -3777,6 +4015,53 @@ _RESOLVE_T0_SQL = """
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
+
+_SET_TRGM_THRESHOLD = text(
+    "SELECT set_config('pg_trgm.similarity_threshold', :floor, true)"
+)
+
+_RESOLVE_T1_T2_SQL = """
+    WITH t1 AS (
+        SELECT DISTINCT ON (alias.entity_id)
+               alias.entity_id,
+               similarity(alias.normalized_lemma, :lemma) AS score
+        FROM memory_v1.entity_aliases_current AS alias
+        WHERE alias.deployment_id = :deployment_id
+          AND alias.normalized_lemma % :lemma
+          AND similarity(alias.normalized_lemma, :lemma) >= :floor
+        ORDER BY alias.entity_id,
+                 similarity(alias.normalized_lemma, :lemma) DESC
+    ),
+    t2 AS (
+        SELECT DISTINCT alias.entity_id
+        FROM memory_v1.entity_aliases_current AS alias
+        LEFT JOIN t1 ON t1.entity_id = alias.entity_id
+        WHERE alias.deployment_id = :deployment_id
+          AND daitch_mokotoff(alias.normalized_lemma)
+              && daitch_mokotoff(:lemma)
+          AND t1.entity_id IS NULL
+    ),
+    blocked AS (
+        SELECT t1.entity_id, t1.score, 'T1'::text AS tier
+        FROM t1
+        UNION ALL
+        SELECT t2.entity_id, 0.0::double precision, 'T2'::text
+        FROM t2
+    )
+    SELECT entity.entity_id, entity.canonical_name,
+           blocked.score AS trigram_score,
+           blocked.tier
+    FROM blocked
+    JOIN memory_v1.entities_current AS entity
+      ON entity.deployment_id = :deployment_id
+     AND entity.entity_id = blocked.entity_id
+    ORDER BY blocked.score DESC,
+             similarity(entity.normalized_name, :lemma) DESC,
+             entity.entity_id
+    LIMIT :limit
+    """
+
+_RESOLVE_T1_T2 = text(_RESOLVE_T1_T2_SQL)
 
 _CONFIRM_CONTEXT_ENTITIES = text(
     """

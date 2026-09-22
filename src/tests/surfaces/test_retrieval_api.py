@@ -630,7 +630,22 @@ def test_s5_sources_via_the_hydration_chain(rig: _ApiRig) -> None:
 
 
 def test_s39_negative_taxonomy_distinguishes_unknown_from_empty(rig: _ApiRig) -> None:
-    """S39: unknown entity vs known entity with no facts are typed differently."""
+    """S39: unknown entity vs known entity with no facts are typed differently.
+
+    Profile vectors written by the deterministic fake embedder are not a
+    calibrated similarity space, so this proof clears them. A string miss
+    with no admissible embedding neighbor stays `unknown_entity`.
+    """
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET profile_summary = NULL, embedding = NULL,"
+                " embedding_model = NULL, embedding_input_policy_version = NULL,"
+                " embedding_text_hash = NULL"
+                " WHERE deployment_id = :deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
     unknown = rig.client.get("/resolve", params={"name": "Contoso"}).json()
     assert unknown["negative"]["kind"] == "unknown_entity"
     assert unknown["entities"] == []

@@ -211,7 +211,7 @@ Write-time cascade tiers:
 | T3 | A sole candidate: mention name + claim context against an evidence-backed profile vector; empty/stale profiles cannot accept |
 | T4 | One binary, match-biased simple-model call for empty/conflicting or multiple candidates; it sees every candidate in the bounded snapshot with aliases, current profile description, salient facts, and T3 score/gate, then selects one supplied id or `new` |
 
-**Query-time** `resolve_entity` is T0 exact today — see [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
+**Query-time** `resolve_entity` uses the same non-LLM tiers: exact alias, trigram, phonetic, then embedding search. It does not adjudicate. See [Concepts](/docs/concepts#identity) and [Primitives](/docs/retrieval/primitives). Merges are reversible with transcripts. Only canonical ids flow downstream.
 
 Write-time T0 never accepts an exact name by itself. T4 prefers a compatible
 existing entity: missing overlap and different topics do not establish a new

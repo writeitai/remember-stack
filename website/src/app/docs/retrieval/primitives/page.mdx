@@ -39,9 +39,9 @@ Legend: **Public** = stable agent call path today · **Internal** = used inside 
 | | |
 | --- | --- |
 | **Surface** | **Public** via `resolve_entity` / resolve endpoint |
-| **In** | name / text, optional type |
-| **Out** | ranked entity candidates |
-| **Shipped behavior** | **T0 exact alias** match; ambiguity returns candidates, never a silent single guess. Write-time cascade is richer (T0–T4). |
+| **In** | name; the HTTP resolve route also accepts up to 8 context entity ids |
+| **Out** | ranked entity candidates (`tier` is `T0`, `T1`, `T2`, or `T3`) |
+| **Shipped behavior** | Current-alias **T0 exact** (complete homonym set), then trigram **T1** and phonetic **T2**, then query-string **T3** embedding search. No LLM adjudication. Ambiguity stays ranked. T1–T3 disclose truncation at the write-path blocking width. |
 
 ### `lookup`
 

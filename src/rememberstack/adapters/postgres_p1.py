@@ -1180,6 +1180,23 @@ class PostgresP1Index:
             qualified=True,
         )
 
+    def entity_semantic_ready(self, *, deployment_id: str) -> bool:
+        """Whether entity profile search is published for this deployment.
+
+        Callers that embed a query string check this first so an unpublished
+        channel does not spend a provider call.
+        """
+        try:
+            self._require_channel(
+                deployment_id=deployment_id,
+                target="entities",
+                channel="semantic",
+                policy=ENTITY_INPUT_POLICY,
+            )
+        except P1SearchUnavailableError:
+            return False
+        return True
+
     def search_entities_scored(
         self,
         *,

@@ -36,7 +36,7 @@ Retrieval is the **read path**. RememberStack does not try to be a clever NL pla
 | “What is true now?” with typed envelope | **`facts_context`** |
 | High-recall source context for a question | **`claims_and_sources_context`** |
 | Both complete authority views | **`combined_context`** |
-| Exact name → entity | **`resolve_entity`** (T0 exact) |
+| Name → entity | **`resolve_entity`** (exact, trigram, phonetic, embedding) |
 | Ad-hoc analytics / joins / graph patterns | **Open SQL / graph helpers / saved queries** |
 | Why do we believe X? | Evidence hydration / audit SQL / transcript endpoints where exposed |
 | Change feed | Open query / delta-oriented saved patterns |
@@ -49,7 +49,7 @@ These are the top-level intent tools on API/CLI/MCP. Seventeen older stock patte
 
 | Operation | Args (required) | Grain | Intent |
 | --- | --- | --- | --- |
-| `resolve_entity` | `name` | entity candidates (envelope packaging) | Exact-name disambiguation |
+| `resolve_entity` | `name` | entity candidates (envelope packaging) | Ranked identity candidates, never a silent guess |
 | `claims_and_sources_context` | `query` (optional `entity_ids`, `k`, `candidate_k`) | **evidence** | Current claims + source chunks only |
 | `facts_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `k`, `evidence_per_fact`, `time`) | **fact** | Entity-neighborhood relations and observations + associated testimony |
 | `combined_context` | `query` (optional `entity_ids`, `hops`, `predicate`, `time`) | `ContextBundle/v2` | Complete claims-and-sources and neighborhood-aware fact envelopes, kept separate |

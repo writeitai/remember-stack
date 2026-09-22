@@ -37,6 +37,7 @@ src/tests/surfaces/test_ingest_principal.py
 src/tests/surfaces/test_open_query_batch_f.py
 src/tests/surfaces/test_operation_registry.py
 src/tests/surfaces/test_ops_cli.py
+src/tests/surfaces/test_query_resolve_tiers.py
 src/tests/surfaces/test_query_sandbox_batch_b.py
 src/tests/surfaces/test_query_sandbox_batch_c.py
 src/tests/surfaces/test_retrieval_api.py
