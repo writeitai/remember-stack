@@ -6068,3 +6068,26 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Authority:** [design](plan/designs/adjacent_chunks_retrieval_design.md),
 [analysis](plan/analysis/adjacent_chunks_retrieval_analysis.md).
+
+## D131. Cross-turn conversational anaphora and question-affirmation resolution in claim extraction
+
+**Status:** accepted. **Date:** 2026-09-22.
+
+**Context.** In multi-turn dialogue transcripts, speakers routinely respond to questions using anaphoric demonstratives or pronouns (e.g. Nate asks "Is that your third one?" → Joanna responds "Yep! I chose to write about this because it's really personal. It's about loss, identity, and connection."). In core extraction (D31/D119), Selection drops the question (drop_question) because it is not an assertion. However, Claimify lacked explicit instructions for cross-turn question-affirmations. Fearing that replacing "this" with "her third screenplay" would be rejected as unverified context, models defaulted to generic nouns ("a story"), completely dropping the ordinal ("third") and work kind ("screenplay"). This caused severe downstream failure (e.g. conv-42/qa/0094): the third screenplay was never cataloged as an entity in E3, the observation lacked identifying keywords, and semantic search surfaced facts about Joanna's second screenplay instead.
+
+**Decision.**
+1. Update `_CLAIMIFY_PROMPT` in `workers/e2.py` with explicit, binding instructions for cross-turn conversational anaphora and question-affirmation resolution:
+   - Unambiguous affirmative commitment: When an utterance affirmatively commits to the premise of a preceding question or dialogue turn, the affirmative response confirms the referent from the question.
+   - Multi-hop resolution: Demonstratives and pronouns ("this", "that", "it", "one") must resolve across multi-hop referential chains established within the supplied bundle (e.g. "this" → "third one" → "screenplay" = "her third screenplay"), rather than degrading into a vague generic noun ("a story").
+   - Negative and hedging boundaries: If the speaker negates, deflects, or expresses uncertainty, the model must not bind the question's premise as true. On explicit correction ("No, my fourth"), the model extracts the speaker's corrected assertion ("her fourth screenplay"). On ambiguous or competing referents, omit the candidate per D31.
+2. Require standalone completeness: standalone claims must preserve specific entity names, ordinal numbers, and qualifiers ("third screenplay", "second marathon"), ensuring semantic search and entity resolution distinguish between different works and milestones. Never drop an established ordinal or specific noun in favor of a vague generalization.
+3. Source references (`source_refs`) must cite the complete evidence chain (origin turn, preceding question turn, and work kind origin) establishing the antecedent.
+4. Token grounding invariants under D32/D119: antecedent text occurring in the target chunk or cited passages is grounded source context and passes deterministic layer-2 token verification (`_failed_added_context_tokens`) without triggering `ADDED_CONTEXT_UNVERIFIED`. The `source_kind` tag is advisory. Semantic validity is guarded by layer-3 entailment self-verdicts and layer-4 audits.
+5. Invalidate component generation (D56): bump `E2_EXTRACTOR_VERSION` (appending `:d131-anaphora-1`) in `workers/e1.py` so that re-ingestion does not reuse stale, generic claims.
+
+**Alternatives and consequences.** Relaxing Selection to keep questions was rejected because interrogatives are not factual assertions and would pollute the claim catalog. Query-time resolution was rejected because it violates D1/D48 and cannot repair top-K truncation when the stored observation lacks keywords. A dedicated E1 dialogue-rewriting pass was rejected due to added latency, cost, and loss of verbatim character offsets. The change adds zero extra LLM calls, zero schema migrations, and minimal prompt token overhead (~110–130 tokens).
+
+**Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
+[analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
+
+
