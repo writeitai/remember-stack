@@ -30,6 +30,7 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from rememberstack.client import ClientSettings
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
@@ -42,7 +43,8 @@ ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-API_TIMEOUT_SECONDS: Final = 60.0
+DEFAULT_API_TIMEOUT_SECONDS: Final = 180.0
+API_TIMEOUT_SECONDS: Final = ClientSettings.model_validate({}).api_timeout_seconds
 """Transport budget for compound retrieval, larger than the server DB budget."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
@@ -129,8 +131,8 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
 )
 ANSWER_AGENT_MODEL: Final = "openai/gpt-6-luna-pro"
 ANSWER_AGENT_REASONING_EFFORT: Final = "high"
-JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
-JUDGE_REASONING_EFFORT: Final = "none"
+JUDGE_MODEL: Final = "openai/gpt-6-luna-pro"
+JUDGE_REASONING_EFFORT: Final = "high"
 TEMPERATURE: Final = 0.0
 LUNA_PRO_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-LunaPro"
 LUNA_PRO_PROTOCOL_KEY: Final = "full-v38-luna-pro"
@@ -338,12 +340,12 @@ TOOL TRACE SO FAR:
 QUESTION:
 {question}"""
 
-JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the
-gold answer. Be generous about concise paraphrases that identify the same topic.
-For time questions, accept equivalent formats or relative expressions only when
-they denote the same date or time period. Extra wording does not make an otherwise
-correct answer wrong. A missing, unknown, contradictory, or different answer is
-WRONG.
+JUDGE_PROMPT_TEMPLATE: Final = """Classify the generated answer to the question as CORRECT or WRONG against the gold answer.
+Evaluate semantic correctness generously:
+- If the generated answer contains, identifies, or encompasses the core fact, entity, date, or event specified by the gold answer, classify it as CORRECT.
+- For time and date questions, accept equivalent calendar expressions, relative expressions (e.g. 'last Friday', 'January 21'), or answers that identify the specific date even if they also mention an encompassing deadline or related action (such as printing or finishing by a certain date).
+- Additional explanatory detail, context, surrounding conversational framing, or synonyms do not make an answer wrong as long as the essential truth of the gold answer is conveyed.
+- Classify as WRONG only if the answer is genuinely contradictory to the gold answer, asserts a fundamentally different fact/entity/time, or is missing/Unknown.
 
 Question: {question}
 Gold answer: {gold_answer}

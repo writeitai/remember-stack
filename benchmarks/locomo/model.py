@@ -160,14 +160,14 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
-    api_timeout_seconds: float = Field(default=60.0, gt=0)
+    api_timeout_seconds: float = Field(default=180.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     document_binding_generation: Literal["document-t0-v1"] = "document-t0-v1"
     answer_agent_model: AnswerAgentModel = "openai/gpt-6-luna-pro"
     answer_agent_reasoning_effort: ReasoningEffort | None = "high"
     answer_word_cap: int | None = Field(default=None, ge=1)
-    judge_model: JudgeModel = "openai/gpt-5.6-luna"
-    judge_reasoning_effort: ReasoningEffort | None = "none"
+    judge_model: JudgeModel = "openai/gpt-6-luna-pro"
+    judge_reasoning_effort: ReasoningEffort | None = "high"
     answer_agent_temperature: float | None = Field(default=0.0, ge=0, le=2)
     judge_temperature: float | None = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1

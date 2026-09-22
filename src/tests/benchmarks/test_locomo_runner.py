@@ -1123,9 +1123,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         (
             "full-v38",
             "openai/gpt-6-luna-pro",
-            "openai/gpt-5.6-luna",
+            "openai/gpt-6-luna-pro",
             "high",
-            "none",
+            "high",
             0.0,
             0,
             2,
@@ -2008,7 +2008,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v38","protocol_fingerprint":'
-        '"bd9e7b2f5b668a02ba10c2b80af134951ed33bf54dd3444e94d3b7cec354d2b0",'
+        '"c70258989339d73fa3ae3f9218326a73faf426eba13be5a12b4fdca876212b48",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'

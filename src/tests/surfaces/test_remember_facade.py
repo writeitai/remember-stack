@@ -194,3 +194,24 @@ def test_top_level_exports() -> None:
     assert hasattr(remember, "Deployment")
     assert hasattr(remember, "LedgerEntry")
     assert hasattr(remember, "SpendGate")
+
+
+def test_client_timeout_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default is 180.0s
+    monkeypatch.delenv("REMEMBER_API_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("REMEMBERSTACK_API_TIMEOUT_SECONDS", raising=False)
+    settings = ClientSettings.model_validate({})
+    assert settings.api_timeout_seconds == 180.0
+    client = Client(settings=settings)
+    assert client._client.timeout.read == 180.0
+
+    # Overridden by REMEMBER_API_TIMEOUT_SECONDS
+    monkeypatch.setenv("REMEMBER_API_TIMEOUT_SECONDS", "240.0")
+    settings_override = ClientSettings.model_validate({})
+    assert settings_override.api_timeout_seconds == 240.0
+
+    # Overridden by REMEMBERSTACK_API_TIMEOUT_SECONDS when REMEMBER_ is unset
+    monkeypatch.delenv("REMEMBER_API_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("REMEMBERSTACK_API_TIMEOUT_SECONDS", "300.0")
+    settings_stack = ClientSettings.model_validate({})
+    assert settings_stack.api_timeout_seconds == 300.0

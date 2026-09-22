@@ -220,7 +220,9 @@ def _provider(
         codex_audit_path=codex_audit_path,
         codex_audit_stage=stage,
         recorder=recorder,
-        chat_provider_only=(protocol.chat_provider_only if stage == "answer" else None),
+        chat_provider_only=(
+            protocol.chat_provider_only if stage in ("answer", "judge") else None
+        ),
     )
 
 

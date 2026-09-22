@@ -117,7 +117,15 @@ class ClientSettings(BaseSettings):
             "api_authorization",
         ),
     )
-    api_timeout_seconds: float = Field(default=30.0, gt=0)
+    api_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        validation_alias=AliasChoices(
+            "REMEMBER_API_TIMEOUT_SECONDS",
+            "REMEMBERSTACK_API_TIMEOUT_SECONDS",
+            "api_timeout_seconds",
+        ),
+    )
 
 
 class ExplicitEnvSettings(BaseSettings):

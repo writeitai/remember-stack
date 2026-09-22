@@ -480,7 +480,8 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.name == "RS-LoCoMo-Full-v38"
     assert protocol.answer_agent_model == "openai/gpt-6-luna-pro"
     assert protocol.answer_agent_reasoning_effort == "high"
-    assert protocol.judge_reasoning_effort == "none"
+    assert protocol.judge_model == "openai/gpt-6-luna-pro"
+    assert protocol.judge_reasoning_effort == "high"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
@@ -885,8 +886,8 @@ def test_cli_clears_ambient_chat_provider_order_and_applies_allowlist_to_ingest_
 
     judge_provider = cli._provider(run_dir=tmp_path, stage="judge")
     assert isinstance(judge_provider, OpenRouterModelProvider)
-    assert judge_provider._settings.chat_provider_only is None
-    assert judge_provider._settings.chat_provider_order == ["openai", "anthropic"]
+    assert judge_provider._settings.chat_provider_only == ["openai/flex"]
+    assert judge_provider._settings.chat_provider_order is None
 
 
 def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(

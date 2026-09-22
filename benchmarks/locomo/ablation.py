@@ -30,6 +30,7 @@ from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerRecord
 from benchmarks.locomo.model import BenchmarkFailure
 from benchmarks.locomo.model import CategorySummary
+from benchmarks.locomo.model import JudgeModel
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import RunConfiguration
@@ -57,6 +58,7 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.sdk import MemoryApiError
@@ -211,8 +213,8 @@ class AblationConfiguration(_FrozenModel):
     answer_prompt_sha256: str
     answer_schema_sha256: str
     judge_provider: Literal["openrouter"] = "openrouter"
-    judge_model: Literal["openai/gpt-5.6-luna"] = _MCP_MODEL
-    judge_reasoning_effort: Literal["none"] = "none"
+    judge_model: JudgeModel = "openai/gpt-6-luna-pro"
+    judge_reasoning_effort: ReasoningEffort | None = "high"
     judge_temperature: float = 0.0
     judge_prompt_sha256: str
     judge_schema_sha256: str
@@ -267,7 +269,7 @@ class AblationSummary(_FrozenModel):
     answer_reasoning_effort: str
     judge_provider: str
     judge_model: str
-    judge_reasoning_effort: str
+    judge_reasoning_effort: ReasoningEffort | None = None
     answer_model_calls: int = Field(ge=0)
     judge_model_calls: int = Field(ge=0)
     runtime_actions: int = Field(ge=0)
