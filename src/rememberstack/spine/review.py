@@ -607,6 +607,14 @@ def _lock_support_review(
             raise ReviewDecisionError("invalid support review fact plane")
         fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
         params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
+        # D135: serialize with document deletion BEFORE any deletion check or
+        # currency write. A deletion takes the lineage row, then its version
+        # rows, then claims; a verdict takes the same rows in the same order
+        # (shared), so either the deletion commits first and the verdict sees
+        # it, or the verdict commits first and the deletion retires what it
+        # restored.
+        connection.execute(_LOCK_CLAIM_LINEAGE, params)
+        connection.execute(_LOCK_CLAIM_VERSIONS, params)
         table = "relations" if kind == "relation" else "observations"
         subject = connection.execute(
             text(
@@ -742,6 +750,29 @@ _CLOSE_REVIEW = text(
     WHERE review_id = :review_id
     """
 ).bindparams(bindparam("history_entry", type_=JSON))
+
+_LOCK_CLAIM_LINEAGE = text(
+    """
+    SELECT d.doc_id FROM documents d
+    JOIN claims cl ON cl.deployment_id = d.deployment_id AND cl.doc_id = d.doc_id
+    WHERE cl.deployment_id = :dep AND cl.claim_id = :claim
+    FOR SHARE OF d
+    """
+)
+
+_LOCK_CLAIM_VERSIONS = text(
+    """
+    SELECT v.version_id FROM document_versions v
+    JOIN chunks c ON c.version_id = v.version_id
+    JOIN claims cl ON cl.deployment_id = c.deployment_id
+    WHERE cl.deployment_id = :dep AND cl.claim_id = :claim
+      AND (c.chunk_id = cl.chunk_id
+           OR c.chunk_id IN (SELECT cc.chunk_id FROM chunk_claims cc
+                             WHERE cc.claim_id = cl.claim_id))
+    ORDER BY v.version_id
+    FOR SHARE OF v
+    """
+)
 
 _CLAIM_DELETED = text(
     f"""

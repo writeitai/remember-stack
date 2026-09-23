@@ -78,6 +78,12 @@ class LifecycleCatalog:
         catalog._engine = _PinnedConnection(connection=connection)  # type: ignore[assignment]
         return catalog
 
+    @contextmanager
+    def transaction(self) -> Iterator["LifecycleCatalog"]:
+        """A catalog whose statements share one transaction, committed on exit."""
+        with self._engine.begin() as connection:
+            yield LifecycleCatalog.on_connection(connection=connection)
+
     def reconciliation_context(self, *, version_id: UUID) -> dict[str, object]:
         """What reconciling one completed version needs to know."""
         with self._engine.connect() as connection:
@@ -736,21 +742,35 @@ class LifecycleCatalog:
                 ).scalars()
             )
 
-    def tombstoned_lineages_needing_cascade(
+    def lock_lineage(self, *, doc_id: UUID) -> None:
+        """Lock the lineage row, serializing with E0 (re)ingest of it (D135)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("SELECT doc_id FROM documents WHERE doc_id = :doc_id FOR UPDATE"),
+                {"doc_id": doc_id},
+            )
+
+    def stranded_deletion_episodes(
         self, *, deployment_id: UUID
-    ) -> tuple[UUID, ...]:
-        """Source-tombstoned lineages that still hold current testimony.
+    ) -> tuple[tuple[UUID, datetime], ...]:
+        """Deletion episodes whose testimony is still current (D135).
+
+        Keyed on deleted VERSIONS, not on the lineage tombstone: a watched
+        file recreated before finalization clears the lineage tombstone, but
+        the deleted versions stay deleted and their claims must still end.
+        Each row is ``(doc_id, episode_at)`` — the newest deletion instant of
+        the versions (or lineage) carrying the stranded claims, which names
+        the episode stably across retries and anew for a later deletion.
 
         Deployment-wide, not per cycle: the cascade re-derives from current
-        state, so a finalizer crash between claiming a cycle and finishing
-        its cascades self-heals on the next pass instead of orphaning the
-        tombstone.
+        state, so a finalizer crash self-heals on the next pass.
         """
         with self._engine.connect() as connection:
             return tuple(
-                connection.execute(
-                    _SELECT_TOMBSTONES_NEEDING_CASCADE, {"deployment_id": deployment_id}
-                ).scalars()
+                (row["doc_id"], row["episode_at"])
+                for row in connection.execute(
+                    _SELECT_STRANDED_EPISODES, {"deployment_id": deployment_id}
+                ).mappings()
             )
 
     def lineage_claim_ids(
@@ -1414,14 +1434,18 @@ _SELECT_CYCLE_LINEAGES = text(
     """
 )
 
-_SELECT_TOMBSTONES_NEEDING_CASCADE = text(
-    """
-    SELECT d.doc_id FROM documents d
-    WHERE d.deployment_id = :deployment_id
-      AND d.deleted_at IS NOT NULL
-      AND d.deleted_sync_cycle_id IS NOT NULL
-      AND EXISTS (SELECT 1 FROM claims cl
-                  WHERE cl.doc_id = d.doc_id AND cl.is_current_testimony)
+_SELECT_STRANDED_EPISODES = text(
+    f"""
+    SELECT v.doc_id, max(coalesce(v.deleted_at, d.deleted_at)) AS episode_at
+    FROM document_versions v
+    JOIN documents d ON d.doc_id = v.doc_id
+    JOIN chunks c ON c.version_id = v.version_id
+    JOIN claims cl ON cl.chunk_id = c.chunk_id AND cl.is_current_testimony
+    WHERE v.deployment_id = :deployment_id
+      AND (v.deleted_at IS NOT NULL OR d.deleted_at IS NOT NULL)
+      AND NOT {LIVE_CARRIAGE_SQL}
+    GROUP BY v.doc_id
+    ORDER BY v.doc_id
     """
 )
 

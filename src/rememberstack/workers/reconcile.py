@@ -290,7 +290,7 @@ class ReconcileHandler:
             )
         scope: tuple[UUID, ...] = ()
         if context.get("lineage_deleted_at") is not None:
-            late = self._catalog.stale_for_deletion(
+            late = self._catalog.stale_for_deleted_testimony(
                 deployment_id=deployment_id, doc_id=doc_id
             )
             scope = self._catalog.lineage_claim_ids(
@@ -433,17 +433,26 @@ class CycleFinalizer:
                         deployment_id=deployment_id, cycle_id=cycle_id, doc_id=doc_id
                     )
             finalized.append(cycle_id)
-        for doc_id in self._catalog.tombstoned_lineages_needing_cascade(
+        for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
             deployment_id=deployment_id
         ):
-            cascade_lineage_removal(
-                catalog=self._catalog,
-                deployment_id=deployment_id,
-                doc_id=doc_id,
-                reconciliation_id=_derived_run_id(
-                    kind="finalize-delete", doc_id=doc_id
-                ),
-            )
+            # One transaction per episode, opened by locking the lineage row
+            # a re-ingest also locks: a recreated file and this cascade never
+            # interleave, and the cascade retires only testimony no live
+            # version carries — never the recreated version's (D135).
+            with self._catalog.transaction() as catalog:
+                catalog.lock_lineage(doc_id=doc_id)
+                cascade_lineage_removal(
+                    catalog=catalog,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    # per deletion EPISODE: stable on retry (the versions'
+                    # deletion instant does not move), new for a later
+                    # deletion after the file came back
+                    reconciliation_id=_derived_run_id(
+                        kind="finalize-delete", doc_id=doc_id, at=episode_at.isoformat()
+                    ),
+                )
         return tuple(finalized)
 
     def _close_lineage_zero_support(
@@ -695,21 +704,30 @@ def cascade_lineage_removal(
     doc_id: UUID,
     reconciliation_id: UUID,
 ) -> ReconciliationDelta:
-    """The uniform lineage-removal cascade (§8): currency → recount → close."""
+    """The uniform lineage-removal cascade (§8): currency → recount → close.
+
+    Scoped to testimony no live version carries (D135): a version that is
+    live again — the file was recreated — keeps its claims. Recount and
+    closure cover every fact any of the lineage's claims touches.
+    """
     transitions = _with_recorded(
         catalog=catalog,
-        transitions=catalog.stale_for_deletion(
+        transitions=catalog.stale_for_deleted_testimony(
             deployment_id=deployment_id, doc_id=doc_id
         ),
         reconciliation_id=reconciliation_id,
     )
-    return _cascade(
+    delta, _changed = _cascade_run(
         catalog=catalog,
         deployment_id=deployment_id,
         transitions=transitions,
         reconciliation_id=reconciliation_id,
         boundary=None,
+        scope_claim_ids=catalog.lineage_claim_ids(
+            deployment_id=deployment_id, doc_id=doc_id
+        ),
     )
+    return delta
 
 
 def _with_recorded(
