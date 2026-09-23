@@ -234,18 +234,27 @@ remember.dev special case.
   server may still derive per-call credentials internally; that is the cloud's
   implementation detail and uses the same port.)
 - **The engine verifies the key itself.** Chosen. The existing signed-token
-  port changes its claim contract: an issuer check, an audience *set*
-  (the key may cover several projects) intersected with the audiences this
-  deployment is configured to accept, a `permissions` array, and a credential
-  kind. The engine learns no organisation or member model: "all projects of an
-  organisation" is expressed as an opaque group audience string that the
-  operator configures on each deployment.
+  port changes its claim contract: an issuer check, a `projects` coverage
+  claim (an explicit list, or the organisation-wide marker `"org:*"` with an
+  `org` claim), a `permissions` array, and a credential kind. The engine
+  learns no organisation or member model: it compares the key's `org` with one
+  opaque "issuer tenant" id the operator configures on the deployment, so a
+  key can cover projects created after it was minted. (An earlier draft used
+  operator-configured group audiences; the explicit marker was agreed with the
+  cloud design because it states the key's intent in the key itself.)
 
 The cost is honest: a leaked multi-project key is valid at several
 deployments until revoked, which the old strict single audience prevented.
 The mitigations are the revocation document with a bounded staleness (§3.6),
 per-key permissions, and single-project keys for callers who want the old
 containment.
+
+A direct path also means no host meters request volume, so the perimeter
+enforces per-key and per-deployment rate and in-flight limits (429 with
+`Retry-After`). Counters are kept in process per API replica rather than in
+Postgres: a shared counter would add a database write to every request and
+make a slow database refuse healthy reads. The cost — limits multiply by the
+replica count — is documented and handled by configuration.
 
 ### 3.6 Revocation freshness
 
@@ -309,12 +318,14 @@ could diverge again.
 ## 4. Library-boundary check (CLAUDE.md Rule 3, D60/D61)
 
 - The engine gains no organisation, member, billing or project-directory
-  model. Audiences are opaque strings compared for equality; permissions it
+  model. Project identifiers and the tenant id are opaque strings compared
+  for equality; permissions it
   does not understand (`account:*`) are ignored because they authorise other
   services.
 - Every new engine input is operator configuration on an existing declared
   port (the auth perimeter): issuer identifier, key set, revocation source,
-  accepted audiences. Any operator can run a conforming issuer; a self-hoster
+  this deployment's project identifier and issuer-tenant id, admission
+  limits. Any operator can run a conforming issuer; a self-hoster
   who runs none keeps the shared-secret bearer.
 - The `project` argument is resolved by hosts; the engine API never sees it.
 - The client package's `--cloud` convenience names one default issuer

@@ -6165,15 +6165,22 @@ chose between deployment and control tokens against a hard-coded
    (OAuth, or a key header by variable reference) where the harness supports
    it, a stdio bridge otherwise, and a self-hosted entry for local engines.
 4. **Perimeter contract.** The signed-credential adapter requires a
-   configured issuer, accepts an audience set intersecting the deployment id
-   or operator-configured opaque audiences, maps `memory:read` → read,
+   configured issuer; accepts a key whose `projects` claim lists this
+   deployment's configured project id, or is the organisation-wide marker
+   `"org:*"` with an `org` claim equal to the deployment's configured
+   issuer-tenant id; maps `memory:read` → read,
    `memory:write` → write (ingest included), `memory:ingest` → ingest only,
    ignores non-memory permissions, refuses unknown memory permissions,
    records a credential `kind` for audit, and takes revocation only as a
-   signed document bound to the deployment's audience with a strictly
-   increasing sequence (lower sequences rejected, last sequence persisted),
-   whose `active_kids` list retires signing-key generations; a revoked key
-   stops working within the staleness bound plus clock leeway.
+   signed document whose `aud` is this deployment, with a sequence that
+   advances on every issued document including heartbeats (lower sequences
+   rejected, last sequence persisted, the first validly signed document
+   accepted), whose `active_kids` list retires signing-key generations; a
+   revoked key stops working within the staleness bound plus clock leeway.
+   The `service` credential kind (`dpcred:` subject) remains part of the
+   generic contract. The perimeter enforces per-key and per-deployment rate
+   and in-flight limits on the direct path (`429` with `Retry-After`),
+   counted in process per API replica.
 5. **Clients.** One resolver gives the SDK and CLI identical environment
    precedence (`REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`,
    `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`, `REMEMBER_CONFIG_DIR`; older aliases
@@ -6183,8 +6190,9 @@ chose between deployment and control tokens against a hard-coded
    removed; account calls are a namespace of `remember.Client` calling the
    issuer's account API. A signed key resolves its data-plane host from a
    claim or the issuer's project endpoint, cached with a bounded lifetime and
-   re-resolved when a deployment moves. Re-login mints and persists the new
-   key before revoking the old one through the pending-revocation journal.
+   re-resolved when a deployment moves. Re-login journals the old key durably,
+   then persists the new key, then revokes the old one. Issuer metadata also
+   names the account API (`remember_account_endpoint`).
    `remember login` runs the standard device grant discovered from the
    issuer's OAuth metadata and stores one key (`credentials.json` version 2).
 

@@ -35,8 +35,8 @@ operator who runs a conforming key issuer:
    mode that relays stdio to a remote MCP endpoint with a key (§5).
 4. **`remember setup`** choosing between a remote entry, a stdio bridge and a
    self-hosted entry (§6).
-5. **The engine perimeter's signed-key contract**: issuer, audiences,
-   permissions, revocation (§7).
+5. **The engine perimeter's signed-key contract**: issuer, project coverage,
+   permissions, revocation, and direct-path admission limits (§7).
 6. **SDK and CLI with one key**: host resolution from the key, `remember
    login` storing one key, and one environment precedence for both (§8).
 
@@ -58,7 +58,12 @@ operator who runs a conforming key issuer:
   **JWKS** (JSON Web Key Set, a list of public keys each named by a `kid`).
 - **Issuer** — the service that mints keys (remember.dev's account service, or
   any operator's equivalent). Identified by an HTTPS URL, the `iss` claim.
-- **Audience** — the `aud` claim: which deployments the key may be used at.
+- **Coverage** — which deployments a key may be used at: the `projects`
+  claim, either an explicit list of project identifiers or the
+  organisation-wide marker `"org:*"` together with the `org` claim.
+- **Issuer tenant** — the issuer's own grouping of deployments (for
+  remember.dev, an organisation). The engine knows only one opaque tenant id,
+  configured by the operator; it has no model of what a tenant is.
 - **Deployment** — one running engine (one trust domain, D50). A **target**
   is one deployment a host can route to.
 
@@ -400,7 +405,9 @@ adapter (`HashedBearerAuth`) is unchanged, and the composite
 | `API_KEY_ISSUER` | Required when signed keys are enabled. The exact `iss` value accepted. |
 | `API_SIGNING_KEYS` / `API_SIGNING_KEYS_URL` | The JWKS, inline or fetched from a URL (one of the two). Ed25519 public keys only, as today. |
 | `API_REVOCATION_DOCUMENT` / `API_REVOCATION_URL` | The signed revocation document (§7.5), inline (operator push) or fetched from a URL. The plain id list `API_REVOKED_CREDENTIAL_IDS` is removed: an unsigned list carries no sequence or audience binding. |
-| `API_ACCEPTED_AUDIENCES` | Extra audience strings this deployment accepts, comma-separated. The deployment id is always accepted. |
+| `API_KEY_PROJECT_ID` | The identifier keys and revocation documents use for this deployment. Default: the deployment id. |
+| `API_KEY_TENANT_ID` | The issuer tenant this deployment belongs to (for remember.dev, the organisation id). Unset → organisation-wide keys are refused. |
+| `API_ADMISSION_*` | Direct-path admission limits (§7.6). |
 | `API_KEY_PREFIXES` | Routing prefixes that may precede the JWS, e.g. `rmb_`. Empty = bare JWS only. |
 | `API_KEY_REFRESH_S` | Refresh interval for fetched JWKS and revocation (starting value 60). |
 | `API_REVOCATION_MAX_STALENESS_S` | Age, measured from the document's `iat`, after which the accepted revocation document is too old (starting value 300). |
@@ -413,16 +420,22 @@ Numbers are starting points to be measured, not constants.
   once), then a compact JWS. Header `alg` is `EdDSA`, `kid` names a key in the
   set; the key is selected by `kid`, never by trying keys.
 - **Required claims**: `iss` (equals `API_KEY_ISSUER`), `sub`, `jti`
-  (non-empty; the revocation handle), `aud` (a string or an array of strings),
-  `iat`, `nbf`, `exp`, `permissions` (array of strings), `kind` (§7.3).
-- **Audience**: accepted when at least one `aud` value equals this
-  deployment's id or a value in `API_ACCEPTED_AUDIENCES`. Comparison is exact
-  string equality; there are no wildcards. An operator expresses "every
-  project in a group" by configuring the same opaque group audience (for
-  example `org:<uuid>`) on each deployment of the group; the engine does not
-  interpret it.
-- **Unknown claims** (organisation, default project, endpoints) are ignored:
-  they are the issuer's and the client's business.
+  (non-empty; the revocation handle), `projects`, `iat`, `nbf`, `exp`,
+  `permissions` (array of strings), `kind` (§7.3). `org` is required when
+  `projects` is `"org:*"`.
+- **Coverage.** The key is accepted at this deployment when either
+  - `projects` is an array of strings and one element equals
+    `API_KEY_PROJECT_ID` (exact string equality), or
+  - `projects` is exactly the string `"org:*"`, `API_KEY_TENANT_ID` is
+    configured, and the key's `org` equals it exactly.
+  Anything else — no match, an empty list, another string, `"org:*"` without
+  `org` or on a deployment with no tenant configured — is refused. There are
+  no other wildcards or patterns. The organisation-wide form lets a key cover
+  projects created after it was minted; the engine compares one opaque tenant
+  string and learns nothing else about organisations.
+- The registered `aud` claim is not used to decide coverage for keys.
+- **Unknown claims** (default project, endpoints, names) are ignored: they are
+  the issuer's and the client's business.
 - **Clock leeway** 30 s on `exp`/`nbf`, as today.
 
 ### 7.3 Credential kind and audit
@@ -471,8 +484,8 @@ header `typ` `revocation+jwt`, with claims:
 | Claim | Meaning |
 | --- | --- |
 | `iss` | The issuer; must equal `API_KEY_ISSUER`. |
-| `aud` | The deployment (or group) audience the document is for; must intersect the audiences this deployment accepts (§7.2). A document for another deployment is rejected, so documents cannot be replayed across deployments. |
-| `seq` | A non-negative integer the issuer increases with every document it publishes for that audience. |
+| `aud` | This deployment: must equal `API_KEY_PROJECT_ID`. A document for another deployment is rejected, so documents cannot be replayed across deployments. |
+| `seq` | A non-negative integer the issuer increases on **every** newly issued document for that `aud`, including the heartbeat re-issue each refresh interval when nothing changed. |
 | `iat`, `exp` | When it was issued, and when the next document is due. |
 | `revoked` | Array of `jti` values refused despite a valid signature. |
 | `active_kids` | The signing-key ids (`kid`) whose credentials remain valid. |
@@ -482,10 +495,12 @@ The signature, audience and sequence let the document travel over any channel
 being trusted.
 
 **Acceptance and cache.**
-- A candidate document is accepted only if its signature, `iss` and `aud`
-  verify, it is signed by a key in `active_kids` of the currently accepted
-  document (or of itself, for the first document), and its `seq` is strictly
-  greater than the last accepted `seq`. An equal `seq` with identical content
+- **First document.** When the deployment has no accepted document yet
+  (nothing persisted), it accepts the first document whose signature verifies
+  against a key in the JWKS and whose `iss` and `aud` match.
+- **Later documents** are accepted only if the signature, `iss` and `aud`
+  verify, the signing `kid` is in the currently accepted document's
+  `active_kids`, and `seq` is strictly greater than the last accepted `seq`. An equal `seq` with identical content
   is a no-op; an equal `seq` with different content, or a lower `seq`, is
   rejected and logged as a rollback attempt.
 - The last accepted `seq` and document are persisted in the deployment's
@@ -513,7 +528,8 @@ listing it is accepted sooner, or the older document goes stale at
 `iat + S ≤ r + S`. A deployment configured with signed keys but no
 revocation source accepts only credentials whose lifetime is at most S.
 
-**Key rotation as revocation.** `active_kids` is the rotation valve. A
+**Key rotation as revocation.** `active_kids` is the rotation valve; a
+retiring rotation is expressed only by removing the `kid` from it. A
 credential whose header `kid` is not in the accepted document's
 `active_kids` is refused even if that key is still present in the JWKS. To
 retire a signing-key generation — including after a suspected compromise —
@@ -525,13 +541,53 @@ the JWKS itself.
 - A JWKS fetched as `{"keys": []}` makes the adapter deny every signed
   credential, as the inline form does today.
 
-### 7.6 Failure responses
+### 7.6 Direct-path admission limits
+
+SDK and CLI traffic reaches the engine directly, not through any host that
+could meter it, so the perimeter itself bounds how much one key and one
+deployment can ask for. After authentication and before the route runs:
+
+| Limit | Starting value (configurable) | Setting (`REMEMBERSTACK_SELFHOST_API_ADMISSION_…`) |
+| --- | --- | --- |
+| Requests per key id (`jti`) | 120 per minute, burst 30 | `KEY_RATE_PER_MIN`, `KEY_BURST` |
+| In flight per key id | 8 | `KEY_IN_FLIGHT` |
+| Requests per deployment | 600 per minute | `DEPLOYMENT_RATE_PER_MIN` |
+| In flight per deployment | 32 | `DEPLOYMENT_IN_FLIGHT` |
+
+- **Mechanism.** A token bucket (a counter that refills at the configured rate
+  up to the burst size; each request takes one token) for rates, and a
+  counting semaphore for in-flight requests. Per-key limits apply to every
+  signed credential, keyed by `jti`; the shared-secret bearer has no key id
+  and is bounded by the per-deployment limits only. `GET /healthz` is exempt.
+  An in-flight slot is released when the response finishes, errors, or the
+  client disconnects.
+- **Refusal.** `429` with the error envelope code `rate_limited` or
+  `concurrency_limited` and a `Retry-After` header in whole seconds: the time
+  until the bucket holds a token, or 1 for an in-flight refusal. The SDK
+  raises `RateLimited` carrying `retry_after` and does not retry by itself;
+  MCP hosts return the same code as a tool error.
+- **Where the counters live: in process, per API replica.** Each API process
+  keeps its own buckets and semaphores in memory. Rejected alternative:
+  Postgres-backed counters, which add a write to every request on the hot
+  path, contend on a few hot rows for a busy key, and turn a slow database
+  into refused requests even for reads that would have succeeded. The cost
+  of the in-process choice is that limits are per replica: with N API
+  replicas behind a load balancer the effective ceilings are N times the
+  configured values. An operator running N replicas sets each value to the
+  intended total divided by N; the self-host profile runs one API replica,
+  where configured and effective limits coincide.
+- These limits bound request volume only. Spend (D91 request-path metering,
+  the spend lease) and the D74 admission barrier are unchanged and still
+  apply after this check.
+
+### 7.7 Failure responses
 
 Every refusal is `401` with no detail beyond "not authenticated" (bad
-signature, unknown `kid`, wrong issuer, no accepted audience, expired,
+signature, unknown `kid`, wrong issuer, not covering this deployment, expired,
 revoked, stale revocation, unknown kind or memory permission), except a
 valid credential lacking the needed scope, which is `403
-insufficient_scope`. Logs record the reason class and `jti`, never the token.
+insufficient_scope`, and an admission refusal, which is `429` with
+`Retry-After` (§7.6). Logs record the reason class and `jti`, never the token.
 
 ## 8. SDK and CLI with one key
 
@@ -548,6 +604,7 @@ OAuth authorization-server metadata (RFC 8414) from
 | `jwks_uri` | diagnostics (`remember doctor`) |
 | `remember_mcp_endpoint` | bridge mode and `remember setup` |
 | `remember_project_endpoint` | data-plane host resolution (§8.3) |
+| `remember_account_endpoint` | base URL of the issuer's account API, used by `remember.Client.account` and `remember whoami` (§8.3, §8.4) |
 
 The concrete endpoint paths are the issuer's (for remember.dev, the cloud
 design's). The `remember` package ships one default issuer identifier,
@@ -600,8 +657,9 @@ and resolves the target:
    single-project key) and no project was requested, use it.
 2. Otherwise call `GET {remember_project_endpoint}?project=<project or default>`
    with the key as bearer. The response is
-   `{"project": "<id>", "name": "<name>", "api_url": "https://…", "audience": "<aud value>"}`.
-   The client checks that `audience` is one of the key's `aud` values and that
+   `{"project": "<id>", "name": "<name>", "api_url": "https://…", "audience": "<the deployment's API_KEY_PROJECT_ID>"}`.
+   The client checks that `audience` is in the key's `projects` list (or that
+   the key is organisation-wide, `"org:*"`) and that
    `api_url` is `https` (or loopback `http`), and talks to `api_url` directly.
 3. **Cache and moved deployments.** The resolved `api_url` is cached per
    (issuer, key id, project) in the process for a bounded time (starting
@@ -629,8 +687,10 @@ a key still reaches a self-hosted engine at `REMEMBER_API_URL` or localhost.
 **Account calls live on the same client.** `CloudClient` is removed.
 `remember.Client` exposes an `account` namespace (`client.account.…`) that
 calls the key's issuer's account API with the same key; the issuer is found
-from `iss` and the API location from the issuer metadata. When the key has no
-issuer (a self-hosted shared secret) or the issuer publishes no account API,
+from `iss` and the API location from the issuer metadata's
+`remember_account_endpoint`. When the key has no
+issuer (a self-hosted shared secret) or the metadata has no
+`remember_account_endpoint`,
 `client.account` raises `AccountApiUnavailable`; memory calls are unaffected.
 The account API's operations and their permissions are defined by the issuer
 (for remember.dev, the cloud design); the engine has no account surface.
@@ -663,16 +723,24 @@ The account API's operations and their permissions are defined by the issuer
   created `0600` in a `0700` directory with the existing atomic write, lock,
   fsync and symlink refusal. `extra="forbid"`; a file that is not this
   shape is refused with "run `remember login`".
-- **A second login replaces, then revokes.** Order: (1) mint the new key;
-  (2) durably persist it — atomic replace of `credentials.json` and fsync of
-  the file and directory — so the machine never holds only a dead key; (3)
-  record the old key in the existing pending-revocation journal (keyed by
-  issuer and key id); (4) revoke the old key through `revocation_endpoint`
-  and drop the journal entry on success. A failed or unconfirmed revocation
-  stays in the journal and is retried by every later CLI start and by
-  `remember logout`; the command reports it. If step 2 fails, the new key is
-  revoked immediately (or journalled if that fails) and the old file is left
-  untouched.
+- **A second login journals, replaces, then revokes.** Order:
+  1. mint the new key;
+  2. durably write the **old** key's secret, issuer and key id to the
+     existing pending-revocation journal (owner-only file, atomic write,
+     fsync of file and directory) **before** touching `credentials.json`;
+  3. durably replace `credentials.json` with the new key (atomic replace,
+     fsync of file and directory);
+  4. revoke the old key through `revocation_endpoint`, and remove its journal
+     entry only when the issuer confirms (2xx, or `401`/`404` = already dead).
+
+  A crash at any point leaves either the old file plus a journal entry for a
+  still-valid old key (harmless: the next run retries or discards it once it
+  sees the old key still in `credentials.json`), or the new file plus a
+  journalled old key that will be revoked — never an old key that nobody will
+  revoke. An unconfirmed revocation stays journalled and is retried by every
+  later CLI start and by `remember logout`, and the command reports it. If
+  step 3 fails, the new key is revoked immediately (or journalled if that
+  fails), the old key's journal entry is removed, and the old file stays.
 - `remember logout` revokes through `revocation_endpoint` and unlinks:
   2xx or already dead (`401`/`404`) → unlink, exit 0; 5xx or network
   failure → keep the file, exit 1; no file → exit 0. It also retries any
@@ -681,7 +749,7 @@ The account API's operations and their permissions are defined by the issuer
   it once (§8.3) to prove the key covers it. No new credential is minted.
 - `remember whoami` prints the issuer, key id, expiry, default project and
   permissions from the key's own claims, locally. Only when the key has
-  `account:read` and the issuer publishes an account API does it add the
+  `account:read` and the issuer metadata has a `remember_account_endpoint` does it add the
   issuer's account view (a host call). It never calls the engine: a
   memory-only key gets the local claim summary and nothing more, and the
   engine has no identity endpoint.
@@ -704,7 +772,8 @@ The account API's operations and their permissions are defined by the issuer
 | Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
 | HTTP transport: non-loopback bind in front of an unauthenticated engine | Refuses to start without `--allow-unauthenticated-engine` |
 | HTTP transport: bad `Origin` | `403` |
-| Engine: key with no accepted audience / wrong issuer / revoked | `401` |
+| Engine: key not covering this deployment / wrong issuer / revoked | `401` |
+| Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After` |
 | Engine: revocation document stale | Long-lived signed keys `401`; short-lived credentials and shared secret unaffected |
 | Engine: valid key lacking permission | `403 insufficient_scope` |
 | Client: project resolution fails | `ProjectResolutionError` / exit 1; no localhost fallback |
@@ -755,8 +824,14 @@ Engine consistency:
 Perimeter (`signed_token_auth.py`):
 - wrong `iss`, missing `permissions`/`kind`, unknown `kind`, `service` with a
   foreign `sub` → refused;
-- `aud` as string and as array; accepted via deployment id and via a
-  configured group audience; no match → refused; no wildcard matching;
+- coverage: explicit `projects` list match and miss; `"org:*"` accepted only
+  with matching `org` and a configured `API_KEY_TENANT_ID`, refused without
+  `org`, with another `org`, or with no tenant configured; no other patterns;
+- first revocation document accepted on a fresh deployment; heartbeat
+  documents advance `seq`;
+- admission: per-key and per-deployment rate and in-flight limits return
+  `429` with a correct `Retry-After`; in-flight slots are released on
+  success, error and client disconnect; `/healthz` is exempt;
 - permission mapping table, including ignored `account:*` and refused unknown
   `memory:*`; no memory permission → `403`;
 - prefix stripped once from the configured set only;
