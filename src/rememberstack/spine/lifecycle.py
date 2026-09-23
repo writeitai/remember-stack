@@ -7,6 +7,7 @@ a stable `reconciliation_id` (a retried run re-emits its rows as no-ops) so
 reconciliation can ride the ordinary work ledger.
 """
 
+from datetime import datetime
 from uuid import UUID
 from uuid import uuid4
 
@@ -539,15 +540,54 @@ class LifecycleCatalog:
             )
         return dict(row)
 
-    def delete_lineage(self, *, doc_id: UUID) -> None:
+    def delete_lineage(self, *, doc_id: UUID) -> datetime:
         """Tombstone a lineage by operator decision (§8; audit-visible).
 
         Claims are retained as history — normal deletion never scrubs
         content (forgotten ≠ deleted); the caller runs the currency cascade.
+        Every version is tombstoned with the lineage, so the deletion
+        survives a later re-ingest that brings the lineage back: the old
+        versions stay deleted, their testimony is never reused, and the
+        returning bytes are processed as a new version (D135). Returns the
+        lineage's deletion instant (the first one, on a repeated call).
         """
         with self._engine.begin() as connection:
             connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
+            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
             connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
+            return connection.execute(
+                _SELECT_LINEAGE_DELETED_AT, {"doc_id": doc_id}
+            ).scalar_one()
+
+    def clear_document_bindings(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+        """Drop T4 anchors a deleted lineage's late pipeline work created (D102)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _CLEAR_DOCUMENT_BINDINGS,
+                {"deployment_id": deployment_id, "doc_id": doc_id},
+            )
+
+    def lineage_deletion_state(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> dict[str, object] | None:
+        """Whether a lineage exists here, is tombstoned, and still testifies.
+
+        ``None`` when the deployment never held the lineage. Otherwise
+        ``deleted_at`` (``None`` while live) and ``holds_current_testimony``
+        — a tombstoned lineage that still holds current claims has a
+        deletion that has not finished (an interrupted cascade, or pipeline
+        work that landed after the tombstone).
+        """
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    _SELECT_LINEAGE_DELETION_STATE,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        return None if row is None else dict(row)
 
     def cycles_ready_to_finalize(
         self, *, deployment_id: UUID
@@ -660,6 +700,8 @@ _SELECT_CONTEXT = text(
     SELECT v.deployment_id, v.doc_id, v.version_id, v.version_no,
            v.sync_cycle_id, d.versioning_mode::text AS versioning_mode,
            d.current_version_id,
+           d.deleted_at AS lineage_deleted_at,
+           v.deleted_at AS version_deleted_at,
            (SELECT cv.source_modified_at FROM document_versions cv
             WHERE cv.version_id = d.current_version_id) AS current_source_modified_at
     FROM document_versions v
@@ -1040,6 +1082,31 @@ _TOMBSTONE_LINEAGE_BY_ID = text(
     """
     UPDATE documents SET deleted_at = now()
     WHERE doc_id = :doc_id AND deleted_at IS NULL
+    """
+)
+
+_TOMBSTONE_LINEAGE_VERSIONS = text(
+    """
+    UPDATE document_versions SET deleted_at = now()
+    WHERE doc_id = :doc_id AND deleted_at IS NULL
+    """
+)
+
+_SELECT_LINEAGE_DELETED_AT = text(
+    "SELECT deleted_at FROM documents WHERE doc_id = :doc_id"
+)
+
+_SELECT_LINEAGE_DELETION_STATE = text(
+    """
+    SELECT d.deleted_at,
+           EXISTS (
+               SELECT 1 FROM claims cl
+               WHERE cl.deployment_id = d.deployment_id
+                 AND cl.doc_id = d.doc_id
+                 AND cl.is_current_testimony
+           ) AS holds_current_testimony
+    FROM documents d
+    WHERE d.deployment_id = :deployment_id AND d.doc_id = :doc_id
     """
 )
 

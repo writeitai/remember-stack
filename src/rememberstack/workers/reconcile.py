@@ -15,7 +15,7 @@ Watched lineages defer source-acted closure to their sync cycle's
 FINALIZATION (the retract-timing barrier): an intra-cycle move resolves as a
 support swap, never retract-then-reassert. The `CycleFinalizer` runs that
 job; `DeletionService` is the operator's grain (§8) through the same
-cascade.
+cascade, and `DocumentDeleter` is its public, caller-facing form (D135).
 """
 
 import logging
@@ -27,6 +27,8 @@ from rememberstack.core import chunker_version as chunker_version_of
 from rememberstack.core import ChunkerParams
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CurrencyTransition
+from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
@@ -85,6 +87,13 @@ class ReconcileHandler:
         context = self._catalog.reconciliation_context(version_id=version_id)
         deployment_id = work.deployment_id
         reconciliation_id = work.processing_id
+        if (
+            context.get("lineage_deleted_at") is not None
+            or context.get("version_deleted_at") is not None
+        ):
+            return self._retire_deleted_testimony(
+                work=work, context=context, version_id=version_id, meter=meter
+            )
 
         source_acted: tuple[CurrencyTransition, ...] = ()
         if (
@@ -234,6 +243,70 @@ class ReconcileHandler:
                 ),
             )
         )
+
+    def _retire_deleted_testimony(
+        self,
+        *,
+        work: ClaimedWork,
+        context: dict[str, object],
+        version_id: UUID,
+        meter: CostMeterPort,
+    ) -> HandlerOutcome:
+        """End testimony that pipeline work produced after a deletion (D135).
+
+        A document deleted while its version was still processing keeps
+        running through the pipeline: claims and fact support can land after
+        the deletion's cascade already ran. This stage is where that work
+        arrives, so it retires whatever the deleted lineage (or deleted
+        version) still holds current, through the same §8 cascade, and ends
+        the chain — nothing downstream is worth paying for on deleted input.
+        """
+        deployment_id = work.deployment_id
+        reconciliation_id = work.processing_id
+        doc_id = context["doc_id"]
+        if not isinstance(doc_id, UUID):
+            raise NonRetryableHandlerError(
+                f"version {version_id} reconciliation context has no doc_id"
+            )
+        # Deletion cleared the document's T4 anchors; late work may have
+        # re-created them, and deleted evidence must never anchor identity.
+        self._catalog.clear_document_bindings(
+            deployment_id=deployment_id, doc_id=doc_id
+        )
+        if context.get("lineage_deleted_at") is not None:
+            late = self._catalog.stale_for_deletion(
+                deployment_id=deployment_id, doc_id=doc_id
+            )
+        else:
+            late = self._catalog.stale_for_version_deletion(
+                deployment_id=deployment_id, version_id=version_id
+            )
+        delta = _cascade(
+            catalog=self._catalog,
+            deployment_id=deployment_id,
+            transitions=_with_recorded(
+                catalog=self._catalog,
+                transitions=late,
+                reconciliation_id=reconciliation_id,
+            ),
+            reconciliation_id=reconciliation_id,
+            boundary=None,
+        )
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=delta.recounted_relations,
+                observation_ids=delta.recounted_observations,
+                meter=meter,
+                call_key=f"profile:reconcile-deleted:{reconciliation_id}",
+            )
+        except ProfileRefreshContendedError:
+            _logger.warning(
+                "profile.refresh_contended reconciliation_id=%s; "
+                "stale cache remains empty",
+                reconciliation_id,
+            )
+        return HandlerOutcome()
 
     def _flag_transcription_only(
         self,
@@ -481,6 +554,79 @@ class DeletionService:
         )
 
 
+class DocumentDeleter:
+    """The public document delete (D135): lineage grain, finish-or-refuse.
+
+    Wraps the §8 lineage cascade with the contract a caller sees: a live
+    document is tombstoned and its contribution removed; an absent one is
+    ``DocumentNotFoundError``; a document whose earlier deletion stopped
+    part-way (or whose in-flight pipeline work landed after it) is finished
+    rather than refused. Entity profiles are refreshed afterwards on a best
+    effort basis — they are disposable orientation text, and a provider
+    outage must not fail a deletion that has already committed.
+    """
+
+    def __init__(
+        self, *, catalog: LifecycleCatalog, profile_refresher: ProfileRefresherPort
+    ) -> None:
+        """Bind lifecycle mutation and the profile projection it invalidates."""
+        self._catalog = catalog
+        self._profile_refresher = profile_refresher
+
+    def delete_document(
+        self, *, deployment_id: UUID, doc_id: UUID, meter: CostMeterPort | None = None
+    ) -> DocumentDeletion:
+        """Remove one document's contribution to this deployment's memory."""
+        state = self._catalog.lineage_deletion_state(
+            deployment_id=deployment_id, doc_id=doc_id
+        )
+        if state is None:
+            raise DocumentNotFoundError(str(doc_id))
+        already_deleted = state["deleted_at"] is not None
+        deleted_at = self._catalog.delete_lineage(doc_id=doc_id)
+        # The same stable run id as `DeletionService.delete_lineage`, so an
+        # interrupted run is finished by the next call rather than duplicated.
+        reconciliation_id = _derived_run_id(kind="delete-lineage", id_=doc_id)
+        delta, changed = _cascade_run(
+            catalog=self._catalog,
+            deployment_id=deployment_id,
+            transitions=_with_recorded(
+                catalog=self._catalog,
+                transitions=self._catalog.stale_for_deletion(
+                    deployment_id=deployment_id, doc_id=doc_id
+                ),
+                reconciliation_id=reconciliation_id,
+            ),
+            reconciliation_id=reconciliation_id,
+            boundary=None,
+        )
+        if already_deleted and not changed:
+            # Nothing was left to finish: the document was already gone.
+            raise DocumentNotFoundError(str(doc_id))
+        try:
+            self._profile_refresher.refresh_for_facts(
+                deployment_id=deployment_id,
+                relation_ids=delta.recounted_relations,
+                observation_ids=delta.recounted_observations,
+                meter=meter,
+                call_key=f"profile:delete:{reconciliation_id}",
+            )
+        except Exception:  # noqa: BLE001 — the deletion itself has committed
+            _logger.warning(
+                "document.delete profile refresh failed doc_id=%s; profiles"
+                " refresh on the next evidence change for those entities",
+                doc_id,
+                exc_info=True,
+            )
+        return DocumentDeletion(
+            doc_id=doc_id,
+            deleted_at=deleted_at,
+            claims_retired=delta.transitions,
+            relations_closed=len(delta.relations_closed),
+            observations_closed=len(delta.observations_closed),
+        )
+
+
 def cascade_lineage_removal(
     *,
     catalog: LifecycleCatalog,
@@ -489,16 +635,12 @@ def cascade_lineage_removal(
     reconciliation_id: UUID,
 ) -> ReconciliationDelta:
     """The uniform lineage-removal cascade (§8): currency → recount → close."""
-    transitions = catalog.stale_for_deletion(deployment_id=deployment_id, doc_id=doc_id)
-    recorded = catalog.recorded_transitions(reconciliation_id=reconciliation_id)
-    seen = {(item.claim_id, item.reason, item.became_current) for item in transitions}
-    transitions = (
-        *transitions,
-        *(
-            item
-            for item in recorded
-            if (item.claim_id, item.reason, item.became_current) not in seen
+    transitions = _with_recorded(
+        catalog=catalog,
+        transitions=catalog.stale_for_deletion(
+            deployment_id=deployment_id, doc_id=doc_id
         ),
+        reconciliation_id=reconciliation_id,
     )
     return _cascade(
         catalog=catalog,
@@ -506,6 +648,31 @@ def cascade_lineage_removal(
         transitions=transitions,
         reconciliation_id=reconciliation_id,
         boundary=None,
+    )
+
+
+def _with_recorded(
+    *,
+    catalog: LifecycleCatalog,
+    transitions: tuple[CurrencyTransition, ...],
+    reconciliation_id: UUID,
+) -> tuple[CurrencyTransition, ...]:
+    """Union recomputed transitions with the run's already-ledgered ones.
+
+    A crash between the currency transaction and the recount/closure steps
+    leaves the ledger ahead of the facts; a rerun recomputes an empty stale
+    set (the cache already flipped), so it must replay what the ledger holds.
+    """
+    seen = {(item.claim_id, item.reason, item.became_current) for item in transitions}
+    return (
+        *transitions,
+        *(
+            item
+            for item in catalog.recorded_transitions(
+                reconciliation_id=reconciliation_id
+            )
+            if (item.claim_id, item.reason, item.became_current) not in seen
+        ),
     )
 
 
@@ -518,6 +685,31 @@ def _cascade(
     boundary: object,
 ) -> ReconciliationDelta:
     """Apply one source-acted basis change end to end, idempotently."""
+    delta, _changed = _cascade_run(
+        catalog=catalog,
+        deployment_id=deployment_id,
+        transitions=transitions,
+        reconciliation_id=reconciliation_id,
+        boundary=boundary,
+    )
+    return delta
+
+
+def _cascade_run(
+    *,
+    catalog: LifecycleCatalog,
+    deployment_id: UUID,
+    transitions: tuple[CurrencyTransition, ...],
+    reconciliation_id: UUID,
+    boundary: object,
+) -> tuple[ReconciliationDelta, bool]:
+    """The cascade, plus whether this run changed any state at all.
+
+    "Changed" means a new currency event, a recount that moved a count, or
+    a newly closed fact. A rerun of a completed cascade changes nothing,
+    which is how a repeated delete tells "already deleted" from "an earlier
+    attempt stopped part-way" (D135).
+    """
     applied = catalog.apply_transitions(
         deployment_id=deployment_id,
         reconciliation_id=reconciliation_id,
@@ -526,7 +718,9 @@ def _cascade(
     claim_ids = tuple({transition.claim_id for transition in transitions})
     relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
     observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
-    catalog.recount(relation_ids=relation_ids, observation_ids=observation_ids)
+    changed_relations, changed_observations = catalog.recount(
+        relation_ids=relation_ids, observation_ids=observation_ids
+    )
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
         relation_ids=catalog.open_zero_support_relations(
@@ -551,7 +745,14 @@ def _cascade(
         observations_closed=closed_observations,
     )
     catalog.emit_evidence_changed(deployment_id=deployment_id, delta=delta)
-    return delta
+    changed = bool(
+        applied
+        or changed_relations
+        or changed_observations
+        or closed_relations
+        or closed_observations
+    )
+    return delta, changed
 
 
 def _derived_run_id(*, kind: str, **parts: object) -> UUID:

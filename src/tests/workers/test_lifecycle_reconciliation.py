@@ -39,6 +39,7 @@ from rememberstack.eval import run_lifecycle_suite
 from rememberstack.eval.harness import EvalHarness
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
 from rememberstack.model import IngestedVersion
@@ -73,6 +74,7 @@ from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import CycleFinalizer
 from rememberstack.workers import DeletionService
+from rememberstack.workers import DocumentDeleter
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
@@ -1129,3 +1131,203 @@ def test_no_route_holds_absence_retraction_until_explicit_source_deletion(
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
     assert rig.relation()["valid_until"] is None
     assert rig.relation()["invalidated_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# D135: the public document delete, end to end on the real chain
+# ---------------------------------------------------------------------------
+
+
+class _UnavailableProfiles:
+    """A profile refresher whose provider is down."""
+
+    def refresh(self, **_: object) -> object:
+        raise RuntimeError("provider unavailable")
+
+    def refresh_many(self, **_: object) -> object:
+        raise RuntimeError("provider unavailable")
+
+    def refresh_for_facts(self, **_: object) -> object:
+        raise RuntimeError("provider unavailable")
+
+
+def _deleter(rig: _LifecycleRig) -> DocumentDeleter:
+    """The public delete over the rig's catalog and profile projection."""
+    return DocumentDeleter(
+        catalog=rig.lifecycle, profile_refresher=rig.profile_refresher
+    )
+
+
+def _open_works_for(rig: _LifecycleRig) -> object:
+    """How many works_for relations are still believed."""
+    return rig.scalar(
+        "SELECT count(*) FROM relations"
+        " WHERE predicate = 'works_for' AND invalidated_at IS NULL"
+    )
+
+
+def _current_claims(rig: _LifecycleRig, doc_id: UUID) -> object:
+    """How many of the lineage's claims are current testimony."""
+    return rig.scalar(
+        "SELECT count(*) FROM claims WHERE doc_id = :d AND is_current_testimony",
+        d=doc_id,
+    )
+
+
+def test_public_delete_removes_the_contribution_and_keeps_history(
+    rig: _LifecycleRig,
+) -> None:
+    """D135: the sole supporter goes, so the fact closes with a recorded
+    retraction; the claims stay as history; a repeat is "not found"."""
+    added = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="staffing.md",
+            mime="text/markdown",
+            content=f"{_FACT_SENTENCE}\n".encode(),
+        ),
+    )
+    rig.drain()
+    assert rig.relation()["evidence_count"] == 1
+
+    result = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    )
+
+    assert result.doc_id == added.doc_id
+    assert result.claims_retired == 1
+    assert result.relations_closed == 1
+    assert result.observations_closed == 0
+    fact = rig.relation()
+    assert fact["evidence_count"] == 0
+    assert fact["invalidated_at"] is not None
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM relation_adjudications"
+            " WHERE outcome = 'retracted_source_removal'"
+        )
+        == 1
+    )
+    assert _current_claims(rig, added.doc_id) == 0
+    assert rig.scalar("SELECT count(*) FROM claims WHERE doc_id = :d", d=added.doc_id)
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_versions"
+            " WHERE doc_id = :d AND deleted_at IS NULL",
+            d=added.doc_id,
+        )
+        == 0
+    )
+    with pytest.raises(DocumentNotFoundError):
+        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+    with pytest.raises(DocumentNotFoundError):
+        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=uuid4())
+
+
+def test_an_interrupted_delete_is_finished_by_the_next_call(rig: _LifecycleRig) -> None:
+    """A tombstone whose cascade never ran is finished, not refused."""
+    added = rig.observe(
+        source_ref="half.md", content=f"{_FACT_SENTENCE}\n", versioning_mode="snapshot"
+    )
+    rig.drain()
+    # the crashed first attempt: the tombstone committed, nothing after it
+    rig.lifecycle.delete_lineage(doc_id=added.doc_id)
+    assert _current_claims(rig, added.doc_id) == 1
+
+    result = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    )
+
+    assert result.claims_retired == 1
+    assert result.relations_closed == 1
+    assert rig.relation()["invalidated_at"] is not None
+    with pytest.raises(DocumentNotFoundError):
+        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+
+
+def test_a_provider_outage_does_not_fail_a_committed_delete(rig: _LifecycleRig) -> None:
+    """Profiles are disposable projections; the deletion still answers."""
+    added = rig.observe(
+        source_ref="outage.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+
+    result = DocumentDeleter(
+        catalog=rig.lifecycle,
+        profile_refresher=_UnavailableProfiles(),  # type: ignore[arg-type]
+    ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+
+    assert result.relations_closed == 1
+    assert rig.relation()["invalidated_at"] is not None
+
+
+def test_re_adding_deleted_bytes_processes_them_again(rig: _LifecycleRig) -> None:
+    """The same file uploaded after its deletion is a new version that is
+    extracted afresh — never a no-op that brings back a document which
+    contributes nothing, and never a reuse of the deleted testimony."""
+    upload = DocumentUpload(
+        filename="staffing.md",
+        mime="text/markdown",
+        content=f"{_FACT_SENTENCE}\n".encode(),
+    )
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    rig.drain()
+    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    assert _open_works_for(rig) == 0
+
+    again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    rig.drain()
+
+    assert again.doc_id == first.doc_id  # uploads are content-addressed
+    assert again.created is True
+    assert again.version_id != first.version_id
+    assert (
+        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=first.doc_id)
+        is None
+    )
+    assert (
+        rig.scalar(
+            "SELECT deleted_at FROM document_versions WHERE version_id = :v",
+            v=first.version_id,
+        )
+        is not None
+    )
+    assert _current_claims(rig, first.doc_id) == 1
+    fresh = rig.scalar(
+        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.is_current_testimony",
+        v=again.version_id,
+    )
+    assert fresh == 1  # extracted from the new version, not re-attached
+    assert _open_works_for(rig) == 1
+
+
+def test_work_that_lands_after_a_delete_is_retired_at_reconcile(
+    rig: _LifecycleRig,
+) -> None:
+    """Deleting a document mid-pipeline: its later claims never stay current,
+    and the fact they created closes when the version reaches reconcile."""
+    added = rig.observe(
+        source_ref="inflight.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+    )
+    result = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    )
+    assert result.claims_retired == 0  # nothing had been extracted yet
+
+    rig.drain()
+
+    assert rig.scalar("SELECT count(*) FROM claims WHERE doc_id = :d", d=added.doc_id)
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
+            d=added.doc_id,
+        )
+        == 0
+    )

@@ -3,7 +3,8 @@
 Assured tools render from the operation registry. When an `OpenQueryFacade`
 is composed, the seven static infrastructure tools are listed and dispatched
 alongside them. When both ingest and pipeline-readiness ports are composed,
-the Layer 1 write tools (`ingest`, `pipeline_readiness`) are advertised first.
+the Layer 1 write tools (`ingest`, `pipeline_readiness`) are advertised first,
+followed by `delete_document` when a deletion port is composed (D135).
 The eighteen `examples.*` identities are never top-level tools — they run only
 through `run_saved_query`.
 """
@@ -15,12 +16,18 @@ import json
 from typing import Literal
 from uuid import UUID
 
+from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
+from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.surfaces.http_api import DocumentDeletionPort
 from rememberstack.surfaces.http_api import IngestPort
 from rememberstack.surfaces.http_api import PipelineReadinessPort
+from rememberstack.surfaces.mcp_memory_tools import delete_document_tool_descriptor
+from rememberstack.surfaces.mcp_memory_tools import DELETE_DOCUMENT_TOOL_NAME
+from rememberstack.surfaces.mcp_memory_tools import handle_delete_document_tool
 from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
 from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
 from rememberstack.surfaces.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
@@ -92,6 +99,30 @@ class _LocalMemoryWriteBackend:
         return None
 
 
+class _LocalDocumentDeleteBackend:
+    """Adapt the in-process deletion port to the shared delete tool (D135)."""
+
+    def __init__(self, *, deletion: DocumentDeletionPort, deployment_id: UUID) -> None:
+        self._deletion = deletion
+        self._deployment_id = deployment_id
+
+    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
+        """Delete through the composed port; absence surfaces as a 404 shape."""
+        try:
+            return self._deletion.delete_document(
+                deployment_id=self._deployment_id, doc_id=doc_id
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+
+
+class _DocumentNotFound(Exception):
+    """The HTTP-shaped absence the shared tool maps to ``document_not_found``."""
+
+    status_code = 404
+    detail = "document_not_found"
+
+
 class OperationMcpServer:
     """Render assured operations, optional write tools, and open-query tools."""
 
@@ -102,6 +133,7 @@ class OperationMcpServer:
         open_query: OpenQueryFacade | None = None,
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
+        deletion: DocumentDeletionPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -110,6 +142,7 @@ class OperationMcpServer:
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
+        `delete_document` is advertised only when `deletion` is composed.
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
@@ -130,6 +163,13 @@ class OperationMcpServer:
                 pipeline_readiness=pipeline_readiness,
                 deployment_id=surface.deployment_id,
             )
+        self._delete_backend: _LocalDocumentDeleteBackend | None = (
+            None
+            if deletion is None
+            else _LocalDocumentDeleteBackend(
+                deletion=deletion, deployment_id=surface.deployment_id
+            )
+        )
 
     def list_tools(self) -> dict[str, object]:
         """List write tools, assured operations, then open-query infrastructure.
@@ -141,6 +181,8 @@ class OperationMcpServer:
         tools: list[dict[str, object]] = []
         if self._write_backend is not None:
             tools.extend(memory_write_tool_descriptors())
+        if self._delete_backend is not None:
+            tools.append(delete_document_tool_descriptor())
         tools.extend(
             {
                 "name": descriptor.name,
@@ -162,6 +204,10 @@ class OperationMcpServer:
         answers are QueryResult/v1 or discovery payloads. Write tools use their
         structured error envelope. Typed failures remain protocol error results.
         """
+        if name == DELETE_DOCUMENT_TOOL_NAME:
+            return handle_delete_document_tool(
+                arguments=arguments, backend=self._delete_backend
+            )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
                 name=name, arguments=arguments, backend=self._write_backend
