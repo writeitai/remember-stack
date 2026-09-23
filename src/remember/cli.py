@@ -28,6 +28,7 @@ from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.credentials import CredentialError
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from remember.models import ConnectorCreate
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
@@ -132,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_query(args)
         if args.command == "ingest":
             return _run_ingest(args)
+        if args.command == "documents":
+            return _run_documents(args)
         if args.command == "connectors":
             return _run_connectors(args)
         if args.command == "mcp":
@@ -552,9 +555,7 @@ def _run_whoami(args: argparse.Namespace) -> int:
         str(stored.deployment_id) if stored.deployment_id else "default"
     )
     print(f"Active Project: {active_proj}")
-    endpoint = (
-        stored.active_data_plane_url or stored.api_url or "https://api.remember.dev"
-    )
+    endpoint = stored.active_data_plane_url or stored.api_url
     print(f"Data Plane: {endpoint}")
     return 0
 
@@ -583,7 +584,7 @@ def _run_balance(args: argparse.Namespace) -> int:
         )
         return 1
 
-    control_plane_url = stored.control_plane.url or "https://api.remember.dev"
+    control_plane_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
     token = stored.control_plane.access_token.get_secret_value()
     org_id = (
         stored.control_plane.org_id
@@ -657,7 +658,7 @@ def _run_projects(args: argparse.Namespace) -> int:
         # D108 / D56: If control plane credentials exist, query live deployments from control plane
         if stored.control_plane and stored.control_plane.access_token:
             cp_attempted = True
-            cp_url = stored.control_plane.url or "https://api.remember.dev"
+            cp_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
             token = stored.control_plane.access_token.get_secret_value()
             org_id = stored.control_plane.org_id or stored.org_id
             endpoint = f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments"
@@ -1267,6 +1268,20 @@ def _run_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_documents(args: argparse.Namespace) -> int:
+    """List the deployment's documents, or delete one from the live memory."""
+    with _cli_memory_client(args) as client:
+        if args.documents_command == "list":
+            page = client.list_documents(
+                limit=args.limit, cursor=args.cursor, status=args.status
+            )
+            print(page.model_dump_json())
+            return 0
+        deletion = client.delete_document(doc_id=args.doc_id)
+    print(deletion.model_dump_json())
+    return 0
+
+
 def _run_connectors(args: argparse.Namespace) -> int:
     """Manage connector configuration on the deployment API."""
     with _cli_memory_client(args) as client:
@@ -1469,12 +1484,15 @@ def _warn_if_revocation_outstanding() -> None:
 def _resolved_token_host(
     *, explicit: str | None, stored_host: str | None = None
 ) -> str:
-    """Require an explicit token host; never derive one from the query API URL."""
+    """Resolve flag, env, stored host, then the remember.dev control plane.
+
+    The token host is never derived from the query API URL.
+    """
     from remember.credentials import TokenHostSettings
     from remember.device_login import normalize_token_host
 
     settings = TokenHostSettings.model_validate({})
-    host = explicit or settings.token_host or stored_host or "https://api.remember.dev"
+    host = explicit or settings.token_host or stored_host or DEFAULT_CONTROL_PLANE_URL
     return normalize_token_host(token_host=host)
 
 
@@ -2388,6 +2406,38 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     ingest.add_argument("--source-version-ref")
 
+    documents = commands.add_parser(
+        "documents", help="list documents or delete one from memory"
+    )
+    documents_commands = documents.add_subparsers(
+        dest="documents_command", required=True
+    )
+    list_documents = documents_commands.add_parser(
+        "list",
+        parents=[client_flags],
+        help="one page of documents, newest first, as JSON",
+    )
+    list_documents.add_argument(
+        "--limit", type=int, default=50, help="documents per page (1-200, default 50)"
+    )
+    list_documents.add_argument(
+        "--cursor", help="the cursor a previous page returned, to read the next"
+    )
+    list_documents.add_argument(
+        "--status",
+        choices=("ingesting", "converting", "structuring", "ready", "failed"),
+        help="only documents whose newest version has this status",
+    )
+    delete_document = documents_commands.add_parser(
+        "delete",
+        parents=[client_flags],
+        help=(
+            "remove a document from memory: its claims stop counting and facts"
+            " only it supported are closed"
+        ),
+    )
+    delete_document.add_argument("doc_id", type=UUID)
+
     connectors = commands.add_parser(
         "connectors", help="manage deployment-side connectors"
     )
@@ -2421,10 +2471,14 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse ingest and pipeline-readiness tools",
+        help="omit and refuse the ingest, pipeline-readiness and delete tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
-    login.add_argument("--token-host", default=None)
+    login.add_argument(
+        "--token-host",
+        default=None,
+        help=f"control-plane base URL (default {DEFAULT_CONTROL_PLANE_URL})",
+    )
     login.add_argument("--api-url", default=None)
     login.add_argument(
         "--audience",
@@ -2441,7 +2495,14 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="shorthand for --audience control",
     )
     logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
-    logout.add_argument("--token-host", default=None)
+    logout.add_argument(
+        "--token-host",
+        default=None,
+        help=(
+            "control-plane base URL (default: the stored host, else"
+            f" {DEFAULT_CONTROL_PLANE_URL})"
+        ),
+    )
 
     setup = commands.add_parser(
         "setup", help="bootstrap AI coding harnesses for Remember"

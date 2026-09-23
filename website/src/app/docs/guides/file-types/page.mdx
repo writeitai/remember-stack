@@ -55,16 +55,18 @@ you added a route.
 ## Send the right type
 
 The type sent with the upload decides which converter reads the file. The
-Python client guesses it from the file name, and on some Python
-installations it does not recognise `.md` as Markdown, so the file is sent
-as `application/octet-stream` and is not processed. Always pass the type:
+`remember` CLI, Python client and MCP `ingest` tool take it from the file
+extension, the same way on every Python installation: `.md` is
+`text/markdown`, `.txt` is `text/plain`, `.pdf` is `application/pdf`, and
+so on ([the full table](/docs/guides/ingest-files#the-mime-type)). A file
+whose extension does not say what it is needs the type passed explicitly:
 
 ```python
-client.ingest("notes/standup.md", mime="text/markdown")
+client.ingest("notes/standup", mime="text/markdown")
 ```
 
 ```bash
-remember ingest notes/standup.md --mime text/markdown
+remember ingest notes/standup --mime text/markdown
 ```
 
 ## Conversations

@@ -13,11 +13,11 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 27 documented operations:
+The API has 28 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents` |
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
 | Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
@@ -158,21 +158,18 @@ their arguments do not fit in a query string.
 | `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
+| `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
-| `POST` | `/operations/{name}` | `write` (see below) |
+| `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
-| `GET` | `/deployment` | `write` (see below) |
+| `GET` | `/deployment` | `read` |
 | any other | any other | `write` |
 
-Two entries need a note:
-
-- **`POST /operations/{name}` requires `write` today.** The route asks each
-  operation's descriptor whether it changes memory (`mutates`). None of the
-  four shipped descriptors sets that field, and an operation that has not
-  declared itself read-only is refused to a `read` credential. All four
-  operations only read, but a `read` credential cannot run them.
-- **`GET /deployment` requires `write`.** It is not in the list of read routes,
-  and any route not listed requires `write`.
+One entry needs a note: **`POST /operations/{name}` decides per
+operation.** The route asks the operation's descriptor whether it changes
+memory (`mutates`). All four shipped operations only read and declare
+`mutates: false`, so a `read` credential can run them. An operation that
+did not declare itself read-only would need `write`.
 
 Any route added later without a classification also requires `write`.
 
@@ -301,7 +298,7 @@ A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins; empty by default). For those origins it allows:
 
-- methods `GET` and `POST`,
+- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.

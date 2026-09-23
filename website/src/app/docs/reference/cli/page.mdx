@@ -30,6 +30,7 @@ The package also installs a second command, [`remember-status`](#remember-status
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
+| | [`documents`](#remember-documents) | List documents, or delete one from the memory. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
 | | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
@@ -92,7 +93,7 @@ that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
 <Tab label="remember.dev">
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 remember query "Who owns the billing migration?"
 ```
 
@@ -157,7 +158,7 @@ document; nothing is processed again.
 | Flag | Default | Meaning |
 |---|---|---|
 | `FILE` | required | Path of the file to upload. |
-| `--mime` | guessed from the file name, else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
 | `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
@@ -176,6 +177,43 @@ remember ingest notes/2026-09-18-billing-sync.md \
 Ingest returns before processing ends. To wait, use the SDK's
 `wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
 readiness command. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+
+### `remember documents`
+
+```text
+remember documents list [--limit N] [--cursor CURSOR]
+                        [--status {ingesting,converting,structuring,ready,failed}]
+                        [--api-url URL] [--token TOKEN] [--self-hosted]
+remember documents delete DOC_ID [--api-url URL] [--token TOKEN] [--self-hosted]
+```
+
+`list` prints one page of documents as JSON, newest document first, in the
+shape of [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
+page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
+documents whose newest version has that status.
+
+```bash
+remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`delete` removes one document, every version of it, from the memory and
+prints what changed:
+
+```json
+{"doc_id":"…","deleted_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
+```
+
+Its claims stop counting as evidence, and facts that only it supported are
+closed with a recorded retraction. The claims and the stored original stay
+as history. Deleting needs a `write` credential. Deleting a document that
+does not exist, or is already deleted, prints
+`error: API 404: document_not_found` and exits with status 1. See
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+```bash
+remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+```
 
 ### `remember query`
 
@@ -287,8 +325,8 @@ remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
 
 Runs an MCP server on standard input and output for a coding agent. It finds
 the deployment the same way as every other command, so after
-`remember login` it needs no flags. `--read-only` removes the `ingest` and
-`pipeline_readiness` tools.
+`remember login` it needs no flags. `--read-only` removes the `ingest`,
+`pipeline_readiness` and `delete_document` tools.
 
 You rarely start it yourself; `remember setup` writes the agent
 configuration that starts it. The tools, their parameters and the errors are
@@ -400,18 +438,11 @@ approve. The command waits for the approval, then stores the token in the
 | `--control-plane`, `--control` | | Same as `--audience control`. |
 
 Token host, first match wins: `--token-host`; `REMEMBER_CONTROL_PLANE_URL`,
-`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`; `https://api.remember.dev`.
-
-<Callout type="warning">
-
-The built-in token host `https://api.remember.dev` does not answer today.
-Pass `--token-host https://remember.dev/app/api`, or set
-`REMEMBER_TOKEN_HOST=https://remember.dev/app/api`.
-
-</Callout>
+`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`;
+`https://remember.dev/app/api`. For remember.dev you pass none of them.
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 ```
 
 After approval it prints:

@@ -602,7 +602,12 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     assert len(responses) == 3
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
     tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
-    assert tool_names == ["ingest", "pipeline_readiness", "resolve_entity"]
+    assert tool_names == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+        "resolve_entity",
+    ]
     assert responses[2]["result"]["isError"] is False
 
 
@@ -618,7 +623,7 @@ def test_remote_mcp_lists_write_tools_when_operations_is_404() -> None:
     )
     server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == ["ingest", "pipeline_readiness"]
+    assert names == ["ingest", "pipeline_readiness", "delete_document"]
 
 
 def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
@@ -759,7 +764,12 @@ def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     listed = server.list_tools()
     names = [tool["name"] for tool in listed["tools"]]  # type: ignore[index]
-    assert names == ["ingest", "pipeline_readiness", *OPEN_QUERY_TOOL_NAMES]
+    assert names == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+        *OPEN_QUERY_TOOL_NAMES,
+    ]
 
 
 def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> None:
@@ -813,9 +823,12 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
         )
         server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
         names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-        assert names == ["ingest", "pipeline_readiness", "resolve_entity"], (
-            f"unexpected tools for payload {payload!r}"
-        )
+        assert names == [
+            "ingest",
+            "pipeline_readiness",
+            "delete_document",
+            "resolve_entity",
+        ], f"unexpected tools for payload {payload!r}"
         assert not any(name in OPEN_QUERY_TOOL_NAMES for name in names)
 
 
@@ -854,7 +867,11 @@ def test_remote_mcp_survives_an_invalid_deployment_response() -> None:
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert responses[0]["result"]["isError"] is True
     tools = responses[1]["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["ingest", "pipeline_readiness"]
+    assert [tool["name"] for tool in tools] == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+    ]
 
 
 def test_cli_ingest_and_connector_commands_use_the_remote_client(

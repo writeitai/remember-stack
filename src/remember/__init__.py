@@ -18,6 +18,7 @@ from remember.errors import CloudError
 from remember.errors import ConnectorNotFoundError
 from remember.errors import MemoryApiError
 from remember.errors import NotPermitted
+from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
 from remember.errors import Unauthenticated
 from remember.models import BillingStatus
@@ -27,6 +28,10 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import Deployment
+from remember.models import DocumentDeletion
+from remember.models import DocumentPage
+from remember.models import DocumentSummary
+from remember.models import DocumentVersionSummary
 from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import LedgerEntry
@@ -60,12 +65,17 @@ __all__ = (
     "ConnectorNotFoundError",
     "ContextBundleV2",
     "Deployment",
+    "DocumentDeletion",
+    "DocumentPage",
+    "DocumentSummary",
+    "DocumentVersionSummary",
     "Envelope",
     "IngestedVersion",
     "LedgerEntry",
     "MemoryApiError",
     "MemoryClient",
     "NotPermitted",
+    "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
     "QueryResultDict",

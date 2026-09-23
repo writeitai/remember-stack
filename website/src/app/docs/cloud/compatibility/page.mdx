@@ -56,6 +56,7 @@ describes for v0.17.0, except where this page says otherwise.
 | Route or feature | What happens |
 |---|---|
 | `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` | Added in v0.17.0. Not present on remember.dev yet (`404`) |
+| `DELETE /documents/{doc_id}` | Added after v0.17.0. Not present on remember.dev yet (`404` with `Not Found`, not `document_not_found`); `remember documents delete` and the `delete_document` MCP tool get the same answer |
 | Connectors (`/connectors…`) | The routes exist on v0.16.0, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
 | Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
 | Filesystem views of the corpus | Not offered on remember.dev |

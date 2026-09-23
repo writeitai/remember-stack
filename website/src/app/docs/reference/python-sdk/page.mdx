@@ -47,6 +47,7 @@ The client is synchronous. There is no async client yet
 | `CloudError` | exception | [Errors](#errors) |
 | `Unauthenticated` | exception | [Errors](#errors) |
 | `NotPermitted` | exception | [Errors](#errors) |
+| `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `RateLimited` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `BillingStatus` | model | [Models](#models) |
@@ -56,6 +57,10 @@ The client is synchronous. There is no async client yet
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
 | `Deployment` | model | [Models](#models) |
+| `DocumentDeletion` | model | [Models](#models) |
+| `DocumentPage` | model | [Models](#models) |
+| `DocumentSummary` | model | [Models](#models) |
+| `DocumentVersionSummary` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
 | `LedgerEntry` | model | [Models](#models) |
@@ -304,6 +309,8 @@ Raises `ValueError` when `client` is combined with another parameter.
 | [`pipeline_readiness`](#pipeline_readiness) | `POST /readiness` | `PipelineReadinessReport` |
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
+| [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
 | [`facts_context`](#facts_context) | `POST /operations/facts_context` | `Envelope` |
@@ -371,7 +378,7 @@ results.
 | `source` | A `Path` or `str` file path (read from disk), or `bytes`. |
 | `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the filename. |
 | `filename` | Required for bytes. Defaults to the file's name for a path. |
-| `mime` | Media type. Defaults to a guess from the file name, then `application/octet-stream`. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
 | `source_kind`, `source_ref` | The document's stable identity: what kind of source it is and its id within that kind. Always together. Ingesting again with the same pair creates a new version of the same document when the bytes differ. See [Documents, versions and sources](/docs/concepts/documents-and-sources). |
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
@@ -440,35 +447,33 @@ What each capability means: [The pipeline and readiness](/docs/concepts/pipeline
 MemoryClient.wait_for_readiness(
     version_ids: Sequence[str | UUID],
     *,
-    timeout: float = 30.0,
-    poll_interval: float = 0.5,
+    timeout: float = 1800.0,
+    poll_interval: float = 15.0,
     require_p3: bool = False,
 ) -> PipelineReadinessReport
 ```
 
-Calls `pipeline_readiness` every `poll_interval` seconds until the report says
-`ready`, requiring `pipeline`, `p1` and `live_graph` (and `p3` when
-`require_p3=True`). Returns the ready report.
+Calls `pipeline_readiness` at once and then every `poll_interval` seconds
+until the report says `ready`, requiring `pipeline`, `p1` and `live_graph`
+(and `p3` when `require_p3=True`). Returns the ready report. The defaults,
+30 minutes and 15 seconds, are starting points sized for single documents;
+raise `timeout` for bulk loads.
+
+A stage that is `failed` has a retry scheduled, so the method keeps
+polling. A stage that is `dead_letter` has used all its attempts and never
+becomes ready, so the method stops at once.
 
 Raises:
 
+- [`PipelineDeadLettered`](#pipelinedeadlettered) when any stage of any
+  listed version is `dead_letter`;
 - `TimeoutError` when `timeout` seconds pass first;
 - `ValueError` when an id is not a UUID.
 
-<Callout type="warning">
-
-The default `timeout` is 30 seconds. Processing a document takes minutes.
-Pass a timeout that fits your documents, for example `timeout=1800`.
-
-</Callout>
-
-The method keeps polling when a stage has failed; it stops only on `ready`
-or on the timeout. Check `stages[].status` for `failed` or `dead_letter`
-yourself if you want to stop earlier. See
-[Wait until a document is queryable](/docs/guides/wait-for-readiness).
+See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ```python
-memory.wait_for_readiness([version.version_id], timeout=1800, poll_interval=15)
+memory.wait_for_readiness([version.version_id])
 ```
 
 #### `deployment_build_info`
@@ -485,6 +490,65 @@ serving: `build_revision` (str), `model_bindings` (dict of str to str),
 ```python
 info = memory.deployment_build_info()
 print(info.build_revision, info.model_bindings.get("claim_extraction"))
+```
+
+#### `list_documents`
+
+```python
+MemoryClient.list_documents(
+    *,
+    limit: int = 50,
+    cursor: str | None = None,
+    status: Literal["ingesting", "converting", "structuring", "ready", "failed"] | None = None,
+) -> DocumentPage
+```
+
+Returns one page of the deployment's documents, newest document first, as a
+[`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
+returned `cursor` to read the next page; it is `None` on the last page.
+`status` keeps only documents whose newest version has that status. `limit`
+is 1 to 200; the deployment answers `422` outside that range. Deleted
+documents are not listed. See
+[`GET /documents`](/docs/reference/http-api/ingest#get-documents).
+
+```python
+cursor = None
+while True:
+    page = memory.list_documents(cursor=cursor)
+    for document in page.documents:
+        print(document.doc_id, document.title, document.serving)
+    if page.cursor is None:
+        break
+    cursor = page.cursor
+```
+
+#### `delete_document`
+
+```python
+MemoryClient.delete_document(*, doc_id: UUID | str) -> DocumentDeletion
+```
+
+Removes one document, every version of it, from the memory and returns a
+[`DocumentDeletion`](/docs/reference/result-types#documentdeletion) with
+`doc_id`, `deleted_at`, `claims_retired`, `relations_closed` and
+`observations_closed`. Its claims stop counting as evidence, and facts that
+only it supported are closed with a recorded retraction. The claims and the
+stored original are kept as history. Needs a `write` credential. See
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
+`MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
+when the document does not exist or is already deleted.
+
+```python
+from remember import MemoryApiError
+
+try:
+    deletion = memory.delete_document(doc_id=version.doc_id)
+    print(f"{deletion.claims_retired} claims retired")
+except MemoryApiError as error:
+    if error.status_code != 404:
+        raise
 ```
 
 ### Assured operations
@@ -1041,7 +1105,8 @@ The same checks are available as a command: [`remember-status`](/docs/reference/
 
 ```text
 RuntimeError
-└── MemoryApiError                 memory clients (Client, MemoryClient)
+├── MemoryApiError                 memory clients (Client, MemoryClient)
+└── PipelineDeadLettered           wait_for_readiness
 Exception
 ├── CloudError                     CloudClient
 │   ├── Unauthenticated            401
@@ -1075,6 +1140,22 @@ except remember.MemoryApiError as error:
 ```
 
 Status codes and their meaning: [Errors and status codes](/docs/reference/errors).
+
+### PipelineDeadLettered
+
+Raised by `wait_for_readiness` when a stage of a version it waits on is
+`dead_letter`: the stage used all its retry attempts and will not finish by
+waiting.
+
+| Attribute | Meaning |
+|---|---|
+| `dead_lettered` | Every dead-lettered stage found, as `(version_id, stage, status)` tuples. |
+| `report` | The `PipelineReadinessReport` that showed them. |
+
+`str(error)` names each version and stage. On a self-hosted deployment the
+operator can replay the work after fixing the cause; on remember.dev,
+report the `version_id` and stage to support. See
+[When a version fails](/docs/guides/wait-for-readiness#when-a-version-fails).
 
 ### CloudError and subclasses
 
@@ -1131,6 +1212,10 @@ models below are Pydantic models (frozen) unless noted.
 | `Envelope` | The result of every retrieval call: `grain`, `temporal_scope`, `entities`, `facts`, `evidence`, `chunks`, `sources`, graph fields, `truncation`, `negative`, `freshness` and more. |
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool). |
+| `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
+| `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
+| `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |

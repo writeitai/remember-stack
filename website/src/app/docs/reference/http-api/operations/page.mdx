@@ -33,7 +33,7 @@ ordered by the registry. Each descriptor carries the operation's `name`,
 `description`, closed `input_schema` (JSON Schema, `additionalProperties:
 false`), `result_schema`, `result_contract` (`envelope` or
 `context_bundle_v2`), `output_grain`, `answer_intent`, `version` and
-`implementation_plan_hash`. `mutates` is `null` on all four.
+`implementation_plan_hash`. `mutates` is `false` on all four.
 
 ```json
 [
@@ -50,7 +50,7 @@ false`), `result_schema`, `result_contract` (`envelope` or
     "result_contract": "envelope",
     "output_grain": "fact",
     "answer_intent": "identity",
-    "mutates": null,
+    "mutates": false,
     "version": 1,
     "implementation_plan_hash": "fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a"
   }
@@ -76,9 +76,8 @@ for descriptor in memory.list_operations():
 
 Run one assured operation over a JSON object of arguments.
 
-**Scope:** `write` today. The route checks the operation's descriptor, and
-none of the four declares itself read-only (`mutates` is `null`), so a `read`
-credential is refused with `403`. See
+**Scope:** `read`. The route checks the operation's descriptor, and all
+four declare themselves read-only (`mutates: false`). See
 [HTTP API conventions](/docs/reference/http-api#scopes).
 
 **Spend hold (remember.dev):** yes, named after the operation.

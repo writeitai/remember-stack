@@ -181,16 +181,12 @@ several reads use `POST` because their arguments do not fit in a URL.
 | `write` | Everything, including every route not listed above |
 
 Routes that are not in the `read` or `ingest` list need `write`. Today that
-includes `POST /connectors`, `POST /connectors/{id}/pause` and
-`GET /deployment`.
+includes `POST /connectors` and `POST /connectors/{id}/pause`.
 
 `POST /operations/{name}` (the [assured operations](/docs/reference/assured-operations))
 decides per operation: an operation that declares itself read-only needs
-`read`, any other needs `write`. No shipped operation declares itself
-read-only yet, so **every assured operation currently needs `write`**,
-although they only read. A `read` token can list operations but not run
-them; use `search`, `graph` or `query` routes with it, or give the caller a
-`write` token.
+`read`, any other needs `write`. All four shipped operations only read and
+declare it (`mutates: false`), so a `read` token can run them.
 
 `GET /healthz` never needs a credential.
 
@@ -222,8 +218,9 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
 - Each entry must be an `https` origin exactly as a browser sends it:
   lowercase scheme and host, an optional port, nothing else. A malformed
   entry, an empty entry or a trailing comma stops the API at start.
-- Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-  are allowed. Cookies are not; the browser must send a token.
+- Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+  headers are allowed. `DELETE` (deleting a document) still needs a token with
+  `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 

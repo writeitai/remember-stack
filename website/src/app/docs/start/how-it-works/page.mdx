@@ -21,7 +21,6 @@ import remember
 client = remember.Client.from_env()
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
     source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
@@ -81,7 +80,7 @@ This takes minutes, not milliseconds, because every stage above does real
 work. You can ask when a document is ready:
 
 ```python
-client.wait_for_readiness([version.version_id], timeout=1800, poll_interval=15)
+client.wait_for_readiness([version.version_id])
 ```
 
 See [Wait until a document is queryable](/docs/guides/wait-for-readiness).

@@ -31,8 +31,8 @@ deployment and token the same way as every other `remember` command: flags,
 then environment variables, then the credential file that `remember login`
 writes. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
 
-`--read-only` leaves out the `ingest` and `pipeline_readiness` tools and
-refuses calls to them.
+`--read-only` leaves out the `ingest`, `pipeline_readiness` and
+`delete_document` tools and refuses calls to them.
 
 ### Protocol
 
@@ -58,7 +58,8 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest` and `pipeline_readiness`, unless `--read-only` is set.
+1. `ingest`, `pipeline_readiness` and `delete_document`, unless
+   `--read-only` is set.
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -69,7 +70,7 @@ this order:
    `memory_v1` query space (schema `memory_v1`, major version 1 and a
    64-character manifest hash). Any error or other answer leaves them out.
 
-A full server therefore lists 13 tools: 2 + 4 + 7.
+A full server therefore lists 14 tools: 3 + 4 + 7.
 
 ### Results
 
@@ -96,11 +97,11 @@ Give exactly one body: `text`, `content_base64` or `path`.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
-| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: `text/plain`. |
-| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: `application/octet-stream`. |
-| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: guessed from the file's real name. |
+| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: the text type of the filename's extension (`.md` is `text/markdown`), else `text/plain`. |
+| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: from the filename's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream`. |
+| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: from the extension of the file's real name, as for `content_base64`. |
 | `filename` | string | with `text` or `content_base64` | 1–512 characters. |
-| `mime` | string | no | 1–255 characters. The engine processes only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `mime` | string | no | 1–255 characters. An explicit value always wins over the defaults above. The engine processes only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | string | no | At most 512 characters. |
 | `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
 | `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
@@ -182,9 +183,34 @@ and their `status`), `capabilities`, `model_bindings`, `build_revision`,
 [Result types](/docs/reference/result-types).
 
 The tool description tells the agent how to poll: wait about 30 seconds after
-ingest, then every 30–60 seconds; stop at once when a stage is `failed` or
-`dead_letter`; stop and report after 20–30 minutes without `ready`. See
-[The pipeline and readiness](/docs/concepts/pipeline).
+ingest, then every 30–60 seconds; treat a `failed` stage as retrying and
+keep polling; stop at once and report the version and stage when a stage is
+`dead_letter`; stop and report after 20–30 minutes without `ready`. An
+ingest that returned `created: false` is polled the same way, because an
+earlier run of the same bytes may still be processing. See
+[Wait until a document is queryable](/docs/guides/wait-for-readiness#over-mcp).
+
+### `delete_document`
+
+Removes one document, every version of it, from the memory. Its claims stop
+counting as evidence, and facts that only it supported are closed with a
+recorded retraction; facts other documents also support stay. The claims and
+the stored original are kept as history. Ingesting the same file again later
+adds it back as a new version.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. No other arguments are accepted. |
+
+The result is a [`DocumentDeletion`](/docs/reference/result-types#documentdeletion):
+`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
+`observations_closed`.
+
+The tool description tells the agent to delete only when the user asks to
+remove a specific document, or the document is plainly wrong or unwanted,
+and never as a way to correct a fact: to correct one, ingest a document that
+says the right thing. The token needs `write` scope. See
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
 ### Assured operations
 
@@ -280,7 +306,7 @@ Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 Errors come back as a tool result with `isError: true`, so the agent can read
 them. The JSON inside depends on the tool group.
 
-**`ingest` and `pipeline_readiness`** return:
+**`ingest`, `pipeline_readiness` and `delete_document`** return:
 
 ```json
 {
@@ -300,6 +326,9 @@ the agent what to do next.
 | `code` | `http_status` | `retryable` | When | `agent_action` in short |
 |---|---|---|---|---|
 | `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
+| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. | Do not retry; check the `doc_id`. |
+| `tool_not_composed` | 404 | no | `delete_document` on a read-only server. | Tell the user deletion is not available here. |
+| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. | Retry later with back-off. |
 | `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
 | `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
 | `empty_body` | 422 | no | The body is empty. | Send non-empty content. |
@@ -321,7 +350,8 @@ the agent what to do next.
 
 With `--read-only`, a call to `ingest` or `pipeline_readiness` returns
 `isError: true` with the plain text
-`write tool 'ingest' is disabled on this read-only MCP server`.
+`write tool 'ingest' is disabled on this read-only MCP server`. A call to
+`delete_document` returns the `tool_not_composed` error object.
 
 **Assured operations and SQL query tools** return:
 
@@ -546,12 +576,13 @@ It does not answer `ping`.
 | `ingest` bodies | `text`, `content_base64`, `path` | `text` only, stored as Markdown |
 | `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
 | `pipeline_readiness` | Yes | Yes |
+| `delete_document` | Yes | Not yet |
 | Assured operations | The four the deployment lists, with its names and schemas | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
 | SQL query tools | Seven, when the deployment serves the query space | Not yet |
 | Input schemas | Full JSON Schemas | None (any object) |
 | Read-only mode | `--read-only` | No |
 | Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
-| Tool count | Up to 13 | 6 |
+| Tool count | Up to 14 | 6 |
 
 remember.dev serves SQL queries over the query space to every project; the
 hosted MCP server does not expose the seven SQL query tools yet. Until it

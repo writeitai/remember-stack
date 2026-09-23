@@ -26,7 +26,6 @@ client = remember.Client.from_env()
 
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     title="Stand-up, 17 September 2026",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
@@ -54,7 +53,6 @@ The same with the CLI:
 
 ```bash
 remember ingest notes/2026-09-17-standup.md \
-  --mime text/markdown \
   --title "Stand-up, 17 September 2026" \
   --source-kind file \
   --source-ref notes/2026-09-17-standup.md \
@@ -69,10 +67,11 @@ flag: the filename is always the file's own name.
 `Client.ingest` takes the body in one of three forms.
 
 **A path**, as a string or a `pathlib.Path`. The client reads the file, uses
-its name as the filename and guesses the MIME type from the extension.
+its name as the filename and takes the MIME type from the file's
+extension.
 
 ```python
-client.ingest("specs/billing-migration.md", mime="text/markdown")
+client.ingest("specs/billing-migration.md")
 ```
 
 A string that is not an existing file raises `ValueError("file not found:
@@ -82,33 +81,39 @@ A string that is not an existing file raises `ValueError("file not found:
 
 ```python
 text = "Dana: the finance sign-off moves to 3 October."
-client.ingest(text.encode("utf-8"), filename="dana-update.md", mime="text/markdown")
+client.ingest(text.encode("utf-8"), filename="dana-update.md")
 ```
 
 **Bytes as `content=`.** Same rules as bytes; use it when the first
 argument reads better as nothing at all.
 
 ```python
-client.ingest(content=b"...", filename="ravi-notes.txt", mime="text/plain")
+client.ingest(content=b"...", filename="ravi-notes.txt")
 ```
 
-With bytes the client cannot guess a MIME type. If you leave `mime` out it
-sends `application/octet-stream`.
+With bytes, the MIME type comes from the `filename` you pass.
 
-## Set the MIME type yourself
+## The MIME type
 
-The MIME type decides which converter reads the file. The client guesses it
-from the file extension with Python's `mimetypes` module and falls back to
-`application/octet-stream` when the guess is empty.
+The MIME type decides which converter reads the file. The client picks it
+from the extension: of the file's real name for a path, of `filename` for
+bytes. The formats a deployment can convert map the same way on every
+Python installation:
 
-<Callout type="warning">
+| Extension | MIME type |
+|---|---|
+| `.md`, `.markdown` | `text/markdown` |
+| `.txt` | `text/plain` |
+| `.html`, `.htm` | `text/html` |
+| `.pdf` | `application/pdf` |
+| `.png` | `image/png` |
+| `.jpg`, `.jpeg` | `image/jpeg` |
+| `.docx`, `.pptx`, `.xlsx` | The Office Open XML types (`application/vnd.openxmlformats-officedocument.…`) |
 
-Python 3.12 does not map `.md` to `text/markdown` unless your system has
-a MIME database that does. A Markdown file sent without `mime=` can
-arrive as `application/octet-stream`. Pass `mime="text/markdown"` for
-Markdown every time.
-
-</Callout>
+Any other extension is looked up in Python's `mimetypes` database, and a
+name it does not know is sent as `application/octet-stream`. Pass `mime=`
+(or `--mime` on the CLI) to send a different type; an explicit value always
+wins.
 
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
@@ -117,8 +122,9 @@ does not change. Get the type right on the first send.
 ## Filenames and titles
 
 - `filename` is required and must not be empty. A path supplies it for you.
-- The extension of the filename is kept with the stored original. It does
-  not change how the file is read; `mime` does.
+- The extension of the filename is kept with the stored original. The
+  file is read according to `mime`; for bytes sent without `mime`, that
+  type comes from the filename's extension.
 - `title` is optional. Without it, the document's title is the filename
   without its extension (`2026-09-17-standup`).
 - The title is set when the document is first created. Sending a new
@@ -168,22 +174,20 @@ from pathlib import Path
 import remember
 from remember import MemoryApiError
 
-MIME_BY_SUFFIX = {".md": "text/markdown", ".txt": "text/plain"}
+SUFFIXES = {".md", ".txt"}
 
 client = remember.Client.from_env()
 root = Path("billing-migration")
 pending = []
 
 for path in sorted(root.rglob("*")):
-    mime = MIME_BY_SUFFIX.get(path.suffix.lower())
-    if mime is None or not path.is_file():
+    if path.suffix.lower() not in SUFFIXES or not path.is_file():
         continue
     ref = path.relative_to(root).as_posix()
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
     try:
         version = client.ingest(
             path,
-            mime=mime,
             source_kind="file",
             source_ref=f"billing-migration/{ref}",
             source_modified_at=modified,
@@ -201,11 +205,12 @@ Run it again after editing one note and only that note produces a new
 version. Unchanged files return `created=False` and cost nothing.
 
 Then wait for the new versions. A readiness check takes at most 1,000
-versions, so wait in batches:
+versions, so wait in batches. A bulk load takes longer than the default
+30-minute `timeout`, so raise it:
 
 ```python
 for start in range(0, len(pending), 1000):
-    client.wait_for_readiness(pending[start:start + 1000], timeout=3600, poll_interval=30)
+    client.wait_for_readiness(pending[start:start + 1000], timeout=3600)
 ```
 
 The client does not retry a failed ingest for you. If a call fails with a
@@ -223,7 +228,6 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
   "arguments": {
     "text": "# Decision log\n\nDana moved the finance sign-off to 3 October.",
     "filename": "decision-log.md",
-    "mime": "text/markdown",
     "source_kind": "agent",
     "source_ref": "billing-migration/decision-log",
     "source_modified_at": "2026-09-18T08:00:00+00:00"
@@ -231,9 +235,12 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
 }
 ```
 
-- `text` is UTF-8 and needs `filename`; `mime` defaults to `text/plain`.
-- `content_base64` is standard base64 and needs `filename`; `mime` is
-  guessed from the filename, else `application/octet-stream`.
+- `text` is UTF-8 and needs `filename`; `mime` is the text type of the
+  filename's extension (`decision-log.md` is `text/markdown`), else
+  `text/plain`.
+- `content_base64` is standard base64 and needs `filename`; `mime` comes
+  from the filename's extension as in the table above, else
+  `application/octet-stream`.
 - `path` reads a local file on the machine running `remember mcp`. It is
   refused unless the operator lists allowed directories in
   `REMEMBERSTACK_MCP_INGEST_ROOTS`.

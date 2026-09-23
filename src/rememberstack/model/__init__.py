@@ -62,6 +62,7 @@ from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import ConnectorNotFoundError
 from rememberstack.model.client import DeploymentBuildInfo
+from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentPage
 from rememberstack.model.client import DocumentStatus
 from rememberstack.model.client import DocumentStatusFilter
@@ -118,6 +119,7 @@ from rememberstack.model.deployment import DeploymentBootstrapInput
 from rememberstack.model.deployment import DeploymentBootstrapResult
 from rememberstack.model.deployment import DeploymentConflictError
 from rememberstack.model.documents import ConvertSource
+from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import DocumentVersionNotFoundError
 from rememberstack.model.documents import IngestedVersion
@@ -462,6 +464,7 @@ __all__ = (
     "DeploymentBootstrapInput",
     "DeploymentBootstrapResult",
     "DeploymentConflictError",
+    "DocumentNotFoundError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
     "DeploymentBuildInfo",
@@ -554,6 +557,7 @@ __all__ = (
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",
+    "DocumentDeletion",
     "DocumentPage",
     "DocumentStatus",
     "DocumentStatusFilter",
