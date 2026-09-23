@@ -99,8 +99,9 @@ them, and ranks the facts it finds there. The result contains:
 - the fact it replaced, if you ask for history;
 - anything contradicting it.
 
-No language model is called here. The same question returns the same
-answer until the memory changes.
+No language model writes this answer; the question is only embedded for
+the semantic part of the search. The same question returns the same answer
+until the memory changes.
 
 ## 6. You check the answer
 
