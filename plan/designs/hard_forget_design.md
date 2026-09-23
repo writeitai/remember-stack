@@ -83,11 +83,12 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 
 - `lineages[]`: one entry per lineage in the forgotten **descendant closure** — the requested
   `doc_id` first (`role = root`), then every lineage reachable from it through
-  `document_members` (`role = member`, with `parent_doc_id` and `member_key`). Each entry carries
+  `document_members` (`role = member`, with `parent_doc_id` and `member_key_sha256` — member
+  keys can contain file names, so only their hash is written). Each entry carries
   that lineage's own source fingerprint, raw `content_hash`es, and the row IDs and object
   keys/prefixes listed above, including private-store prefixes. Every field above that v1 scopes
   to "the lineage" is scoped per entry. The top-level `doc_id` remains the requested lineage.
-- `member_suppressions[]`: `(parent_doc_id, member_key)` pairs. A request to forget one member
+- `member_suppressions[]`: `(parent_doc_id, member_key_sha256)` pairs. A request to forget one member
   lineage records its own pair here, so that the parent is never re-expanded into it.
 - `alias_entities[]`: the IDs of entities that held `document_metadata` alias contributions from
   any lineage in `lineages[]`. Names are never written to the manifest. Replay deletes every

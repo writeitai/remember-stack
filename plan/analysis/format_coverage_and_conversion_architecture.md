@@ -360,3 +360,13 @@ each source's spelling (now stored, and the displayed alias rebuilt from
 survivors). Separately, the v2 forget manifest had listed alias lemmas,
 which are names; it now lists only entity IDs, keeping the manifest
 content-free.
+
+### Round 4
+
+A narrow verification confirmed the member-key, coverage and alias fixes and
+found three remaining inconsistencies, all fixed: the design text still said
+each registry entry carries aliases; manifest v2 and the suppression table
+stored member keys, which can contain file names (both now store the key's
+SHA-256); and §5.3 still described edited archive members as new versions,
+contradicting the content-hash keys (now: only message-export conversations
+gain versions; edited archive members and attachments are new lineages).

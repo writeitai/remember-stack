@@ -38,9 +38,10 @@ with embedded figures is **full** for its text and **expand** for its figures.
 ## 2. The format registry
 
 One engine-shipped registry replaces the operator-built route table. Each
-entry states, for one family: detection (§2.2), canonical MIME types and
-aliases, posture, converter, provider requirements, `max_bytes`, and an opaque
-`cost_class` label. The complete shipped entries are §3. The original's
+entry states, for one family: detection (§2.2), canonical MIME types,
+posture, converter, provider requirements, `max_bytes`, and an opaque
+`cost_class` label. The complete shipped entries are §3. Non-canonical MIME
+spellings are mapped by one registry-wide alias table (§3), not per entry. The original's
 storage class is not per entry: D132's rule applies to every family (image,
 audio and video originals hot; all other originals cold).
 
@@ -474,9 +475,12 @@ parent's.
   (`postgres_schema_design.md` §13.1). Relation and observation counts,
   confirmation, reconciliation and projections all use it.
 - **Versions (D55/D56).** A new parent version re-expands. A member with the
-  same key and content hash reuses the existing child version; a changed
-  member becomes a new child version; a member absent from the new parent
-  version has its child lineage retired as absent.
+  same key reuses the existing child lineage and, when its content hash is
+  unchanged, the existing child version. Only message-export conversations
+  can gain a new child version, because only their keys (native IDs) survive
+  a content change; an edited archive member or attachment has a new key and
+  is a new child lineage (§5.2). A member absent from the new parent version
+  has its child lineage retired as absent.
 
 ### 5.4 Forgetting
 
@@ -488,11 +492,12 @@ parent's.
   every child is scrubbed like the parent, including private query assets
   and staged member objects.
 - **Forgetting one child** records a **member suppression** (schema:
-  `document_member_suppressions`: parent `doc_id`, member key). `expand`
+  `document_member_suppressions`: parent `doc_id` and the SHA-256 of the
+  member key — never the key itself, which can contain a file name). `expand`
   skips suppressed keys in every later expansion of that parent — including
   re-expansion of an unchanged parent version after restore — and records
   `skipped` with reason `suppressed` on the member record. The suppression is
-  content-free (a key, not bytes) and is carried in the forget manifest, so
+  content-free (a hash, not a name or bytes) and is carried in the forget manifest, so
   restore replay re-creates it (`hard_forget_design.md` §2).
 
 ### 5.5 Bounds
