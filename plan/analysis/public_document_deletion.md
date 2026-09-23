@@ -94,7 +94,17 @@ answer questions the internal service never had to:
   cascade over whatever that deleted input still holds current, clears any T4
   anchors late work re-created, and ends the chain (no labelling of facts from
   deleted input). Reads never show the late work, because they filter the
-  tombstone. The cost is that already-queued extraction still runs once.
+  tombstone. The cost is that already-queued stages still run once.
+
+  Verified in CI while building this: claim extraction already fences
+  publication on a tombstoned lineage (`selection_catalog` refuses a chunk
+  whose document is deleted), so a document deleted before extraction never
+  gets claims at all. The window reconcile covers is narrower: claims
+  extracted just before the tombstone, then fact application after it. Fact
+  application counts only current testimony, so it can leave a fact open with
+  zero support; reconcile (and a repeated delete) therefore recount and close
+  every fact that *any* of the deleted lineage's claims touches, not only the
+  claims whose currency changes in that run.
 
 ### 3.3 Adding the document back
 

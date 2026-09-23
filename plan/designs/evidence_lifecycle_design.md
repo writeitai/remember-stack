@@ -423,11 +423,14 @@ the information survive its source's reorganization.)
   it did. Example: the process dies after tombstoning Dana's draft; the draft is already
   hidden from every read, and Dana's retry closes the fact it alone supported.
 - **Work still in flight.** Deleting a document never waits for or cancels its pipeline.
-  Work that lands after the tombstone is invisible to reads (they filter tombstones) and
-  is retired where every version's chain converges: when the reconcile stage finds its
-  version's lineage or the version itself tombstoned, it clears T4 anchors that late work
-  re-created (D102), runs this section's cascade over whatever the deleted input still
-  holds current, and ends the chain.
+  Claim extraction already refuses to publish for a tombstoned lineage; work past that
+  point (fact application over claims extracted just before the tombstone) is invisible to
+  reads, which filter tombstones, and is retired where every version's chain converges:
+  when the reconcile stage finds its version's lineage or the version itself tombstoned,
+  it clears T4 anchors that late work re-created (D102), runs this section's cascade over
+  whatever the deleted input still holds current — recounting and closing every fact any
+  of the lineage's claims touches, so a fact applied from already-retired claims does not
+  stay open — and ends the chain.
 - **Coming back.** Re-observing a deleted lineage's identity (the same upload bytes, or the
   same connector `source_ref`) is a new observation, not an undo. Because the old versions
   are tombstoned, D55's content-hash no-op never matches them: the bytes become a new

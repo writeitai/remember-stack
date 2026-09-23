@@ -1304,11 +1304,11 @@ def test_re_adding_deleted_bytes_processes_them_again(rig: _LifecycleRig) -> Non
     assert _open_works_for(rig) == 1
 
 
-def test_work_that_lands_after_a_delete_is_retired_at_reconcile(
+def test_a_document_deleted_before_processing_never_testifies(
     rig: _LifecycleRig,
 ) -> None:
-    """Deleting a document mid-pipeline: its later claims never stay current,
-    and the fact they created closes when the version reaches reconcile."""
+    """Deleting a document whose pipeline has not run yet: the pipeline may
+    keep going, but nothing it produces is ever current or believed."""
     added = rig.observe(
         source_ref="inflight.md",
         content=f"{_FACT_SENTENCE}\n",
@@ -1321,7 +1321,6 @@ def test_work_that_lands_after_a_delete_is_retired_at_reconcile(
 
     rig.drain()
 
-    assert rig.scalar("SELECT count(*) FROM claims WHERE doc_id = :d", d=added.doc_id)
     assert _current_claims(rig, added.doc_id) == 0
     assert _open_works_for(rig) == 0
     assert (
@@ -1331,3 +1330,50 @@ def test_work_that_lands_after_a_delete_is_retired_at_reconcile(
         )
         == 0
     )
+
+
+def test_reconcile_retires_testimony_of_a_deleted_lineage(rig: _LifecycleRig) -> None:
+    """The reconcile stage is the backstop for work that outran a deletion:
+    reaching it for a tombstoned lineage retires what is still current,
+    closes what only that testimony supported, and ends the chain."""
+    added = rig.observe(
+        source_ref="late.md", content=f"{_FACT_SENTENCE}\n", versioning_mode="snapshot"
+    )
+    # run the whole chain except reconcile, so its work row sits queued
+    while True:
+        progressed = False
+        for stage in (
+            stage for stage in _STAGES if stage is not PipelineStage.RECONCILE
+        ):
+            outcome = rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            if outcome is not RunResultOutcome.NO_WORK:
+                progressed = True
+        if not progressed:
+            break
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
+    # the tombstone lands, but no cascade runs (the work outran it)
+    rig.lifecycle.delete_lineage(doc_id=added.doc_id)
+
+    outcome = rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    ).outcome
+
+    assert outcome is RunResultOutcome.SUCCEEDED
+    assert _current_claims(rig, added.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_state"
+            " WHERE stage = 'label_relation' AND target_id = :v",
+            v=added.version_id,
+        )
+        == 0
+    )
+    # nothing was left for the public delete to finish
+    with pytest.raises(DocumentNotFoundError):
+        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)

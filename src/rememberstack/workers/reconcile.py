@@ -273,15 +273,19 @@ class ReconcileHandler:
         self._catalog.clear_document_bindings(
             deployment_id=deployment_id, doc_id=doc_id
         )
+        scope: tuple[UUID, ...] = ()
         if context.get("lineage_deleted_at") is not None:
             late = self._catalog.stale_for_deletion(
+                deployment_id=deployment_id, doc_id=doc_id
+            )
+            scope = self._catalog.lineage_claim_ids(
                 deployment_id=deployment_id, doc_id=doc_id
             )
         else:
             late = self._catalog.stale_for_version_deletion(
                 deployment_id=deployment_id, version_id=version_id
             )
-        delta = _cascade(
+        delta, _changed = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
             transitions=_with_recorded(
@@ -291,6 +295,7 @@ class ReconcileHandler:
             ),
             reconciliation_id=reconciliation_id,
             boundary=None,
+            scope_claim_ids=scope,
         )
         try:
             self._profile_refresher.refresh_for_facts(
@@ -599,6 +604,9 @@ class DocumentDeleter:
             ),
             reconciliation_id=reconciliation_id,
             boundary=None,
+            scope_claim_ids=self._catalog.lineage_claim_ids(
+                deployment_id=deployment_id, doc_id=doc_id
+            ),
         )
         if already_deleted and not changed:
             # Nothing was left to finish: the document was already gone.
@@ -702,6 +710,7 @@ def _cascade_run(
     transitions: tuple[CurrencyTransition, ...],
     reconciliation_id: UUID,
     boundary: object,
+    scope_claim_ids: tuple[UUID, ...] = (),
 ) -> tuple[ReconciliationDelta, bool]:
     """The cascade, plus whether this run changed any state at all.
 
@@ -709,13 +718,20 @@ def _cascade_run(
     a newly closed fact. A rerun of a completed cascade changes nothing,
     which is how a repeated delete tells "already deleted" from "an earlier
     attempt stopped part-way" (D135).
+
+    ``scope_claim_ids`` widens the recount/closure scope beyond the claims
+    that transition in this run. A deleted lineage passes all of its claims:
+    fact work that applied already-retired claims (a fact with no current
+    support, still open) is then settled like any other source-acted loss.
     """
     applied = catalog.apply_transitions(
         deployment_id=deployment_id,
         reconciliation_id=reconciliation_id,
         transitions=transitions,
     )
-    claim_ids = tuple({transition.claim_id for transition in transitions})
+    claim_ids = tuple(
+        {transition.claim_id for transition in transitions} | set(scope_claim_ids)
+    )
     relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
     observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
     changed_relations, changed_observations = catalog.recount(
