@@ -140,12 +140,10 @@ The API sends one of four `detail` strings:
 | `403` `credential is for another deployment` | The shared-secret bind or the token's `aud` names a different deployment id. | Bind the secret, or mint the token, for the id in your `.env`. |
 | `403` `credential may not perform this operation` | The token's scope does not cover the route. | See below. |
 
-The scope surprise that catches most people: **every assured operation
-needs `write`**, although they only read. A `read` token gets `403` on
-`POST /operations/facts_context` and on the other three. `GET /deployment`
-needs `write` too. Give an agent that calls operations a `write` token, or
-limit it to the search, graph and SQL routes a `read` token may call. The
-full table is in [Authentication and scopes](/docs/self-hosting/authentication#scopes).
+A `read` token can call every route that only reads, including the four
+assured operations and `GET /deployment`. It cannot ingest or change
+anything; that needs `ingest` or `write`. The full table is in
+[Authentication and scopes](/docs/self-hosting/authentication#scopes).
 
 ## A browser app cannot reach the API
 
@@ -244,12 +242,11 @@ whose MIME type is still unrouted stays parked.
 The MIME type is the one the upload declared, not something the engine
 detects. These uploads arrive with a type the default routes do not cover:
 
-- the Python client with `bytes` instead of a path, and no `mime=`:
+- a file or `filename` with no extension, or an extension the client does
+  not map and the sending machine's MIME table does not know:
   `application/octet-stream`;
-- the MCP `ingest` tool with `content_base64` and no `mime`:
-  `application/octet-stream`, whatever the `filename`;
-- a file with no extension, or an extension the sending machine's MIME
-  table does not know;
+- an older `remember` client on a Python installation that does not know
+  `.md`: `application/octet-stream`;
 - a `curl` call with a type such as `text/x-markdown`. The match is exact.
 
 Re-sending the same file with the right type does not help. RememberStack
@@ -266,8 +263,11 @@ SELECT mime, count(*) FROM content_objects GROUP BY mime;
 SQL
 ```
 
-For new uploads, pass the type: `remember ingest notes.md --mime text/markdown`,
-or `mime="text/markdown"` in Python.
+The current client sends `.md` and `.markdown` as `text/markdown` on
+every Python installation, and takes the type of bytes from their
+`filename`. For a file whose extension does not say what it is, pass the
+type: `remember ingest notes --mime text/markdown`, or `mime="text/markdown"`
+in Python.
 
 ### Dead letters
 

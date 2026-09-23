@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import signal
 import stat
+from typing import Final
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -41,6 +42,12 @@ class DurabilityUnconfirmed(Exception):
     leaves the machine holding a credential it has itself destroyed. The honest
     response is to continue and say the guarantee is weaker than intended.
     """
+
+
+#: The remember.dev control-plane base URL: the default token host for
+#: ``remember login`` and the base every control-plane client talks to. The
+#: device grant, org, deployment and billing routes all live under it.
+DEFAULT_CONTROL_PLANE_URL: Final = "https://remember.dev/app/api"
 
 
 class CredentialError(ValueError):
@@ -113,7 +120,7 @@ class ControlPlaneCredentials(BaseModel):
 
     model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
-    url: str = "https://api.remember.dev"
+    url: str = DEFAULT_CONTROL_PLANE_URL
     access_token: SecretStr
     org_id: str | UUID | None = None
     user_id: str | UUID | None = None
@@ -156,7 +163,7 @@ class CredentialFile(BaseModel):
 
     version: Literal[1]
     api_url: str = "http://127.0.0.1:8000"
-    token_host: str = "https://api.remember.dev"
+    token_host: str = DEFAULT_CONTROL_PLANE_URL
     access_token: SecretStr = Field(default_factory=lambda: SecretStr(""))
     token_type: Literal["Bearer"] = "Bearer"
     token_id: UUID = Field(default_factory=uuid4)

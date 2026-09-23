@@ -75,6 +75,9 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # browser credential needs most: without it the app can show counts
         # but never which document they refer to.
         ("GET", r"^/documents$"),
+        # Build revision and model bindings: what this deployment is, not what
+        # it holds. `remember doctor` checks it with whatever token it has.
+        ("GET", r"^/deployment$"),
     )
 )
 

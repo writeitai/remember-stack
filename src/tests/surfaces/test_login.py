@@ -16,6 +16,7 @@ import httpx
 from pydantic import SecretStr
 import pytest
 
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces.credentials import CredentialFile
 from rememberstack.surfaces.credentials import load_credentials
@@ -152,7 +153,8 @@ def test_login_without_token_host_defaults_to_cloud(
     monkeypatch.setattr(httpx, "Client", mock_client)
     cli_main(["login", "--api-url", "https://remember.dev/app/api/dp/v1"])
     assert len(recorded_base_urls) >= 1
-    assert recorded_base_urls[0] == "https://api.remember.dev"
+    assert recorded_base_urls[0] == DEFAULT_CONTROL_PLANE_URL
+    assert DEFAULT_CONTROL_PLANE_URL == "https://remember.dev/app/api"
     assert "https://remember.dev/app/api/dp/v1" not in recorded_base_urls
     assert load_credentials() is None
 

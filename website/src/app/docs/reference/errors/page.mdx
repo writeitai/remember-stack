@@ -34,7 +34,9 @@ Branch on the status and the code or string, not on `message`.
 The `remember` Python client raises `remember.MemoryApiError` for all of
 them, with `status_code` (`0` for a network failure), `detail` (the string, or
 the message) and `code` (set on `/query/*` routes when the body carries a
-known code at its expected status).
+known code at its expected status). `wait_for_readiness` raises
+`remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
+([Python SDK](/docs/reference/python-sdk#pipelinedeadlettered)).
 
 ## Deployment HTTP statuses
 
@@ -299,8 +301,8 @@ The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 | `running` | In progress. |
 | `succeeded` | Done. |
 | `skipped` | Not needed for this version; counts as done. |
-| `failed` | Failed; the pipeline may retry it. |
-| `dead_letter` | Failed for good. Stop waiting and report it. |
+| `failed` | The last attempt failed and a retry is scheduled. Keep waiting. |
+| `dead_letter` | Failed for good: every attempt is used. Stop waiting and report it. The Python client's `wait_for_readiness` raises `remember.PipelineDeadLettered` here, naming the version and stage. |
 
 ### Readiness capability reasons
 

@@ -282,7 +282,6 @@ import remember
 client = remember.Client.from_env()
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
     source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
@@ -342,7 +341,7 @@ This takes minutes, not milliseconds, because every stage above does real
 work. You can ask when a document is ready:
 
 ```python
-client.wait_for_readiness([version.version_id], timeout=1800, poll_interval=15)
+client.wait_for_readiness([version.version_id])
 ```
 
 See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
@@ -525,9 +524,8 @@ export REMEMBER_API_KEY=umc_dp_...
 ```
 
 The Python client and the `remember` CLI both read these. Instead of
-exporting a token you can sign the CLI in with
-`remember login --token-host https://remember.dev/app/api`, which opens
-a browser and stores the token in `~/.config/remember/credentials.json`.
+exporting a token you can sign the CLI in with `remember login`, which
+opens a browser and stores the token in `~/.config/remember/credentials.json`.
 
 **Self-hosted:**
 
@@ -557,7 +555,6 @@ import remember
 client = remember.Client.from_env()
 version = client.ingest(
     "standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/standup.md",
     source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
@@ -565,8 +562,7 @@ version = client.ingest(
 print(version.version_id, version.created)
 ```
 
-Pass `mime` explicitly. Python does not recognise `.md` files as Markdown
-on every platform, and a file sent with the wrong type is not processed.
+The client sends `.md` files as `text/markdown`, whatever Python you run.
 
 `created` is `True` the first time. Send the same bytes again and it is
 `False`: nothing new is stored and nothing is charged.
@@ -574,16 +570,12 @@ on every platform, and a file sent with the wrong type is not processed.
 ## 5. Wait until it is processed
 
 ```python
-client.wait_for_readiness(
-    [version.version_id],
-    timeout=1800,
-    poll_interval=15,
-)
+client.wait_for_readiness([version.version_id])
 ```
 
 Processing reads, structures and connects the document. It takes minutes.
-Always pass a `timeout`: the default is 30 seconds, which is shorter than a
-typical run.
+`wait_for_readiness` checks every 15 seconds for up to 30 minutes by
+default, and stops with an error at once if a stage fails for good.
 
 ## 6. Ask
 
@@ -606,7 +598,7 @@ The result is an envelope. Look for:
 ## The same with the CLI
 
 ```bash
-remember ingest standup.md --mime text/markdown \
+remember ingest standup.md \
   --source-kind file --source-ref notes/standup.md \
   --source-modified-at 2026-09-17T09:30:00+00:00
 
@@ -2370,18 +2362,16 @@ with remember.Client() as memory:
         source_kind="notes",
         source_ref="notes/2026-04-28-standup.md",
     )
-    report = memory.wait_for_readiness(
-        [version.version_id], timeout=1800, poll_interval=30
-    )
+    report = memory.wait_for_readiness([version.version_id])
     print(report.ready)
 ```
 
 `wait_for_readiness` requires `pipeline`, `p1` and `live_graph` (add
-`require_p3=True` for `p3`) and raises `TimeoutError` when the time runs out.
-Its default timeout is 30 seconds, which is too short for real documents;
-set it explicitly as above. It keeps polling through a `dead_letter`, so for
-long waits, inspect `report.versions[*].stages` yourself and stop on
-`dead_letter`. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+`require_p3=True` for `p3`). It checks every 15 seconds for up to 30
+minutes by default and raises `TimeoutError` when the time runs out. It
+keeps waiting through a `failed` stage, which is being retried, and stops
+at once with `PipelineDeadLettered` on a `dead_letter` stage. See
+[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 The report also carries `build_revision` and `model_bindings`: which engine
 build and which models are processing your documents.
@@ -3222,16 +3212,18 @@ you added a route.
 ## Send the right type
 
 The type sent with the upload decides which converter reads the file. The
-Python client guesses it from the file name, and on some Python
-installations it does not recognise `.md` as Markdown, so the file is sent
-as `application/octet-stream` and is not processed. Always pass the type:
+`remember` CLI, Python client and MCP `ingest` tool take it from the file
+extension, the same way on every Python installation: `.md` is
+`text/markdown`, `.txt` is `text/plain`, `.pdf` is `application/pdf`, and
+so on ([the full table](https://remember.dev/docs/guides/ingest-files#the-mime-type)). A file
+whose extension does not say what it is needs the type passed explicitly:
 
 ```python
-client.ingest("notes/standup.md", mime="text/markdown")
+client.ingest("notes/standup", mime="text/markdown")
 ```
 
 ```bash
-remember ingest notes/standup.md --mime text/markdown
+remember ingest notes/standup --mime text/markdown
 ```
 
 ## Conversations
@@ -3318,7 +3310,7 @@ from remember import MemoryApiError
 client = remember.Client.from_env()
 converter = MarkItDown()
 root = Path("shared-drive-export")
-TEXT_SUFFIXES = {".md": "text/markdown", ".txt": "text/plain"}
+TEXT_SUFFIXES = {".md", ".txt"}
 CONVERTED = {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".htm"}
 pending = []
 
@@ -3328,17 +3320,16 @@ for path in sorted(root.rglob("*")):
         continue
     ref = path.relative_to(root).as_posix()
     if suffix in TEXT_SUFFIXES:
-        body, mime = path.read_bytes(), TEXT_SUFFIXES[suffix]
+        body, filename = path.read_bytes(), path.name
     else:
-        body, mime = converter.convert(str(path)).text_content.encode("utf-8"), "text/markdown"
+        body, filename = converter.convert(str(path)).text_content.encode("utf-8"), f"{path.stem}.md"
     if not body.strip():
         print(f"skipped {ref}: no text")
         continue
     try:
         version = client.ingest(
             content=body,
-            filename=f"{path.stem}.md" if mime == "text/markdown" else path.name,
-            mime=mime,
+            filename=filename,
             title=path.stem,
             source_kind="file",
             source_ref=ref,
@@ -3352,6 +3343,9 @@ for path in sorted(root.rglob("*")):
 
 print(f"{len(pending)} new versions")
 ```
+
+The client takes the MIME type from `filename`, so naming converted text
+`….md` sends it as `text/markdown`.
 
 File modification times are often reset by copying and exporting. If your
 source system knows the real date (a document's last edit, a meeting's
@@ -3420,7 +3414,6 @@ for source, (text, date) in rebuild_documents(chunks).items():
     version = client.ingest(
         content=text.encode("utf-8"),
         filename="document.md",
-        mime="text/markdown",
         title=source,
         source_kind="vector-import",
         source_ref=source,
@@ -3571,7 +3564,6 @@ client = remember.Client.from_env()
 
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     title="Stand-up, 17 September 2026",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
@@ -3599,7 +3591,6 @@ The same with the CLI:
 
 ```bash
 remember ingest notes/2026-09-17-standup.md \
-  --mime text/markdown \
   --title "Stand-up, 17 September 2026" \
   --source-kind file \
   --source-ref notes/2026-09-17-standup.md \
@@ -3614,10 +3605,11 @@ flag: the filename is always the file's own name.
 `Client.ingest` takes the body in one of three forms.
 
 **A path**, as a string or a `pathlib.Path`. The client reads the file, uses
-its name as the filename and guesses the MIME type from the extension.
+its name as the filename and takes the MIME type from the file's
+extension.
 
 ```python
-client.ingest("specs/billing-migration.md", mime="text/markdown")
+client.ingest("specs/billing-migration.md")
 ```
 
 A string that is not an existing file raises `ValueError("file not found:
@@ -3627,31 +3619,39 @@ A string that is not an existing file raises `ValueError("file not found:
 
 ```python
 text = "Dana: the finance sign-off moves to 3 October."
-client.ingest(text.encode("utf-8"), filename="dana-update.md", mime="text/markdown")
+client.ingest(text.encode("utf-8"), filename="dana-update.md")
 ```
 
 **Bytes as `content=`.** Same rules as bytes; use it when the first
 argument reads better as nothing at all.
 
 ```python
-client.ingest(content=b"...", filename="ravi-notes.txt", mime="text/plain")
+client.ingest(content=b"...", filename="ravi-notes.txt")
 ```
 
-With bytes the client cannot guess a MIME type. If you leave `mime` out it
-sends `application/octet-stream`.
+With bytes, the MIME type comes from the `filename` you pass.
 
-## Set the MIME type yourself
+## The MIME type
 
-The MIME type decides which converter reads the file. The client guesses it
-from the file extension with Python's `mimetypes` module and falls back to
-`application/octet-stream` when the guess is empty.
+The MIME type decides which converter reads the file. The client picks it
+from the extension: of the file's real name for a path, of `filename` for
+bytes. The formats a deployment can convert map the same way on every
+Python installation:
 
-**Warning:**
+| Extension | MIME type |
+|---|---|
+| `.md`, `.markdown` | `text/markdown` |
+| `.txt` | `text/plain` |
+| `.html`, `.htm` | `text/html` |
+| `.pdf` | `application/pdf` |
+| `.png` | `image/png` |
+| `.jpg`, `.jpeg` | `image/jpeg` |
+| `.docx`, `.pptx`, `.xlsx` | The Office Open XML types (`application/vnd.openxmlformats-officedocument.…`) |
 
-Python 3.12 does not map `.md` to `text/markdown` unless your system has
-a MIME database that does. A Markdown file sent without `mime=` can
-arrive as `application/octet-stream`. Pass `mime="text/markdown"` for
-Markdown every time.
+Any other extension is looked up in Python's `mimetypes` database, and a
+name it does not know is sent as `application/octet-stream`. Pass `mime=`
+(or `--mime` on the CLI) to send a different type; an explicit value always
+wins.
 
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
@@ -3660,8 +3660,9 @@ does not change. Get the type right on the first send.
 ## Filenames and titles
 
 - `filename` is required and must not be empty. A path supplies it for you.
-- The extension of the filename is kept with the stored original. It does
-  not change how the file is read; `mime` does.
+- The extension of the filename is kept with the stored original. The
+  file is read according to `mime`; for bytes sent without `mime`, that
+  type comes from the filename's extension.
 - `title` is optional. Without it, the document's title is the filename
   without its extension (`2026-09-17-standup`).
 - The title is set when the document is first created. Sending a new
@@ -3711,22 +3712,20 @@ from pathlib import Path
 import remember
 from remember import MemoryApiError
 
-MIME_BY_SUFFIX = {".md": "text/markdown", ".txt": "text/plain"}
+SUFFIXES = {".md", ".txt"}
 
 client = remember.Client.from_env()
 root = Path("billing-migration")
 pending = []
 
 for path in sorted(root.rglob("*")):
-    mime = MIME_BY_SUFFIX.get(path.suffix.lower())
-    if mime is None or not path.is_file():
+    if path.suffix.lower() not in SUFFIXES or not path.is_file():
         continue
     ref = path.relative_to(root).as_posix()
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
     try:
         version = client.ingest(
             path,
-            mime=mime,
             source_kind="file",
             source_ref=f"billing-migration/{ref}",
             source_modified_at=modified,
@@ -3744,11 +3743,12 @@ Run it again after editing one note and only that note produces a new
 version. Unchanged files return `created=False` and cost nothing.
 
 Then wait for the new versions. A readiness check takes at most 1,000
-versions, so wait in batches:
+versions, so wait in batches. A bulk load takes longer than the default
+30-minute `timeout`, so raise it:
 
 ```python
 for start in range(0, len(pending), 1000):
-    client.wait_for_readiness(pending[start:start + 1000], timeout=3600, poll_interval=30)
+    client.wait_for_readiness(pending[start:start + 1000], timeout=3600)
 ```
 
 The client does not retry a failed ingest for you. If a call fails with a
@@ -3766,7 +3766,6 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
   "arguments": {
     "text": "# Decision log\n\nDana moved the finance sign-off to 3 October.",
     "filename": "decision-log.md",
-    "mime": "text/markdown",
     "source_kind": "agent",
     "source_ref": "billing-migration/decision-log",
     "source_modified_at": "2026-09-18T08:00:00+00:00"
@@ -3774,9 +3773,12 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
 }
 ```
 
-- `text` is UTF-8 and needs `filename`; `mime` defaults to `text/plain`.
-- `content_base64` is standard base64 and needs `filename`; `mime` is
-  guessed from the filename, else `application/octet-stream`.
+- `text` is UTF-8 and needs `filename`; `mime` is the text type of the
+  filename's extension (`decision-log.md` is `text/markdown`), else
+  `text/plain`.
+- `content_base64` is standard base64 and needs `filename`; `mime` comes
+  from the filename's extension as in the table above, else
+  `application/octet-stream`.
 - `path` reads a local file on the machine running `remember mcp`. It is
   refused unless the operator lists allowed directories in
   `REMEMBERSTACK_MCP_INGEST_ROOTS`.
@@ -3941,7 +3943,6 @@ body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "Rav
 version = client.ingest(
     body.encode("utf-8"),
     filename="standup-2026-09-17.md",
-    mime="text/markdown",
     title="Billing migration stand-up — 2026-09-17",
     source_kind="meeting",
     source_ref="standup/2026-09-17",
@@ -3959,13 +3960,13 @@ Three choices in that call matter:
   time (or its end time, consistently). Every claim extracted from the
   document gets it as `asserted_at`, the time the source made the
   statement. Never leave it as the moment you happened to upload.
-- **`mime="text/markdown"`.** Bytes carry no file extension to guess from.
+- **A `.md` `filename`.** Bytes have no path, so the client takes the MIME
+  type from `filename`: `standup-2026-09-17.md` is sent as `text/markdown`.
 
 The same file from the CLI:
 
 ```bash
 remember ingest standup-2026-09-17.md \
-  --mime text/markdown \
   --source-kind meeting --source-ref standup/2026-09-17 \
   --source-modified-at 2026-09-17T09:30:00+00:00
 ```
@@ -3978,7 +3979,6 @@ From an agent over MCP, pass the rendered text:
   "arguments": {
     "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, Ravi\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
     "filename": "standup-2026-09-17.md",
-    "mime": "text/markdown",
     "source_kind": "meeting",
     "source_ref": "standup/2026-09-17",
     "source_modified_at": "2026-09-17T09:30:00+00:00"
@@ -4006,7 +4006,6 @@ grows, with the same source pair and `versioning_mode="living"`:
 version = client.ingest(
     body.encode("utf-8"),
     filename="support-4411.md",
-    mime="text/markdown",
     source_kind="chat",
     source_ref="support/4411",
     source_modified_at=last_turn_at,
@@ -4080,7 +4079,6 @@ client = remember.Client.from_env()
 
 v2 = client.ingest(
     "specs/billing-migration-plan.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="specs/billing-migration-plan.md",
     source_modified_at=datetime(2026, 9, 17, 14, 0, tzinfo=UTC),
@@ -4110,7 +4108,6 @@ The same with the CLI:
 
 ```bash
 remember ingest specs/billing-migration-plan.md \
-  --mime text/markdown \
   --source-kind file --source-ref specs/billing-migration-plan.md \
   --source-modified-at 2026-09-17T14:00:00+00:00 \
   --versioning-mode living \
@@ -4202,7 +4199,6 @@ new_versions = []
 for path in sorted(root.glob("*.md")):
     version = client.ingest(
         path,
-        mime="text/markdown",
         source_kind="file",
         source_ref=f"specs/{path.name}",
         source_modified_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
@@ -4212,7 +4208,7 @@ for path in sorted(root.glob("*.md")):
         new_versions.append(version.version_id)
 
 if new_versions:
-    client.wait_for_readiness(new_versions, timeout=1800, poll_interval=30)
+    client.wait_for_readiness(new_versions)
 ```
 
 Run it on a schedule. Unchanged files are no-ops; edited files become new
@@ -4287,33 +4283,21 @@ client = remember.Client.from_env()
 
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
 )
 
-report = client.wait_for_readiness(
-    [version.version_id],
-    timeout=1800,
-    poll_interval=30,
-)
+report = client.wait_for_readiness([version.version_id])
 print(report.ready)
 ```
 
-`wait_for_readiness(version_ids, *, timeout=30.0, poll_interval=0.5,
-require_p3=False)` polls the deployment until every listed version is
-ready, then returns the last report. If `timeout` seconds pass first, it
-raises `TimeoutError`, whose message includes the last report.
-
-**Warning:**
-
-The default `timeout` is 30 seconds and the default `poll_interval` is
-half a second. A small Markdown file takes minutes to process, so the
-defaults time out on almost every real document while polling twice a
-second. Always pass both. `timeout=1800` (30 minutes) and
-`poll_interval=30` suit single documents; raise the timeout for bulk
-loads. The same pacing applies everywhere: first check after about 30
-seconds, then every 30 to 60 seconds, never more often than every 15.
+`wait_for_readiness(version_ids, *, timeout=1800.0, poll_interval=15.0,
+require_p3=False)` checks the deployment at once, then every
+`poll_interval` seconds, until every listed version is ready, and returns
+the last report. The defaults, 30 minutes and 15 seconds, are starting
+points sized for single documents, where processing takes minutes. Raise
+`timeout` for bulk loads. If `timeout` seconds pass first, it raises
+`TimeoutError`, whose message includes the last report.
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
@@ -4325,50 +4309,30 @@ check covers at most 1,000 versions; split larger lists.
 
 A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
-finished one returns ready on the first poll.
+finished one returns ready on the first check.
 
 ## Stop on failure
 
-`wait_for_readiness` does not stop when a stage dead-letters. A
-dead-lettered version is never ready, so the call keeps polling until the
-timeout. When you wait on
-many versions or long timeouts, poll yourself and stop on the first
-dead letter:
+A stage that is `failed` has a retry scheduled and can still succeed, so
+`wait_for_readiness` keeps waiting through it. A stage that is
+`dead_letter` has used all its attempts and will never become ready, so
+`wait_for_readiness` stops at the first check that shows one and raises
+`remember.PipelineDeadLettered`:
 
 ```python
-import time
-
 import remember
-from remember import ReadinessRequirements
 
-TERMINAL = {"dead_letter"}
-
-def wait_or_fail(client, version_ids, *, timeout=1800.0, poll_interval=30.0):
-    require = ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=False)
-    deadline = time.monotonic() + timeout
-    time.sleep(min(30.0, timeout))
-    while True:
-        report = client.pipeline_readiness(version_ids=tuple(version_ids), require=require)
-        if report.ready:
-            return report
-        failed = [
-            (version.version_id, stage.stage, stage.status)
-            for version in report.versions
-            for stage in version.stages
-            if stage.status in TERMINAL
-        ]
-        if failed:
-            raise RuntimeError(f"processing failed: {failed}")
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"not ready after {timeout}s: {report.capabilities}")
-        time.sleep(poll_interval)
-
-client = remember.Client.from_env()
-report = wait_or_fail(client, [version.version_id])
+try:
+    client.wait_for_readiness([version.version_id])
+except remember.PipelineDeadLettered as error:
+    for version_id, stage, status in error.dead_lettered:
+        print(f"{version_id}: {stage} is {status}")
+    # error.report is the full readiness report that showed the dead letter.
 ```
 
-`pipeline_readiness` takes the version IDs as a tuple of `UUID` values and
-a `ReadinessRequirements` naming all four capabilities.
+`dead_lettered` lists every `(version_id, stage, status)` that is
+dead-lettered, and the message names them too. What to do next is under
+[When a version fails](#when-a-version-fails).
 
 ## Read the report
 
@@ -4454,25 +4418,23 @@ algorithm. Your agent's instructions should say the same:
 1. Wait about 30 seconds after ingest before the first check.
 2. Then check every 30 to 60 seconds, backing off gently. Never check more
    often than every 15 seconds.
-3. Stop at once if any `stages[].status` is `failed` or `dead_letter`, and
-   report that stage.
-4. After 20 to 30 minutes without `ready: true` and without a failure, stop
-   and escalate to the operator with the `version_id` and the last
+3. A `failed` stage is retrying: keep polling, and describe it as retrying
+   if you report progress.
+4. Stop at once if any `stages[].status` is `dead_letter`, and report the
+   `version_id` and that stage.
+5. After 20 to 30 minutes without `ready: true` and without a dead letter,
+   stop and escalate to the operator with the `version_id` and the last
    `stages[]`.
-
-   Step 3 follows the tool's guidance, which treats `failed` as a stop signal so an agent does
-   not sit on a retry loop. A `failed` stage can still recover on its own;
-   if you are not in a hurry, check again later before reporting it.
 
 Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
 the agent also reads a published corpus snapshot. `ready: true` means the
 assured operations can see the content; whether a given question finds it
 still depends on relevance.
 
-An ingest that returned `created: false` started no new processing. Check
-readiness once: `ready: true` means the content is already queryable, and a
-`failed` or `dead_letter` stage means stop and report. If it is neither, an
-earlier run of the same bytes is still going; poll it as above.
+An ingest that returned `created: false` started no new processing, but an
+earlier run of the same bytes may still be going. Check readiness:
+`ready: true` means the content is already queryable. Otherwise poll it
+exactly as above, stopping only on `dead_letter` or the time limit.
 
 ## Next
 
@@ -6064,7 +6026,6 @@ def load_notes(client: remember.Client, folder: Path) -> None:
     for path in sorted(folder.glob("*.md")):
         version = client.ingest(
             path,
-            mime="text/markdown",
             source_kind=SOURCE_KIND,
             source_ref=path.name,
             source_modified_at=meeting_time(path),
@@ -6079,9 +6040,7 @@ def load_notes(client: remember.Client, folder: Path) -> None:
         return
     print(f"Waiting for {len(pending)} version(s); this takes minutes...")
     for start in range(0, len(pending), 1000):
-        client.wait_for_readiness(
-            pending[start : start + 1000], timeout=3600, poll_interval=30
-        )
+        client.wait_for_readiness(pending[start : start + 1000], timeout=3600)
     print("Ready.")
 
 # --- memory: context --------------------------------------------------------
@@ -6235,10 +6194,10 @@ only it is waited on.
 file name, and dated by the meeting date in its name
 (`source_modified_at`). Re-running the loader is safe: unchanged files
 return `created=False` and are skipped; changed files become new versions
-of the same document. `mime="text/markdown"` is set explicitly because the
-MIME guess for `.md` is not reliable on every Python. `wait_for_readiness`
-gets an explicit timeout, because its 30-second default is shorter than a
-real run.
+of the same document. The client sends `.md` files as `text/markdown`.
+`wait_for_readiness` checks every 15 seconds and stops at once if a stage
+dead-letters; its timeout is raised from the 30-minute default to an hour
+because a batch of notes takes longer than one document.
 
 **Context.** One `combined_context` call returns what the memory holds true
 (`facts`) and what people said (`claims_and_sources`) side by side.
@@ -6645,7 +6604,7 @@ you approve it in a browser where you are signed in, and the token is
 written to a credential file on that machine.
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 ```
 
 The terminal prints a `verification_uri` (`https://remember.dev/app/device`),
@@ -6653,12 +6612,9 @@ a link that already contains the code, and a `user_code`. Open the link,
 check that the code on the page matches the terminal, choose the
 organisation and the project's deployment, and approve.
 
-**Warning:**
-
-Pass `--token-host https://remember.dev/app/api`. Without it the CLI
-defaults to `https://api.remember.dev`, which does not answer, and the
-login fails. You can set the host once with `REMEMBER_TOKEN_HOST` or
-`REMEMBER_CONTROL_PLANE_URL` instead.
+The CLI requests the token from `https://remember.dev/app/api` unless you
+pass `--token-host` or set `REMEMBER_TOKEN_HOST` or
+`REMEMBER_CONTROL_PLANE_URL`.
 
 What to expect:
 
@@ -6681,7 +6637,7 @@ kept so you can retry.
 ### Log in for organisation status
 
 ```bash
-remember login --control-plane --token-host https://remember.dev/app/api
+remember login --control-plane
 ```
 
 This asks for a **control-plane token** instead (`--control` and
@@ -7035,10 +6991,16 @@ into the same balance.
 
 ## The three charges
 
+**Provisional rates:**
+
+The rates below are development rates (rate version `dev-eur-2026-09-v4`,
+in force since 23 September 2026). They are provisional: they will be
+replaced when prices are published, and a new rate never changes a charge
+already made.
+
 ### Active project
 
-A fixed number of credits per active project per month. The rate is not
-published yet.
+**20 credits per active project per month** (provisional).
 
 A project is charged only while its deployment is ready to serve you. The
 charge is prorated to the second across the UTC calendar month: a project
@@ -7056,8 +7018,7 @@ until it can; see [Spend caps and auto top-up](https://remember.dev/docs/cloud/s
 
 ### Processed text
 
-A fixed number of credits per million characters. The rate is not
-published yet.
+**20 credits per million characters** of processed text (provisional).
 
 This is charged once for each new document version that finishes
 processing successfully. The quantity is the number of characters in the
@@ -7076,8 +7037,7 @@ refused before anything is stored or charged; see
 
 ### Stored data
 
-A fixed number of credits per GiB per month. The rate is not published
-yet.
+**3 credits per GiB per month** (provisional).
 
 Once a day each deployment measures what it holds, and remember.dev charges
 for that day: gibibytes held multiplied by the part of the day the project
@@ -7154,8 +7114,9 @@ curl -s https://remember.dev/app/api/v1/pricing/rates
 ```
 
 The response lists each charge with its unit and rate in credits, and
-states that ordinary retrieval is included. While no rate is published it
-answers `404` with `pricing_not_published`. A new rate applies from the
+states that ordinary retrieval is included. Until prices are published it
+answers `404` with `pricing_not_published`; the provisional rates are the
+ones on this page. A new rate applies from the
 time it takes effect; it never changes a charge already made.
 
 ## Related
@@ -8727,9 +8688,11 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
 `passthrough` keeps the text as it is. It requires valid UTF-8; a file in
 another encoding fails conversion.
 
-The MIME type is the one sent with the upload. The `remember` CLI and
-Python client guess it from the file extension and fall back to
-`application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
+The MIME type is the one sent with the upload. The `remember` CLI, Python
+client and MCP `ingest` tool take it from the file extension, the same way
+on every Python installation for the formats a route can name (the table is
+in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), and fall back
+to `application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
 the extension does not say what the file is. The match is exact:
 `text/markdown` and `text/x-markdown` are different keys.
 
@@ -9031,16 +8994,12 @@ several reads use `POST` because their arguments do not fit in a URL.
 | `write` | Everything, including every route not listed above |
 
 Routes that are not in the `read` or `ingest` list need `write`. Today that
-includes `POST /connectors`, `POST /connectors/{id}/pause` and
-`GET /deployment`.
+includes `POST /connectors` and `POST /connectors/{id}/pause`.
 
 `POST /operations/{name}` (the [assured operations](https://remember.dev/docs/reference/assured-operations))
 decides per operation: an operation that declares itself read-only needs
-`read`, any other needs `write`. No shipped operation declares itself
-read-only yet, so **every assured operation currently needs `write`**,
-although they only read. A `read` token can list operations but not run
-them; use `search`, `graph` or `query` routes with it, or give the caller a
-`write` token.
+`read`, any other needs `write`. All four shipped operations only read and
+declare it (`mutates: false`), so a `read` token can run them.
 
 `GET /healthz` never needs a credential.
 
@@ -9548,12 +9507,10 @@ The API sends one of four `detail` strings:
 | `403` `credential is for another deployment` | The shared-secret bind or the token's `aud` names a different deployment id. | Bind the secret, or mint the token, for the id in your `.env`. |
 | `403` `credential may not perform this operation` | The token's scope does not cover the route. | See below. |
 
-The scope surprise that catches most people: **every assured operation
-needs `write`**, although they only read. A `read` token gets `403` on
-`POST /operations/facts_context` and on the other three. `GET /deployment`
-needs `write` too. Give an agent that calls operations a `write` token, or
-limit it to the search, graph and SQL routes a `read` token may call. The
-full table is in [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication#scopes).
+A `read` token can call every route that only reads, including the four
+assured operations and `GET /deployment`. It cannot ingest or change
+anything; that needs `ingest` or `write`. The full table is in
+[Authentication and scopes](https://remember.dev/docs/self-hosting/authentication#scopes).
 
 ## A browser app cannot reach the API
 
@@ -9652,12 +9609,11 @@ whose MIME type is still unrouted stays parked.
 The MIME type is the one the upload declared, not something the engine
 detects. These uploads arrive with a type the default routes do not cover:
 
-- the Python client with `bytes` instead of a path, and no `mime=`:
+- a file or `filename` with no extension, or an extension the client does
+  not map and the sending machine's MIME table does not know:
   `application/octet-stream`;
-- the MCP `ingest` tool with `content_base64` and no `mime`:
-  `application/octet-stream`, whatever the `filename`;
-- a file with no extension, or an extension the sending machine's MIME
-  table does not know;
+- an older `remember` client on a Python installation that does not know
+  `.md`: `application/octet-stream`;
 - a `curl` call with a type such as `text/x-markdown`. The match is exact.
 
 Re-sending the same file with the right type does not help. RememberStack
@@ -9674,8 +9630,11 @@ SELECT mime, count(*) FROM content_objects GROUP BY mime;
 SQL
 ```
 
-For new uploads, pass the type: `remember ingest notes.md --mime text/markdown`,
-or `mime="text/markdown"` in Python.
+The current client sends `.md` and `.markdown` as `text/markdown` on
+every Python installation, and takes the type of bytes from their
+`filename`. For a file whose extension does not say what it is, pass the
+type: `remember ingest notes --mime text/markdown`, or `mime="text/markdown"`
+in Python.
 
 ### Dead letters
 
@@ -10604,20 +10563,16 @@ their arguments do not fit in a query string.
 | `GET` | `/documents` | `read` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
-| `POST` | `/operations/{name}` | `write` (see below) |
+| `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
-| `GET` | `/deployment` | `write` (see below) |
+| `GET` | `/deployment` | `read` |
 | any other | any other | `write` |
 
-Two entries need a note:
-
-- **`POST /operations/{name}` requires `write` today.** The route asks each
-  operation's descriptor whether it changes memory (`mutates`). None of the
-  four shipped descriptors sets that field, and an operation that has not
-  declared itself read-only is refused to a `read` credential. All four
-  operations only read, but a `read` credential cannot run them.
-- **`GET /deployment` requires `write`.** It is not in the list of read routes,
-  and any route not listed requires `write`.
+One entry needs a note: **`POST /operations/{name}` decides per
+operation.** The route asks the operation's descriptor whether it changes
+memory (`mutates`). All four shipped operations only read and declare
+`mutates: false`, so a `read` credential can run them. An operation that
+did not declare itself read-only would need `write`.
 
 Any route added later without a classification also requires `write`.
 
@@ -10920,7 +10875,6 @@ from remember import Client
 memory = Client()
 version = memory.ingest(
     "billing-migration.md",
-    mime="text/markdown",
     source_kind="notes",
     source_ref="specs/billing-migration.md",
     versioning_mode="living",
@@ -10929,8 +10883,10 @@ print(version.version_id, version.created)
 ```
 
 `Client.ingest` accepts a path (string or `Path`) or bytes; with bytes, pass
-`filename`. It guesses `mime` from the file name and falls back to
-`application/octet-stream`. `Client.ingest_file(path, ...)` is the same call.
+`filename`. It takes `mime` from the extension of the file's name (for
+bytes, of `filename`): `.md` is `text/markdown` on every Python
+installation; see [the full table](https://remember.dev/docs/guides/ingest-files#the-mime-type).
+An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. `Client.ingest_file(path, ...)` is the same call.
 
 ## POST /readiness
 
@@ -10964,8 +10920,9 @@ The stages a self-hosted deployment reports, in order: `convert`, `structure`,
 `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`,
 `embed_claim`, `reconcile`, `label_relation`.
 
-If a stage is `failed` or `dead_letter`, stop polling: that version will not
-become ready without intervention.
+A `failed` stage has a retry scheduled and can still succeed; keep polling.
+If a stage is `dead_letter`, stop polling: it used all its attempts, and
+that version will not become ready without intervention.
 
 Capability `reason` values:
 
@@ -11005,12 +10962,13 @@ report = memory.pipeline_readiness(
 )
 
 # Or poll until ready (pipeline, p1 and live_graph required; p3 optional):
-report = memory.wait_for_readiness([version.version_id], timeout=300, poll_interval=2)
+report = memory.wait_for_readiness([version.version_id])
 ```
 
-`wait_for_readiness` polls every `poll_interval` seconds (default 0.5) and
-raises `TimeoutError` after `timeout` seconds (default 30). It does not stop
-early on a `failed` stage. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+`wait_for_readiness` polls every `poll_interval` seconds (default 15) and
+raises `TimeoutError` after `timeout` seconds (default 1800). It keeps
+polling through a `failed` stage and raises `PipelineDeadLettered` at once
+on a `dead_letter` stage. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 ## GET /documents
 
@@ -11239,7 +11197,7 @@ ordered by the registry. Each descriptor carries the operation's `name`,
 `description`, closed `input_schema` (JSON Schema, `additionalProperties:
 false`), `result_schema`, `result_contract` (`envelope` or
 `context_bundle_v2`), `output_grain`, `answer_intent`, `version` and
-`implementation_plan_hash`. `mutates` is `null` on all four.
+`implementation_plan_hash`. `mutates` is `false` on all four.
 
 ```json
 [
@@ -11256,7 +11214,7 @@ false`), `result_schema`, `result_contract` (`envelope` or
     "result_contract": "envelope",
     "output_grain": "fact",
     "answer_intent": "identity",
-    "mutates": null,
+    "mutates": false,
     "version": 1,
     "implementation_plan_hash": "fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a"
   }
@@ -11282,9 +11240,8 @@ for descriptor in memory.list_operations():
 
 Run one assured operation over a JSON object of arguments.
 
-**Scope:** `write` today. The route checks the operation's descriptor, and
-none of the four declares itself read-only (`mutates` is `null`), so a `read`
-credential is refused with `403`. See
+**Scope:** `read`. The route checks the operation's descriptor, and all
+four declare themselves read-only (`mutates: false`). See
 [HTTP API conventions](https://remember.dev/docs/reference/http-api#scopes).
 
 **Spend hold (remember.dev):** yes, named after the operation.
@@ -13893,7 +13850,7 @@ One assured operation, as `GET /operations` returns it.
 | `result_contract` | string | `envelope` or `context_bundle_v2`. |
 | `output_grain` | string, nullable | `fact`, `evidence`, or `null` for `combined_context`. |
 | `answer_intent` | string | `identity`, `claims_and_sources`, `facts` or `combined_context`. |
-| `mutates` | boolean, nullable | Whether the operation changes memory. `null` on all four today. |
+| `mutates` | boolean, nullable | Whether the operation changes memory. `false` on all four shipped operations. |
 | `version` | integer ≥ 1, nullable | |
 | `implementation_plan_hash` | string of 64 hex characters, nullable | Identifies the exact plan. |
 
@@ -15285,6 +15242,7 @@ The client is synchronous. There is no async client yet
 | `CloudError` | exception | [Errors](#errors) |
 | `Unauthenticated` | exception | [Errors](#errors) |
 | `NotPermitted` | exception | [Errors](#errors) |
+| `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `RateLimited` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `BillingStatus` | model | [Models](#models) |
@@ -15604,7 +15562,7 @@ results.
 | `source` | A `Path` or `str` file path (read from disk), or `bytes`. |
 | `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the filename. |
 | `filename` | Required for bytes. Defaults to the file's name for a path. |
-| `mime` | Media type. Defaults to a guess from the file name, then `application/octet-stream`. The engine converts only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
+| `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
 | `source_kind`, `source_ref` | The document's stable identity: what kind of source it is and its id within that kind. Always together. Ingesting again with the same pair creates a new version of the same document when the bytes differ. See [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources). |
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
@@ -15673,33 +15631,33 @@ What each capability means: [The pipeline and readiness](https://remember.dev/do
 MemoryClient.wait_for_readiness(
     version_ids: Sequence[str | UUID],
     *,
-    timeout: float = 30.0,
-    poll_interval: float = 0.5,
+    timeout: float = 1800.0,
+    poll_interval: float = 15.0,
     require_p3: bool = False,
 ) -> PipelineReadinessReport
 ```
 
-Calls `pipeline_readiness` every `poll_interval` seconds until the report says
-`ready`, requiring `pipeline`, `p1` and `live_graph` (and `p3` when
-`require_p3=True`). Returns the ready report.
+Calls `pipeline_readiness` at once and then every `poll_interval` seconds
+until the report says `ready`, requiring `pipeline`, `p1` and `live_graph`
+(and `p3` when `require_p3=True`). Returns the ready report. The defaults,
+30 minutes and 15 seconds, are starting points sized for single documents;
+raise `timeout` for bulk loads.
+
+A stage that is `failed` has a retry scheduled, so the method keeps
+polling. A stage that is `dead_letter` has used all its attempts and never
+becomes ready, so the method stops at once.
 
 Raises:
 
+- [`PipelineDeadLettered`](#pipelinedeadlettered) when any stage of any
+  listed version is `dead_letter`;
 - `TimeoutError` when `timeout` seconds pass first;
 - `ValueError` when an id is not a UUID.
 
-**Warning:**
-
-The default `timeout` is 30 seconds. Processing a document takes minutes.
-Pass a timeout that fits your documents, for example `timeout=1800`.
-
-The method keeps polling when a stage has failed; it stops only on `ready`
-or on the timeout. Check `stages[].status` for `failed` or `dead_letter`
-yourself if you want to stop earlier. See
-[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 ```python
-memory.wait_for_readiness([version.version_id], timeout=1800, poll_interval=15)
+memory.wait_for_readiness([version.version_id])
 ```
 
 #### `deployment_build_info`
@@ -16331,7 +16289,8 @@ The same checks are available as a command: [`remember-status`](https://remember
 
 ```text
 RuntimeError
-└── MemoryApiError                 memory clients (Client, MemoryClient)
+├── MemoryApiError                 memory clients (Client, MemoryClient)
+└── PipelineDeadLettered           wait_for_readiness
 Exception
 ├── CloudError                     CloudClient
 │   ├── Unauthenticated            401
@@ -16365,6 +16324,22 @@ except remember.MemoryApiError as error:
 ```
 
 Status codes and their meaning: [Errors and status codes](https://remember.dev/docs/reference/errors).
+
+### PipelineDeadLettered
+
+Raised by `wait_for_readiness` when a stage of a version it waits on is
+`dead_letter`: the stage used all its retry attempts and will not finish by
+waiting.
+
+| Attribute | Meaning |
+|---|---|
+| `dead_lettered` | Every dead-lettered stage found, as `(version_id, stage, status)` tuples. |
+| `report` | The `PipelineReadinessReport` that showed them. |
+
+`str(error)` names each version and stage. On a self-hosted deployment the
+operator can replay the work after fixing the cause; on remember.dev,
+report the `version_id` and stage to support. See
+[When a version fails](https://remember.dev/docs/guides/wait-for-readiness#when-a-version-fails).
 
 ### CloudError and subclasses
 
@@ -16536,7 +16511,7 @@ that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
 **remember.dev:**
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 remember query "Who owns the billing migration?"
 ```
 
@@ -16596,7 +16571,7 @@ document; nothing is processed again.
 | Flag | Default | Meaning |
 |---|---|---|
 | `FILE` | required | Path of the file to upload. |
-| `--mime` | guessed from the file name, else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
+| `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
 | `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
@@ -16872,16 +16847,11 @@ approve. The command waits for the approval, then stores the token in the
 | `--control-plane`, `--control` | | Same as `--audience control`. |
 
 Token host, first match wins: `--token-host`; `REMEMBER_CONTROL_PLANE_URL`,
-`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`; `https://api.remember.dev`.
-
-**Warning:**
-
-The built-in token host `https://api.remember.dev` does not answer today.
-Pass `--token-host https://remember.dev/app/api`, or set
-`REMEMBER_TOKEN_HOST=https://remember.dev/app/api`.
+`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`;
+`https://remember.dev/app/api`. For remember.dev you pass none of them.
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 ```
 
 After approval it prints:
@@ -17272,11 +17242,11 @@ Give exactly one body: `text`, `content_base64` or `path`.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
-| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: `text/plain`. |
-| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: `application/octet-stream`. |
-| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: guessed from the file's real name. |
+| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: the text type of the filename's extension (`.md` is `text/markdown`), else `text/plain`. |
+| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: from the filename's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream`. |
+| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: from the extension of the file's real name, as for `content_base64`. |
 | `filename` | string | with `text` or `content_base64` | 1–512 characters. |
-| `mime` | string | no | 1–255 characters. The engine processes only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
+| `mime` | string | no | 1–255 characters. An explicit value always wins over the defaults above. The engine processes only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `title` | string | no | At most 512 characters. |
 | `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
 | `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
@@ -17358,9 +17328,12 @@ and their `status`), `capabilities`, `model_bindings`, `build_revision`,
 [Result types](https://remember.dev/docs/reference/result-types).
 
 The tool description tells the agent how to poll: wait about 30 seconds after
-ingest, then every 30–60 seconds; stop at once when a stage is `failed` or
-`dead_letter`; stop and report after 20–30 minutes without `ready`. See
-[The pipeline and readiness](https://remember.dev/docs/concepts/pipeline).
+ingest, then every 30–60 seconds; treat a `failed` stage as retrying and
+keep polling; stop at once and report the version and stage when a stage is
+`dead_letter`; stop and report after 20–30 minutes without `ready`. An
+ingest that returned `created: false` is polled the same way, because an
+earlier run of the same bytes may still be processing. See
+[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness#over-mcp).
 
 ### `delete_document`
 
@@ -18061,7 +18034,9 @@ Branch on the status and the code or string, not on `message`.
 The `remember` Python client raises `remember.MemoryApiError` for all of
 them, with `status_code` (`0` for a network failure), `detail` (the string, or
 the message) and `code` (set on `/query/*` routes when the body carries a
-known code at its expected status).
+known code at its expected status). `wait_for_readiness` raises
+`remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
+([Python SDK](https://remember.dev/docs/reference/python-sdk#pipelinedeadlettered)).
 
 ## Deployment HTTP statuses
 
@@ -18326,8 +18301,8 @@ The routes themselves are in [remember.dev API](https://remember.dev/docs/refere
 | `running` | In progress. |
 | `succeeded` | Done. |
 | `skipped` | Not needed for this version; counts as done. |
-| `failed` | Failed; the pipeline may retry it. |
-| `dead_letter` | Failed for good. Stop waiting and report it. |
+| `failed` | The last attempt failed and a retry is scheduled. Keep waiting. |
+| `dead_letter` | Failed for good: every attempt is used. Stop waiting and report it. The Python client's `wait_for_readiness` raises `remember.PipelineDeadLettered` here, naming the version and stage. |
 
 ### Readiness capability reasons
 

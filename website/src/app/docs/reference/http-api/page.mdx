@@ -160,20 +160,16 @@ their arguments do not fit in a query string.
 | `GET` | `/documents` | `read` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
-| `POST` | `/operations/{name}` | `write` (see below) |
+| `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
-| `GET` | `/deployment` | `write` (see below) |
+| `GET` | `/deployment` | `read` |
 | any other | any other | `write` |
 
-Two entries need a note:
-
-- **`POST /operations/{name}` requires `write` today.** The route asks each
-  operation's descriptor whether it changes memory (`mutates`). None of the
-  four shipped descriptors sets that field, and an operation that has not
-  declared itself read-only is refused to a `read` credential. All four
-  operations only read, but a `read` credential cannot run them.
-- **`GET /deployment` requires `write`.** It is not in the list of read routes,
-  and any route not listed requires `write`.
+One entry needs a note: **`POST /operations/{name}` decides per
+operation.** The route asks the operation's descriptor whether it changes
+memory (`mutates`). All four shipped operations only read and declare
+`mutates: false`, so a `read` credential can run them. An operation that
+did not declare itself read-only would need `write`.
 
 Any route added later without a classification also requires `write`.
 

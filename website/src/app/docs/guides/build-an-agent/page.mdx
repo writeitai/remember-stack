@@ -90,7 +90,6 @@ def load_notes(client: remember.Client, folder: Path) -> None:
     for path in sorted(folder.glob("*.md")):
         version = client.ingest(
             path,
-            mime="text/markdown",
             source_kind=SOURCE_KIND,
             source_ref=path.name,
             source_modified_at=meeting_time(path),
@@ -105,9 +104,7 @@ def load_notes(client: remember.Client, folder: Path) -> None:
         return
     print(f"Waiting for {len(pending)} version(s); this takes minutes...")
     for start in range(0, len(pending), 1000):
-        client.wait_for_readiness(
-            pending[start : start + 1000], timeout=3600, poll_interval=30
-        )
+        client.wait_for_readiness(pending[start : start + 1000], timeout=3600)
     print("Ready.")
 
 # --- memory: context --------------------------------------------------------
@@ -261,10 +258,10 @@ only it is waited on.
 file name, and dated by the meeting date in its name
 (`source_modified_at`). Re-running the loader is safe: unchanged files
 return `created=False` and are skipped; changed files become new versions
-of the same document. `mime="text/markdown"` is set explicitly because the
-MIME guess for `.md` is not reliable on every Python. `wait_for_readiness`
-gets an explicit timeout, because its 30-second default is shorter than a
-real run.
+of the same document. The client sends `.md` files as `text/markdown`.
+`wait_for_readiness` checks every 15 seconds and stops at once if a stage
+dead-letters; its timeout is raised from the 30-minute default to an hour
+because a batch of notes takes longer than one document.
 
 **Context.** One `combined_context` call returns what the memory holds true
 (`facts`) and what people said (`claims_and_sources`) side by side.

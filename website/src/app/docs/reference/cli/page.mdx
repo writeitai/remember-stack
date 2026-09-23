@@ -93,7 +93,7 @@ that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
 <Tab label="remember.dev">
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 remember query "Who owns the billing migration?"
 ```
 
@@ -158,7 +158,7 @@ document; nothing is processed again.
 | Flag | Default | Meaning |
 |---|---|---|
 | `FILE` | required | Path of the file to upload. |
-| `--mime` | guessed from the file name, else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
 | `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
@@ -438,18 +438,11 @@ approve. The command waits for the approval, then stores the token in the
 | `--control-plane`, `--control` | | Same as `--audience control`. |
 
 Token host, first match wins: `--token-host`; `REMEMBER_CONTROL_PLANE_URL`,
-`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`; `https://api.remember.dev`.
-
-<Callout type="warning">
-
-The built-in token host `https://api.remember.dev` does not answer today.
-Pass `--token-host https://remember.dev/app/api`, or set
-`REMEMBER_TOKEN_HOST=https://remember.dev/app/api`.
-
-</Callout>
+`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`;
+`https://remember.dev/app/api`. For remember.dev you pass none of them.
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 ```
 
 After approval it prints:

@@ -33,7 +33,6 @@ from datetime import timedelta
 from datetime import timezone
 import json
 import logging
-import mimetypes
 import os
 from pathlib import Path
 import stat
@@ -48,6 +47,7 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from remember.mime import infer_upload_mime
 from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
@@ -108,12 +108,18 @@ _PIPELINE_READINESS_DESCRIPTION: Final = (
     " live_graph, but set p3=false unless a published CorpusFS snapshot is part"
     " of the caller's contract. The live graph is PostgreSQL state and never"
     " waits for a projection build."
-    " Terminal stop: if any stages[].status is failed or dead_letter, STOP"
-    " polling and report the stage to the user — do not keep polling."
+    " Terminal stop: if any stages[].status is dead_letter, STOP polling and"
+    " report the version_id and that stage to the user — a dead-lettered stage"
+    " has used all its retries and never becomes ready by waiting."
+    " status=failed is NOT terminal: the last attempt failed and a retry is"
+    " scheduled with back-off, so keep polling and describe it as retrying."
     " Bounded poll: wait ~30s after ingest, then poll every 30–60s with mild"
     " back-off (floor ~15s). After ~20–30 minutes without ready=true and without"
-    " a terminal stage failure, stop and escalate to the operator (include"
+    " a dead_letter stage, stop and escalate to the operator (include"
     " version_id and last stages[])."
+    " An ingest that returned created=false started no new run, but an earlier"
+    " run of the same bytes may still be processing: poll that version_id the"
+    " same way."
 )
 
 _DELETE_DOCUMENT_DESCRIPTION: Final = (
@@ -157,7 +163,7 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
                 " with text and content_base64. Path is resolved fully; symlink"
                 " escape outside a configured root is rejected. Must be a regular"
                 " file (not a directory, FIFO, or device). Size is checked before"
-                " read. Filename defaults to the path basename; mime is guessed"
+                " read. Filename defaults to the path basename; mime is inferred"
                 " from the real path name unless mime is supplied (SDK parity)."
             ),
         },
@@ -194,9 +200,11 @@ _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
             "minLength": 1,
             "maxLength": _MIME_MAX_LEN,
             "description": (
-                "Optional. Default: for path, guessed from the real path name"
-                " (SDK parity); for text, text/plain; for content_base64,"
-                " application/octet-stream (or guess from filename when set)."
+                "Optional; an explicit value always wins. Default: for path,"
+                " inferred from the real path name; for content_base64, inferred"
+                " from filename (.md → text/markdown, .pdf → application/pdf,"
+                " .png → image/png, …), else application/octet-stream; for text,"
+                " a text/* type inferred from filename, else text/plain."
             ),
         },
         "title": {
@@ -888,7 +896,12 @@ def _parse_ingest_arguments(
                 )
             )
         resolved_filename = filename
-        resolved_mime = mime or "text/plain"
+        # UTF-8 text takes a textual type from its filename (notes.md →
+        # text/markdown); anything else is sent as text/plain.
+        guessed = infer_upload_mime(filename)
+        resolved_mime = mime or (
+            guessed if guessed and guessed.startswith("text/") else "text/plain"
+        )
     else:
         assert content_base64 is not None
         content = _decode_base64(content_base64)
@@ -899,9 +912,11 @@ def _parse_ingest_arguments(
                 )
             )
         resolved_filename = filename
-        # Bytes path matches the SDK: default application/octet-stream unless
-        # the caller supplied mime (filename alone does not change the default).
-        resolved_mime = mime or "application/octet-stream"
+        # Bytes match the SDK: the type follows the filename unless the caller
+        # supplied mime; an unknown extension is application/octet-stream.
+        resolved_mime = (
+            mime or infer_upload_mime(filename) or "application/octet-stream"
+        )
 
     return _ParsedIngest(
         content=content,
@@ -1133,11 +1148,9 @@ def _resolve_path_body(
         )
     # MIME matches the SDK: guess from the real target path name, not an
     # overridden filename, unless the caller supplied mime explicitly.
-    if mime:
-        resolved_mime = mime
-    else:
-        guessed = mimetypes.guess_type(resolved.name)[0]
-        resolved_mime = guessed or "application/octet-stream"
+    resolved_mime = (
+        mime or infer_upload_mime(resolved.name) or "application/octet-stream"
+    )
     return content, resolved_filename, resolved_mime
 
 
@@ -1314,20 +1327,22 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
             " treating this content as recallable. Require pipeline, p1, and"
             " live_graph; set p3=false unless CorpusFS publication is required."
             " Poll algorithm: wait ~30s, then poll every 30–60s with mild back-off"
-            " (floor ~15s). STOP immediately if any stages[].status is failed or"
-            " dead_letter and report that stage. After ~20–30 minutes without"
+            " (floor ~15s). STOP immediately if any stages[].status is dead_letter"
+            " and report version_id and that stage. A failed stage is retrying"
+            " (a retry is scheduled): keep polling. After ~20–30 minutes without"
             " ready=true, stop and escalate to the operator with version_id and"
-            " last stages[]. created=false means content-hash no-op: no new"
-            " pipeline run."
+            " last stages[]."
         )
     else:
         guidance = (
             "Ingest was a content-hash no-op (created=false): this version already"
-            " exists and no new pipeline run was started. Call pipeline_readiness"
-            " once with pipeline/p1/live_graph required and p3=false; if ready=true"
-            " the content is"
-            " already recallable. If a stage is failed/dead_letter, stop and report"
-            " it — do not keep polling."
+            " exists and no new pipeline run was started. An earlier run of the"
+            " same bytes may still be processing. Call pipeline_readiness with"
+            " pipeline/p1/live_graph required and p3=false: ready=true means the"
+            " content is already recallable; otherwise keep polling it with the"
+            " same algorithm as a new ingest (every 30–60s, floor ~15s, escalate"
+            " after ~20–30 minutes). STOP and report if any stage is dead_letter;"
+            " a failed stage is retrying."
         )
     return {
         "deployment_id": str(ingested.deployment_id),

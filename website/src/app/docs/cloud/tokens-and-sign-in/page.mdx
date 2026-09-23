@@ -106,7 +106,7 @@ you approve it in a browser where you are signed in, and the token is
 written to a credential file on that machine.
 
 ```bash
-remember login --token-host https://remember.dev/app/api
+remember login
 ```
 
 The terminal prints a `verification_uri` (`https://remember.dev/app/device`),
@@ -114,14 +114,9 @@ a link that already contains the code, and a `user_code`. Open the link,
 check that the code on the page matches the terminal, choose the
 organisation and the project's deployment, and approve.
 
-<Callout type="warning">
-
-Pass `--token-host https://remember.dev/app/api`. Without it the CLI
-defaults to `https://api.remember.dev`, which does not answer, and the
-login fails. You can set the host once with `REMEMBER_TOKEN_HOST` or
-`REMEMBER_CONTROL_PLANE_URL` instead.
-
-</Callout>
+The CLI requests the token from `https://remember.dev/app/api` unless you
+pass `--token-host` or set `REMEMBER_TOKEN_HOST` or
+`REMEMBER_CONTROL_PLANE_URL`.
 
 What to expect:
 
@@ -144,7 +139,7 @@ kept so you can retry.
 ### Log in for organisation status
 
 ```bash
-remember login --control-plane --token-host https://remember.dev/app/api
+remember login --control-plane
 ```
 
 This asks for a **control-plane token** instead (`--control` and
