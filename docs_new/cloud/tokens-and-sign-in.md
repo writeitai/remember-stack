@@ -1,0 +1,281 @@
+---
+title: Tokens and sign-in
+description: The credentials remember.dev issues, what each one can do, how long it lives, how to get it without copying secrets, and how to revoke it.
+applies_to: [remember.dev]
+---
+
+# Tokens and sign-in
+
+remember.dev has one credential for memory and a few for everything around
+it. Most of the time you need only the first.
+
+| Credential | Looks like | Reaches | Who gets it | Lifetime |
+|---|---|---|---|---|
+| Deployment API token | `umc_dp_…` | One project's deployment: ingest, search, operations, graph, SQL queries | Owners | 365 days by default |
+| Control-plane token | `umc_cp_…` | Read-only organisation status: deployments, balance, ledger, statements, spend gate | Any member | 90 days by default |
+| Browser session | cookie | The console and the account API | Anyone who signs in | Until you sign out |
+| Hosted MCP token | issued to your agent | One project, through [hosted MCP](hosted-mcp.md) | Any member who connects an agent | 1 hour, refreshed |
+
+## Deployment API tokens
+
+A deployment API token is the credential your code, the `remember` CLI and
+a local `remember mcp` server present to your project's deployment. It
+authenticates to one deployment only, and it can read and write that
+memory.
+
+Send it as a bearer token to the deployment's hostname:
+
+```bash
+export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
+export REMEMBER_API_KEY=umc_dp_...
+```
+
+```bash
+curl -s https://<deployment-id>.dp.remember.dev/deployment \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+The token has no person behind it: it belongs to the organisation, and the
+deployment records requests made with it as coming from that token, not
+from whoever minted it.
+
+### Mint a token in the console
+
+1. Sign in as an owner and open **Settings → API Tokens**.
+2. Enter a label that says where the token will live, for example
+   `ravi-laptop` or `ci-ingest`.
+3. Choose **Mint token** and copy the secret.
+
+The secret is shown once. remember.dev stores only a hash of it and cannot
+show it again. If you lose it, mint a new one and revoke the old one.
+
+The mint response also carries the deployment's hostname as
+`data_plane_hostname`, so a script that mints through the API knows where to
+send requests.
+
+The list shows each token's label, identifier, when it was last used and
+when it expires. Only owners can mint, list or revoke tokens.
+
+### Limits
+
+- **Lifetime:** 365 days from minting. The console warns before a token
+  expires; so does the `remember` CLI, starting 30 days ahead.
+- **At most 20 live tokens per deployment.** Minting a 21st is refused
+  with `409`. Revoke one first, or replace one in the same step (below).
+- **At most 60 mints per hour** per member per organisation. More returns
+  `429`.
+
+### Rotate a token
+
+Mint the replacement before you revoke the old token, so nothing breaks in
+between. Through the API you can do both in one step by naming the token
+being replaced; that step is allowed even when the deployment already holds
+20 tokens:
+
+```bash
+curl -s -X POST \
+  "https://remember.dev/app/api/v1/orgs/$ORG_ID/deployments/$DEPLOYMENT_ID/api-tokens" \
+  -H "Content-Type: application/json" \
+  --cookie "__session=..." \
+  -d '{"label": "ci-ingest-2026-10", "replaces_token_id": "<old token id>"}'
+```
+
+If `replaced_predecessor` in the response is `false`, the new token works
+but the old one is still live; revoke it.
+
+### Revoke a token
+
+Choose **Revoke** next to the token in **Settings → API Tokens**. The
+deployment refuses the token from then on.
+
+A token can also revoke itself, without a browser session:
+
+```bash
+curl -s -X DELETE https://remember.dev/app/api/v1/api-tokens/self \
+  -H "Authorization: Bearer umc_dp_..."
+```
+
+That is what `remember logout` does.
+
+## `remember login`
+
+`remember login` gets a deployment API token onto a machine without you
+copying it. It uses a device authorization flow: the terminal shows a code,
+you approve it in a browser where you are signed in, and the token is
+written to a credential file on that machine.
+
+```bash
+remember login --token-host https://remember.dev/app/api
+```
+
+The terminal prints a `verification_uri` (`https://remember.dev/app/device`),
+a link that already contains the code, and a `user_code`. Open the link,
+check that the code on the page matches the terminal, choose the
+organisation and the project's deployment, and approve.
+
+!!! warning
+    Pass `--token-host https://remember.dev/app/api`. Without it the CLI
+    defaults to `https://api.remember.dev`, which does not answer, and the
+    login fails. You can set the host once with `REMEMBER_TOKEN_HOST` or
+    `REMEMBER_CONTROL_PLANE_URL` instead.
+
+What to expect:
+
+- **Only owners can approve** a deployment login, because the result reads
+  and writes memory. A member cannot approve it.
+- **The code expires after 15 minutes.** The CLI polls every 5 seconds and
+  slows down if asked.
+- **The token is an ordinary deployment API token.** It appears in
+  **Settings → API Tokens**, counts toward the limit of 20, and expires
+  after 365 days.
+- **The deployment must be serving.** If it is not live yet, the login
+  stops with a message saying so; run it again once the project is ready.
+- **Logging in again for the same deployment replaces the old token.** The
+  CLI revokes the previous one after the new one is safely on disk.
+
+`remember logout` revokes every token stored in the credential file and
+deletes the file. If the revocation fails with a server error, the file is
+kept so you can retry.
+
+### Log in for organisation status
+
+```bash
+remember login --control-plane --token-host https://remember.dev/app/api
+```
+
+This asks for a **control-plane token** instead (`--control` and
+`--audience control` mean the same). Any member of the organisation can
+approve it, and the approval page says it is read-only. The CLI stores it
+next to any deployment token, and `remember balance` and
+`remember projects list` use it.
+
+## Control-plane tokens
+
+A control-plane token (`umc_cp_…`) lets a script or agent read an
+organisation's status without a browser session. Its profile, `status:read`,
+allows exactly these requests and nothing else:
+
+- `GET /v1/orgs/{org_id}` and `GET /v1/orgs/{org_id}/deployments`
+- `GET /v1/organisations/{org_id}/deployments/{deployment_id}`
+- `GET /v1/orgs/{org_id}/billing/status`, `…/billing/ledger`,
+  `…/billing/statements`, `…/billing/statements/{statement_id}`,
+  `…/billing/grants`, `…/billing/purchase-options`, `…/billing/auto-top-up`
+- `GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate` and
+  `…/spend-safety/usage`
+- `DELETE /v1/control-tokens/self`, to revoke itself
+
+It cannot read or write memory, spend money or change settings. Its
+authority is the smaller of the profile and the holder's current
+membership, checked on every request: a token stops working when its
+holder is no longer an active member.
+
+Get one with `remember login --control-plane`, or while signed in:
+
+```bash
+curl -s -X POST "https://remember.dev/app/api/v1/orgs/$ORG_ID/control-tokens" \
+  -H "Content-Type: application/json" \
+  --cookie "__session=..." \
+  -d '{"label": "status-dashboard", "expires_in_days": 30}'
+```
+
+- **Lifetime:** 90 days by default; `expires_in_days` accepts 1 to 180.
+- **Minting** needs a browser session, and is limited to 20 per member per
+  organisation per hour.
+- **The secret** is in the mint response once.
+- **List and revoke** with `GET` and `DELETE /v1/orgs/{org_id}/control-tokens`.
+
+The console does not show control-plane tokens under **Settings**; they are
+managed through the API and `remember login --control-plane`.
+
+### Use it from Python
+
+`remember.CloudClient` reads status with a control-plane token. It reads
+`REMEMBER_CLOUD_TOKEN`, `REMEMBER_CLOUD_ORG` and, optionally,
+`REMEMBER_CLOUD_URL` (default `https://remember.dev/app/api`):
+
+```python
+from remember import CloudClient
+
+with CloudClient.from_env() as cloud:
+    status = cloud.billing_status()
+    deployment = cloud.deployment()
+    print(status.state, status.balance)
+    if deployment is not None:
+        print(deployment.state, deployment.hostname)
+```
+
+The `remember-status` command prints the same summary and exits `0` when
+the deployment is ready, billing can spend and the spend gate allows work,
+`1` otherwise and `2` on an error:
+
+```bash
+REMEMBER_CLOUD_TOKEN=umc_cp_... REMEMBER_CLOUD_ORG=<org-id> remember-status
+```
+
+## Browser sign-in
+
+You sign in to the console at `https://remember.dev/app` with:
+
+- **Email and password.** Passwords need at least 8 characters with an
+  upper-case letter, a lower-case letter and a digit. You must verify your
+  email address before you can use the console; the verification link is
+  valid for 48 hours. A password reset link is valid for 2 hours.
+- **Google.** Sign in with a Google account.
+
+The session is an HTTP-only cookie. **Settings → Security → Log out** signs
+out and ends your sessions on every device.
+
+When the console shows your memory, it asks the account API for a
+short-lived, read-only credential for that one deployment (10 minutes; 3
+minutes and upload-only when you upload a file) and calls the deployment
+directly. Signing out does not reach those credentials; they expire on
+their own.
+
+## The credential file
+
+`remember login` writes `credentials.json` to:
+
+1. the directory in `REMEMBER_CONFIG_DIR`, if set;
+2. otherwise `$XDG_CONFIG_HOME/remember/`, or `~/.config/remember/`.
+
+If no file exists there but one exists in the older `rememberstack`
+directory beside it, the CLI uses that one.
+
+The file is created with mode `0600` in a `0700` directory. The CLI refuses
+to read it if it is readable by group or others, or if it is a symbolic
+link.
+
+The file can hold several projects, one of them active, plus a
+control-plane token. `remember switch <project>` changes the active one;
+`remember whoami` shows what is active.
+
+### Which credential the CLI uses
+
+For each request the CLI takes the endpoint and the token from the first
+place that has them:
+
+1. `--url` / `--api-url` and `--token` flags;
+2. environment: `REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_URL` or
+   `REMEMBERSTACK_API_URL` for the endpoint, and `REMEMBER_TOKEN`,
+   `REMEMBER_API_AUTHORIZATION` or `REMEMBERSTACK_API_AUTHORIZATION` for the
+   token;
+3. the credential file's active project.
+
+When you point the CLI at a different host with a flag or variable, it does
+not send the stored token there.
+
+The Python client does not read the credential file. Give it the endpoint
+and token through `REMEMBER_API_URL` and `REMEMBER_API_KEY`, or pass them to
+`remember.Client`. See the [Python SDK reference](../reference/python-sdk.md).
+
+## Keep tokens safe
+
+- Put a token in an environment variable or a secret store, never in code
+  or a committed file.
+- Mint one token per machine or job, with a label that names it, so you can
+  revoke one without breaking the others.
+- Do not paste a token into an agent's chat. Connect agents with
+  [hosted MCP](hosted-mcp.md), which never shows them a token.
+- If a token leaks, revoke it first, then mint a replacement.
+
+More in [Data handling and security](data-and-security.md).

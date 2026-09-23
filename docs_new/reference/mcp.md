@@ -1,0 +1,558 @@
+---
+title: MCP tools
+description: The remember mcp server and the hosted remember.dev MCP server, every tool with its parameters, results and errors.
+applies_to: [remember.dev, self-hosted]
+---
+
+# MCP tools
+
+MCP (Model Context Protocol) is how coding agents call external tools. There
+are two MCP servers that give an agent access to your memory:
+
+- **`remember mcp`**, a server that runs on your machine next to the agent.
+  It is part of the `remember` package and talks to one deployment: a
+  self-hosted engine or a remember.dev project.
+- **The hosted server** at `https://remember.dev/app/api/mcp`. remember.dev
+  runs it; the agent signs in through the browser.
+
+The tables in [Side by side](#side-by-side) show how the two differ. How to
+connect an agent step by step: [Connect your coding agent](../start/connect-your-agent.md).
+
+## `remember mcp`
+
+```bash
+remember mcp [--read-only] [--api-url URL] [--token TOKEN]
+```
+
+The server reads JSON-RPC 2.0 messages from standard input, one per line,
+and writes one response per line to standard output. It finds the
+deployment and token the same way as every other `remember` command: flags,
+then environment variables, then the credential file that `remember login`
+writes. See [CLI: How the CLI finds your deployment](cli.md#how-the-cli-finds-your-deployment).
+
+`--read-only` leaves out the `ingest` and `pipeline_readiness` tools and
+refuses calls to them.
+
+### Protocol
+
+| Method | Behaviour |
+|---|---|
+| `initialize` | Requires `params.protocolVersion` (any string). Answers with `protocolVersion` `2025-11-25`, `capabilities: {"tools": {}}` and `serverInfo: {"name": "rememberstack", "version": "<package version>"}`. |
+| `ping` | Answers `{}`. |
+| `tools/list` | Returns the tool list; see below. |
+| `tools/call` | Runs one tool. `params.name` is required; `params.arguments` must be an object when present. |
+| Notifications (no `id`) | Accepted; no response. |
+| Anything else | Error `-32601`. |
+
+JSON-RPC error codes: `-32700` for a line that is not JSON, `-32600` for a
+message that is not a valid request, `-32602` for bad `initialize` or
+`tools/call` parameters, `-32603` for a failure while building the answer
+(for example `tools/list` when the deployment cannot be reached or rejects
+the token).
+
+The server offers tools only: no resources and no prompts.
+
+### How `tools/list` is built
+
+Every `tools/list` call asks the deployment what it serves and returns, in
+this order:
+
+1. `ingest` and `pipeline_readiness`, unless `--read-only` is set.
+2. The assured operations the deployment lists at `GET /operations`:
+   `resolve_entity`, `claims_and_sources_context`, `facts_context`,
+   `combined_context`. Their input schemas come from the deployment. If
+   the deployment answers `404` there, this group is empty. Any other
+   failure (unreachable, `401`, `403`) makes `tools/list` fail with `-32603`,
+   so a wrong token never looks like an empty tool list.
+3. The seven SQL query tools, only when `GET /query/space` answers with the
+   `memory_v1` query space (schema `memory_v1`, major version 1 and a
+   64-character manifest hash). Any error or other answer leaves them out.
+
+A full server therefore lists 13 tools: 2 + 4 + 7.
+
+### Results
+
+Every `tools/call` result has this shape:
+
+```json
+{
+  "content": [{"type": "text", "text": "<JSON>"}],
+  "isError": false
+}
+```
+
+The text is a JSON document: the tool's result on success, an error object
+when `isError` is `true`. The error object differs by tool group; see
+[Errors](#errors).
+
+### `ingest`
+
+Stores one document. Returns as soon as the bytes are stored; processing
+takes minutes. Call `pipeline_readiness` before expecting the content in
+results.
+
+Give exactly one body: `text`, `content_base64` or `path`.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: `text/plain`. |
+| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: `application/octet-stream`. |
+| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: guessed from the file's real name. |
+| `filename` | string | with `text` or `content_base64` | 1–512 characters. |
+| `mime` | string | no | 1–255 characters. The engine processes only media types it has a converter for; see [File formats and converters](../self-hosting/converters.md). |
+| `title` | string | no | At most 512 characters. |
+| `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
+| `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
+| `versioning_mode` | `"snapshot"` or `"living"` | no | Default `"snapshot"`. `"living"` needs `source_kind`/`source_ref`. |
+| `source_modified_at` | string | no | ISO 8601 timestamp in UTC (`Z` or `+00:00`). Needs `source_kind`/`source_ref`. |
+| `source_version_ref` | string | no | 1–512 characters. Needs `source_kind`/`source_ref`. |
+
+Unknown keys are refused. The input schema enforces the one-body rule with
+`oneOf`.
+
+Success result:
+
+```json
+{
+  "deployment_id": "…",
+  "doc_id": "…",
+  "version_id": "…",
+  "content_hash": "…",
+  "created": true,
+  "pipeline": {
+    "status": "accepted_not_ready",
+    "next_tool": "pipeline_readiness",
+    "poll_with": {
+      "version_ids": ["…"],
+      "require": {"pipeline": true, "p1": true, "live_graph": true, "p3": false}
+    },
+    "guidance": "Ingest accepted. Wait until pipeline_readiness.ready is true …"
+  }
+}
+```
+
+`created: false` means these exact bytes were already stored; no new
+processing starts, and one readiness check tells the agent whether the
+content is already available.
+
+The server does not check body size itself. The deployment refuses a body
+over its limit, and the tool returns `body_too_large`. remember.dev's limit is
+in [Limits](../cloud/limits.md).
+
+#### Ingest from a path
+
+The `path` body is off by default. To allow it, list the directories the
+server may read:
+
+```bash
+export REMEMBERSTACK_MCP_INGEST_ROOTS='["/home/ravi/notes", "/srv/specs"]'
+# or: REMEMBERSTACK_MCP_INGEST_ROOTS=/home/ravi/notes,/srv/specs
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty: `path` refused | A JSON array or a comma-separated list of directories. |
+| `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` (256 MiB) | The largest file the server reads from a path. It protects the server process; it is not the deployment's upload limit. |
+
+Rules for a path:
+
+- `~` is expanded and the path is resolved fully, following symbolic links.
+  The result must be inside a listed directory (`path_not_allowed`).
+- The target must exist and be readable (`path_unreadable`).
+- It must be a regular file, not a directory, pipe or device
+  (`path_not_regular_file`).
+- Its size is checked before and while reading (`path_too_large`).
+
+The path is read on the machine running `remember mcp`, never on the engine
+host.
+
+### `pipeline_readiness`
+
+Checks whether ingested versions are processed and ready to be found.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `version_ids` | array of strings | yes | 1–1,000 version UUIDs from `ingest`. |
+| `require` | object | yes | Exactly four booleans: `pipeline`, `p1`, `live_graph`, `p3`. For ordinary use: `pipeline`, `p1` and `live_graph` true, `p3` false. |
+
+The result is the readiness report: `ready`, `versions` (each with `stages`
+and their `status`), `capabilities`, `model_bindings`, `build_revision`,
+`document_binding_generation`. Field detail:
+[Result types](result-types.md).
+
+The tool description tells the agent how to poll: wait about 30 seconds after
+ingest, then every 30–60 seconds; stop at once when a stage is `failed` or
+`dead_letter`; stop and report after 20–30 minutes without `ready`. See
+[The pipeline and readiness](../concepts/pipeline.md).
+
+### Assured operations
+
+These four tools are the deployment's assured operations. Their input
+schemas are served by the deployment; the tables below are what a v0.17.0
+engine serves. Behaviour and results: [Assured operations](assured-operations.md).
+
+#### `resolve_entity`
+
+Resolves a name to ranked candidate entities; never guesses silently.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `name` | string | yes | At least 1 character. |
+
+#### `claims_and_sources_context`
+
+What sources said: current claims and the source passages that confirm them.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `query` | string | yes | 1–8,192 characters. |
+| `entity_ids` | array of UUID strings | no | 1–20, unique. |
+| `k` | integer | no | 1–100; default 50. |
+| `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+
+#### `facts_context`
+
+What the memory holds true: relations and observations under a time scope,
+with a bounded look at the entities' neighbourhood.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `query` | string | yes | 1–8,192 characters. |
+| `entity_ids` | array of UUID strings | no | 1–19, unique. |
+| `k` | integer | no | 1–30; default 15. |
+| `evidence_per_fact` | integer | no | 1–5; default 3. |
+| `hops` | integer | no | 1–2; default 1. |
+| `predicate` | string | no | 1–200 characters. |
+| `time` | object | no | Default `{"mode": "current"}`. See below. |
+
+`time` is one of:
+
+```json
+{"mode": "current"}
+{"mode": "at", "at": "2026-09-01T00:00:00Z"}
+{"mode": "overlap", "from": "2026-07-01T00:00:00Z", "to": "2026-09-30T23:59:59Z"}
+{"mode": "history"}
+```
+
+Timestamps are ISO 8601 date-times. What each mode means: [Time](../concepts/time.md).
+
+#### `combined_context`
+
+Both of the above in one call, returned as `ContextBundle/v2`.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `query` | string | yes | 1–8,192 characters. |
+| `entity_ids` | array of UUID strings | no | 1–19, unique. |
+| `hops` | integer | no | 1–2; default 1. |
+| `predicate` | string | no | 1–200 characters. |
+| `time` | object | no | As in `facts_context`. |
+
+For every operation, unknown keys are refused, and integers must be whole
+numbers.
+
+### SQL query tools
+
+SQL queries run over the query space (`memory_v1`): prepared, read-only views
+and functions. The engine parses every statement and validates it against
+the query space before it runs; anything outside it is rejected. See
+[Query space memory_v1](query-space.md).
+
+All seven tools refuse unknown keys, wrong types (including `null` for a
+string field), booleans in place of integers, and out-of-range numbers.
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `query_sql` | `sql` (string, required); `parameters` (array of values for `$1`, `$2`, …); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+| `explain_sql` | `sql` (string, required); `parameters` (array) | `QueryResult/v1` with the plan; the statement does not run |
+| `describe_query_space` | `pattern` (string, shell-style filter over view names); `include_examples` (boolean, default false) | The query space description |
+| `search_query_space` | `query` (string, required); `k` (integer 1–25, default 10) | A list of `{kind, name, score, purpose, tags}`; searches the query space's own documentation, never your data |
+| `list_saved_queries` | `namespace` (identifier); `status` (string) | Saved-query summaries; without `status`, active versions only |
+| `describe_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1) | One saved query: SQL, parameters, declared columns, validation state |
+| `run_saved_query` | `namespace`, `name` (identifiers, required); `version` (integer ≥ 1); `parameters` (array); `max_rows` (integer ≥ 0) | `QueryResult/v1` |
+
+Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
+[Saved queries](../guides/saved-queries.md).
+
+### Errors
+
+Errors come back as a tool result with `isError: true`, so the agent can read
+them. The JSON inside depends on the tool group.
+
+**`ingest` and `pipeline_readiness`** return:
+
+```json
+{
+  "code": "path_not_allowed",
+  "message": "…",
+  "http_status": 400,
+  "retryable": false,
+  "agent_action": "Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. …",
+  "reason_code": "…",
+  "request_id": "…"
+}
+```
+
+`reason_code` and `request_id` appear only when known. `agent_action` tells
+the agent what to do next.
+
+| `code` | `http_status` | `retryable` | When | `agent_action` in short |
+|---|---|---|---|---|
+| `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
+| `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
+| `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
+| `empty_body` | 422 | no | The body is empty. | Send non-empty content. |
+| `path_not_allowed` | 400 | no | Path ingest is off, or the path is outside the listed directories, or contains a NUL byte. | Use `text`/`content_base64`, or ask the operator to set the roots. |
+| `path_unreadable` | 400 | no | The path does not exist or cannot be read. | Check the path on the machine running the server. |
+| `path_not_regular_file` | 400 | no | Directory, pipe, device or other special file. | Point at a regular file. |
+| `path_too_large` | 413 | no | Larger than the read limit. | Split the file or raise the limit. |
+| `body_too_large` | 413 | no | The deployment refused the body as too large. | Split or shorten the document. |
+| `spend_safety` | as sent, else 403 | no | remember.dev refused the work to stay within a spend cap. | Tell the user; do not retry. |
+| `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). | Tell the user; do not retry. |
+| `dispatch_parked` | 423 | no | The work is parked until someone acts (for example a purchase). | Stop retrying; notify a person. |
+| `unauthorized` | 401 | no | The token is missing, wrong or revoked. | Replace the token. |
+| `forbidden` | 403 | no | The token may not do this. | Use a token for this deployment with the right scope. |
+| `transport_error` | 0 | yes | No answer from the deployment. | Retry with back-off; check the address and network. |
+| `engine_client_error` | the 4xx status | no | Any other 4xx from the deployment. | Read the message and fix the call. |
+| `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. | Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
+| `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
+| `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
+
+With `--read-only`, a call to `ingest` or `pipeline_readiness` returns
+`isError: true` with the plain text
+`write tool 'ingest' is disabled on this read-only MCP server`.
+
+**Assured operations and SQL query tools** return:
+
+```json
+{"error": {"status_code": 422, "detail": "…", "code": "relation_not_allowed"}}
+```
+
+`status_code` is the deployment's HTTP status (`0` when no answer arrived,
+`null` when `remember mcp` refused the arguments before calling the
+deployment). `code` is present for SQL query failures; the codes are listed
+in [Errors and status codes](errors.md). A few argument errors come back as
+plain text instead of JSON.
+
+A `tools/call` for a name the server does not know is sent to the deployment
+as an operation and returns the deployment's error in this shape.
+
+## Configuration that `remember setup` writes
+
+[`remember setup`](cli.md#remember-setup) writes the files below. In each,
+`<launcher>` and `<args>` are one of:
+
+| Situation | `command` | `args` |
+|---|---|---|
+| A `remember` binary installed outside a virtual environment or cache | absolute path of `remember` | `["mcp"]` |
+| Otherwise, when `uvx` is installed | absolute path of `uvx` | `["remember", "mcp"]` |
+
+An `env` block is added only when there is an address to pin: with
+`--self-hosted` (default `http://localhost:8000`) or with `--url`. It holds
+exactly one variable, `REMEMBER_DATA_PLANE_URL`. Tokens are never written into
+these files; the server reads them from the credential file.
+
+Existing files are merged: other servers and settings are kept, and the
+`remember` entry is replaced.
+
+### Cursor
+
+`<project>/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "command": "/Users/ravi/.local/bin/remember",
+      "args": ["mcp"],
+      "env": {
+        "REMEMBER_DATA_PLANE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+It also writes a rule file, `<project>/.cursor/rules/remember.mdc`,
+replacing any earlier version:
+
+```markdown
+---
+description: Use Remember bitemporal memory for codebase facts, architecture, and past decisions
+globs: *
+alwaysApply: false
+---
+# Remember Memory Integration
+
+Before making architectural decisions, refactoring core subsystems, or answering
+questions about past codebase designs, consult Remember bitemporal memory via the
+available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`).
+
+## Retrieval Discipline
+1. **Resolve entities first:** Use `resolve_entity` to obtain canonical entity IDs for people, projects, modules, or concepts.
+2. **Query facts first:** Use `facts_context` (with `time.mode="history"` for historical context or achievements) as the primary authority for adjudicated truth.
+3. **Fall back to claims only when needed:** Use `claims_and_sources_context` if facts are missing or verbatim source text is required.
+4. **Use `query_sql`** to run sandboxed SQL against `facts_current` or `graph_edges_current`.
+
+## Temporal Semantics
+- `valid_from` / `valid_until`: When the fact was true in the real world. Granularity is given by `valid_precision` (`instant`, `day`, `month`, `quarter`, `year`, `open`, `unknown`). `open` indicates an ongoing state with a known start date and no recorded end date.
+- `asserted_at`: Strictly when the source made the statement (message sent / page published). Unresolved relative phrases in claim text (e.g. "last week", "yesterday") are relative to `asserted_at`. Never confuse speech time (`asserted_at`) with event validity (`valid_from`/`valid_until`).
+- Check past decisions and bitemporal validity before asserting assumptions.
+- Never guess historical rationale when it is recorded in Remember.
+```
+
+### Claude Code
+
+`remember setup` runs Claude Code's own command:
+
+```bash
+claude mcp add remember -e REMEMBER_DATA_PLANE_URL=http://localhost:8000 -- /Users/ravi/.local/bin/remember mcp
+```
+
+The `-e` part appears only when an address is pinned. Claude Code decides
+where it stores the entry. When `claude` is not on `PATH`, `remember setup`
+prints this command for you to run.
+
+### Claude Desktop
+
+The same JSON as for Cursor (the `mcpServers.remember` entry, no rule file),
+merged into Claude Desktop's configuration file:
+
+| System | File |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux | `$XDG_CONFIG_HOME/Claude/claude_desktop_config.json`, default `~/.config/Claude/claude_desktop_config.json` |
+
+Restart Claude Desktop after the change.
+
+### Codex
+
+`<project>/.codex/config.toml`:
+
+```toml
+[mcp_servers.remember]
+command = "/Users/ravi/.local/bin/remember"
+args = ["mcp"]
+
+[mcp_servers.remember.env]
+REMEMBER_DATA_PLANE_URL = "http://localhost:8000"
+```
+
+Any earlier `[mcp_servers.remember]` and `[mcp_servers.remember.*]` tables
+are removed first; the rest of the file is kept. Codex loads a project's
+`.codex/config.toml` only when you trust the project in Codex.
+
+### Antigravity
+
+`<project>/.agents/mcp_config.json`, with the same `mcpServers.remember`
+entry as Cursor, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
+replacing any earlier version:
+
+```markdown
+---
+name: remember
+description: Open bitemporal memory infrastructure for AI agents. Use when looking up past decisions, system architecture, factual evidence, or attested codebase knowledge.
+---
+
+# Remember Bitemporal Memory Skill
+
+You have access to Remember, an open bitemporal memory infrastructure for AI agents.
+Use the Remember MCP tools (`facts_context`, `combined_context`, `claims_and_sources_context`, `resolve_entity`, `query_sql`, `describe_query_space`)
+to query past system decisions, architectural records, and entity-relationship knowledge graphs.
+
+## Preferred Retrieval Flow
+1. **Entity resolution first (`resolve_entity`)**: When an inquiry involves a named person, organization, module, file, or concept, resolve it first with `resolve_entity` to obtain the canonical `entity_id`.
+2. **Fact layer first (`facts_context`)**: Query `facts_context` (anchored by `entity_ids` when available, or by semantic text query) as the primary authority for established facts, biography, attributes, relationships, and history.
+   - Use `time.mode="history"` for biography, achievements, and "has ever" questions so historical and completed facts remain visible.
+   - Use `time.mode="current"` or `"at"` for what holds at an instant, and `"overlap"` for a requested interval.
+3. **Sources fallback (`claims_and_sources_context`)**: Only fall back to `claims_and_sources_context` if `facts_context` lacks the answer, or if the inquiry specifically demands verbatim quotes, speaker dialogue details, or raw source context.
+4. **Combined context (`combined_context`)**: Use when both adjudicated facts and source claims are needed side by side.
+
+## Dates and Temporal Semantics
+Do not collapse distinct temporal dimensions into a single generic date:
+
+- **Facts carry `validity` with `valid_from`, `valid_until`, and `valid_precision`:**
+  - `valid_from` / `valid_until`: Real-world event or state validity ("When did this happen or hold true in the world?"). Answer event-time questions using these bounds.
+  - `valid_precision`: The granularity of the validity window (`instant`, `day`, `month`, `quarter`, `year`, `open`, or `unknown`).
+  - `open`: Represents an ongoing state with a known start date and no recorded end date (still true/current).
+  - `unknown`: No usable real-world date was given in the source. Undated facts are clean prose without temporal bracket annotations.
+- **Evidence rows (claims) carry `asserted_at`:**
+  - `asserted_at`: Strictly **when the source made this statement** (when the message was sent, conversation occurred, or page was published).
+  - Unresolved relative phrases: If claim text still contains a relative phrase (*"last week"*, *"yesterday"*, *"two months ago"*), evaluate it relative to that row's `asserted_at`.
+  - **Never confuse speech time (`asserted_at`) with real-world event validity (`valid_from` / `valid_until`).**
+- **System transaction timestamps (`ingested_at`, `invalidated_at`):**
+  - Record when the database learned or superseded the record. Never present system ingestion time as an event or conversation date.
+```
+
+`remember doctor` checks the Cursor, Antigravity, Codex and Claude Desktop
+files; see [CLI](cli.md#remember-doctor).
+
+## The hosted server on remember.dev
+
+```text
+https://remember.dev/app/api/mcp
+```
+
+You add this URL to your agent. On first use the agent opens a browser; you
+sign in to remember.dev and pick one project. The agent then works with that
+project until you connect again. No token goes into the agent's
+configuration. Setup per client: [Hosted MCP](../cloud/hosted-mcp.md).
+
+How sign-in works, for clients that need the details:
+
+| Item | Value |
+|---|---|
+| Transport | HTTP `POST` of one JSON-RPC message to the URL; the answer is one JSON body. |
+| Authorization | OAuth 2.1 authorization code with PKCE (`S256` only). |
+| Discovery | `https://remember.dev/app/api/.well-known/oauth-protected-resource` and `https://remember.dev/app/api/.well-known/oauth-authorization-server`. An unauthenticated request gets `401` with a `WWW-Authenticate` header pointing at the first. |
+| Client registration | Dynamic, at `https://remember.dev/app/api/oauth/register`. Redirect URIs must be `https`, or `http` on `localhost`/`127.0.0.1`. |
+| Scope | `remember.mcp` |
+| Access token | Valid for 1 hour. |
+| Refresh token | Valid for 30 days. |
+| Project choice | A consent page lists the projects of every organisation you are an active member of; you pick one. |
+
+The hosted server lists six tools:
+
+| Tool | What it does | Arguments |
+|---|---|---|
+| `ingest` | Stores a note in the chosen project. | Only `text` and `filename` are used. `filename` defaults to `note.md`; the note is always stored as `text/markdown`. Other `ingest` arguments are ignored. |
+| `pipeline_readiness` | Checks processing, as above. | `version_ids`, `require`, as above. |
+| `resolve_entity` | As above. | As above. |
+| `testimony_context` | The project engine's claims-and-sources operation. | Passed unchanged to the engine. |
+| `fact_context` | The project engine's facts operation. | Passed unchanged to the engine. |
+| `answer_context` | The project engine's combined operation. | Passed unchanged to the engine. |
+
+The last three tools carry the operation names of engine v0.16.0, which
+remember.dev runs today. On v0.17.0 these operations are named
+`claims_and_sources_context`, `facts_context` and `combined_context`. See
+[What remember.dev serves](../cloud/compatibility.md).
+
+The hosted server publishes no input schemas: each tool accepts any object.
+It does not answer `ping`.
+
+## Side by side
+
+| | `remember mcp` | Hosted server |
+|---|---|---|
+| Runs | On your machine, started by the agent | On remember.dev |
+| Works with | A self-hosted engine or a remember.dev project | remember.dev projects |
+| Transport | stdio, one JSON-RPC message per line | HTTP `POST`, one JSON-RPC message per request |
+| Protocol version answered | `2025-11-25` | `2025-11-25` |
+| Sign-in | Token from flags, environment or the credential file | OAuth in the browser; you pick a project |
+| Where the token lives | Credential file (`remember login` or `remember setup --token`) | With the agent's OAuth client; access 1 hour, refresh 30 days |
+| Configure with | `remember setup` | The agent's "add remote MCP server" setting |
+| `ingest` bodies | `text`, `content_base64`, `path` | `text` only, stored as Markdown |
+| `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
+| `pipeline_readiness` | Yes | Yes |
+| Assured operations | The four the deployment lists, with its names and schemas | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
+| SQL query tools | Seven, when the deployment serves the query space | Not yet |
+| Input schemas | Full JSON Schemas | None (any object) |
+| Read-only mode | `--read-only` | No |
+| Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
+| Tool count | Up to 13 | 6 |
+
+remember.dev serves SQL queries over the query space to every project; the
+hosted MCP server does not expose the seven SQL query tools yet. Until it
+does, an agent that needs them can use `remember mcp` with the project's
+token.

@@ -1,0 +1,200 @@
+---
+title: "Claims: what a source said"
+description: How RememberStack turns documents into standalone, source-grounded statements, what it leaves out, and why a claim never changes.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Claims: what a source said
+
+Most memory systems hand your agent a text chunk and let the model work out
+what it means. The chunk says "he agreed to move it to June". Who agreed?
+Move what? Which June? The agent guesses, or asks you again.
+
+RememberStack does that reading once, at write time. It turns each document
+into **claims**: short statements that stand on their own, each tied to the
+exact characters of the source that support it. A claim records *what a
+source said*, not whether it is true. Deciding what is true is the job of
+[facts](facts.md).
+
+## What a claim is
+
+A claim is one coherent assertion from one document version, rewritten so a
+reader needs no surrounding context. From a meeting transcript dated
+2026-03-04:
+
+> **Ravi:** Dana and I agreed yesterday to move the cutover to June 8.
+
+RememberStack might store:
+
+| Field | Value |
+|---|---|
+| `claim_text` | `Ravi said that Dana and Ravi agreed on 2026-03-03 to move the billing migration cutover to June 8.` |
+| `source_span` | `Dana and I agreed yesterday to move the cutover to June 8.` |
+| `is_attributed` | `true` |
+| `asserted_at` | `2026-03-04T15:00:00Z` |
+
+The claim resolves pronouns ("I" becomes Ravi), partial references ("the
+cutover" becomes the billing migration cutover, when the document says so)
+and relative dates ("yesterday" becomes 2026-03-03 when the document carries a
+date). The original wording is kept in `source_span`.
+
+A claim keeps an assertion together even when its support spans several
+sentences, and keeps apart things that differ: independently dated events,
+statements by different speakers, and propositions that sound alike but are
+not. "Ravi finished the migration", "Ravi worked on the migration" and "Ravi
+enjoyed the migration" are three different claims.
+
+Every claim carries:
+
+- `claim_id`, `doc_id` and `chunk_id` (the passage it came from),
+- `claim_text` and `source_span`,
+- `char_start` and `char_end`, the origin span in the version's converted
+  text, and `evidence_spans`, every span that supports it (see
+  [Evidence](evidence.md)),
+- `is_attributed` (see [below](#attributed-claims)),
+- `asserted_at`, when the source said it,
+- `claim_valid_from`, `claim_valid_until`, `claim_valid_precision` and
+  `claim_valid_kind`, when the claim says it happened or was true (see
+  [Time](time.md)),
+- `is_current_testimony` (see [below](#current-and-superseded-testimony)).
+
+## How claims are made
+
+Extraction runs two model calls per chunk, in two pipeline stages.
+
+### 1. Selection: what is worth keeping
+
+The first call, **Selection**, reads a chunk with its surrounding context
+and judges every statement in it. Each candidate gets exactly one outcome:
+`keep`, `keep_flagged` (kept, but marked borderline), or a drop with a named
+reason. The drop reasons are a fixed list:
+
+| Reason | What it drops |
+|---|---|
+| `opinion` | An unattributed opinion ("this approach is cleaner"). |
+| `advice` | Advice or recommendations ("you should back up first"). |
+| `hypothetical` | Hypotheticals ("if we delayed, costs would rise"). |
+| `generic` | Generic truisms ("migrations are risky"). |
+| `question` | Questions. |
+| `intro` | Section introductions ("this section covers…"). |
+| `conclusion` | Section conclusions and wrap-ups. |
+| `no_info` | Statements that say nothing is known ("we don't know yet"). |
+| `ambiguous` | Statements whose meaning the source leaves open. |
+| `references_boilerplate` | Reference lists and boilerplate. |
+
+Selection keeps specific, checkable assertions about events, states,
+decisions, quantities, policies and relationships, including quantities,
+dates and changes of state phrased as opinions. When unsure, it prefers
+`keep_flagged` to a drop.
+
+An opinion **with a holder** is kept. "Dana thinks the June date is too
+tight" is a claim about Dana's stance, not an assertion that the date is too
+tight.
+
+Selection also notes the people, companies, works and events the chunk
+introduces, so later chunks of the same document can refer back to them.
+
+### 2. Claimify: make each statement stand alone
+
+The second call, **Claimify**, rewrites each kept statement into a standalone
+claim (decontextualise), splits unrelated assertions apart (decompose), and
+cites the passages that support it. It may only use the document itself:
+the header, the target chunk, permitted neighbouring passages and the quoted
+passages of earlier references. It never uses outside knowledge. If the
+source leaves several readings possible, the candidate is omitted.
+
+Every piece of text Claimify adds from outside the target chunk is listed in
+the claim's `added_context`, tagged with where it came from.
+
+### 3. The grounding gate: no text without a source
+
+Before a claim is stored, a deterministic check (no model involved) verifies
+it:
+
+- Every cited passage must exist. The first, the origin, must lie in the
+  target chunk and overlap a statement Selection kept.
+- Every word Claimify added must occur in the document's permitted context.
+  Numbers get no exception, except an ISO date the claim itself resolved and
+  also recorded in its structured time fields.
+
+A claim that fails is not stored. RememberStack does not ask the model to
+try again; it drops the candidate and records why.
+
+The model also returns its own judgement of whether the source supports the
+whole claim (`entailment_self_verdict`). It is stored for audit but does not
+decide anything: a matching word is not proof of meaning, and the engine
+does not pretend otherwise.
+
+## The audit ledger
+
+Every decision along the way is written to an append-only ledger, one row
+per decision:
+
+| Decision type | Recorded when |
+|---|---|
+| `selection_drop` | Selection dropped a statement (with its reason). |
+| `selection_keep_flagged` | Selection kept a borderline statement. |
+| `decontext_edit` | Claimify added context to a statement. |
+| `claimify_omitted` | Claimify left out a kept statement. |
+| `grounding_rejected` | The grounding gate refused a claim (with the check that failed). |
+
+So "why is this sentence not in memory?" has a recorded answer. The
+ledger lives in the deployment's PostgreSQL database. It is not yet exposed
+through the HTTP API, the SDK or the `memory_v1` query space.
+
+## Claims never change
+
+A claim is immutable. Nothing edits its text, its dates or its source after
+it is written. If a later source contradicts it, that is a new claim from a
+new source. If the extractor improves and reads the same file differently,
+that produces new claims, and the old ones remain as history.
+
+This is what keeps provenance honest. A claim is testimony: this
+source, in this version, said this. Belief can change; testimony does not.
+The part that changes when evidence changes is the [fact](facts.md).
+
+When a new version of a document keeps a passage unchanged, RememberStack
+does not extract it again: the unchanged passage keeps its existing claims,
+with the same `claim_id`. The cost of a new version grows with the size of
+the edit, not the size of the document.
+
+## Attributed claims
+
+`is_attributed` is `true` when the claim records someone's statement or
+stance rather than asserting something directly: "Ravi said the cutover
+moved", "Dana believes June is too tight".
+
+Attribution is never dropped. "Ravi said he finished the migration" does not
+become "Ravi finished the migration". When the claim becomes a fact, an
+attributed claim becomes an observation about the speaker's stance, not a
+fact about the subject (see [Facts](facts.md#observations)).
+
+## Current and superseded testimony
+
+`is_current_testimony` says whether a claim still counts as what its source
+currently says. It starts `true`. It becomes `false` when:
+
+| Reason | What happened |
+|---|---|
+| `reextracted` | A newer extractor processed the same file; its claims replace these. |
+| `version_superseded` | In `living` mode, a new version of the document no longer contains this passage. |
+| `version_deleted` | The version was deleted. |
+
+A fourth reason, `review_restored`, returns a claim to current testimony.
+
+Currency is bookkeeping, not truth. A non-current claim still exists, can
+still be read for audit, and still says what it said. What changes is that it
+no longer counts as support for a fact. In `snapshot` mode (the default) a
+new version flips nothing: every version stays standing testimony. See
+[Updating a source](updating-sources.md).
+
+The assured operations return current testimony only. Historical claims are
+visible through the `memory_v1` query space (`claims_visible_history`) for
+audit.
+
+## Where to go next
+
+- [Facts](facts.md): how claims become what memory holds true.
+- [Evidence](evidence.md): how a claim points back to the source text.
+- [Time](time.md): the dates a claim carries.
+- [Cite the source of an answer](../guides/cite-sources.md).

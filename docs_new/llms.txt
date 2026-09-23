@@ -1,0 +1,97 @@
+# RememberStack and remember.dev
+
+> RememberStack is an open-source memory engine for AI agents. It keeps what each source said (claims), what is held true now (facts), when it was true, and the passage every answer came from. `remember` is its Python client, CLI and MCP server (`pip install remember`). remember.dev runs RememberStack for you, one isolated deployment per project.
+
+Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_context`, with `time` for history), then claims and sources (`claims_and_sources_context`), then SQL queries over the query space. When the memory reports it knows nothing, say so; do not guess.
+
+## Start
+
+- [Why RememberStack](index.md): Memory for AI agents that keeps what each source said, what is true now, and when, with the path back to the source.
+- [A five-minute tour](start/how-it-works.md): What happens to a document from the moment you send it to the moment your agent asks about it.
+- [remember.dev or self-hosted?](start/choose.md): The same engine either way. What changes is who runs it.
+- [Quickstart](start/quickstart.md): Send a document to RememberStack and ask your first question.
+- [Connect your coding agent](start/connect-your-agent.md): Give Claude Code, Cursor, Codex, Antigravity or Claude Desktop access to your memory over MCP.
+
+## Concepts
+
+- [Documents, versions and sources](concepts/documents-and-sources.md): How RememberStack identifies a file, keeps every version of it, and knows where it came from and when it was written.
+- [Claims: what a source said](concepts/claims.md): How RememberStack turns documents into standalone, source-grounded statements, what it leaves out, and why a claim never changes.
+- [Facts: what is held true](concepts/facts.md): How RememberStack combines claims from many sources into relations and observations, keeps them current, and counts their support.
+- [Entities and identity](concepts/entities.md): How RememberStack decides that two mentions are the same person, project or thing, and why a query never guesses between two.
+- [Time](concepts/time.md): How RememberStack records when something was true, when a source said it, and when the memory learned it, and how you ask about any of the three.
+- [Evidence and provenance](concepts/evidence.md): How every fact and claim in RememberStack points back to exact characters in a specific version of a source, and how to follow that path.
+- [Contradictions, corroboration and supersession](concepts/contradictions.md): How RememberStack shows disagreement between sources instead of hiding it, how it counts independent support, and how it tells a change from a conflict.
+- [Updating a source: snapshot and living](concepts/updating-sources.md): What a new version of a document means to RememberStack, and how a living source retracts facts when its content is removed.
+- [The pipeline and readiness](concepts/pipeline.md): What happens to a document between ingest and recall, stage by stage, how long it takes, and how to know when it can be queried.
+- [Retrieval: operations, search, graph and SQL](concepts/retrieval.md): The ways to read from RememberStack, from four assured operations for everyday agent context to search, graph traversal and SQL queries, and how hybrid retrieval works underneath.
+- [Reading a result](concepts/reading-results.md): The envelope every RememberStack read returns, field by field, with an annotated example, and the ContextBundle/v2 wrapper.
+
+## Guides
+
+- [Ingest files](guides/ingest-files.md): Send files and raw bytes to RememberStack, name them so later edits land in the same document, and load a whole folder.
+- [Ingest conversations and transcripts](guides/ingest-conversations.md): Turn chat sessions and meeting transcripts into documents RememberStack can date, attribute and cite turn by turn.
+- [Keep a source up to date](guides/keep-sources-current.md): Re-send an edited file as a new version of the same document, and choose what happens to facts that the new version no longer supports.
+- [Wait until a document is queryable](guides/wait-for-readiness.md): Poll readiness for the versions you ingested, with a timeout that fits real processing times, and stop on failures instead of waiting forever.
+- [Give an agent context](guides/agent-context.md): Pick the assured operation that fits the question, size it to your token budget, and put its result into a prompt without losing what it tells you.
+- [Ask about the past](guides/ask-about-the-past.md): Ask what was true at a date, during a period, or ever, what sources said at the time, and what the memory believed on an earlier day.
+- [Cite the source of an answer](guides/cite-sources.md): Follow a fact to the claims behind it, the document they came from and the exact passage, and show why the memory holds it.
+- [Handle unknowns and ambiguity](guides/unknowns-and-ambiguity.md): Tell "nothing known" from "no such thing" from "could not look", handle names that match more than one entity, and brief your agent so it never fills a gap by guessing.
+- [Explore memory with SQL](guides/sql.md): Discover the query space, write your first SQL query over current facts, combine search with joins, and read the limits and errors.
+- [Saved queries](guides/saved-queries.md): List, inspect and run the 18 SQL queries every deployment ships with, and understand when a saved query runs and when it refuses.
+- [Build a memory-backed agent](guides/build-an-agent.md): A complete project assistant that loads a folder of meeting notes into RememberStack and answers questions with checked citations.
+
+## remember.dev
+
+- [What remember.dev runs for you](cloud/overview.md): remember.dev runs a RememberStack deployment for each of your projects, so you send documents and ask questions without operating a database, a pipeline, model keys or TLS.
+- [Tokens and sign-in](cloud/tokens-and-sign-in.md): The credentials remember.dev issues, what each one can do, how long it lives, how to get it without copying secrets, and how to revoke it.
+- [Hosted MCP](cloud/hosted-mcp.md): Connect a coding agent to one remember.dev project over MCP with a browser sign-in instead of an API token, and what the hosted server offers.
+- [Pricing and credits](cloud/pricing.md): How remember.dev charges for an active project, for text it processes and for data it stores, how prepaid credits and holds work, and what is never charged.
+- [Spend caps and auto top-up](cloud/spend-controls.md): Set a monthly cap for the organisation and a sub-cap per project, understand exactly what stops when money or a cap runs out, and refill the balance automatically within a ceiling.
+- [Limits](cloud/limits.md): Every limit remember.dev enforces on ingest, storage, tokens, sign-in, projects and billing, with the error you get when you reach it.
+- [What remember.dev serves](cloud/compatibility.md): Which RememberStack version remember.dev runs, which deployment routes it serves, what differs from the version these docs describe, and how changes are announced.
+- [Data handling and security](cloud/data-and-security.md): Where remember.dev keeps your data, who and what can reach it, which outside services see it, what is recorded, and what remember.dev does not promise.
+- [Closing a project, deleting your account](cloud/leaving.md): How to close a remember.dev project and have its data deleted, how the 30-day cancel window works, how to delete your account, and what happens to unused credit.
+- [Support](cloud/support.md): How to reach remember.dev support, what to include so a problem can be traced, and what support can and cannot do today.
+- [Organisations, projects and members](cloud/organisations-and-projects.md): How remember.dev groups billing and people into an organisation, gives each project its own isolated deployment, and decides who can see and change what.
+
+## Self-hosting
+
+- [Requirements](self-hosting/requirements.md): What you need to run RememberStack yourself — PostgreSQL 19, S3-compatible storage, Docker, a model key — and what is not measured yet.
+- [Install with Docker Compose](self-hosting/install.md): Start a self-hosted RememberStack with Docker Compose, check that it is healthy, send a first document, and stop, restart or reset it.
+- [Configuration](self-hosting/configuration.md): How a self-hosted RememberStack reads its settings, which ones you need to change, and how to set the ones compose.yaml does not pass through.
+- [Models and providers](self-hosting/models.md): Which model each pipeline step uses, how to change it, how RememberStack routes calls through OpenRouter, and what changing the embedding model does.
+- [File formats and converters](self-hosting/converters.md): Which file types a self-hosted RememberStack accepts, how to route more types to converters, and what happens to a file no converter accepts.
+- [Authentication and scopes](self-hosting/authentication.md): Protect a self-hosted RememberStack API with a shared secret or signed tokens, understand read, ingest and write scopes, and allow browser origins.
+- [Scaling](self-hosting/scaling.md): The bounds a self-hosted RememberStack runs within — worker claim rates, replicas per stage, connection pools for retrieval and graph queries, and SQL query limits.
+- [Operating the pipeline](self-hosting/operating.md): Inspect a self-hosted RememberStack pipeline, replay failed work, release parked conversions, set spend budgets, and repair the graph catalog.
+- [Observability](self-hosting/observability.md): What a self-hosted RememberStack logs, how to send its errors to Sentry or a compatible service, and how to export what it spent on models.
+- [Upgrades and migrations](self-hosting/upgrades.md): Move a self-hosted RememberStack to a new release, understand what setup migrates, keep the deployment id stable, and back up the data yourself.
+- [Filesystem views](self-hosting/filesystem-views.md): Publish a self-hosted RememberStack memory as a read-only directory tree that an agent can browse with ls, cat and grep.
+
+## Reference
+
+- [HTTP API conventions](reference/http-api/index.md): Base URL, authentication, scopes, errors, limits and the other rules every RememberStack HTTP route follows.
+- [Ingest, readiness and documents](reference/http-api/ingest.md): The routes that add a document, report how far its processing has got, and list what the deployment holds.
+- [Assured operation routes](reference/http-api/operations.md): List the four assured operations and run one over JSON arguments.
+- [Entities and facts](reference/http-api/entities-and-facts.md): Resolve a name to entities, look up relations and observations, hydrate a relation down to its sources, and read a relation's decision history.
+- [Search and adjacent chunks](reference/http-api/search.md): Search claims and source chunks by meaning or by keyword, and fetch the chunks around one you found.
+- [Graph](reference/http-api/graph.md): Walk the live graph of entities and relations, find paths between two entities, and trace citation chains between documents.
+- [SQL queries](reference/http-api/query.md): Run a read-only SQL statement over the memory_v1 query space, inspect its plan, discover the query space, and run saved queries.
+- [Deployment info and health](reference/http-api/deployment.md): Check which code and models a deployment is serving, probe its health, and read its cost export.
+- [Assured operations](reference/assured-operations.md): The four fixed retrievals RememberStack guarantees, with every parameter, limit, default and result contract.
+- [Result types](reference/result-types.md): Every response model of the RememberStack HTTP API, field by field, with every enum value.
+- [Query space memory_v1](reference/query-space.md): Every view, column, function, grammar rule, limit and shipped saved query of the memory_v1 query space that SQL queries run over.
+- [Python SDK](reference/python-sdk.md): Every public class, method, setting and error in the remember Python package.
+- [CLI](reference/cli.md): Every remember command, flag, default, environment variable and exit code.
+- [MCP tools](reference/mcp.md): The remember mcp server and the hosted remember.dev MCP server, every tool with its parameters, results and errors.
+- [Configuration variables](reference/configuration.md): Every environment variable read by the RememberStack engine and by the remember client and CLI, with its default, type and purpose.
+- [Errors and status codes](reference/errors.md): Every HTTP status, error code and status value RememberStack and remember.dev return, what each means, and what to do about it.
+- [remember.dev API](reference/cloud-api.md): The remember.dev account API for sign-in, organisations, projects, tokens, device login, billing, usage, settings, support, offboarding and hosted MCP sign-in, with authentication and error shapes.
+
+## Project
+
+- [Benchmarks and how we measure](project/benchmarks.md): What LoCoMo and BEAM measure, how the RememberStack harness runs them, which numbers exist and for which protocol, and how to reproduce a run.
+- [Releases and changelog](project/changelog.md): What changed for users in each RememberStack release, newest first.
+- [What is not built yet](project/not-built-yet.md): Features RememberStack and remember.dev do not have today, each in one sentence.
+- [Glossary](project/glossary.md): Every term the RememberStack and remember.dev documentation uses, in one or two plain sentences, with a link to where it is explained.
+- [Contributing, license and trademarks](project/contributing.md): The license, the contributor agreement, the trademark policy, how to set up a development checkout and how the repository is laid out.

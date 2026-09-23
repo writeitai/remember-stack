@@ -1,0 +1,218 @@
+---
+title: Graph
+description: Walk the live graph of entities and relations, find paths between two entities, and trace citation chains between documents.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Graph
+
+The live graph is the set of current relations seen as edges between
+entities (the nodes). Three routes walk it: the neighbourhood of one entity,
+the shortest paths between two entities, and citation chains between two
+documents. They read PostgreSQL directly, inside one read-only snapshot, so
+every answer is consistent with itself.
+
+All three use `POST` because their arguments do not fit a query string. They
+only read and need the `read` scope. They carry no spend hold. Base URL,
+authentication and error shapes are described in
+[HTTP API conventions](index.md).
+
+## Bounds every traversal shares
+
+Each traversal runs under fixed budgets. When one is reached, the result says
+so in `truncation.reason` instead of stopping silently.
+
+| Budget | Value | `truncation.reason` when reached |
+|---|---|---|
+| Edges examined | 2,000 | `expansion_budget` |
+| Frontier size | 1,000 | `frontier_budget` |
+| Traversal time | 1,000 ms | `time_budget` |
+| Results | the route's limit | `result_budget` |
+| Statement timeout | 5 s | none: the request fails with `500` |
+
+Two traversals run at a time by default
+(`REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY`, default `2`). A request that
+cannot get a slot within the pool wait (default 1 second) is refused with
+`503` `live graph is busy`.
+
+### Time
+
+`valid_at` and `believed_at` are the two clocks of a bitemporal read: the
+instant in the world you ask about, and the instant of the memory's knowledge
+you ask from. Send both or neither. With neither, both are the time the
+request runs. The result's `temporal_scope` always has mode `as_of` and names
+both clocks. Send them in UTC (`Z` or `+00:00`). See
+[Time](../../concepts/time.md).
+
+## POST /graph/neighborhood
+
+Return the entities within a number of hops of one entity, nearest first,
+optionally with the path to each.
+
+### Request body
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `entity_id` | UUID | yes | | |
+| `hops` | integer | no | `2` | 1 to 4. |
+| `predicates` | array of string | no | `[]` (all) | At most 100 items, each 1 to 200 characters. Only edges with these predicates are followed. |
+| `valid_at` | date-time | no | now | Send with `believed_at`. |
+| `believed_at` | date-time | no | now | Send with `valid_at`. |
+| `limit` | integer | no | `500` | 1 to 500 entities per page. |
+| `continuation` | string | no | | The `truncation.continuation` from the previous page. At most 200 characters. |
+| `include_paths` | boolean | no | `false` | Also return one path to each entity. |
+
+Unknown fields are rejected.
+
+### Response
+
+`200` with an [`Envelope`](../result-types.md#envelope) of grain `fact`:
+
+- `nodes`: the entities reached ([`GraphNode`](../result-types.md#graphnode)),
+  each with its hop distance.
+- `paths` and `edges`: with `include_paths`, one
+  [`GraphPath`](../result-types.md#graphpath) per entity and the distinct
+  [`GraphEdge`](../result-types.md#graphedge) entries they use. Empty
+  otherwise.
+- `truncation`: always present. When more entities exist, `truncated` is
+  `true` and `continuation` holds the cursor for the next page.
+
+| Situation | Result |
+|---|---|
+| `entity_id` not in the live graph | `negative.kind` `unknown_entity` |
+| The entity exists but no neighbour matches | `negative.kind` `known_empty` |
+| `continuation` is not a cursor this route issued | `negative.kind` `boundary` |
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | Out-of-range `hops` or `limit`, too many or too long `predicates`, only one of `valid_at` and `believed_at`, or an unknown field. |
+| `503` | `live graph is busy` | No traversal slot was free in time. Retry. |
+| `503` | `live graph result unavailable` | The traversal and the rows it pointed at disagreed. Retry. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/graph/neighborhood" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"entity_id\": \"$BILLING_MIGRATION_ID\", \"hops\": 2, \"limit\": 100, \"include_paths\": true}"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+page = memory.graph_neighborhood(entity_id=billing_migration_id, hops=2, limit=100)
+while True:
+    for node in page.nodes:
+        print(node.hops, node.name)
+    if page.truncation is None or page.truncation.continuation is None:
+        break
+    page = memory.graph_neighborhood(
+        entity_id=billing_migration_id,
+        hops=2,
+        limit=100,
+        continuation=page.truncation.continuation,
+    )
+```
+
+## POST /graph/path
+
+Return the shortest paths between two entities. All returned paths have the
+same, shortest length.
+
+### Request body
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `from_entity_id` | UUID | yes | | |
+| `to_entity_id` | UUID | yes | | |
+| `max_hops` | integer | no | `4` | 1 to 6. |
+| `predicates` | array of string | no | `[]` (all) | At most 100 items, each 1 to 200 characters. |
+| `valid_at` | date-time | no | now | Send with `believed_at`. |
+| `believed_at` | date-time | no | now | Send with `valid_at`. |
+
+Unknown fields are rejected. At most 10 paths are returned.
+
+### Response
+
+`200` with an `Envelope` of grain `fact`. `paths` holds the paths, each whole:
+if any edge of a path no longer holds, the whole path is dropped rather than
+shortened. `nodes` and `edges` list the distinct entities and relations the
+paths use. `truncation` is always present.
+
+| Situation | Result |
+|---|---|
+| Either entity not in the live graph | `negative.kind` `unknown_entity` |
+| No path within `max_hops` | `negative.kind` `known_empty` |
+
+### Errors
+
+As for [`POST /graph/neighborhood`](#post-graphneighborhood).
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/graph/path" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"from_entity_id\": \"$DANA_ID\", \"to_entity_id\": \"$RAVI_ID\", \"max_hops\": 3}"
+```
+
+```python
+envelope = memory.graph_path(from_entity_id=dana_id, to_entity_id=ravi_id, max_hops=3)
+```
+
+## POST /graph/citation-path
+
+Return directed citation chains from one document to another: document A
+cites B, B cites C, and so on.
+
+### Request body
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `from_doc_id` | UUID | yes | | |
+| `to_doc_id` | UUID | yes | | |
+| `max_hops` | integer | no | `6` | 1 to 6. |
+
+Unknown fields are rejected. At most 10 paths are returned. This route takes
+no clocks; it reads the current document graph.
+
+### Response
+
+`200` with an `Envelope` of grain `fact`, shaped like a path result but over
+documents:
+
+- each `GraphNode` is a document: `entity_id` holds the document id and
+  `name` its title;
+- each `GraphEdge` is a citation: `relation_id` holds the cross-reference id,
+  `subject_id` and `object_id` the citing and cited documents, `predicate` the
+  kind of reference and `fact` its context text. `evidence_count` is `0` and
+  the validity fields are `null`.
+
+`temporal_scope.mode` is `current` when chains are found.
+
+| Situation | Result |
+|---|---|
+| Either document not live | `negative.kind` `unknown_entity` |
+| No chain within `max_hops` | `negative.kind` `known_empty` |
+
+### Errors
+
+As for [`POST /graph/neighborhood`](#post-graphneighborhood).
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/graph/citation-path" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"from_doc_id\": \"$SPEC_DOC_ID\", \"to_doc_id\": \"$RFC_DOC_ID\"}"
+```
+
+```python
+envelope = memory.graph_citation_path(from_doc_id=spec_doc_id, to_doc_id=rfc_doc_id)
+```

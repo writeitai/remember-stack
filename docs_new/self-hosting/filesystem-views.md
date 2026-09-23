@@ -1,0 +1,144 @@
+---
+title: Filesystem views
+description: Publish a self-hosted RememberStack memory as a read-only directory tree that an agent can browse with ls, cat and grep.
+applies_to: [self-hosted]
+---
+
+# Filesystem views
+
+Some agents work best with files. A filesystem view gives them one: a
+directory tree with a page per document and per entity, grouped by source,
+by month and by topic, with an index in every directory. An agent can
+`cat` the index, follow a path, and `grep` the tree without calling the
+API.
+
+The tree is generated from the database. It holds no information the
+memory does not, and it is a snapshot: it shows the memory as it was when
+you built it, until you build it again.
+
+## Build a snapshot
+
+```bash
+docker compose --profile operations run --rm projections
+```
+
+The `projections` service runs `project --plane p3`. It renders the whole
+tree, writes it to the `remember-corpusfs` bucket in MinIO under a new
+version, and marks that version as the latest. It prints a short report
+with the `snapshot_id`, the `version` and the number of `files`. Each run
+builds the tree from scratch.
+
+Nothing builds snapshots on a schedule. Run the command again, from cron or
+by hand, when you want the view to catch up.
+
+## Publish it to a directory
+
+`mounts` copies the latest snapshot out of MinIO into a directory:
+
+```bash
+mkdir -p "$PWD/memory-views"
+docker compose run --rm --no-deps \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-views:$PWD/memory-views" \
+  api mounts --root "$PWD/memory-views"
+```
+
+Mount the host directory at the **same path** inside the container, as
+above. `mounts` points the view at the snapshot with an absolute symbolic
+link, and a link created under a different path inside the container is
+broken on the host. `--user` makes the files yours rather than the
+container user's.
+
+The command prints where each view is:
+
+```json
+{"deployment_id": "…", "p3": "…/memory-views/<deployment-id>/p3", "artifacts": "…/artifacts", "raw": "…/raw", "knowledge": "…/knowledge", "read_only": true}
+```
+
+Publishing is atomic: `p3` is a link that switches from one complete
+snapshot directory to the next, so an agent reading the tree never sees a
+half-copied one. Old snapshot directories stay in place; delete them when
+you no longer need them.
+
+## The four views
+
+| View | Contents |
+|---|---|
+| `p3` | The corpus tree described below. |
+| `artifacts` | The converted Markdown and other artifacts, **if** you pass `--artifacts-root` pointing at a directory where the `remember-artifacts` bucket is mounted. Otherwise an empty directory. |
+| `raw` | The original files, **if** you pass `--raw-root` pointing at a directory where the `remember-raw` bucket is mounted. Otherwise an empty directory. Nothing in the corpus tree links into it: reaching an original means following the `raw_uri` in a document's page on purpose. |
+| `knowledge` | Reserved. Always an empty directory in this release. |
+
+`--raw-root` and `--artifacts-root` must be existing directories. They
+default to `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` and
+`REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT`. RememberStack does not mount
+buckets itself; use an S3 filesystem tool of your choice.
+
+## Layout of the corpus tree
+
+```text
+p3/
+├── _index.md              how to navigate; which paths are stable
+├── llms.txt               the facets and where things live
+├── documents/
+│   ├── _index.md          one row per document
+│   └── <doc_id>/_index.md one page per document
+├── entities/
+│   ├── _index.md          one row per entity
+│   └── <entity_id>/_index.md one page per entity, listing the documents that mention it
+├── by-source/<source_kind>/<title>-<doc_id>.md
+├── by-time/<yyyy>/<mm>/<title>-<doc_id>.md
+└── by-topic/<topic path>/<title>-<doc_id>.md
+```
+
+Every directory, including the intermediate ones, carries an `_index.md`
+listing what is in it with a one-line summary per entry, and an
+`llms.txt` for orientation. An agent reads one index to learn what a
+directory holds instead of opening every file.
+
+Paths come in two kinds:
+
+- **Stable paths:** `documents/<doc_id>/` and `entities/<entity_id>/`.
+  They are addressed by id and do not move between snapshots, including
+  when a document gets a new version. Store these.
+- **View paths:** everything under `by-source/`, `by-time/` and
+  `by-topic/`. They may be reorganised as the memory grows. Every page
+  there names its stable path in its front matter.
+
+A document appears in `by-source/` under its `source_kind`, in `by-time/`
+under the month of its `source_modified_at` (or its publication time), and
+in `by-topic/` when structuring proposed a topic path for it. A directory
+with more than 150 entries is split into sub-directories by name prefix
+(`REMEMBERSTACK_P3_SHARD_THRESHOLD`).
+
+A document page holds front matter (`doc_id`, `canonical_path`,
+`version_id`, `content_hash`, `artifact_uri`, `raw_uri`, `mime`,
+`source_kind`, `source_ref` and the state of the latest stored version),
+the title and the document's summary. It does not hold the document's
+text; `artifact_uri` points to the converted Markdown.
+
+## Read-only is your job
+
+The views are meant to be read, never written: changes go through the API
+and the pipeline, and PostgreSQL is the authority. `mounts` does not set
+file permissions. If agents or users should not be able to change the tree,
+make the directory read-only for them, for example by mounting it read-only
+into the agent's container. The same applies to bucket mounts you pass as
+`--raw-root` and `--artifacts-root`, and reads of the raw originals are
+logged only if your mount tool logs them.
+
+## Rebuilding into a local directory
+
+`remember ops rebuild --deployment ID --snapshot-root DIR --version V`
+writes a snapshot tree straight into a directory inside the container
+instead of MinIO. It also records that snapshot as the latest, and `mounts`
+then fails to find it in MinIO. Run the `projections` service again before
+the next `mounts`.
+
+## When it refuses
+
+Building a snapshot and publishing the views both refuse to run while a
+hard forget is in progress ([Operating the pipeline](operating.md#when-a-hard-forget-is-in-progress)).
+
+On remember.dev you read memory through the API, the SDK and hosted MCP;
+see [What remember.dev serves](../cloud/compatibility.md).

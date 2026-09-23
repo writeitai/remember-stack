@@ -1,0 +1,1296 @@
+---
+title: Query space memory_v1
+description: Every view, column, function, grammar rule, limit and shipped saved query of the memory_v1 query space that SQL queries run over.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Query space memory_v1
+
+SQL queries run over **the query space**, `memory_v1`: a fixed set of
+prepared, read-only views and functions over your memory. Every statement is
+parsed and validated against it before it runs, and anything outside it is
+rejected. The views already apply the memory's rules — deleted versions,
+forgotten sources and superseded readings are absent — so a statement can only
+see what the memory itself would return.
+
+This page is the reference for the query space: [identity and
+versioning](#version-and-manifest-hash), [the grammar a statement must
+follow](#what-a-statement-may-contain), [limits](#limits), the
+[12 functions](#functions), the [25 views](#views) and the
+[18 shipped saved queries](#shipped-saved-queries). The routes that run
+statements are in [SQL queries](http-api/query.md); a walkthrough is in
+[Explore memory with SQL](../guides/sql.md).
+
+## Version and manifest hash
+
+| Property | Value |
+|---|---|
+| Schema | `memory_v1` |
+| Schema major version | `1` |
+| Manifest contract | `memory_v1.manifest/2` |
+| Surface manifest hash (this release) | `d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2` |
+| PostgreSQL major | 19 |
+
+The query space is described by a manifest checked into the engine. Its hash
+covers the views (definitions, columns, comments), the function signatures,
+the assured operation descriptors and the limits. Every `QueryResult` reports
+it in `surface_manifest_hash`, and `GET /query/space` returns the whole
+manifest content.
+
+When a release changes the query space, the hash changes. The deployment then
+moves every active saved query to `pending_revalidation`, and a saved query
+refuses to run (`saved_query_revalidation_pending`) until it is revalidated
+against the new hash. If the database's live views do not match the manifest
+the server was built with, every statement fails with
+`schema_version_mismatch`.
+
+## What a statement may contain
+
+A statement is checked in this order. The first rule it breaks decides the
+error code.
+
+### One read-only statement
+
+- Exactly one statement (`multiple_statements` otherwise).
+- It must be a `SELECT`, `VALUES` or `WITH … SELECT` (`statement_not_allowed`).
+  No `SELECT INTO`, no `FOR UPDATE` or other row locks, no `TABLESAMPLE`.
+- It must parse as PostgreSQL (`parse_error`) and contain no NUL byte.
+- Names beginning with `__rememberstack_` are reserved
+  (`statement_not_allowed`).
+- Placeholders must be contiguous from `$1` (`invalid_parameter`), and the
+  request must supply exactly as many parameters as the highest placeholder.
+
+### Relations
+
+A statement may read only the 25 views below, unqualified or as
+`memory_v1.<view>`, and its own CTEs. Any other table, view or schema is
+`relation_not_allowed`.
+
+### Built-in functions
+
+Besides the [12 public functions](#functions), these built-in functions are
+allowed (`function_not_allowed` otherwise). A `pg_catalog.` prefix is allowed;
+any other schema prefix is not.
+
+| Kind | Functions |
+|---|---|
+| Aggregates | `count`, `sum`, `avg`, `min`, `max`, `bool_and`, `bool_or`, `array_agg`, `string_agg`, `jsonb_agg`, `jsonb_object_agg` |
+| Conditionals | `coalesce`, `nullif`, `greatest`, `least` |
+| Text | `lower`, `upper`, `trim`, `btrim`, `length`, `octet_length`, `substring`, `replace`, `regexp_replace` |
+| Numbers | `abs`, `ceil`, `floor`, `round` |
+| Time | `date_trunc`, `extract`, `make_interval` |
+| Arrays and JSON | `array_length`, `cardinality`, `jsonb_typeof`, `jsonb_array_length`, `jsonb_build_object` |
+| Window | `row_number`, `rank`, `dense_rank`, `lag`, `lead`, `first_value`, `last_value` |
+
+Also refused: ordered-set aggregates (`WITHIN GROUP`), table functions
+(`XMLTABLE`, `JSON_TABLE`), XML expressions, and session keywords such as
+`CURRENT_USER` and `CURRENT_SCHEMA`.
+
+### Operators
+
+`=`, `<>`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-`, `*`, `/`, `%`, `||`, `@>`,
+`<@`, `&&`, `->`, `->>`, `#>`, `#>>`, `~`, `~*`, `!~`, `!~*`, `LIKE` (`~~`),
+`NOT LIKE` (`!~~`), `ILIKE` (`~~*`), `NOT ILIKE` (`!~~*`), `= ANY`,
+`BETWEEN`, `NOT BETWEEN`. `AND`, `OR`, `NOT`, `IS NULL` and `IS [NOT]
+TRUE/FALSE` are allowed too. Any other operator, including one in
+`ORDER BY … USING`, is `operator_not_allowed`.
+
+### Casts
+
+Casts are allowed only to `uuid`, `text`, `varchar`, `bpchar`, `bool`,
+`boolean`, `int2`, `int4`, `int8`, `integer`, `bigint`, `smallint`, `numeric`,
+`float4`, `float8`, `timestamptz`, `timestamp`, `date`, `interval`, `jsonb`
+(`operator_not_allowed` otherwise).
+
+### Syntax
+
+The statement is built from a fixed set of syntax elements; anything else is
+`statement_not_allowed`. Allowed: `SELECT` with `FROM`, joins, subqueries in
+`FROM` and in expressions (`IN`, `EXISTS`, scalar), `WITH`, `WHERE`,
+`GROUP BY` (including grouping sets), `HAVING`, `ORDER BY`, `LIMIT`, window
+definitions, `CASE`, `COALESCE`, `GREATEST`/`LEAST`, `NULL` and boolean tests,
+array constructors and subscripts, row constructors, `COLLATE`, named
+function arguments, and literals of every kind. The exact parser classes are
+listed in `GET /query/space` under `sql_grammar.statement_node_classes`.
+
+### Recursion
+
+At most one recursive CTE per statement, and it must follow one template
+(`unbounded_recursion` otherwise):
+
+- the `WITH RECURSIVE` clause holds exactly one CTE, with no `CYCLE` or
+  `SEARCH` clause;
+- its body is `anchor UNION [ALL] recursive-term`;
+- the anchor sets an integer column named `depth` to the literal `0`;
+- the recursive term references the CTE exactly once, joins only views (no
+  subqueries in its `FROM`), and emits `depth + 1` in the `depth` column;
+- the recursive term has a top-level condition `depth < N` with `N` at most
+  6, not inside an `OR`.
+
+```sql
+WITH RECURSIVE reach AS (
+  SELECT object_entity_id AS entity_id, 0 AS depth
+  FROM graph_edges_current
+  WHERE subject_entity_id = $1::uuid
+  UNION
+  SELECT e.object_entity_id, r.depth + 1
+  FROM reach AS r
+  JOIN graph_edges_current AS e ON e.subject_entity_id = r.entity_id
+  WHERE r.depth < 3
+)
+SELECT DISTINCT entity_id FROM reach
+```
+
+### Public function placement
+
+The 12 public functions return rows, and they have extra rules
+(`function_placement_not_allowed` otherwise):
+
+- a call must be a `FROM` item of the top-level statement, or of a top-level
+  CTE body — not inside a subquery, a `UNION` arm, a `LATERAL` join or an
+  `IN`/`EXISTS` test;
+- each call is its own `FROM` item (no `ROWS FROM` with several functions);
+- every argument is a literal or a parameter (`$1`), optionally cast;
+- at most 3 calls per category per statement (`quota_exceeded`): nomination
+  (`semantic_*`, `lexical_*`), body fetch (`fetch_chunk_bodies`), bitemporal
+  (`facts_as_of`), temporal (`canonical_bounds`), graph (`graph_*`).
+
+## Limits
+
+Two limit tiers exist. Over HTTP, every statement runs in the **interactive**
+tier. The analytical tier needs an operator entitlement and a separate pool
+that the shipped profile does not configure, so it is listed for completeness.
+
+A caller may lower a limit, or raise it up to the hard cap. Over HTTP only
+`max_rows` can be set by the caller; a saved query can also carry its own
+`statement_timeout_ms` and `max_bytes` defaults.
+
+| Limit | Interactive | Analytical |
+|---|---|---|
+| Statement timeout, default | 5,000 ms | 60,000 ms |
+| Statement timeout, hard cap | 15,000 ms | 60,000 ms |
+| Statement timeout with a graph function | 5,000 ms | 5,000 ms |
+| Lock timeout | 250 ms | 2,000 ms |
+| Idle-in-transaction timeout | 5,000 ms | 15,000 ms |
+| Rows returned, default | 200 | 10,000 |
+| Rows returned, hard cap | 1,000 | 10,000 |
+| Bytes returned, default | 1,048,576 | 67,108,864 |
+| Bytes returned, hard cap | 8,388,608 | 67,108,864 |
+| Work memory | 16,384 KiB | 65,536 KiB |
+| Temporary files | 65,536 KiB | 65,536 KiB |
+| SQL text | 65,536 bytes | 65,536 bytes |
+| Parameters, count | 64 | 256 |
+| Parameters, encoded size | 262,144 bytes | 1,048,576 bytes |
+| Recursive CTEs per statement | 1 | 1 |
+| Recursion depth | 6 | 6 |
+| Concurrent statements per caller | 2 | 1 |
+| Concurrent statements per deployment | 8 | 4 |
+| Statement seconds per caller per minute | 30 | 60 |
+| Statement seconds per deployment per minute | 120 | 240 |
+
+Rows beyond the row cap, or beyond the byte cap, are cut and the result says
+`truncated: true` with `truncation_reason` `row_cap` or `byte_cap`. Exceeding
+a concurrency or per-minute budget refuses the statement with
+`concurrency_exceeded` or `quota_exceeded`.
+
+Every statement runs in one read-only, repeatable-read transaction with
+parallel query off, so all its parts see one snapshot of the memory.
+
+Per-function caps, in addition:
+
+| Function | Cap |
+|---|---|
+| `semantic_*`, `lexical_*` | `k` defaults to 20 and is lowered to 100 if larger; 200 candidates in total per statement across all search calls (`quota_exceeded` beyond). |
+| `fetch_chunk_bodies` | 50 chunk ids per call; 512 KiB of chunk text per call; 4 MiB per statement. |
+| `facts_as_of` | `max_rows` defaults to 200, hard cap 1,000. |
+| `graph_*` | See each function. |
+
+## Functions
+
+The 12 public functions are set-returning: call them in `FROM`, following the
+[placement rules](#public-function-placement). The search functions nominate
+candidates from the search index and then confirm each one against the
+database inside the same transaction, so a result never includes something the
+views would hide. What they did is reported in the result's
+`semantic_invocations` or `graph_invocations`.
+
+`now()` and other clock functions are not allowed. Pass the time you mean as a
+parameter.
+
+### semantic_claims
+
+```sql
+semantic_claims(query text, k integer [, filters jsonb [, embedding_input_policy_version text [, embedder_generation text]]])
+```
+
+Claims ranked by meaning. Category: nomination.
+
+| Column | Type |
+|---|---|
+| `rank` | integer |
+| `score` | double precision |
+| `channel` | text |
+| `claim_id` | uuid |
+| `doc_id` | uuid |
+| `claim_text` | text |
+| `source_handle` | text |
+| `source_kind` | text |
+| `asserted_at` | timestamptz |
+| `claim_valid_from` | timestamptz |
+| `claim_valid_until` | timestamptz |
+
+Filters: `asserted_from`, `asserted_to` (ISO 8601 instants), `doc_id`,
+`entity_id` (UUIDs), `source_kind` (string).
+
+### lexical_claims
+
+```sql
+lexical_claims(query text, k integer [, filters jsonb])
+```
+
+Claims ranked by keyword (BM25). Same columns and filters as
+`semantic_claims`. Category: nomination.
+
+### semantic_chunks
+
+```sql
+semantic_chunks(query text, k integer [, filters jsonb [, embedding_input_policy_version text [, embedder_generation text]]])
+```
+
+Source chunks ranked by meaning. Category: nomination.
+
+| Column | Type |
+|---|---|
+| `rank` | integer |
+| `score` | double precision |
+| `channel` | text |
+| `chunk_id` | uuid |
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `representation_id` | uuid |
+| `section_id` | uuid |
+| `chunk_content_hash` | text |
+| `embedding_text_hash` | text |
+| `source_text` | text |
+| `location_header` | text |
+| `embedding_input_policy_version` | text |
+| `policy_generation` | text |
+| `embedder_generation` | text |
+| `created_at` | timestamptz |
+
+Filters: `doc_id` (UUID), `language`, `section_role`, `source_kind`,
+`source_shape` (strings). `section_role` must be one of `body`, `abstract`,
+`introduction`, `results`, `methods`, `discussion`, `conclusion`,
+`references`, `appendix`, `table`, `figure_caption`, `nav`, `boilerplate`,
+`legal`.
+
+### lexical_chunks
+
+```sql
+lexical_chunks(query text, k integer [, filters jsonb])
+```
+
+Source chunks ranked by keyword (BM25). Same columns and filters as
+`semantic_chunks`. Category: nomination.
+
+### semantic_facts
+
+```sql
+semantic_facts(query text, k integer [, filters jsonb [, embedding_input_policy_version text [, embedder_generation text]]])
+```
+
+Facts (relations and observations) ranked by meaning. Category: nomination.
+
+| Column | Type |
+|---|---|
+| `rank` | integer |
+| `score` | double precision |
+| `channel` | text |
+| `fact_id` | uuid |
+| `fact_kind` | text |
+| `fact_label` | text |
+| `predicate` | text |
+| `subject_entity_id` | uuid |
+| `object_entity_id` | uuid |
+| `evidence_count` | bigint |
+| `contradict_count` | bigint |
+| `support_state` | text |
+| `evaluated_at` | timestamptz |
+
+Filters: `fact_kind` (`relation` or `observation`), `support_state`
+(`current` or `withdrawn`), `predicate` (string), `subject_entity_id`,
+`object_entity_id` (UUIDs).
+
+### semantic_entities
+
+```sql
+semantic_entities(query text, k integer [, filters jsonb])
+```
+
+Entities ranked by how well their profile matches. No filters. Category:
+nomination.
+
+| Column | Type |
+|---|---|
+| `rank` | integer |
+| `score` | double precision |
+| `channel` | text |
+| `entity_id` | uuid |
+| `entity_type` | text |
+| `canonical_name` | text |
+| `profile_summary` | text |
+| `live_mention_count` | bigint |
+| `live_document_count` | bigint |
+
+For all six search functions: `filters` is a JSON object with scalar values
+from the function's filter list; any other key is `invalid_parameter`. The
+two generation arguments pin a specific embedding generation and are
+normally left out.
+
+### fetch_chunk_bodies
+
+```sql
+fetch_chunk_bodies(chunk_ids uuid[])
+```
+
+The text of up to 50 chunks, re-verified against their content and embedding
+hashes before it is returned. All requested chunks must belong to one
+embedding generation. Category: body fetch.
+
+| Column | Type |
+|---|---|
+| `input_ordinal` | integer |
+| `chunk_id` | uuid |
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `representation_id` | uuid |
+| `section_id` | uuid |
+| `chunk_content_hash` | text |
+| `embedding_text_hash` | text |
+| `source_text` | text |
+| `location_header` | text |
+| `embedding_input_policy_version` | text |
+| `policy_generation` | text |
+| `embedder_generation` | text |
+| `created_at` | timestamptz |
+
+`chunks_live` has no text column; this function is the only way to read chunk
+text in SQL.
+
+### facts_as_of
+
+```sql
+facts_as_of(valid_at timestamptz, believed_at timestamptz [, max_rows integer])
+```
+
+The facts that were valid at `valid_at`, as the memory believed at
+`believed_at`. `max_rows` defaults to 200, hard cap 1,000. Category:
+bitemporal.
+
+| Column | Type |
+|---|---|
+| `deployment_id` | uuid |
+| `fact_kind` | text |
+| `fact_id` | uuid |
+| `subject_entity_id` | uuid |
+| `predicate` | text |
+| `object_entity_id` | uuid |
+| `statement` | text |
+| `fact_label` | text |
+| `valid_from` | timestamptz |
+| `valid_until` | timestamptz |
+| `ingested_at` | timestamptz |
+| `invalidated_at` | timestamptz |
+| `contradiction_group` | uuid |
+| `confidence` | real |
+| `evidence_count_current` | bigint |
+| `contradict_count_current` | bigint |
+| `support_state_current` | text |
+| `applied_valid_at` | timestamptz |
+| `applied_believed_at` | timestamptz |
+| `identity_regime` | text |
+| `valid_precision` | text |
+| `temporal_match` | text |
+
+### canonical_bounds
+
+```sql
+canonical_bounds(valid_from timestamptz, valid_until timestamptz, valid_precision text)
+```
+
+Turn a stored validity window and its precision into the half-open interval
+it means: a `day` covers the whole UTC day, a `year` the whole year, an
+`instant` a one-microsecond point; `open` has no end and `unknown` has no
+bounds. Category: temporal.
+
+| Column | Type |
+|---|---|
+| `canon_start` | timestamptz |
+| `canon_end` | timestamptz |
+
+Because arguments must be literals or parameters, use it for one window you
+supply. For every claim at once, read `claims_canonical`, which carries the
+same bounds.
+
+### graph_neighborhood
+
+```sql
+graph_neighborhood(deployment_id uuid, start_entity_id uuid
+  [, max_depth integer [, predicates text[] [, valid_at timestamptz [, believed_at timestamptz
+  [, max_results integer [, expansion_budget integer [, frontier_budget integer [, time_budget_ms integer]]]]]]]])
+```
+
+Paths to the entities within `max_depth` hops, and one terminal status row.
+Category: graph.
+
+| Argument | Default | Range |
+|---|---|---|
+| `max_depth` | 2 | 1 to 4 (above 4 is capped and reported as `depth_budget`) |
+| `predicates` | all | |
+| `valid_at`, `believed_at` | now | both or neither |
+| `max_results` | 100 | 1 to 500 |
+| `expansion_budget` | 2,000 | 1 to 2,000 |
+| `frontier_budget` | 1,000 | 1 to 1,000 |
+| `time_budget_ms` | 1,000 | 1 to 5,000 |
+
+| Column | Type |
+|---|---|
+| `row_kind` | text |
+| `hops` | integer |
+| `relation_ids` | uuid[] |
+| `node_ids` | uuid[] |
+| `truncated` | boolean |
+| `truncation_reason` | text |
+| `examined_edges` | bigint |
+| `returned_paths` | bigint |
+| `effective_depth` | integer |
+| `effective_expansion_budget` | integer |
+| `effective_frontier_budget` | integer |
+| `effective_result_budget` | integer |
+| `effective_time_budget_ms` | integer |
+| `applied_valid_at` | timestamptz |
+| `applied_believed_at` | timestamptz |
+
+### graph_path
+
+```sql
+graph_path(deployment_id uuid, from_entity_id uuid, to_entity_id uuid
+  [, max_depth integer [, predicates text[] [, valid_at timestamptz [, believed_at timestamptz
+  [, max_results integer [, expansion_budget integer [, frontier_budget integer [, time_budget_ms integer]]]]]]]])
+```
+
+Equal-length shortest paths between two entities, and one terminal status
+row. Same columns as `graph_neighborhood`. Category: graph.
+
+| Argument | Default | Range |
+|---|---|---|
+| `max_depth` | 4 | 1 to 6 |
+| `max_results` (paths) | 3 | 1 to 10 |
+| Budgets, clocks, predicates | as for `graph_neighborhood` | |
+
+### graph_citation_path
+
+```sql
+graph_citation_path(deployment_id uuid, from_doc_id uuid, to_doc_id uuid
+  [, max_depth integer [, max_paths integer [, expansion_budget integer [, frontier_budget integer [, time_budget_ms integer]]]]])
+```
+
+Directed citation chains between two live documents, and one terminal status
+row. Category: graph.
+
+| Argument | Default | Range |
+|---|---|---|
+| `max_depth` | 6 | 1 to 6 |
+| `max_paths` | 3 | 1 to 10 |
+| Budgets | as for `graph_neighborhood` | |
+
+| Column | Type |
+|---|---|
+| `row_kind` | text |
+| `hops` | integer |
+| `crossref_ids` | uuid[] |
+| `document_ids` | uuid[] |
+| `truncated` | boolean |
+| `truncation_reason` | text |
+| `examined_edges` | bigint |
+| `returned_paths` | bigint |
+| `effective_depth` | integer |
+| `effective_expansion_budget` | integer |
+| `effective_frontier_budget` | integer |
+| `effective_result_budget` | integer |
+| `effective_time_budget_ms` | integer |
+| `evaluated_at` | timestamptz |
+
+For all three graph functions:
+
+- the first argument must be the parameter `$1`, bound to this deployment's
+  id (`invalid_parameter` otherwise). Every `QueryResult` reports that id in
+  `deployment_id`;
+- the statement timeout is 5 seconds;
+- the terminal status row is removed from `rows` and reported in
+  `graph_invocations`; a budget that was reached also appears in `warnings`
+  and `truncation_reason`.
+
+```sql
+SELECT hops, relation_ids, node_ids
+FROM graph_neighborhood($1::uuid, $2::uuid, 2)
+ORDER BY hops, relation_ids
+```
+
+## Views
+
+The 25 views, with every column. Descriptions are the comments in the
+manifest, as `GET /query/space` returns them. Every view has a
+`deployment_id` column; a deployment only ever sees its own rows.
+
+| View | Grain | Row key |
+|---|---|---|
+| [`changes_visible`](#changes_visible) | one externally visible change event | `object_kind`, `event_id` |
+| [`chunks_live`](#chunks_live) | one chunk coordinate in a current ready representation | `chunk_id` |
+| [`claim_occurrences_live`](#claim_occurrences_live) | one current claim occurrence | `claim_id`, `chunk_id`, `derivation_kind` |
+| [`claims_canonical`](#claims_canonical) | one historically visible claim with surviving lineage and its half-open canonical window | `claim_id` |
+| [`claims_live`](#claims_live) | one current-testimony claim | `claim_id` |
+| [`claims_visible_history`](#claims_visible_history) | one historically visible claim with surviving lineage | `claim_id` |
+| [`contradiction_members_current`](#contradiction_members_current) | one current contradiction-group member | `contradiction_group`, `fact_kind`, `fact_id` |
+| [`document_crossrefs_live`](#document_crossrefs_live) | one live document cross-reference | `crossref_id` |
+| [`document_versions_visible`](#document_versions_visible) | one visible version of a live lineage | `version_id` |
+| [`documents_live`](#documents_live) | one live document lineage | `doc_id` |
+| [`entities_current`](#entities_current) | one externally visible survivor entity | `entity_id` |
+| [`entity_aliases_current`](#entity_aliases_current) | one current alias-to-survivor mapping | `alias_id` |
+| [`entity_document_mentions`](#entity_document_mentions) | one survivor entity × live document | `entity_id`, `doc_id` |
+| [`evidence_lineage`](#evidence_lineage) | one fact × current-testimony document lineage × stance | `fact_kind`, `fact_id`, `doc_id`, `stance` |
+| [`fact_claim_evidence_live`](#fact_claim_evidence_live) | one current claim-to-fact association | `fact_kind`, `fact_id`, `claim_id`, `stance` |
+| [`facts_current`](#facts_current) | one currently valid relation or observation | `fact_kind`, `fact_id` |
+| [`facts_visible_history`](#facts_visible_history) | one historically visible relation or observation | `fact_kind`, `fact_id` |
+| [`graph_edges_current`](#graph_edges_current) | one current relation edge | `relation_id` |
+| [`graph_edges_visible_history`](#graph_edges_visible_history) | one historically visible relation edge | `relation_id` |
+| [`identity_events_visible`](#identity_events_visible) | one visible resolution/merge/split event | `object_kind`, `event_id` |
+| [`mentions_live`](#mentions_live) | one mention in current content | `mention_id` |
+| [`page_evidence_visible`](#page_evidence_visible) | one visible K artifact-to-target association | `artifact_id`, `role`, `target_kind`, `target_id` |
+| [`pages_live`](#pages_live) | one visible K artifact | `artifact_id` |
+| [`sections_live`](#sections_live) | one section in a current ready representation | `section_id` |
+| [`testimony_currency_events_visible`](#testimony_currency_events_visible) | one visible D54 transition | `event_id` |
+
+### changes_visible
+
+One row per externally visible change event, keyed by the synthetic pair (deployment_id, object_kind, event_id): every union arm names its own transition in object_kind and supplies an identifier from its own source table, so the underlying identifier spaces cannot collide. Each arm reads an already invariant-bearing relation or joins one, so a change event appears only while its object is still visible. THERE IS DELIBERATELY NO DELETION ARM: forgetting a lineage, tombstoning a version, or retiring a page removes the affected events instead of announcing the removal, and labels are drawn only from visible objects, so neither the event set nor the label text can become a side channel for what was forgotten. The occurrence clock is transaction time and never world validity, the feed is uncapped at the relation level so a caller bounds it with an ordinary predicate, and the view carries no counts and asserts no facts.
+
+- **Grain:** one externally visible change event (`change_event_visible`)
+- **Row key:** `deployment_id`, `object_kind`, `event_id`
+- **Clock semantics:** `transaction_time_event`
+- **Joins to:** `facts_visible_history` on `deployment_id`, `object_id`; `claims_visible_history` on `deployment_id`, `object_id`; `pages_live` on `deployment_id`, `object_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the change event. |
+| `object_kind` | text | no | Which kind of change event this is, naming both the changed object and the transition. Values: `relation_ingest`, `relation_invalidation`, `relation_supersession`, `observation_ingest`, `observation_invalidation`, `observation_supersession`, `claim_ingest`, `knowledge_page_compilation`. |
+| `event_id` | uuid | no | Identity of the event within its own source, unique together with object_kind. |
+| `object_id` | uuid | no | The object that changed, joinable to the relation named by object_kind. |
+| `occurred_at` | timestamp with time zone | no | When the change occurred, which is a transaction-time instant and never world validity. |
+| `label` | text | no | Short human-readable label for the changed object, drawn only from objects that are themselves visible. |
+
+### chunks_live
+
+One row per chunk coordinate in the current ready representation of a live lineage, keyed by (deployment_id, chunk_id) and joined to documents_live on (deployment_id, doc_id) and to sections_live on (deployment_id, section_id). This relation is metadata only and deliberately carries no authoritative body column: chunk text is returned solely by the confirmed body-fetch path, which re-verifies the coordinate and the content and embedding hashes before any bytes leave the system. Chunks of superseded versions, non-ready readings, and forgotten lineages are absent, and a section_id is exposed only when that section belongs to the representation's current structure generation. The location header is generated orientation text, never evidence; the view carries no counts and no validity clocks.
+
+- **Grain:** one chunk coordinate in a current ready representation (`chunk_current_content`)
+- **Row key:** `deployment_id`, `chunk_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`; `sections_live` on `deployment_id`, `section_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the chunk. |
+| `chunk_id` | uuid | no | Stable identity of this retrieval unit within the current reading. |
+| `doc_id` | uuid | no | The live lineage the chunk belongs to. |
+| `version_id` | uuid | no | The lineage's current version the chunk was cut from. |
+| `representation_id` | uuid | no | The current ready reading whose block grid and offsets the chunk uses. |
+| `section_id` | uuid | yes | The section containing the chunk, null when the chunk has no section in the current structure generation. |
+| `ordinal` | integer | no | Position of the chunk within the document. |
+| `block_start` | integer | no | First block ordinal packed into the chunk. |
+| `block_end` | integer | no | Last block ordinal packed into the chunk, inclusive. |
+| `char_start` | integer | no | Start character offset of the chunk within this representation's markdown. |
+| `char_end` | integer | no | End character offset of the chunk within this representation's markdown. |
+| `token_count` | integer | yes | Token length of the chunk, null when it was never measured. |
+| `chunk_content_hash` | text | no | Hash of the chunk's ordered block hashes, which is its content identity. |
+| `extraction_input_hash` | text | no | Hash of the stable extraction inputs, which is the reuse key that avoids re-extracting unchanged content. |
+| `embedding_text_hash` | text | yes | Hash of the exact text that was embedded under the D80 policy, null when the chunk has not been embedded. |
+| `location_facts` | jsonb | yes | The deterministic D80 location facts as structured data, null when no policy generation has stamped the chunk. |
+| `location_header` | text | yes | The deterministic D80 location header prepended to the embedded text; it is generated orientation text and is never asserted evidence. |
+| `embedding_input_policy_version` | text | yes | The D80 embedding-input policy in force for this chunk, null when unstamped. |
+| `policy_generation` | text | yes | The generation label of that policy application, null when unstamped. |
+| `embedder_generation` | text | yes | The embedder generation that produced the chunk vector, null when the chunk has not been embedded. |
+| `chunker_version` | text | yes | The chunker configuration that produced this cut, null on rows written before the stamp existed. |
+| `prefixer_version` | text | yes | The context-prefixer generation for this chunk, null when no prefix was generated. |
+| `created_at` | timestamp with time zone | no | When the chunk row was written, which is a processing instant rather than a world-time clock. |
+
+### claim_occurrences_live
+
+One row per current claim occurrence, keyed by (deployment_id, claim_id, chunk_id, derivation_kind) with null derivation kinds treated as equal, and joined to claims_visible_history on (deployment_id, claim_id) and to chunks_live on (deployment_id, chunk_id). It is the explicit association answering which current chunk, version, representation, and section carry a claim, and evidence_spans is the complete body support for that occurrence. Repeated attachments collapse to the earliest, so attached_at is the first time the occurrence was recorded. Occurrences in superseded versions, non-ready readings, and forgotten lineages are absent. Claim char_start/char_end remain the immutable origin; they are not the complete evidence list. The view carries no counts and no validity clocks.
+
+- **Grain:** one current claim occurrence (`claim_occurrence_current_content`)
+- **Row key:** `deployment_id`, `claim_id`, `chunk_id`, `derivation_kind`
+- **Clock semantics:** `none`
+- **Joins to:** `claims_visible_history` on `deployment_id`, `claim_id`; `chunks_live` on `deployment_id`, `chunk_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the occurrence. |
+| `claim_id` | uuid | no | The claim carried by this chunk occurrence. |
+| `chunk_id` | uuid | no | The current-content chunk that carries the claim. |
+| `derivation_kind` | text | yes | How this occurrence was derived from the source, such as passthrough, asr, or ocr; null when the reading recorded no label. |
+| `doc_id` | uuid | no | The live lineage carrying the occurrence. |
+| `version_id` | uuid | no | The lineage's current version carrying the occurrence. |
+| `representation_id` | uuid | no | The current ready reading carrying the occurrence. |
+| `section_id` | uuid | yes | The section containing the carrying chunk, null when the chunk has no section in the current structure generation. |
+| `evidence_mode` | text | yes | How mediated this occurrence is, such as source_expression or model_observation; null when the reading recorded no mode. |
+| `source_locators` | jsonb | yes | The resolved source locator set for this occurrence, null when the reading resolved none. |
+| `attached_at` | timestamp with time zone | no | When this occurrence was first recorded, which is a processing instant rather than a world-time clock. |
+| `evidence_spans` | jsonb | no | The complete ordered list of supporting body ranges for this occurrence, origin first, as {char_start, char_end} objects in the carrying representation. |
+
+### claims_canonical
+
+One row per historically visible claim with surviving lineage, keyed by (deployment_id, claim_id), carrying the stored inclusive D41 window beside the half-open canonical bounds that every overlap predicate must use (D107 §5). canon_start is inclusive and canon_end exclusive; both are null when precision is unknown, and canon_end is also null for an open window. Overlap is a.start < b.end AND b.start < a.end with a null end as unbounded. This relation is IMMUTABLE SOURCE TESTIMONY: it never answers what currently holds. Claims of forgotten lineages and tombstoned versions are absent.
+
+- **Grain:** one historically visible claim with surviving lineage and its half-open canonical window (`claim_visible_history_canonical`)
+- **Row key:** `deployment_id`, `claim_id`
+- **Clock semantics:** `claim_validity_immutable`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the claim. |
+| `claim_id` | uuid | no | Stable identity of this immutable claim. |
+| `doc_id` | uuid | no | The live lineage that asserted the claim. |
+| `version_id` | uuid | no | The non-tombstoned version the claim was extracted from. |
+| `representation_id` | uuid | no | The reading whose character offsets the claim's anchors use. |
+| `chunk_id` | uuid | no | The chunk the claim was extracted from. |
+| `claim_text` | text | no | The standalone assertion as extracted, which is source testimony rather than adjudicated truth. |
+| `source_span` | text | no | The verbatim slice of the source the claim derives from. |
+| `char_start` | integer | no | Start character offset of source_span within the named representation's markdown. |
+| `char_end` | integer | no | End character offset of source_span within the named representation's markdown. |
+| `added_context` | jsonb | no | The substrings decontextualization added, each with the bundle source it came from. |
+| `temporal_class` | text | yes | How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified. Values: `static`, `dynamic`, `atemporal`. |
+| `is_attributed` | boolean | no | True when the claim preserves an attribution, so it entails that someone said it rather than that it holds. |
+| `audit_status` | text | no | Result of the sampled independent grounding audit, defaulting to unaudited. Values: `unaudited`, `sampled_pass`, `sampled_fail`, `escalated`. |
+| `kept_flagged` | boolean | no | True when selection kept the claim but marked it for review. |
+| `extractor_version` | text | no | The extractor generation that produced the claim, which is part of the D54 extraction basis. |
+| `asserted_at` | timestamp with time zone | yes | Assertion-event time: when the source asserted this, null when the source carries no date. |
+| `claim_valid_from` | timestamp with time zone | yes | Immutable inclusive start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown. |
+| `claim_valid_until` | timestamp with time zone | yes | Immutable inclusive end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision. |
+| `claim_valid_precision` | text | no | Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open. Values: `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
+| `claim_valid_kind` | text | yes | Which world-interval was asserted, such as event_time or measurement_period; null when unclassified. Values: `proposition_validity`, `event_time`, `measurement_period`, `effective_period`. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time: when this deployment extracted the claim. |
+| `source_kind` | text | no | The connector family of the asserting lineage. |
+| `source_handle` | text | no | Stable human-usable handle for the asserting lineage, formed from its connector-native identity. |
+| `is_current_testimony` | boolean | no | True while this claim is the current transcription of its chunk under D54; false once a newer extraction generation or a living-mode version move superseded it. |
+| `canon_start` | timestamp with time zone | yes | Inclusive start of the half-open canonical window (D107 §5); null when precision is unknown. |
+| `canon_end` | timestamp with time zone | yes | Exclusive end of the half-open canonical window; null when the window is open or unknown. |
+
+### claims_live
+
+One row per current-testimony claim, keyed by (deployment_id, claim_id): the subset of claims_visible_history whose D54 currency flag is still set. Like every claim relation this is IMMUTABLE SOURCE TESTIMONY, and "live" here means current transcription of a live source, never current truth: a claim in this relation can be contradicted by the adjudicated worldview, and querying its validity window to answer what holds now is the wrong query — start from facts_current and follow fact_claim_evidence_live back to here. The stored claim_valid_* window is inclusive D41 storage; world-time overlap belongs on claims_canonical. Claims of forgotten lineages and tombstoned versions are absent, and this relation is the sole claim input to the D54 counting path. The view carries no counts.
+
+- **Grain:** one current-testimony claim (`claim_current_testimony`)
+- **Row key:** `deployment_id`, `claim_id`
+- **Clock semantics:** `claim_validity_immutable`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the claim. |
+| `claim_id` | uuid | no | Stable identity of this immutable claim. |
+| `doc_id` | uuid | no | The live lineage that asserted the claim. |
+| `version_id` | uuid | no | The non-tombstoned version the claim was extracted from. |
+| `representation_id` | uuid | no | The reading whose character offsets the claim's anchors use. |
+| `chunk_id` | uuid | no | The chunk the claim was extracted from. |
+| `claim_text` | text | no | The standalone assertion as extracted, which is source testimony rather than adjudicated truth. |
+| `source_span` | text | no | The verbatim slice of the source the claim derives from. |
+| `char_start` | integer | no | Start character offset of source_span within the named representation's markdown. |
+| `char_end` | integer | no | End character offset of source_span within the named representation's markdown. |
+| `added_context` | jsonb | no | The substrings decontextualization added, each with the bundle source it came from. |
+| `temporal_class` | text | yes | How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified. Values: `static`, `dynamic`, `atemporal`. |
+| `is_attributed` | boolean | no | True when the claim preserves an attribution, so it entails that someone said it rather than that it holds. |
+| `audit_status` | text | no | Result of the sampled independent grounding audit, defaulting to unaudited. Values: `unaudited`, `sampled_pass`, `sampled_fail`, `escalated`. |
+| `kept_flagged` | boolean | no | True when selection kept the claim but marked it for review. |
+| `extractor_version` | text | no | The extractor generation that produced the claim, which is part of the D54 extraction basis. |
+| `asserted_at` | timestamp with time zone | yes | Assertion-event time: when the source asserted this, null when the source carries no date. |
+| `claim_valid_from` | timestamp with time zone | yes | Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown. |
+| `claim_valid_until` | timestamp with time zone | yes | Immutable end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision. |
+| `claim_valid_precision` | text | no | Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open. Values: `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
+| `claim_valid_kind` | text | yes | Which world-interval was asserted, such as event_time or measurement_period; null when unclassified. Values: `proposition_validity`, `event_time`, `measurement_period`, `effective_period`. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time: when this deployment extracted the claim. |
+| `source_kind` | text | no | The connector family of the asserting lineage. |
+| `source_handle` | text | no | Stable human-usable handle for the asserting lineage, formed from its connector-native identity. |
+
+### claims_visible_history
+
+One row per claim whose source lineage is live and whose source version is not tombstoned, keyed by (deployment_id, claim_id) and joined to documents_live on (deployment_id, doc_id) and to document_versions_visible on (deployment_id, version_id). This relation is IMMUTABLE SOURCE TESTIMONY and never answers what currently holds: claim_valid_from and claim_valid_until are the inclusive stored D41 window (an instant has equal endpoints). World-time overlap MUST use claims_canonical.canon_start / canon_end, which are the half-open canonical bounds; filtering these raw columns as a current-truth or overlap predicate is the wrong query — use facts_current for what holds now, and claims_canonical for as-of testimony. A null claim_valid_from means unbounded-before or unknown and a null claim_valid_until means open-per-source or unknown, disambiguated by claim_valid_precision. Claims of forgotten lineages and tombstoned versions are absent; is_current_testimony is D54 bookkeeping and never validity. The view carries no counts.
+
+- **Grain:** one historically visible claim with surviving lineage (`claim_visible_history`)
+- **Row key:** `deployment_id`, `claim_id`
+- **Clock semantics:** `claim_validity_immutable`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the claim. |
+| `claim_id` | uuid | no | Stable identity of this immutable claim. |
+| `doc_id` | uuid | no | The live lineage that asserted the claim. |
+| `version_id` | uuid | no | The non-tombstoned version the claim was extracted from. |
+| `representation_id` | uuid | no | The reading whose character offsets the claim's anchors use. |
+| `chunk_id` | uuid | no | The chunk the claim was extracted from. |
+| `claim_text` | text | no | The standalone assertion as extracted, which is source testimony rather than adjudicated truth. |
+| `source_span` | text | no | The verbatim slice of the source the claim derives from. |
+| `char_start` | integer | no | Start character offset of source_span within the named representation's markdown. |
+| `char_end` | integer | no | End character offset of source_span within the named representation's markdown. |
+| `added_context` | jsonb | no | The substrings decontextualization added, each with the bundle source it came from. |
+| `temporal_class` | text | yes | How the claim behaves over time, either static, dynamic, or atemporal; null when unclassified. Values: `static`, `dynamic`, `atemporal`. |
+| `is_attributed` | boolean | no | True when the claim preserves an attribution, so it entails that someone said it rather than that it holds. |
+| `audit_status` | text | no | Result of the sampled independent grounding audit, defaulting to unaudited. Values: `unaudited`, `sampled_pass`, `sampled_fail`, `escalated`. |
+| `kept_flagged` | boolean | no | True when selection kept the claim but marked it for review. |
+| `extractor_version` | text | no | The extractor generation that produced the claim, which is part of the D54 extraction basis. |
+| `asserted_at` | timestamp with time zone | yes | Assertion-event time: when the source asserted this, null when the source carries no date. |
+| `claim_valid_from` | timestamp with time zone | yes | Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown. |
+| `claim_valid_until` | timestamp with time zone | yes | Immutable end of that interval, null for open-per-source or unknown as disambiguated by claim_valid_precision. |
+| `claim_valid_precision` | text | no | Granularity of the asserted interval, from unknown through instant, day, month, quarter, and year to open. Values: `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
+| `claim_valid_kind` | text | yes | Which world-interval was asserted, such as event_time or measurement_period; null when unclassified. Values: `proposition_validity`, `event_time`, `measurement_period`, `effective_period`. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time: when this deployment extracted the claim. |
+| `source_kind` | text | no | The connector family of the asserting lineage. |
+| `source_handle` | text | no | Stable human-usable handle for the asserting lineage, formed from its connector-native identity. |
+| `is_current_testimony` | boolean | no | True while this claim is the current transcription of its chunk under D54; false once a newer extraction generation or a living-mode version move superseded it. |
+
+### contradiction_members_current
+
+One row per current member of a contradiction group, keyed by (deployment_id, contradiction_group, fact_kind, fact_id) and joined to facts_current on (deployment_id, fact_kind, fact_id). A contradiction group is the system declining to silently pick a winner, so both sides stand and are visible here with their own clocks, counts, and support state. Membership, clocks, and the shared evaluation instant are inherited unchanged from facts_current, including the half-open world-time interval and the surviving-provenance requirement. Because arbitrary SQL can still filter this relation down to one side, a result built from it carries no platform guarantee that co-members are complete: that guarantee belongs to the assured operations. The counts are exact counts of distinct current-testimony lineages, and support state is derived at read time.
+
+- **Grain:** one current contradiction-group member (`contradiction_member_current`)
+- **Row key:** `deployment_id`, `contradiction_group`, `fact_kind`, `fact_id`
+- **Clock semantics:** `bitemporal_current_at_evaluated_at`
+- **Joins to:** `facts_current` on `deployment_id`, `fact_kind`, `fact_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the fact. |
+| `contradiction_group` | uuid | no | The shared identifier binding the members of one unadjudicated contradiction. |
+| `fact_kind` | text | no | Which fact layer this member belongs to, either relation or observation. Values: `relation`, `observation`. |
+| `fact_id` | uuid | no | Stable identity of the member fact. |
+| `fact_label` | text | yes | Human-readable sentence for the member, null when no label has been generated. |
+| `valid_from` | timestamp with time zone | yes | World-time start of the member, null for unknown or always. |
+| `valid_until` | timestamp with time zone | yes | World-time end of the member, null while the member is open. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time start: when the system first believed the member. |
+| `evidence_count` | bigint | no | Exact count of distinct current-testimony lineages supporting the member. |
+| `contradict_count` | bigint | no | Exact count of distinct current-testimony lineages contradicting the member. |
+| `support_state` | text | no | Exactly current or withdrawn, derived at read time from the open review queue. Values: `current`, `withdrawn`. |
+| `evaluated_at` | timestamp with time zone | no | The single statement instant at which both clocks were applied, shared with every other current relation in the statement. |
+
+### document_crossrefs_live
+
+One row per resolved cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). An unresolved reference, a reference whose target was never ingested, or one whose source or target lineage has been forgotten is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.
+
+- **Grain:** one live document cross-reference (`document_crossref_live`)
+- **Row key:** `deployment_id`, `crossref_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `from_doc_id`; `documents_live` on `deployment_id`, `to_doc_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns both endpoint lineages. |
+| `crossref_id` | uuid | no | Stable identity of this cross-reference. |
+| `from_doc_id` | uuid | no | The live lineage that makes the reference. |
+| `to_doc_id` | uuid | no | The live lineage that is referenced. |
+| `kind` | text | no | What kind of reference this is, one of cites, links_to, attaches, or replies_to. Values: `cites`, `links_to`, `attaches`, `replies_to`. |
+| `context` | text | yes | Bounded surrounding context of the reference, truncated to 500 characters and null when none was captured. |
+| `created_at` | timestamp with time zone | no | When the reference was extracted, which is a processing instant. |
+
+### document_versions_visible
+
+One row per non-tombstoned version of a live document lineage, keyed by (deployment_id, version_id) and joined to documents_live on (deployment_id, doc_id). A tombstoned version and every version of a forgotten lineage are absent, which is why the whole schema authorizes version-derived rows through this relation rather than through document_versions directly. This is version history, not fact history: is_current_version says which snapshot the lineage currently points at, and no column here asserts what the system currently believes to be true. The view carries no counts.
+
+- **Grain:** one visible version of a live lineage (`document_version_visible`)
+- **Row key:** `deployment_id`, `version_id`
+- **Clock semantics:** `ingest_and_supersession_instants`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the version. |
+| `version_id` | uuid | no | Stable identity of this observed snapshot of the lineage. |
+| `doc_id` | uuid | no | The lineage this version belongs to, joinable to documents_live. |
+| `version_no` | integer | no | One-based ordinal of the version within its lineage. |
+| `content_hash` | text | no | Hash of the immutable bytes this version observed, shared by lineages carrying identical content. |
+| `source_version_ref` | text | yes | The connector revision or etag for this snapshot, null when the source has none. |
+| `status` | text | no | Processing status of the version, such as ready or failed. Values: `ingesting`, `converting`, `structuring`, `ready`, `failed`, `deleted`. |
+| `current_representation_id` | uuid | yes | The reading of this version that is currently live, null while no reading has completed. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time origin: when this deployment ingested the snapshot. |
+| `source_modified_at` | timestamp with time zone | yes | When the source says this snapshot was authored, null when the source gives no date. |
+| `published_at` | timestamp with time zone | yes | The document's own publication date for this snapshot, null when unknown. |
+| `language` | text | yes | Detected primary language of this snapshot, null when undetected. |
+| `superseded_at` | timestamp with time zone | yes | When a newer version became current, null while this version is still the lineage's current one. |
+| `is_current_version` | boolean | no | True only for the lineage's current snapshot. |
+
+### documents_live
+
+One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.
+
+- **Grain:** one live document lineage (`document_lineage_live`)
+- **Row key:** `deployment_id`, `doc_id`
+- **Clock semantics:** `source_observation_instants`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns this document lineage; every join to another memory_v1 relation carries it. |
+| `doc_id` | uuid | no | Stable lineage identity, unique within the deployment and never reused. |
+| `source_kind` | text | no | The connector family that produced the lineage, such as google_drive or upload. |
+| `source_ref` | text | yes | The connector-native stable identifier, null for one-shot sources that have none. |
+| `source_uri` | text | yes | The original location of the source, null when the source has no addressable location. |
+| `title` | text | yes | Best-effort human title of the lineage, which is orientation text rather than asserted evidence. |
+| `versioning_mode` | text | no | The D55 currency mode of the lineage, either snapshot or living. Values: `snapshot`, `living`. |
+| `origin` | text | no | The D42 provenance stamp, either external or system_generated. Values: `external`, `system_generated`. |
+| `first_seen_at` | timestamp with time zone | no | The instant this deployment first observed the lineage. |
+| `last_observed_at` | timestamp with time zone | yes | The instant the connector last observed the lineage, null when it has never been re-observed. |
+| `current_version_id` | uuid | yes | The lineage's current snapshot, null when no non-tombstoned current version exists. |
+| `current_version_no` | integer | yes | The one-based ordinal of the current version within the lineage, null when there is no visible current version. |
+| `current_version_status` | text | yes | Processing status of the current version, null when there is no visible current version. Values: `ingesting`, `converting`, `structuring`, `ready`, `failed`, `deleted`. |
+| `current_representation_id` | uuid | yes | The current ready reading of the current version, null when no ready representation exists. |
+| `has_current_ready_content` | boolean | no | True only when the lineage has a ready current version and a ready current representation, which is the precondition every current-content relation joins on. |
+| `source_modified_at` | timestamp with time zone | yes | When the source says the current snapshot was authored, which dates derived testimony. |
+| `published_at` | timestamp with time zone | yes | The document's own publication date on the current version, null when unknown. |
+| `language` | text | yes | Detected primary language of the current version, null when undetected. |
+
+### entities_current
+
+One row per externally visible survivor entity, keyed by (deployment_id, entity_id). Membership requires SURVIVING PROVENANCE, which is an explicit association to at least one live document lineage: a mention of this survivor in any non-tombstoned version of a live lineage, or a live document-entity bridge. An entity whose every source has been forgotten is therefore absent rather than orphaned, and merged entities are absent because a merge redirects to a survivor instead of rewriting history. MEMBERSHIP AND THE COUNTS ANSWER DIFFERENT QUESTIONS, and the difference is deliberate: the two counts are exact over CURRENT content only — they equal this entity's rows in mentions_live and entity_document_mentions — so an entity whose only mention sits in a superseded version of a live lineage is published here with both counts at zero and has no row in entity_document_mentions at all. A zero count is not an absence of provenance. graph_degree is a deprecated compatibility scalar fixed at zero after D98 because current adjacency is computed from live PostgreSQL relations; profile_summary is orientation text, never evidence; and the clocks are registry maintenance instants that carry no world-validity meaning. After D96, entity_type and type_confidence are vacated (always NULL); identity is the entity_id.
+
+- **Grain:** one externally visible survivor entity (`entity_survivor_current`)
+- **Row key:** `deployment_id`, `entity_id`
+- **Clock semantics:** `registry_maintenance_instants`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the entity. |
+| `entity_id` | uuid | no | Stable survivor identity, which is never reused and never rewritten by a merge. |
+| `entity_type` | text | yes | Vacated after D96: this compatibility output position always returns NULL because identity is the entity_id and no entity class is stored; use observation or profile fact text for kind-like retrieval. |
+| `canonical_name` | text | no | Preferred display name of the entity. |
+| `normalized_name` | text | no | Accent-folded lower-case form of the canonical name, used for matching. |
+| `type_confidence` | real | yes | Vacated after D96: this compatibility output position always returns NULL because the removed entity-class vote has no confidence value; identity decisions are recorded by resolution tier and confidence instead. |
+| `profile_summary` | text | yes | Registry-maintained blurb about the entity; it is labeled orientation text and is never asserted evidence. |
+| `live_mention_count` | bigint | no | Exact count of the mentions of this entity in the CURRENT content of live lineages, which is zero when every mention of it survives only in a superseded version. |
+| `live_document_count` | bigint | no | Exact count of the live document lineages whose CURRENT content mentions this entity, which is zero for the same reason. |
+| `graph_degree` | bigint | no | Deprecated compatibility scalar fixed at zero after D98; consumers compute live relation degree from PostgreSQL adjacency. |
+| `created_at` | timestamp with time zone | no | When the entity was minted. |
+| `updated_at` | timestamp with time zone | no | When the entity registry row was last maintained. |
+
+### entity_aliases_current
+
+One row per current alias-to-survivor mapping, keyed by (deployment_id, alias_id) and joined to entities_current on (deployment_id, entity_id). Merge redirects are resolved, so an alias recorded against a since-merged entity now names the survivor while source_entity_id preserves where it was recorded. An alias whose survivor has no surviving provenance is absent, because membership is inherited from entities_current. The clocks are observation instants rather than validity, and the view carries no counts.
+
+- **Grain:** one current alias-to-survivor mapping (`entity_alias_current`)
+- **Row key:** `deployment_id`, `alias_id`
+- **Clock semantics:** `observation_instants`
+- **Joins to:** `entities_current` on `deployment_id`, `entity_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the alias. |
+| `alias_id` | uuid | no | Stable identity of this alias row. |
+| `source_entity_id` | uuid | no | The entity the alias was originally recorded against, which may since have been merged away. |
+| `entity_id` | uuid | no | The survivor entity the alias currently names, joinable to entities_current. |
+| `alias_text` | text | no | The surface form as observed or as canonicalized. |
+| `normalized_lemma` | text | no | Accent-folded lower-case match key for the alias. |
+| `provenance` | text | no | Where the alias came from, either source when observed in a document or llm_canonical when emitted by the extractor. Values: `source`, `llm_canonical`. |
+| `confidence` | real | yes | Confidence that this surface really names the entity, null when never scored. |
+| `first_seen` | timestamp with time zone | no | When the alias was first recorded. |
+| `last_seen` | timestamp with time zone | no | When the alias was last observed. |
+
+### entity_document_mentions
+
+One row per survivor entity and live document lineage, keyed by (deployment_id, entity_id, doc_id) and joined to entities_current on (deployment_id, entity_id) and documents_live on (deployment_id, doc_id). The mention count is EXACT rather than sampled or capped, and it counts exactly the mentions this deployment can still show: one for every row of mentions_live in this lineage whose resolution names this survivor, and nothing else. Mentions of forgotten lineages, mentions of superseded versions and non-current readings, mentions with no chunk coordinate, mentions whose own lineage disagrees with their chunk's, and mentions whose resolution has been superseded are therefore counted nowhere — a mention of superseded content is not live content and is not counted. Merge redirects are resolved before counting, so a merged entity contributes to its survivor and never appears on its own. The clocks are mention-recording instants, not world-validity, and this relation carries no evidence and no fact semantics.
+
+- **Grain:** one survivor entity × live document (`entity_document_mention_live`)
+- **Row key:** `deployment_id`, `entity_id`, `doc_id`
+- **Clock semantics:** `mention_observation_instants`
+- **Joins to:** `entities_current` on `deployment_id`, `entity_id`; `documents_live` on `deployment_id`, `doc_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns both the entity and the document. |
+| `entity_id` | uuid | no | The survivor entity, with merge redirects already resolved. |
+| `doc_id` | uuid | no | The live lineage the entity is mentioned in. |
+| `mention_count` | bigint | no | Exact count of the mentions of this survivor in this lineage's current content. |
+| `first_mentioned_at` | timestamp with time zone | no | When the earliest counted mention was recorded. |
+| `last_mentioned_at` | timestamp with time zone | no | When the latest counted mention was recorded. |
+
+### evidence_lineage
+
+One row per fact, current-testimony document lineage, and stance, keyed by (deployment_id, fact_kind, fact_id, doc_id, stance) and joined to the fact relations on (deployment_id, fact_kind, fact_id) and to documents_live on (deployment_id, doc_id). THIS RELATION IS THE SOLE PUBLIC INPUT FOR D54 EVIDENCE COUNTS: an evidence count is the number of rows here for a fact and stance, which is exactly the number of distinct current-testimony source lineages, so repeating an assertion inside one document and re-extracting the same document both leave every count unchanged while a genuinely independent second source moves it by one. claim_count is descriptive colour about how loudly one lineage says it and must never be summed into an evidence count. Evidence from forgotten lineages and from superseded testimony is absent. The assertion range is source-asserted event time, not fact validity.
+
+- **Grain:** one fact × current-testimony document lineage × stance (`evidence_lineage`)
+- **Row key:** `deployment_id`, `fact_kind`, `fact_id`, `doc_id`, `stance`
+- **Clock semantics:** `assertion_event_range`
+- **Joins to:** `facts_visible_history` on `deployment_id`, `fact_kind`, `fact_id`; `documents_live` on `deployment_id`, `doc_id`; `claims_live` on `deployment_id`, `representative_claim_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the evidence. |
+| `fact_kind` | text | no | Which fact layer the evidence points at, either relation or observation. Values: `relation`, `observation`. |
+| `fact_id` | uuid | no | The adjudicated fact this lineage supports or contradicts. |
+| `doc_id` | uuid | no | The live document lineage that is the counted unit of corroboration. |
+| `stance` | text | no | Exactly supports or contradicts. Values: `supports`, `contradicts`. |
+| `source_kind` | text | no | The connector family of the lineage. |
+| `source_handle` | text | no | Stable human-usable handle for the lineage, formed from its connector-native identity. |
+| `claim_count` | bigint | no | How many current-testimony claims in this lineage take this stance, which is DESCRIPTIVE ONLY and is never an evidence count. |
+| `representative_claim_id` | uuid | no | The most recently asserted claim of this lineage and stance, chosen deterministically as a readable exemplar. |
+| `asserted_from` | timestamp with time zone | yes | Earliest assertion instant among those claims, null when none of them carries a date. |
+| `asserted_to` | timestamp with time zone | yes | Latest assertion instant among those claims, null when none of them carries a date. |
+
+### fact_claim_evidence_live
+
+One row per current claim-to-fact association, keyed by (deployment_id, fact_kind, fact_id, claim_id, stance) and joined to facts_current or facts_visible_history on (deployment_id, fact_kind, fact_id) and to claims_live on (deployment_id, claim_id). This is the AUDITABLE BRIDGE between the two truth layers: it records which immutable testimony supports or contradicts an adjudicated fact, and stance is exactly supports or contradicts. Only current testimony from live lineages appears, and an association whose denormalized lineage disagrees with its claim's lineage is treated as mismatched state and dropped rather than exposed. The claim-validity columns are the SOURCE's asserted interval, inclusive at both endpoints and never the fact's validity; a null endpoint is unbounded or unknown. The view carries no counts: aggregate evidence_lineage instead.
+
+- **Grain:** one current claim-to-fact association (`fact_claim_evidence_live`)
+- **Row key:** `deployment_id`, `fact_kind`, `fact_id`, `claim_id`, `stance`
+- **Clock semantics:** `claim_validity_immutable`
+- **Joins to:** `facts_visible_history` on `deployment_id`, `fact_kind`, `fact_id`; `claims_live` on `deployment_id`, `claim_id`; `documents_live` on `deployment_id`, `doc_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the association. |
+| `fact_kind` | text | no | Which fact layer the association points at, either relation or observation. Values: `relation`, `observation`. |
+| `fact_id` | uuid | no | The adjudicated fact this claim supports or contradicts. |
+| `claim_id` | uuid | no | The current-testimony claim on the other side of the bridge. |
+| `stance` | text | no | Exactly supports or contradicts, matching the shipped evidence stance vocabulary. Values: `supports`, `contradicts`. |
+| `doc_id` | uuid | no | The live lineage that asserted the claim, which is the unit D54 counts. |
+| `source_kind` | text | no | The connector family of that lineage. |
+| `source_handle` | text | no | Stable human-usable handle for that lineage, formed from its connector-native identity. |
+| `asserted_at` | timestamp with time zone | yes | When the source asserted the claim, null when the source carries no date. |
+| `claim_valid_from` | timestamp with time zone | yes | Immutable start of the world-time interval the SOURCE asserted, null for unbounded-before or unknown. |
+| `claim_valid_until` | timestamp with time zone | yes | Immutable end of that interval, null for open-per-source or unknown. |
+| `claim_valid_precision` | text | no | Granularity of the asserted interval, from unknown through instant to open. Values: `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
+| `claim_valid_kind` | text | yes | Which world-interval was asserted, null when unclassified. Values: `proposition_validity`, `event_time`, `measurement_period`, `effective_period`. |
+| `linked_at` | timestamp with time zone | no | When the association was recorded, which is a processing instant rather than a validity clock. |
+
+### facts_current
+
+Confirmed facts holding at the single evaluated_at instant and still believed. Unknown or partial windows are excluded from this strict current view; inspect facts_visible_history for possible matches and historical achievements. A NULL end alone never establishes ongoing validity. Counts are distinct current testimony lineages.
+
+- **Grain:** one currently valid relation or observation (`fact_current`)
+- **Row key:** `deployment_id`, `fact_kind`, `fact_id`
+- **Clock semantics:** `bitemporal_current_at_evaluated_at`
+- **Joins to:** `entities_current` on `deployment_id`, `subject_entity_id`; `entities_current` on `deployment_id`, `object_entity_id`; `fact_claim_evidence_live` on `deployment_id`, `fact_kind`, `fact_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the fact. |
+| `fact_kind` | text | no | Which fact layer this row belongs to, either relation or observation. Values: `relation`, `observation`. |
+| `fact_id` | uuid | no | Stable identity of the adjudicated fact. |
+| `subject_entity_id` | uuid | no | Survivor identity of the subject entity, with merge redirects resolved. |
+| `predicate` | text | yes | The governed predicate of a relation, null for an observation. |
+| `object_entity_id` | uuid | yes | Survivor identity of the object entity of a relation, null for an observation. |
+| `statement` | text | yes | The canonical statement of an observation, null for a relation. |
+| `fact_label` | text | yes | Human-readable sentence for the fact, null when no label has been generated. |
+| `valid_from` | timestamp with time zone | yes | Canonical inclusive world-time start; NULL means unknown. |
+| `valid_until` | timestamp with time zone | yes | Canonical exclusive world-time end; NULL means unknown unless valid_precision is open. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time start: when the system first believed the fact. |
+| `contradiction_group` | uuid | yes | Shared identifier of an unadjudicated contradiction, null when the fact is in no contradiction group. |
+| `confidence` | real | yes | Aggregate confidence over the fact's evidence, null when never scored. |
+| `evidence_count` | bigint | no | Exact count of distinct current-testimony lineages supporting the fact. |
+| `contradict_count` | bigint | no | Exact count of distinct current-testimony lineages contradicting the fact. |
+| `support_state` | text | no | Exactly current or withdrawn, derived at read time from the open review queue. Values: `current`, `withdrawn`. |
+| `evaluated_at` | timestamp with time zone | no | The single statement instant at which both clocks were applied, shared by every current relation referenced in the same statement. |
+| `valid_precision` | text | no | Chosen world-date precision; unknown and partial boundaries are distinct from explicitly open. |
+
+### facts_visible_history
+
+Historically visible adjudicated facts with one canonical world window and separate system timestamps. Membership requires surviving provenance. Unknown dates and partial windows are possible temporal matches, not proof of being current; open precision explicitly means ongoing. Completed windows remain believed history while invalidated_at is NULL. Evidence counts and support state are current testimony, not reconstructed historical counts.
+
+- **Grain:** one historically visible relation or observation (`fact_visible_history`)
+- **Row key:** `deployment_id`, `fact_kind`, `fact_id`
+- **Clock semantics:** `bitemporal_raw`
+- **Joins to:** `entities_current` on `deployment_id`, `subject_entity_id`; `entities_current` on `deployment_id`, `object_entity_id`; `evidence_lineage` on `deployment_id`, `fact_kind`, `fact_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the fact. |
+| `fact_kind` | text | no | Which fact layer this row belongs to, either relation or observation. Values: `relation`, `observation`. |
+| `fact_id` | uuid | no | Stable identity of the adjudicated fact. |
+| `subject_entity_id` | uuid | no | Survivor identity of the subject entity, with merge redirects resolved. |
+| `predicate` | text | yes | The governed predicate of a relation, null for an observation. |
+| `object_entity_id` | uuid | yes | Survivor identity of the object entity of a relation, null for an observation. |
+| `statement` | text | yes | The canonical statement of an observation, null for a relation. |
+| `fact_label` | text | yes | Human-readable sentence for the fact, null when no label has been generated. |
+| `valid_from` | timestamp with time zone | yes | Canonical inclusive world-time start; NULL means unknown. |
+| `valid_until` | timestamp with time zone | yes | Canonical exclusive world-time end; NULL means unknown unless valid_precision is open. |
+| `ingested_at` | timestamp with time zone | no | Raw transaction-time start: when the system first believed the fact. |
+| `invalidated_at` | timestamp with time zone | yes | Raw transaction-time end: when the system learned the fact was superseded, null while it is still believed. |
+| `contradiction_group` | uuid | yes | Shared identifier of an unadjudicated contradiction, null when the fact is in no contradiction group. |
+| `confidence` | real | yes | Aggregate confidence over the fact's evidence, null when never scored. |
+| `evidence_count_current` | bigint | no | LIVE count of distinct current-testimony lineages supporting the fact, read now and never a historical reconstruction. |
+| `contradict_count_current` | bigint | no | LIVE count of distinct current-testimony lineages contradicting the fact, read now and never a historical reconstruction. |
+| `support_state_current` | text | no | LIVE support state, exactly current or withdrawn, derived now from the open review queue and never a stored column. Values: `current`, `withdrawn`. |
+| `valid_precision` | text | no | Chosen world-date precision; unknown and partial boundaries are distinct from explicitly open. |
+
+### graph_edges_current
+
+One row per current relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on (deployment_id, subject_entity_id) and (deployment_id, object_entity_id). This is the LIVE graph surface, evaluated in PostgreSQL rather than read from a projection: it inherits the facts_current membership rule, the same half-open world-time interval, and the same shared evaluation instant, which is emitted on every row. Both endpoints are survivor identities and both are required to be visible entities, so an edge is dropped as a unit rather than dangling into an entity that has no surviving provenance. The counts are exact counts of distinct current-testimony lineages, and support state is derived at read time from the open review queue. Observations never project here, because they are entity-anchored facts rather than edges.
+
+- **Grain:** one current relation edge (`graph_edge_current`)
+- **Row key:** `deployment_id`, `relation_id`
+- **Clock semantics:** `bitemporal_current_at_evaluated_at`
+- **Joins to:** `entities_current` on `deployment_id`, `subject_entity_id`; `entities_current` on `deployment_id`, `object_entity_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the edge. |
+| `relation_id` | uuid | no | Stable identity of the relation this edge projects. |
+| `subject_entity_id` | uuid | no | Survivor identity of the edge's source entity, guaranteed present in entities_current. |
+| `object_entity_id` | uuid | no | Survivor identity of the edge's target entity, guaranteed present in entities_current. |
+| `predicate` | text | no | The governed predicate carried by the edge. |
+| `fact_label` | text | yes | Human-readable sentence for the relation, null when no label has been generated. |
+| `valid_from` | timestamp with time zone | yes | World-time start of the relation, null for unknown or always. |
+| `valid_until` | timestamp with time zone | yes | World-time end of the relation, null while it is open; the interval is half-open. |
+| `ingested_at` | timestamp with time zone | no | Transaction-time start: when the system first believed the relation. |
+| `contradiction_group` | uuid | yes | Shared identifier of an unadjudicated contradiction, null when the edge is in no contradiction group. |
+| `confidence` | real | yes | Aggregate confidence over the relation's evidence, null when never scored. |
+| `evidence_count` | bigint | no | Exact count of distinct current-testimony lineages supporting the relation. |
+| `contradict_count` | bigint | no | Exact count of distinct current-testimony lineages contradicting the relation. |
+| `support_state` | text | no | Exactly current or withdrawn, derived at read time from the open review queue. Values: `current`, `withdrawn`. |
+| `evaluated_at` | timestamp with time zone | no | The single statement instant at which both clocks were applied, shared with every other current relation in the statement. |
+
+### graph_edges_visible_history
+
+One row per historically visible relation edge, keyed by (deployment_id, relation_id) and joined to entities_current on both endpoint columns. Membership requires surviving historical provenance and two visible survivor endpoints, so a relation whose sources have all been forgotten disappears and an edge is never left dangling. Both clocks are RAW: world time is half-open, transaction time is bounded by ingested_at and invalidated_at, a null endpoint is unbounded or unknown, and membership here is not a claim that the edge currently holds. The three columns suffixed _current are LIVE CURRENT-TESTIMONY VALUES READ NOW and never assert that those counts or that support state held at any historical instant; they come from evidence_lineage and from the open support_withdrawn review row respectively.
+
+- **Grain:** one historically visible relation edge (`graph_edge_visible_history`)
+- **Row key:** `deployment_id`, `relation_id`
+- **Clock semantics:** `bitemporal_raw`
+- **Joins to:** `entities_current` on `deployment_id`, `subject_entity_id`; `entities_current` on `deployment_id`, `object_entity_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the edge. |
+| `relation_id` | uuid | no | Stable identity of the relation this edge projects. |
+| `subject_entity_id` | uuid | no | Survivor identity of the edge's source entity, guaranteed present in entities_current. |
+| `object_entity_id` | uuid | no | Survivor identity of the edge's target entity, guaranteed present in entities_current. |
+| `predicate` | text | no | The governed predicate carried by the edge. |
+| `fact_label` | text | yes | Human-readable sentence for the relation, null when no label has been generated. |
+| `valid_from` | timestamp with time zone | yes | Raw world-time start of the relation, null for unknown or always. |
+| `valid_until` | timestamp with time zone | yes | Raw world-time end of the relation, null while it has not been capped; the interval is half-open. |
+| `ingested_at` | timestamp with time zone | no | Raw transaction-time start: when the system first believed the relation. |
+| `invalidated_at` | timestamp with time zone | yes | Raw transaction-time end: when the system learned the relation was superseded, null while it is still believed. |
+| `contradiction_group` | uuid | yes | Shared identifier of an unadjudicated contradiction, null when the edge is in no contradiction group. |
+| `confidence` | real | yes | Aggregate confidence over the relation's evidence, null when never scored. |
+| `evidence_count_current` | bigint | no | LIVE count of distinct current-testimony lineages supporting the relation, read now and never a historical reconstruction. |
+| `contradict_count_current` | bigint | no | LIVE count of distinct current-testimony lineages contradicting the relation, read now and never a historical reconstruction. |
+| `support_state_current` | text | no | LIVE support state, exactly current or withdrawn, read now and never a historical reconstruction. Values: `current`, `withdrawn`. |
+
+### identity_events_visible
+
+One row per visible identity event, keyed by the synthetic pair (deployment_id, object_kind, event_id): each union arm names its own log in object_kind and supplies that log's own identifier, so the two identifier spaces cannot collide. Resolution events carry a mention and an outcome of linked or new_entity; they appear only while that exact mention is present in mentions_live, which binds them to the current-content transcript and its complete visibility gate. Merge events carry a counterpart entity and an outcome of merge or unmerge, where a split is recorded as the un-merge that reversed a merge. Every event requires its survivor entity to pass the entities_current provenance gate. Decision clocks are transaction time and carry no world-validity meaning; the view carries no counts and asserts no facts.
+
+- **Grain:** one visible resolution/merge/split event (`identity_event_visible`)
+- **Row key:** `deployment_id`, `object_kind`, `event_id`
+- **Clock semantics:** `transaction_time_event`
+- **Joins to:** `entities_current` on `deployment_id`, `entity_id`; `mentions_live` on `deployment_id`, `mention_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the event. |
+| `object_kind` | text | no | Which append-only log the event comes from, either resolution_decision or merge_event. Values: `resolution_decision`, `merge_event`. |
+| `event_id` | uuid | no | Identity of the event within its own log, unique together with object_kind. |
+| `entity_id` | uuid | no | The survivor entity the event is about, joinable to entities_current. |
+| `related_entity_id` | uuid | yes | The counterpart entity of a merge or unmerge, null for a resolution event. |
+| `mention_id` | uuid | yes | The mention a resolution event decided, null for a merge event. |
+| `outcome` | text | no | What the event did, one of linked, new_entity, merge, or unmerge. Values: `linked`, `new_entity`, `merge`, `unmerge`. |
+| `method` | text | no | Which mechanism produced the event, such as a resolution tier or merge_event. Values: `T0`, `T3`, `T4_small`, `T4_frontier`, `human`, `merge_event`. |
+| `confidence` | real | yes | Confidence recorded for the decision, null when the log records none. |
+| `decided_by` | text | no | Whether the decision was automatic or human. Values: `auto`, `human`. |
+| `decided_at` | timestamp with time zone | no | When the decision was made, which is a transaction-time instant. |
+| `is_superseded` | boolean | no | True once a later decision replaced this one, or a later un-merge reversed it. |
+
+### mentions_live
+
+One row per mention occurring in current content, keyed by (deployment_id, mention_id) and joined to chunks_live on (deployment_id, chunk_id), documents_live on (deployment_id, doc_id), and entities_current on (deployment_id, resolved_entity_id). Membership binds every coordinate of the mention: the chunk must be a current-content chunk and the mention's own lineage must be that chunk's lineage, so mentions in superseded versions, in non-ready readings, in forgotten lineages, and mentions whose recorded lineage disagrees with their chunk's are all absent. Resolution is deliberately nullable and UNRESOLVED MENTIONS REMAIN VISIBLE: the five resolution columns are populated together or not at all, from the mention's single live, unsuperseded decision and only when the survivor that decision names passes the entities_current provenance gate, so a decision pointing at a retired, merged-away, or provenance-free identity leaves the whole resolution null rather than describing a decision whose subject this schema will not show. The claim coordinate is gated the same way and is null unless that claim is itself a visible claim of this lineage. Merge redirects are resolved before exposure. This relation is source transcript, not evidence and not fact; it carries no counts and no validity clocks. After D96, emitted_type and type_confidence are vacated compatibility positions that always return NULL.
+
+- **Grain:** one mention in current content (`mention_current_content`)
+- **Row key:** `deployment_id`, `mention_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `chunks_live` on `deployment_id`, `chunk_id`; `entities_current` on `deployment_id`, `resolved_entity_id`; `claims_visible_history` on `deployment_id`, `claim_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the mention. |
+| `mention_id` | uuid | no | Stable identity of this mention in the immutable mention transcript. |
+| `doc_id` | uuid | no | The live lineage the mention occurs in. |
+| `version_id` | uuid | no | The lineage's current version the mention occurs in. |
+| `representation_id` | uuid | no | The current ready reading whose offsets the mention anchors use. |
+| `chunk_id` | uuid | no | The current-content chunk the mention occurs in. |
+| `section_id` | uuid | yes | The section containing the mention, null when the chunk has no section in the current structure generation. |
+| `claim_id` | uuid | yes | The claim the mention occurs in, exposed only while that claim is itself visible and null otherwise. |
+| `surface_form` | text | no | The mention exactly as it appeared in the source. |
+| `normalized_lemma` | text | no | Accent-folded lower-case form of the surface form. |
+| `canonical_name_form` | text | yes | The nominative or canonical form the extractor emitted, null when it emitted none. |
+| `emitted_type` | text | yes | Vacated after D96: this compatibility output position always returns NULL because extraction emits entity names rather than type classes; the source and canonical spellings remain available on this mention. |
+| `type_confidence` | real | yes | Vacated after D96: this compatibility output position always returns NULL because extraction no longer produces an entity-class confidence; resolution confidence remains available separately. |
+| `language` | text | yes | Language of the mention, null when undetected. |
+| `char_start` | integer | yes | Start character offset of the mention within the named representation's markdown, null when unrecorded. |
+| `char_end` | integer | yes | End character offset of the mention within the named representation's markdown, null when unrecorded. |
+| `created_at` | timestamp with time zone | no | When the mention was recorded, which is a processing instant. |
+| `resolved_entity_id` | uuid | yes | The survivor entity this mention currently resolves to, null while the mention is unresolved or while the entity that decision names is not itself visible. |
+| `resolution_method` | text | yes | Which decision tier produced the live resolution, null exactly when resolved_entity_id is null. Values: `T0`, `T3`, `T4_small`, `T4_frontier`, `human`. |
+| `resolution_confidence` | real | yes | Confidence of that live resolution, null exactly when resolved_entity_id is null. |
+| `resolution_is_new_entity` | boolean | yes | True when the live resolution minted a new entity, null exactly when resolved_entity_id is null. |
+| `resolved_at` | timestamp with time zone | yes | When the live resolution was decided, null exactly when resolved_entity_id is null. |
+
+### page_evidence_visible
+
+One row per visible artifact-to-target citation, keyed by (deployment_id, artifact_id, role, target_kind, target_id) and joinable to pages_live on (deployment_id, artifact_id), documents_live on target_id for claim and document targets, and the fact relations on target_id for relation targets. EACH TARGET PASSES ITS OWN VISIBILITY GATE: a citation appears only while its cited lineage is live or its cited relation still has surviving provenance, so forgetting a source removes the link rather than leaving a reference to vanished content. The authoritative citation set is evaluated once and joined directly to non-tombstoned artifact status, which is exactly the membership rule pages_live applies, so a visible page always has at least one row here and a link never outlives the page that carries it. A claim citation is a stable coordinate on the asserting LINEAGE, and its chunk content hashes are exposed only as locators inside that already authorized lineage: the hash never authorizes a read and cannot be used to bypass the lineage gate. Because several chunk coordinates in one lineage collapse into one association, link_count reports exactly how many underlying links were collapsed. The view carries no clocks.
+
+- **Grain:** one visible K artifact-to-target association (`k_artifact_evidence_visible`)
+- **Row key:** `deployment_id`, `artifact_id`, `role`, `target_kind`, `target_id`
+- **Clock semantics:** `none`
+- **Joins to:** `pages_live` on `deployment_id`, `artifact_id`; `documents_live` on `deployment_id`, `target_id`; `facts_visible_history` on `deployment_id`, `target_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the association. |
+| `artifact_id` | uuid | no | The visible knowledge artifact that carries the citation. |
+| `role` | text | no | What the citation does, one of supports, contradicts, or cites. Values: `supports`, `contradicts`, `cites`. |
+| `target_kind` | text | no | What is cited, one of claim, relation, or document. Values: `claim`, `relation`, `document`. |
+| `target_id` | uuid | no | The cited target: the asserting lineage for a claim citation, the relation for a relation citation, or the lineage for a document citation. |
+| `claim_chunk_content_hashes` | text[] | yes | Sorted chunk-content hashes locating the cited claims inside the lineage, null for non-claim targets; these are locators only and never authorize a read. |
+| `link_count` | bigint | no | Exact number of underlying citation links collapsed into this association. |
+
+### pages_live
+
+One row per visible knowledge artifact, keyed by (deployment_id, artifact_id) and joined to page_evidence_visible on the same pair. Membership is FAIL-CLOSED ON PROVENANCE as well as on status: an artifact appears only while it is not tombstoned AND at least one of its citations still points at a visible target, so a page whose every cited source has been forgotten leaves with them instead of surviving as compiled prose about content this deployment can no longer show. Both page kinds carry citations, so an artifact with none is anomalous rather than ordinary: it is absent here and counted in the operator quarantine report, where it can be recompiled or retired. A tombstoned parent, and a parent that is itself absent for either reason, is reported as null rather than dangling. Everything textual here is COMPILED ORIENTATION PROSE AT COMPILED GRAIN: page_summary is a writer's abstract of cited evidence and can never be promoted to a live fact, and the artifact body itself lives in the knowledge repository rather than in this schema. The review-flag count is exact over unprocessed flags, is_stale means the compiled page is known to lag its inputs, and last_compiled_at is a processing instant rather than a validity clock.
+
+- **Grain:** one visible K artifact (`k_artifact_compiled_grain`)
+- **Row key:** `deployment_id`, `artifact_id`
+- **Clock semantics:** `compilation_instants`
+- **Joins to:** `pages_live` on `deployment_id`, `parent_artifact_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the artifact. |
+| `artifact_id` | uuid | no | Stable identity of this knowledge artifact. |
+| `layer` | text | no | Content tier of the artifact, one of K1, K2, or K3. Values: `K1`, `K2`, `K3`. |
+| `page_kind` | text | no | Ownership contract of the body, either compiled when machine-owned or authored when human-owned. Values: `compiled`, `authored`. |
+| `git_path` | text | no | Path of the artifact's file in the knowledge repository. |
+| `kind` | text | yes | Free-form editorial kind such as summary or profile, null when unset. |
+| `parent_artifact_id` | uuid | yes | Parent artifact in the compile tree, exposed only while that parent is itself visible and null otherwise. |
+| `page_summary` | text | yes | Writer-emitted abstract of the page; it is compiled orientation prose and is never asserted evidence. |
+| `status` | text | no | Lifecycle status of the artifact, one of active, stale, or quarantined. Values: `active`, `stale`, `quarantined`. |
+| `last_compiled_at` | timestamp with time zone | yes | When the artifact was last compiled, null when it has never been compiled. |
+| `is_stale` | boolean | no | True when a compiled artifact is known to lag its inputs, either by status or by an unprocessed refresh. |
+| `open_review_flags` | bigint | no | Exact count of unprocessed authored-review flags on the artifact, always zero for a compiled page. |
+| `redaction_required` | boolean | no | True when an open authored-review flag asks the author to redact content. |
+
+### sections_live
+
+One row per section of the current ready representation of a live lineage, keyed by (deployment_id, section_id) and joined to documents_live on (deployment_id, doc_id). Sections of a superseded version, of a non-ready reading, of a superseded D79 structure generation, and of a forgotten lineage are all absent, so a node_path resolves to exactly one live tree. Character and block offsets are meaningful only against the named representation. The summary column is orientation text, not evidence, and the view carries no counts and no validity clocks.
+
+- **Grain:** one section in a current ready representation (`section_current_content`)
+- **Row key:** `deployment_id`, `section_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the section. |
+| `section_id` | uuid | no | Stable identity of this section node. |
+| `doc_id` | uuid | no | The live lineage the section belongs to. |
+| `version_id` | uuid | no | The lineage's current version, whose bytes this section indexes. |
+| `representation_id` | uuid | no | The current ready reading whose character offsets this section uses. |
+| `structure_generation_id` | uuid | no | The D79 structure generation that produced this tree, always the representation's current generation. |
+| `parent_section_id` | uuid | yes | The parent node in the section tree, null for the root section. |
+| `node_path` | text | no | Materialized path such as 0.2.1, unique within the structure generation. |
+| `heading_level` | smallint | yes | Source heading depth from one to six, null when the section carries no heading. |
+| `title` | text | yes | Section title as read from the source, null when the section has none. |
+| `normalized_title` | text | no | Case-folded and trimmed title used for stable matching, empty when there is no title. |
+| `role` | text | no | Structural role of the section, such as body, references, or boilerplate. Values: `body`, `abstract`, `introduction`, `results`, `methods`, `discussion`, `conclusion`, `references`, `appendix`, `table`, `figure_caption`, `nav`, `boilerplate`, `legal`. |
+| `ordinal` | integer | no | Position of the section among its siblings. |
+| `block_start` | integer | no | First block ordinal of the section on the deterministic block grid. |
+| `block_end` | integer | no | Last block ordinal of the section, inclusive. |
+| `char_start` | integer | no | Start character offset of the section within this representation's markdown. |
+| `char_end` | integer | no | End character offset of the section within this representation's markdown. |
+| `page_start` | integer | yes | First source page of the section, null when the source is not paginated. |
+| `page_end` | integer | yes | Last source page of the section, null when the source is not paginated. |
+| `summary` | text | yes | Section summary generated for navigation and context; it is labeled orientation text and is never asserted evidence. |
+
+### testimony_currency_events_visible
+
+One row per visible D54 testimony-currency transition, keyed by (deployment_id, event_id) and joined to claims_visible_history on (deployment_id, claim_id) and to documents_live on (deployment_id, doc_id). A currency transition is BOOKKEEPING and never validity: nothing about the claim changes and no fact is adjudicated by it. Transitions of forgotten lineages and of claims whose source version is tombstoned are absent, and from_version_id is null rather than dangling whenever the superseded version is itself no longer visible, so this relation cannot be read as a tombstone side channel. The occurrence instant is transaction time; the view carries no counts and no world-validity clocks.
+
+- **Grain:** one visible D54 transition (`testimony_currency_event_visible`)
+- **Row key:** `deployment_id`, `event_id`
+- **Clock semantics:** `transaction_time_event`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `claims_visible_history` on `deployment_id`, `claim_id`; `document_versions_visible` on `deployment_id`, `from_version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the transition. |
+| `event_id` | uuid | no | Stable identity of this append-only transition record. |
+| `claim_id` | uuid | no | The claim whose testimony currency changed. |
+| `doc_id` | uuid | no | The live lineage whose basis change drove the transition. |
+| `reconciliation_id` | uuid | no | The single reconciliation run that emitted the transition, so a retried run is recognizable as one run. |
+| `became_current` | boolean | no | True when the claim regained currency and false when it lost currency. |
+| `reason` | text | no | Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored. Values: `reextracted`, `version_superseded`, `version_deleted`, `review_restored`. |
+| `from_extractor_version` | text | yes | The superseded extractor generation for a re-extraction, null for the other reasons. |
+| `from_version_id` | uuid | yes | The superseded document version, exposed only while that version is itself visible and null otherwise. |
+| `occurred_at` | timestamp with time zone | no | When the transition occurred, which is a transaction-time instant and never a validity clock. |
+
+## Shipped saved queries
+
+Every deployment is seeded with 18 saved queries in the `examples`
+namespace, status `active`, origin and assurance `shipped_example`. They are
+starting points, not guarantees: RememberStack wrote them and they pass the
+same validation as your statements, but what they compute is plain SQL you can
+read (`GET /query/saved/examples/<name>`), copy and change. A copy is yours.
+
+Their `parameter_schema` is empty. The parameters are the positional
+placeholders in the SQL, listed here. Run one with
+`POST /query/saved/examples/<name>/run` and `{"parameters": [...]}`.
+
+| Name | What it answers | Parameters | Row limit in the SQL |
+|---|---|---|---|
+| `claims_verbatim` | Claims as asserted, nominated semantically and joined to live testimony | `$1` query text | 20 |
+| `claims_about` | Claims that mention an entity, via live claim occurrences | `$1` entity id | 50 |
+| `claims_as_of` | Claims whose canonical world-time window overlaps an inclusive interval; unknown-precision claims are counted by precision, not by bounds | `$1` interval start, `$2` interval end (timestamps) | 50 |
+| `claims_hybrid_rrf` | Semantic and lexical claim channels fused by reciprocal rank | `$1` query text | 20 |
+| `chunks_hybrid_rrf` | Semantic and lexical chunk channels fused by reciprocal rank | `$1` query text | 20 |
+| `chunk_neighbors` | The chunks either side of one chunk in its current section | `$1` chunk id | none (± 2 chunks) |
+| `documents_about` | Every live document that mentions an entity, with its live metadata | `$1` entity id | 50 |
+| `pages_about` | Compiled pages that cite an entity through live page evidence | `$1` entity id | 50 |
+| `relation_current` | Current relations for an entity, as adjudicated | `$1` entity id | 50 |
+| `observation_current` | Current observations about an entity | `$1` entity id | 50 |
+| `identity_as_of` | Bounded identity-event transcript as of one decision instant | `$1` entity id, `$2` instant (timestamp) | 100 |
+| `entity_timeline` | One entity's visible facts grouped by a disclosed time bucket (day) | `$1` entity id | 200 |
+| `explain` | Why the system holds a fact: history, live evidence, lineage, and source | `$1` fact id | 100 |
+| `multi_hop_context` | Evidence along a route between two entities, with semantic nominations | `$1` deployment id, `$2` from entity id, `$3` to entity id, `$4` query text | 100 |
+| `changed_since` | What the system learned after an instant | `$1` instant (timestamp) | 100 |
+| `graph_neighborhood` | Relations within N hops of an entity (2 hops) | `$1` deployment id, `$2` entity id | none |
+| `graph_path` | Routes between two entities, each returned whole (up to 4 hops) | `$1` deployment id, `$2` from entity id, `$3` to entity id | none |
+| `graph_citation_path` | Directed citation routes between two live documents (up to 6 hops) | `$1` deployment id, `$2` from document id, `$3` to document id | none |
+
+The `examples` namespace belongs to the platform: seeding refuses to
+overwrite a query of yours with the same name, and never re-enables a shipped
+query you disabled. Copies you make must use another namespace.
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/query/saved/examples/changed_since/run" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"parameters": ["2026-09-20T00:00:00Z"]}'
+```
+
+```python
+from remember import Client
+
+memory = Client()
+result = memory.run_saved_query(
+    namespace="examples", name="changed_since", parameters=["2026-09-20T00:00:00Z"]
+)
+for object_kind, object_id, occurred_at, label in result["rows"]:
+    print(occurred_at, object_kind, label)
+```

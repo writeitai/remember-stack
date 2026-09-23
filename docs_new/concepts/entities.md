@@ -1,0 +1,141 @@
+---
+title: Entities and identity
+description: How RememberStack decides that two mentions are the same person, project or thing, and why a query never guesses between two.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Entities and identity
+
+"Ravi", "Ravi S." and "our backend lead" may be one person. Two people
+called Dana are two people. If memory gets this wrong in one direction,
+facts about different people blur into one; in the other, one person's
+history splits across duplicates and no query sees all of it. An agent that
+plans on top of either makes confident mistakes.
+
+An **entity** is one real-world referent (a person, a team, a project, a
+document, an event), with one `entity_id` however it is spelled. Facts are
+about entities. RememberStack decides identity carefully at write time and
+never guesses at read time.
+
+## What an entity has
+
+- `entity_id`: its stable identity.
+- A canonical name and **aliases**: every spelling the sources used for it.
+- A **profile**: a short prose summary built from its most important
+  observations and relations. The profile helps decide identity; it is not
+  the identity.
+
+An entity has no type. See [No entity types](#no-entity-types).
+
+## Matching a mention at write time
+
+Every relation or observation names its entities. For each name, the
+resolver works through a cascade, cheapest step first. The first three steps
+only *find candidates*; they never decide on their own.
+
+1. **Exact alias.** Is there an entity with exactly this cleaned-up name?
+   An exact match lists every such entity, which may be several (two people
+   called Dana). It is a candidate list, not a verdict.
+2. **Similar spelling.** Trigram similarity finds near-spellings: "Ravi
+   Shankar" and "Ravi Shanker".
+3. **Similar sound.** A phonetic code (Daitch–Mokotoff) finds names that
+   sound alike but are spelled differently.
+4. **Profile embedding.** The mention, together with its claim, is embedded
+   and compared with each candidate's profile. A strong match accepts a
+   repeat of a known entity without calling a model. This is how routine
+   mentions of known people stay cheap.
+5. **One small-model choice.** When the profile step cannot decide (no
+   profile yet, a conflict with the claim, several plausible candidates),
+   one call to a small model sees the mention, its claim and the bounded
+   candidate set, and returns one existing candidate or "new". It prefers an
+   existing compatible candidate unless the evidence positively
+   distinguishes a new referent.
+
+If no candidate matches, a new entity is created. Every verdict is recorded
+with its step, scores and the resolver version.
+
+Two refinements matter in practice:
+
+- Within one document, once a name has been matched to an entity, the same
+  exact name in the same document reuses that match rather than asking
+  again.
+- Bare head nouns ("the system", "the app", "a card") are not entities
+  unless the claim pins down a specific referent.
+
+## Merges and reversibility
+
+Identity is revisited as knowledge grows. When an entity's profile is
+refreshed, RememberStack re-examines its neighbourhood: entities that share
+aliases or similar profiles are grouped by profile similarity, never by
+chaining pairwise guesses, so the result does not depend on the order in
+which documents arrived.
+
+A merge, when applied, is a redirect from the absorbed entity to the
+survivor, stored with a snapshot of the state before the merge. Undoing it
+replays that snapshot. Nothing is overwritten. Merges that would touch many
+facts, and entity groups that grow suspiciously large, are held back rather
+than applied.
+
+!!! note
+    Automatic merging is off by default. Merge proposals are recorded for
+    review instead of applied, and there is no user-facing command to review
+    them yet. In practice the write-time cascade above decides identity.
+
+## Resolving a name at query time
+
+When you or your agent ask about "Ravi", the `resolve_entity` operation
+turns the name into entity IDs. It uses the same exact, spelling and sound
+steps, and falls back to profile embedding search only when those find
+nothing. It never calls a model and never makes the small-model choice.
+
+It also never picks for you:
+
+- **One candidate**: you have your entity.
+- **Several candidates**: that is ambiguity, and every candidate is
+  returned, ranked, with the step that found it (`tier`: `T0` exact, `T1`
+  spelling, `T2` sound, `T3` profile embedding). Your agent chooses, or asks.
+- **No candidate**: the envelope carries a typed negative, `unknown_entity`,
+  instead of an empty list that could be mistaken for "no facts".
+
+```python
+import remember
+
+with remember.Client() as memory:
+    result = memory.resolve_entity("Dana")
+    if result.negative is not None:
+        print(result.negative.kind, result.negative.explanation)
+    elif len(result.entities) > 1:
+        for candidate in result.entities:
+            print(candidate.entity_id, candidate.canonical_name, candidate.tier)
+    else:
+        dana = result.entities[0]
+        facts = memory.facts_context("billing migration", entity_ids=[dana.entity_id])
+```
+
+Returning an ambiguity is the point. A system that silently picks the
+likelier Dana answers confidently about the wrong person. See
+[Handle unknowns and ambiguity](../guides/unknowns-and-ambiguity.md).
+
+## No entity types
+
+Entities carry no class such as Person, Company or Project. This is a
+deliberate choice.
+
+Types force a decision at the first mention, when the least is known, and
+then that decision gets in the way. A name used for both a person and their
+company splits into twins; two homonyms of different types cannot be
+compared; "is a bank" becomes a type in one place and a fact in another.
+
+What a type would have said lives in **observations** instead ("Northwind is
+a payment provider based in Dublin") and in the profile. "List the payment
+providers" is answered by searching fact text, not by filtering a type
+column. Relations need no type check either: `works_for` works whether its
+object is a company or a person.
+
+## Where to go next
+
+- [Facts](facts.md): what is recorded about an entity.
+- [Retrieval](retrieval.md): how entity IDs scope `facts_context` and the
+  graph.
+- [Entities and facts routes](../reference/http-api/entities-and-facts.md):
+  `GET /resolve` and the lookup routes.

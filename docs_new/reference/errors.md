@@ -1,0 +1,333 @@
+---
+title: Errors and status codes
+description: Every HTTP status, error code and status value RememberStack and remember.dev return, what each means, and what to do about it.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Errors and status codes
+
+This page collects every error a client can meet: HTTP statuses from a
+deployment, the codes SQL queries report, spend refusals on remember.dev,
+the structured errors the MCP tools return, `remember login` failures, the
+remember.dev account API's error shape, and the status values that appear in
+results.
+
+A "no" that is an answer — nothing matched, the entity is unknown, a limit
+was reached — is not an error. It comes back as `200` with a typed
+[`negative`](result-types.md#negativekind) in the envelope. Read that first
+when a result is empty.
+
+## Error shapes
+
+A deployment's error body always has one key, `detail`:
+
+| Form | Example |
+|---|---|
+| String | `{"detail": "body_too_large"}` |
+| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` |
+| Object with `code` and `message` | `{"detail": {"code": "invalid_parameter", "message": "unknown argument(s): limit"}}` |
+| Validation list | `{"detail": [{"type": "less_than_equal", "loc": ["query", "k"], "msg": "Input should be less than or equal to 400", "input": "500", "ctx": {"le": 400}}]}` |
+
+Branch on the status and the code or string, not on `message`.
+
+The `remember` Python client raises `remember.MemoryApiError` for all of
+them, with `status_code` (`0` for a network failure), `detail` (the string, or
+the message) and `code` (set on `/query/*` routes when the body carries a
+known code at its expected status).
+
+## Deployment HTTP statuses
+
+| Status | `detail` | Meaning | What to do |
+|---|---|---|---|
+| `400` | `cursor is malformed` | `GET /documents` got a cursor it cannot read. | Restart paging without a cursor. |
+| `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
+| `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
+| `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}` or `GET /deployment`). | Use a `write` credential. See [Scopes](http-api/index.md#scopes). |
+| `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
+| `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
+| `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
+| `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
+| `409` | `rate_class_unavailable` | Text metering (remember.dev): the file is a binary format. | Send plain text or Markdown. |
+| `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
+| `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
+| `413` | `body_too_large` | The ingest body is over the cap (100,000,000 bytes on remember.dev). | Split the document. |
+| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
+| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. | Fix the request; `loc` names the field. |
+| `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
+| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
+| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
+| `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
+| `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
+| `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
+| `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
+| `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
+| `500` | `Internal Server Error` | An unhandled failure. Known causes in this release: a non-UTC `valid_at` or `believed_at` on lookups and graph routes; an embedding failure on search and lookup routes; an unknown `status` on `GET /query/saved`; re-ingesting content that was forgotten; a graph statement timeout. | Check the request against those causes; otherwise report it. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
+| `503` | `model provider unavailable` | An assured operation could not embed its query. | Retry with back-off. |
+| `503` | `live graph is busy` | No graph traversal slot was free in time. | Retry with back-off. |
+| `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
+| `503` | `{"code": "…_unavailable", …}` | A store needed by a SQL query was unavailable. See [SQL query codes](#sql-query-codes). | Retry with back-off. |
+
+### Spend refusals (remember.dev)
+
+Returned by ingest, search, SQL query and operation routes before any work
+runs. See [HTTP API conventions](http-api/index.md#spend-refusals-rememberdev).
+
+| Status | `detail` | Meaning | What to do |
+|---|---|---|---|
+| `401` | `missing_bearer` | No token reached the control plane. | Send the token. |
+| `401` | `invalid_token` | The token is malformed. | Use the token exactly as shown when it was created. |
+| `401` | `unknown_token` | No such token. | Create a new token. |
+| `401` | `token_expired` | The token has expired. | Create a new token. |
+| `403` | `token_revoked` | The token was revoked. | Create a new token. |
+| `403` | `token_retired` | The token was retired. | Create a new token. |
+| `403` | `project_membership_revoked` | The token's owner is no longer a member of the project. | Ask an owner for access, then create a new token. |
+| `403` | `dispatch_refused:fleet_dispatch_halted` | remember.dev has halted work. | Wait; see [Support](../cloud/support.md). |
+| `403` | `dispatch_refused:missing_spend_policy` | The project has no spend policy. | Contact support. |
+| `403` | `dispatch_refused:missing_org_provider_key` | The organisation's model key is missing or inactive. | Contact support. |
+| `403` | `dispatch_refused:missing_provider_limit_backstop` | The model key has no provider-side limit. | Contact support. |
+| `403` | `dispatch_refused:org_usd_ceiling_exhausted` | The organisation's spend ceiling is reached. | See [Spend caps and auto top-up](../cloud/spend-controls.md). |
+| `403` | `dispatch_refused:org_token_ceiling_exhausted` | The token ceiling is reached. | As above. |
+| `403` | `dispatch_refused:org_call_ceiling_exhausted` | The call ceiling is reached. | As above. |
+| `403` | `dispatch_refused:measurement_failed` | Spend could not be measured, so work is refused. | Retry later; contact support if it persists. |
+| `423` | `dispatch_parked:<reason>` | The project's work is parked for the recorded reason. | Fix the cause (for example buy credits); parked work resumes. Do not retry in a loop. |
+| `503` | `spend_lease_unavailable` | The control plane could not be reached or failed. | Retry with back-off. |
+
+## SQL query codes
+
+SQL queries report problems with one of 27 codes. For the statement routes
+(`POST /query/sql`, `POST /query/sql/explain`,
+`POST /query/saved/{namespace}/{name}/run`), a problem with the statement
+itself comes back as `200` with the code in the result's `error_code` and
+`termination_reason` `rejected` or `failed`. A code raised outside the
+statement — a saved query that cannot run, a refused discovery argument — is
+an HTTP error at the status below, with
+`{"detail": {"code": "…", "message": "…"}}`.
+
+| Code | HTTP status | Meaning | What to do |
+|---|---|---|---|
+| `parse_error` | 422 | The SQL does not parse, or contains a NUL byte. | Fix the syntax. |
+| `multiple_statements` | 422 | More than one statement. | Send one statement. |
+| `statement_not_allowed` | 422 | Not a read-only `SELECT`/`VALUES`/`WITH`, or uses a construct outside the grammar (row locks, `SELECT INTO`, `TABLESAMPLE`, `WITHIN GROUP`, a reserved `__rememberstack_` name). | Rewrite within the [grammar](query-space.md#what-a-statement-may-contain). |
+| `relation_not_allowed` | 422 | A table, view or schema outside `memory_v1`. | Use the [views](query-space.md#views). |
+| `function_not_allowed` | 422 | A function not on the allowlist (including `now()`), a qualified function outside `memory_v1`/`pg_catalog`, a table function, an XML expression or a session keyword. | Use an [allowed function](query-space.md#built-in-functions); pass times as parameters. |
+| `function_placement_not_allowed` | 422 | A public function outside a top-level `FROM` item, packed with others in `ROWS FROM`, or given a computed argument. | Follow the [placement rules](query-space.md#public-function-placement). |
+| `operator_not_allowed` | 422 | An operator or cast type outside the allowlist. | Use an allowed operator or cast. |
+| `invalid_parameter` | 422 | Wrong parameter count, non-contiguous placeholders, too many or too large parameters, SQL text over 65,536 bytes, a bad filter, `k` below 1, a graph function without `$1` as this deployment's id, or a graph call with only one clock. | Fix the parameters. |
+| `unbounded_recursion` | 422 | A recursive CTE that does not follow the template, or more than one. | Follow the [recursion template](query-space.md#recursion). |
+| `schema_version_mismatch` | 409 | The database's `memory_v1` views do not match the server's manifest. | An operator must finish the upgrade (migrations). |
+| `quota_exceeded` | 409 | More than 3 function calls of one category, the statement's 200-candidate search budget is spent, the per-minute statement-time budget is spent, or the operator has disabled SQL queries. | Simplify the statement or wait a minute. |
+| `concurrency_exceeded` | 409 | Too many statements running for this caller (2) or deployment (8). | Retry after the others finish. |
+| `saved_query_not_found` | 404 | No saved query or version by that name, or the deployment has no registry. | Check `GET /query/saved`. |
+| `saved_query_disabled` | 409 | The saved query is disabled, or the version is a draft, deprecated or broken. | Run an active version. |
+| `saved_query_incompatible` | 409 | A saved-query version failed a validation or activation check (raised by the deployment's authoring tooling, not by the HTTP routes). | Revalidate the version. |
+| `saved_query_revalidation_pending` | 409 | The query space changed since the version was validated. | Revalidate the saved query. |
+| `statement_timeout` | 500 | The statement ran past its timeout. | Narrow the statement, add filters or a `LIMIT`. |
+| `lock_timeout` | 500 | A lock was not available within the lock timeout. | Retry. |
+| `cancelled` | 500 | The statement was cancelled. Not produced by this release. | Retry. |
+| `resource_limit` | 500 | Memory, temporary-file or connection limits were exceeded. | Narrow the statement. |
+| `execution_error` | 500 | The statement failed while running (for example a bad cast of a parameter), or the saved-query registry could not be read. | Check parameter values and casts. |
+| `pg_unavailable` | 503 | The database is unavailable. | Retry with back-off. |
+| `p1_unavailable` | 503 | The search index could not be searched or read, or no embedder is configured. | Retry; check readiness (`p1`). |
+| `graph_unavailable` | 503 | A graph function returned no usable status. | Retry; check readiness (`live_graph`). |
+| `corpus_body_unavailable` | 503 | Chunk text could not be read. Not produced by this release. | Retry. |
+| `generation_unavailable` | 503 | The search index has no usable embedding generation, or requested chunks span more than one. | Retry after indexing completes; fetch chunks from one generation. |
+| `confirmation_failed` | 500 | Nominated rows could not be confirmed against the database. | Retry. |
+
+When a code arrives inside a `200` result, `termination_reason` is `rejected`
+if the statement was refused before the engine opened a transaction (parse
+and grammar codes, `unbounded_recursion`, parameter-count and size problems,
+`quota_exceeded`, `concurrency_exceeded`), and `failed` if it was refused or
+failed after that (`schema_version_mismatch`, bad search filters, timeouts,
+store codes).
+
+## MCP tool errors
+
+The MCP server returns a tool failure as a normal tool result with
+`"isError": true` and one JSON text block.
+
+### Ingest and readiness tools
+
+The `ingest` and `pipeline_readiness` tools return a structured error:
+
+```json
+{
+  "code": "body_too_large",
+  "message": "Ingest body exceeds the deployment size limit.",
+  "http_status": 413,
+  "retryable": false,
+  "agent_action": "Split or shorten the document; do not retry the same payload.",
+  "reason_code": null
+}
+```
+
+`reason_code` and `request_id` appear only when known.
+
+| `code` | `http_status` | `retryable` | `agent_action` |
+|---|---|---|---|
+| `invalid_arguments` | 422 | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
+| `source_lineage_pair` | 422 | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
+| `empty_body` | 422 | no | Provide non-empty path / text / content_base64 content. |
+| `encoding_error` | 422 | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
+| `path_not_allowed` | 400 | no | Pass a clean filesystem path without NUL characters. / Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. Do not retry path until roots are set. / Place the file under an allowlisted root, or use text/content_base64. Ask the operator to extend roots only when intentional. |
+| `path_not_regular_file` | 400 | no | Point path at a regular file, or send text/content_base64. |
+| `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
+| `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
+| `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
+| `spend_safety` | the HTTP status, else 403 | no | Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation. |
+| `dispatch_refused` | 403 | no | Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt. |
+| `dispatch_parked` | 423 | no | Stop automated retries and notify a human; park is policy, not a transient blip. |
+| `unauthorized` | 401 | no | Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if the token was revoked. |
+| `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
+| `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
+| `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
+| `transport_error` | 0 | yes | Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and network reachability. |
+| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. |
+| `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
+| `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
+
+For `dispatch_refused` and `dispatch_parked`, `reason_code` holds the part
+after the colon (for example `org_usd_ceiling_exhausted`).
+
+### Assured operation and SQL query tools
+
+The operation tools and the seven SQL query tools return:
+
+```json
+{"error": {"status_code": 422, "detail": "unknown argument(s): limit", "code": "invalid_parameter"}}
+```
+
+`code` is present when the deployment sent one. A SQL query argument refused
+before any request is sent has `"status_code": null` and the SQL query
+`code`. A local argument problem that is not a SQL query code comes back as
+plain text.
+
+On a read-only MCP server, calling `ingest` returns the text
+`write tool 'ingest' is disabled on this read-only MCP server`.
+
+### JSON-RPC errors
+
+| Code | Message | Cause |
+|---|---|---|
+| `-32700` | the parse error | The request line is not JSON. |
+| `-32600` | `invalid JSON-RPC request` / `request is not an object` | Not a JSON-RPC 2.0 request. |
+| `-32601` | `unknown method '<name>'` | A method other than `initialize`, `ping`, `tools/list`, `tools/call`. |
+| `-32602` | `bad initialize params` / `bad params` / `bad arguments` | Malformed parameters. |
+| `-32603` | the error text | An API or argument error while listing or calling tools. |
+
+See [MCP tools](mcp.md).
+
+## remember login (device grant)
+
+`remember login` uses the OAuth device flow against remember.dev. It polls
+the token endpoint no faster than the interval the server gives, between 1 and
+30 seconds.
+
+| Server answer | What the CLI does |
+|---|---|
+| `authorization_pending` | Keeps polling at the same interval (or `Retry-After`, if longer). |
+| `slow_down` | Adds 5 seconds to the interval and keeps polling. |
+| `temporarily_unavailable` | Adds 5 seconds and keeps polling. |
+| `access_denied` | Stops: you declined in the browser. Run `remember login` again. |
+| `expired_token` | Stops: the code expired before approval. Run it again and approve sooner. |
+| `invalid_grant` | Stops. Run it again. |
+| any other error | Stops with the server's description. |
+| code expires while polling | Stops: `device grant expired before authorization`. |
+| authorize request not `200` | Stops: `authorize failed with HTTP <status>`. |
+| poll answer not `200` or `400` | Stops: `token poll failed with HTTP <status>`. |
+| unusable success body | Stops: `token host returned an unusable token response`. |
+| redirect to another host | Stops: `refusing a cross-host redirect`. |
+
+Every failure exits with status 1. See [Tokens and sign-in](../cloud/tokens-and-sign-in.md).
+
+## remember.dev account API errors
+
+The remember.dev account API (organisations, projects, billing, tokens) uses
+one error envelope:
+
+```json
+{
+  "detail": {
+    "code": "…",
+    "message": "…",
+    "retryable": false,
+    "request_id": "…"
+  }
+}
+```
+
+Branch on `code`; `message` is for people. Some older routes answer with a
+plain string `detail`. When the body has no `request_id`, the `remember`
+client takes it from the `X-Request-Id` response header if one is present.
+
+The `remember` client raises:
+
+| Exception | Status | Meaning |
+|---|---|---|
+| `remember.Unauthenticated` | 401 | No credential, or one that is not accepted (also revoked, expired, or membership ended). Sign in again. |
+| `remember.NotPermitted` | 403 | The credential may not do this. A fresh credential of the same kind will not help. |
+| `remember.RateLimited` | 429 | Too many requests. `retry_after` holds the `Retry-After` seconds when sent. |
+| `remember.CloudError` | any other | The base class; carries `status_code`, `code`, `retryable`, `request_id`. |
+
+The routes themselves are in [remember.dev API](cloud-api.md).
+
+## Status values
+
+### Document version status
+
+| Value | Meaning |
+|---|---|
+| `ingesting` | Stored; conversion not started. |
+| `converting` | Being converted to Markdown. |
+| `structuring` | Being split into sections. |
+| `ready` | Converted and structured. Extraction may still be running; use readiness. |
+| `failed` | Conversion or structuring failed; `error` says why. |
+| `deleted` | Deleted. Not listed by `GET /documents`. |
+
+### Pipeline stage status
+
+| Value | Meaning |
+|---|---|
+| `missing` | No work exists yet for this stage and component version. |
+| `pending` | Queued. |
+| `running` | In progress. |
+| `succeeded` | Done. |
+| `skipped` | Not needed for this version; counts as done. |
+| `failed` | Failed; the pipeline may retry it. |
+| `dead_letter` | Failed for good. Stop waiting and report it. |
+
+### Readiness capability reasons
+
+See [Ingest](http-api/ingest.md#post-readiness).
+
+### Saved query status
+
+| Value | Runs? | Meaning |
+|---|---|---|
+| `draft` | no | Written, not activated. |
+| `pending_revalidation` | no | Was active; the query space changed and it must be revalidated. |
+| `active` | yes | The version that runs. |
+| `deprecated` | no | Replaced by a newer version. |
+| `disabled` | no | Turned off. |
+| `broken` | no | Failed validation. |
+
+### SQL query termination reason
+
+`completed`, `rejected`, `failed`. See [SQL queries](http-api/query.md#how-results-and-errors-come-back).
+
+### Connector status
+
+`active`, `paused`, `error`. The connector routes are not served by a stock
+deployment in this release.
+
+### Spend gate decision (remember.dev)
+
+| Value | Meaning |
+|---|---|
+| `allow` | Work may run. |
+| `refuse` | Work is refused; the engine answers `403 dispatch_refused:<reason>`. |
+| `park` | Work waits; the engine answers `423 dispatch_parked:<reason>`. It resumes when the cause is fixed. |
+
+`remember.CloudClient.spend_gate(deployment_id=...)` returns this decision
+with its `reason_code`.

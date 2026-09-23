@@ -1,0 +1,175 @@
+---
+title: Assured operation routes
+description: List the four assured operations and run one over JSON arguments.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Assured operation routes
+
+Assured operations are the four fixed retrievals RememberStack guarantees:
+`resolve_entity`, `claims_and_sources_context`, `facts_context` and
+`combined_context`. Two routes expose them. The CLI and the MCP server read
+the same registry, so the tools they offer always match these routes.
+
+What each operation takes and returns is described in
+[Assured operations](../assured-operations.md). This page covers the HTTP
+side.
+
+## GET /operations
+
+Return the descriptors of the four operations this deployment serves.
+
+**Scope:** `read`.
+
+### Parameters
+
+None.
+
+### Response
+
+`200` with an array of [`ToolDescriptor`](../result-types.md#tooldescriptor),
+ordered by the registry. Each descriptor carries the operation's `name`,
+`description`, closed `input_schema` (JSON Schema, `additionalProperties:
+false`), `result_schema`, `result_contract` (`envelope` or
+`context_bundle_v2`), `output_grain`, `answer_intent`, `version` and
+`implementation_plan_hash`. `mutates` is `null` on all four.
+
+```json
+[
+  {
+    "name": "resolve_entity",
+    "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
+    "input_schema": {
+      "type": "object",
+      "properties": {"name": {"type": "string", "minLength": 1}},
+      "additionalProperties": false,
+      "required": ["name"]
+    },
+    "result_schema": {"...": "the Envelope JSON Schema"},
+    "result_contract": "envelope",
+    "output_grain": "fact",
+    "answer_intent": "identity",
+    "mutates": null,
+    "version": 1,
+    "implementation_plan_hash": "fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a"
+  }
+]
+```
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/operations" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+for descriptor in memory.list_operations():
+    print(descriptor.name, descriptor.version, descriptor.result_contract)
+```
+
+## POST /operations/{name}
+
+Run one assured operation over a JSON object of arguments.
+
+**Scope:** `write` today. The route checks the operation's descriptor, and
+none of the four declares itself read-only (`mutates` is `null`), so a `read`
+credential is refused with `403`. See
+[HTTP API conventions](index.md#scopes).
+
+**Spend hold (remember.dev):** yes, named after the operation.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `name` | path | string | yes | One of `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`. |
+
+### Request body
+
+A JSON object whose keys are the operation's parameters. An empty body is the
+empty object. Arguments are checked against the descriptor before anything
+runs:
+
+- unknown keys are refused;
+- a required key that is missing is refused;
+- strings must be JSON strings; integers must be JSON integers (a whole-number
+  float such as `3.0` is accepted, `true` is not);
+- `entity_ids` must be an array of UUID strings, with no duplicates;
+- `time` must be an object in one of the four modes;
+- length, item-count and range bounds from the descriptor apply;
+- for `claims_and_sources_context`, `candidate_k` may not be smaller than `k`.
+
+The parameters of each operation are listed in
+[Assured operations](../assured-operations.md).
+
+### Response
+
+`200` with the operation's result:
+
+| Operation | Result |
+|---|---|
+| `resolve_entity` | [`Envelope`](../result-types.md#envelope), grain `fact` |
+| `claims_and_sources_context` | `Envelope`, grain `evidence` |
+| `facts_context` | `Envelope`, grain `fact` |
+| `combined_context` | [`ContextBundle/v2`](../result-types.md#contextbundlev2) |
+
+An answer of "nothing found" is still `200`. The envelope's `negative` field
+says which kind of nothing: `unknown_entity`, `known_empty` or `boundary`.
+See [Reading a result](../../concepts/reading-results.md).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `403` | `credential may not perform this operation` | The credential's scope is not `write`. |
+| `404` | the operation name, as a string | No active operation has that name. |
+| `422` | `{"code": "invalid_parameter", "message": "<name>"}` | A required argument is missing; the message is its name. |
+| `422` | `{"code": "invalid_parameter", "message": "unknown argument(s): …"}` | An argument the operation does not take. |
+| `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` object. |
+| `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
+| `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | `claims_and_sources_context` only. |
+| `422` | validation list | The body is not a JSON object. |
+| `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
+
+Spend refusals are listed in
+[HTTP API conventions](index.md#spend-refusals-rememberdev).
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/operations/facts_context" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Who owns the billing migration?",
+       "time": {"mode": "current"}}'
+```
+
+```python
+from remember import Client
+
+memory = Client()
+
+# The generic form:
+result = memory.run_operation(
+    name="facts_context",
+    arguments={"query": "Who owns the billing migration?"},
+)
+
+# The named helpers:
+people = memory.resolve_entity("Dana")
+said = memory.claims_and_sources_context("billing migration cutover date")
+held = memory.facts_context("Who owns the billing migration?", hops=1)
+both = memory.combined_context("billing migration status", time={"mode": "current"})
+```
+
+`run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
+says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
+`facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
+`combined_context` takes `query` and `time`; `claims_and_sources_context`
+takes `query`; `resolve_entity` takes `name`. Use `run_operation` for the rest
+(`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
+operations).

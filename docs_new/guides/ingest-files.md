@@ -1,0 +1,299 @@
+---
+title: Ingest files
+description: Send files and raw bytes to RememberStack, name them so later edits land in the same document, and load a whole folder.
+applies_to: [remember.dev, self-hosted]
+---
+
+# Ingest files
+
+An agent can only remember what you give it. This page shows how to send a
+file, a string or raw bytes to RememberStack, how to name it so an edited
+file becomes a new version of the same document instead of a stranger, and
+how to load a folder of notes in one go.
+
+You need a configured client. If you have not set `REMEMBER_API_URL` and a
+token yet, follow the [Quickstart](../start/quickstart.md) first.
+
+## Send one file
+
+```python
+from datetime import UTC, datetime
+
+import remember
+
+client = remember.Client.from_env()
+
+version = client.ingest(
+    "notes/2026-09-17-standup.md",
+    mime="text/markdown",
+    title="Stand-up, 17 September 2026",
+    source_kind="file",
+    source_ref="notes/2026-09-17-standup.md",
+    source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
+)
+print(version.doc_id, version.version_id, version.created)
+```
+
+The call returns as soon as the bytes are stored. The result
+(`IngestedVersion`) carries:
+
+| Field | Meaning |
+|---|---|
+| `deployment_id` | The deployment that stored the bytes. |
+| `doc_id` | The document. Stable for one `source_kind` + `source_ref` pair. |
+| `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
+| `content_hash` | SHA-256 of the bytes, in hex. |
+| `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
+
+Processing (reading, structuring, extracting claims, adjudicating facts)
+happens afterwards and takes minutes. The document is not queryable until
+it finishes: see [Wait until a document is queryable](wait-for-readiness.md).
+
+The same with the CLI:
+
+```bash
+remember ingest notes/2026-09-17-standup.md \
+  --mime text/markdown \
+  --title "Stand-up, 17 September 2026" \
+  --source-kind file \
+  --source-ref notes/2026-09-17-standup.md \
+  --source-modified-at 2026-09-17T09:30:00+00:00
+```
+
+The CLI prints the same fields as one JSON line. It has no `--filename`
+flag: the filename is always the file's own name.
+
+## Three ways to pass the body
+
+`Client.ingest` takes the body in one of three forms.
+
+**A path**, as a string or a `pathlib.Path`. The client reads the file, uses
+its name as the filename and guesses the MIME type from the extension.
+
+```python
+client.ingest("specs/billing-migration.md", mime="text/markdown")
+```
+
+A string that is not an existing file raises `ValueError("file not found:
+…")`. The client never treats a string as document text.
+
+**Bytes as the first argument.** You must name the file.
+
+```python
+text = "Dana: the finance sign-off moves to 3 October."
+client.ingest(text.encode("utf-8"), filename="dana-update.md", mime="text/markdown")
+```
+
+**Bytes as `content=`.** Same rules as bytes; use it when the first
+argument reads better as nothing at all.
+
+```python
+client.ingest(content=b"...", filename="ravi-notes.txt", mime="text/plain")
+```
+
+With bytes the client cannot guess a MIME type. If you leave `mime` out it
+sends `application/octet-stream`.
+
+## Set the MIME type yourself
+
+The MIME type decides which converter reads the file. The client guesses it
+from the file extension with Python's `mimetypes` module and falls back to
+`application/octet-stream` when the guess is empty.
+
+!!! warning
+    Python 3.12 does not map `.md` to `text/markdown` unless your system has
+    a MIME database that does. A Markdown file sent without `mime=` can
+    arrive as `application/octet-stream`. Pass `mime="text/markdown"` for
+    Markdown every time.
+
+The deployment keeps the first MIME type it saw for a given set of bytes.
+If you send the same bytes again with a corrected `mime`, the stored type
+does not change. Get the type right on the first send.
+
+## Filenames and titles
+
+- `filename` is required and must not be empty. A path supplies it for you.
+- The extension of the filename is kept with the stored original. It does
+  not change how the file is read; `mime` does.
+- `title` is optional. Without it, the document's title is the filename
+  without its extension (`2026-09-17-standup`).
+- The title is set when the document is first created. Sending a new
+  version with a different `title` does not rename the document.
+
+## Name the source: `source_kind` and `source_ref`
+
+A document's identity is the pair `source_kind` + `source_ref`:
+
+- `source_kind` is the kind of place the file comes from, such as `file`,
+  `drive`, `meeting`.
+- `source_ref` is the file's stable identifier within that kind, such as a
+  relative path or an upstream file ID.
+
+Send the same pair again with changed bytes and you get a new version of
+the same document. Send it with identical bytes and nothing is stored
+(`created=False`). That is what makes re-running an import safe.
+
+The two must be supplied together. One without the other raises
+`ValueError` in the client and returns HTTP 422 from the API.
+
+Without the pair, the document's identity is its content hash. Sending the
+same bytes twice is still a no-op, but an edited copy of the file becomes a
+second, unrelated document, and both keep speaking. Use the pair for
+anything you will send more than once. [Documents, versions and
+sources](../concepts/documents-and-sources.md) explains the model.
+
+`source_modified_at` is when the source last changed. It becomes the time
+the document's claims were asserted, which is how RememberStack reads
+"yesterday" or "next week" inside the text. It must be a timezone-aware UTC
+`datetime`; a naive or non-UTC value raises `ValueError`. It requires the
+source pair.
+
+`versioning_mode` and `source_version_ref` also require the pair. They
+matter when a file changes: see [Keep a source up to
+date](keep-sources-current.md).
+
+## Load a folder
+
+This loop sends every Markdown and text file under a folder, keyed by its
+path, and collects the versions that need processing:
+
+```python
+from datetime import UTC, datetime
+from pathlib import Path
+
+import remember
+from remember import MemoryApiError
+
+MIME_BY_SUFFIX = {".md": "text/markdown", ".txt": "text/plain"}
+
+client = remember.Client.from_env()
+root = Path("billing-migration")
+pending = []
+
+for path in sorted(root.rglob("*")):
+    mime = MIME_BY_SUFFIX.get(path.suffix.lower())
+    if mime is None or not path.is_file():
+        continue
+    ref = path.relative_to(root).as_posix()
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    try:
+        version = client.ingest(
+            path,
+            mime=mime,
+            source_kind="file",
+            source_ref=f"billing-migration/{ref}",
+            source_modified_at=modified,
+        )
+    except MemoryApiError as error:
+        print(f"skipped {ref}: {error.status_code} {error.detail}")
+        continue
+    if version.created:
+        pending.append(version.version_id)
+
+print(f"{len(pending)} new versions")
+```
+
+Run it again after editing one note and only that note produces a new
+version. Unchanged files return `created=False` and cost nothing.
+
+Then wait for the new versions. A readiness check takes at most 1,000
+versions, so wait in batches:
+
+```python
+for start in range(0, len(pending), 1000):
+    client.wait_for_readiness(pending[start:start + 1000], timeout=3600, poll_interval=30)
+```
+
+The client does not retry a failed ingest for you. If a call fails with a
+transport error, sending the same bytes with the same source pair again is
+safe: at worst it returns `created=False`.
+
+## Send a document through MCP
+
+An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
+`content_base64` or `path` carries the body:
+
+```json
+{
+  "name": "ingest",
+  "arguments": {
+    "text": "# Decision log\n\nDana moved the finance sign-off to 3 October.",
+    "filename": "decision-log.md",
+    "mime": "text/markdown",
+    "source_kind": "agent",
+    "source_ref": "billing-migration/decision-log",
+    "source_modified_at": "2026-09-18T08:00:00+00:00"
+  }
+}
+```
+
+- `text` is UTF-8 and needs `filename`; `mime` defaults to `text/plain`.
+- `content_base64` is standard base64 and needs `filename`; `mime` is
+  guessed from the filename, else `application/octet-stream`.
+- `path` reads a local file on the machine running `remember mcp`. It is
+  refused unless the operator lists allowed directories in
+  `REMEMBERSTACK_MCP_INGEST_ROOTS`.
+
+Limits on the tool arguments: `filename` up to 512 characters, `mime` 255,
+`title` 512, `source_kind` 128, `source_ref` 512, `source_version_ref` 512.
+The tool's reply includes the arguments to pass to `pipeline_readiness`
+next. See [Connect your coding agent](../start/connect-your-agent.md).
+
+## What gets read
+
+Every ingest is stored. Whether it is read depends on the MIME type and on
+where you run.
+
+=== "remember.dev"
+
+    remember.dev reads UTF-8 plain text and Markdown. Before storing
+    anything it checks the bytes:
+
+    | Sent | Result |
+    |---|---|
+    | Text declared as `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or no type | Accepted. Markdown keeps its type; everything else is read as plain text. |
+    | Binary content (PDF, image, ZIP, gzip, audio) | Refused, HTTP 409 `rate_class_unavailable`. |
+    | HTML, XML, SVG, RTF, a text file with any other declared type, invalid UTF-8, control characters | Refused, HTTP 422 `rate_class_ambiguous`. |
+    | Empty or whitespace-only | Refused, HTTP 422 `empty_text`. |
+    | More than 10,000,000 bytes | Refused, HTTP 413 `source_bytes_limit_exceeded`. |
+    | A request body over 100,000,000 bytes | Refused, HTTP 413 `body_too_large`, before it is read. |
+
+    Convert other formats to Markdown before you send them. See
+    [What remember.dev serves](../cloud/compatibility.md) and
+    [Limits](../cloud/limits.md).
+
+=== "Self-hosted"
+
+    A fresh self-hosted deployment reads `text/markdown` and `text/plain`
+    and nothing else. A file with any other MIME type is stored and its
+    processing is parked, not refused: the ingest succeeds, and the
+    version waits until an operator adds a converter for its type. PDF,
+    HTML, Office documents and images need converters that you configure.
+    See [File formats and converters](../self-hosting/converters.md).
+
+    There is no body size limit unless the operator sets
+    `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`. Over that limit the API
+    answers HTTP 413 `body_too_large`. A request without a
+    `Content-Length` header is refused with HTTP 411 when a limit is set.
+
+A parked version never becomes ready, so a readiness wait on it runs until
+its timeout. Check the MIME type before you wait.
+
+## Errors
+
+| Status | When |
+|---|---|
+| 413 | Body over the deployment limit (`body_too_large`), or over 10,000,000 bytes on remember.dev (`source_bytes_limit_exceeded`). Split the file. |
+| 409 | remember.dev refused binary content (`rate_class_unavailable`). |
+| 422 | Missing half of the source pair, a non-UTC `source_modified_at`, living mode or a revision without a source pair, or a remember.dev text check (`rate_class_ambiguous`, `empty_text`). |
+| 401, 403 | Missing or wrong token, or a token without write access. |
+
+The Python client raises `remember.MemoryApiError` with `status_code` and
+`detail`. Client-side checks (the source pair, UTC, a missing file) raise
+`ValueError` before anything is sent.
+
+## Next
+
+- [Wait until a document is queryable](wait-for-readiness.md)
+- [Ingest conversations and transcripts](ingest-conversations.md)
+- [Keep a source up to date](keep-sources-current.md)
