@@ -136,7 +136,7 @@ One credential serves every surface: a signed key minted by the issuer (or, for 
 self-hosted engine without an issuer, the pre-shared bearer secret). The credential
 file holds that one key; the SDK and CLI resolve the key, engine URL and project with
 one shared precedence (explicit value, then `REMEMBER_API_KEY` / `REMEMBER_API_URL` /
-`REMEMBER_PROJECT`, then — CLI only — the credential file, then derivation from the
+`REMEMBER_PROJECT`, then the stored credential file (read by SDK and CLI alike), then derivation from the
 key). A key from the file is sent only to its issuer, its recorded URL, or a
 data-plane URL the issuer resolved for it. The file format, resolution table and
 failure behaviour are in
@@ -258,6 +258,6 @@ Decoupling client delivery from internal engine implementation requires strict, 
 - **D92 & D108 (Secret Isolation)**: API tokens and bearer secrets (both cloud and self-hosted) are never written into committed git repositories or project-local files.
 - **D43 (Autonomous Bitemporal Memory)**: All recall and truth adjudication operates autonomously without blocking on human queues.
 - **D66 (Honest Status & Balance)**: Balance and credit transparency is maintained across both web UI and CLI (`remember balance`).
-- **D92 (CLI Credential Storage)**: The credential file is CLI-only and holds one signed key (D136).
+- **D92 (Credential Storage)**: The credential file holds one signed key, written by `remember login` and read by SDK and CLI under the stored-key origin rule (D136).
 - **Durable Zero-Friction Onboarding**: `uvx remember setup` automatically configures persistent, absolute-path launchers (`<resolved_launcher_path> [remember] mcp`) that operate seamlessly without manual `$PATH` intervention or GUI editor `FileNotFoundError` failures.
 - **Zero Host-Dependency Friction**: Developers and AI agents never encounter C-extension compilation errors when adopting Remember.

@@ -76,9 +76,10 @@ existing.
 6. **`rememberstack.cost_export.v1` is an immutable path**
    `GET /ops/cost-export/v1`. A later contract is a new path. v1 never
    grows fields. Extra keys are forbidden on the page and on each receipt.
-7. **`remember login` / `logout`** (D92, amended by D136) are CLI-only.
-   They do not make `MemoryClient` read the credential file. The engine
-   does not grow a second credential store.
+7. **`remember login` / `logout`** (D92, amended by D136) are CLI
+   commands; the credential file they write is read by SDK and CLI alike
+   under D136's origin rule. The engine does not grow a second credential
+   store.
 
 ### 1.1 Documented non-goals (not deferrals)
 
@@ -638,9 +639,11 @@ The login, logout, credential-file and CLI-resolution contract is
 [one_key_client_surfaces_design.md §8](one_key_client_surfaces_design.md#8-sdk-and-cli-with-one-key).
 The parts of the original D92 contract that remain binding:
 
-- Login and logout are **CLI** features. `MemoryClient` and
-  `ClientSettings` never read the credential file; ambient file pickup would
-  send an embedded library's requests to a host its caller never configured.
+- Login and logout are **CLI** commands. The stored credential file they
+  write is read by the SDK and the CLI with one precedence (D136 design
+  §8.2); the stored-key origin rule there, not a CLI-only file, is what keeps
+  an embedded library from sending a stored key to a host its caller never
+  configured.
 - The credential file is created `0600` from the first byte in a `0700`
   directory (atomic write, fsync, refusal to follow a symlink at the final
   path); on filesystems without POSIX modes it is written best-effort with a
@@ -650,9 +653,9 @@ The parts of the original D92 contract that remain binding:
 - Redirects during the grant are followed only to the same origin.
 - Logout revokes, then unlinks: 2xx or already-dead (401/404) → unlink,
   exit 0; 5xx or network failure → keep the file, exit 1; no file → exit 0.
-- A second login revokes the previous credential first; a revocation that
-  cannot be confirmed is kept in the pending-revocation journal rather than
-  forgotten.
+- A second login mints and durably persists the replacement before revoking
+  the previous credential; a revocation that cannot be confirmed is kept in
+  the pending-revocation journal and retried rather than forgotten.
 
 ---
 
@@ -783,7 +786,7 @@ Docs describe what the tree runs.
 | Rule 2 ceiling/retention | Claude | Ceiling non-goal with reason; monthly partitions, no silent GC |
 | v1 path versioning | both | `/ops/cost-export/v1`; golden field set |
 | token_host derive | both | Required explicit host (superseded by D136 issuer discovery) |
-| SDK file pickup | Claude | CLI only |
+| SDK file pickup | Claude | CLI only (superseded by D136: SDK reads the file under the stored-key origin rule) |
 | Scope / ContextVar | both | Async middleware; explicit `call_site`; immutable scope |
 | Wrong embed inventory | both | Cypher/EXPLAIN 0; combined_context 3; resolve removed |
 | Catalog list | both | Full amend table |

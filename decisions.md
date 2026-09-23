@@ -3938,9 +3938,13 @@ export on the customer perimeter; derive token host from API URL (that is D92).
 > (login now discovers endpoints from the issuer's OAuth metadata, default issuer
 > `https://remember.dev`, `--issuer` / `REMEMBER_ISSUER` to override), the D92/D108
 > credential-file shape (now version 2 holding one key), and the JSON device-grant
-> variant (now the standard RFC 8628 grant). Still binding: the credential file is
-> CLI-only and `MemoryClient` / `ClientSettings` never read it; logout revokes then
-> unlinks; the engine grows no second credential store.
+> variant (now the standard RFC 8628 grant). Also replaced: "the credential file is
+> CLI-only" — the SDK now reads the same stored file with the same precedence as the
+> CLI (explicit > environment > file), and the stored-key origin rule (D136 design
+> §8.2) is what stops a stored key reaching a host the caller never named; and
+> "revoke, then replace" on re-login — now mint, persist, then revoke with the
+> pending-revocation journal. Still binding: logout revokes then unlinks; the engine
+> grows no second credential store.
 
 **Decision (2026-08-13).** `remember login` / `logout` live in the base CLI.
 They require an explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`. The
@@ -6155,7 +6159,9 @@ chose between deployment and control tokens against a hard-coded
 3. **`remember mcp`** has an engine mode (stdio, and Streamable HTTP that
    forwards each caller's bearer to the engine) and a bridge mode that relays
    stdio to any remote MCP URL with a bearer key, restoring local `path`
-   ingest under the configured roots. `remember setup` writes a remote entry
+   ingest under the configured roots. A stored key is attached only to the
+   issuer-advertised `remember_mcp_endpoint` origin; `--read-only` passes only
+   tools annotated `readOnlyHint: true`. `remember setup` writes a remote entry
    (OAuth, or a key header by variable reference) where the harness supports
    it, a stdio bridge otherwise, and a self-hosted entry for local engines.
 4. **Perimeter contract.** The signed-credential adapter requires a
@@ -6163,13 +6169,22 @@ chose between deployment and control tokens against a hard-coded
    or operator-configured opaque audiences, maps `memory:read` → read,
    `memory:write` → write (ingest included), `memory:ingest` → ingest only,
    ignores non-memory permissions, refuses unknown memory permissions,
-   records a credential `kind` for audit, and takes revocation inline or as a
-   signed, refreshed document with a staleness bound.
+   records a credential `kind` for audit, and takes revocation only as a
+   signed document bound to the deployment's audience with a strictly
+   increasing sequence (lower sequences rejected, last sequence persisted),
+   whose `active_kids` list retires signing-key generations; a revoked key
+   stops working within the staleness bound plus clock leeway.
 5. **Clients.** One resolver gives the SDK and CLI identical environment
    precedence (`REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`,
    `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`, `REMEMBER_CONFIG_DIR`; older aliases
-   removed); only the CLI reads the credential file. A signed key resolves its
-   data-plane host from a claim or the issuer's project endpoint.
+   removed), and both read the stored credential file after the environment;
+   a stored key is only ever sent to its issuer, its advertised MCP endpoint,
+   its recorded URL or an issuer-resolved deployment. `CloudClient` is
+   removed; account calls are a namespace of `remember.Client` calling the
+   issuer's account API. A signed key resolves its data-plane host from a
+   claim or the issuer's project endpoint, cached with a bounded lifetime and
+   re-resolved when a deployment moves. Re-login mints and persists the new
+   key before revoking the old one through the pending-revocation journal.
    `remember login` runs the standard device grant discovered from the
    issuer's OAuth metadata and stores one key (`credentials.json` version 2).
 
@@ -6182,15 +6197,16 @@ The bridge keeps the one key usable by harnesses that only run local servers.
 
 **Consequences.** A leaked multi-project key is valid at several deployments
 until revoked, which the old strict single audience prevented; revocation is
-therefore fetched and bounded in age. The engine's claim contract and the
-issuer must switch together. Public docs change when the behaviour ships.
+therefore signed, sequenced, audience-bound and bounded in age. A host may carry
+memory traffic to the engine (the hosted MCP path); the engine treats it like any
+other caller holding a credential. Public docs change when the behaviour ships.
 
 **Rejected.** Per-host copies with contract tests; hosts rendering from
 `GET /operations`; the engine accepting `project`; one MCP connection per
 project; key-for-token exchange in the SDK; `remember mcp` holding its own
 credential behind the HTTP transport; keeping environment aliases.
 
-**Supersedes.** D92 in part (explicit token host, credential file shape);
+**Supersedes.** D92 in part (explicit token host, credential file shape, CLI-only file, revoke-before-replace re-login);
 D108 item 4's authentication, credential-separation and `setup` default
 clauses and its amendment of D92; the metering design's §6 login contract;
 the distribution design's §3.1/§3.4/§4 credential text. Cloud-side

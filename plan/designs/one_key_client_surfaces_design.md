@@ -3,6 +3,7 @@
 **Status:** accepted design (D136). **Date:** 2026-09-23.
 **Decision:** [D136](../../decisions.md#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp).
 **Analysis:** [one_key_client_surfaces_analysis.md](../analysis/one_key_client_surfaces_analysis.md).
+**Build order:** [plan/plans/one_key_client_surfaces.md](../plans/one_key_client_surfaces.md).
 **Companion (cloud side):** the remember.dev "one key, one MCP endpoint" design
 in `writeitai/ultimate-memory-cloud` (branch `design/one-key-one-mcp`). It owns
 organisations, members, billing, account tools, key minting and consent, the
@@ -71,11 +72,14 @@ operator who runs a conforming key issuer:
 3. The engine perimeter is the only authority on what a credential may do at
    a deployment. Hosts may refuse earlier; they never grant more.
 4. A key is never written into a project-local file (anything under the
-   working tree a harness reads), never logged, never printed after login,
-   and never sent to an origin other than its issuer or a deployment the
-   caller named or the issuer resolved for it.
-5. The SDK and the CLI resolve environment variables with one shared
-   function. The CLI alone additionally reads the credential file.
+   working tree a harness reads), never logged, and never printed after
+   login. A key from the credential file is sent only to its issuer, to the
+   issuer-advertised MCP endpoint, to the file's recorded engine URL, or to a
+   data-plane URL the issuer resolved for it (§8.2); any other destination
+   requires a key the caller supplied explicitly.
+5. The SDK and the CLI resolve their settings with one shared function and
+   one precedence: explicit argument, then environment, then the stored
+   credential file.
 
 ## 3. The tool catalogue: `remember.mcp_tools`
 
@@ -127,6 +131,10 @@ The module also exports, as the single implementation every host uses:
 - `map_error(...)` and `error_result(...)` — the structured tool error
   envelope (`{"error": {"status_code", "code", "detail"}}`) for HTTP and
   transport failures, so every host reports failures identically.
+- MCP tool annotations on every rendered tool: `readOnlyHint: true` for
+  `memory:read` tools and `false` for `memory:write` tools, and
+  `destructiveHint: true` for `delete_document`. Hosts must not alter them;
+  the bridge's read-only mode relies on them (§5.3).
 - `ToolBackend` — the protocol a host implements to execute a validated call
   (in process, over the engine HTTP API via `MemoryClient`, or by forwarding).
 
@@ -238,8 +246,8 @@ because an answer from the wrong memory looks correct to the agent.
 `remember mcp` runs in exactly one of two modes, chosen at start:
 
 1. **Bridge mode** when a remote MCP URL is configured: `--remote-url URL`,
-   else `REMEMBER_MCP_URL`, else the `mcp_endpoint` of the stored key's
-   issuer when the resolved key is a signed key and no engine URL was given
+   else `REMEMBER_MCP_URL`, else the `remember_mcp_endpoint` of the resolved
+   key's issuer when the key is a signed key and no engine URL was given
    explicitly (§8.2).
 2. **Engine mode** otherwise: it serves the catalogue against one or more
    engines' HTTP APIs, with connection resolution from §8.2.
@@ -308,9 +316,18 @@ Bridge mode relays MCP between the agent's stdio and a remote Streamable
 HTTP endpoint. It is generic: any HTTPS MCP URL and any bearer key.
 
 - **Configuration.** URL: `--remote-url`, `REMEMBER_MCP_URL`, or the issuer
-  metadata (§8.1). Key: `--api-key`, `REMEMBER_API_KEY`, or the credential
-  file (§8.2). Both are required; a missing key is a start-up error that says
-  how to get one (`remember login`).
+  metadata's `remember_mcp_endpoint` (§8.1). Key: `--api-key`,
+  `REMEMBER_API_KEY`, or the credential file (§8.2). Both are required; a
+  missing key is a start-up error that says how to get one (`remember login`).
+- **Stored-key binding.** A key taken from the credential file is attached
+  only when the remote URL's origin equals the origin of the
+  `remember_mcp_endpoint` advertised in that key's issuer metadata (fetched
+  from the stored `issuer`, over HTTPS, same-origin redirects only). For any
+  other remote URL — including one set by a changed `REMEMBER_MCP_URL` — the
+  bridge refuses to start unless a key was supplied explicitly
+  (`--api-key` or `REMEMBER_API_KEY`), and says why. A long-lived
+  multi-project key therefore cannot be redirected to another host by an
+  environment change alone.
 - **Relay.** Each JSON-RPC message from stdin is `POST`ed to the URL with
   `Authorization: Bearer <key>`, `Accept: application/json, text/event-stream`
   and the session header once issued. JSON responses and event-stream
@@ -334,10 +351,14 @@ HTTP endpoint. It is generic: any HTTPS MCP URL and any bearer key.
   Redirects are followed only to the same origin; a cross-origin redirect is
   an error, because following it would hand the key to another host. The key
   never appears in logs or error text.
-- `--read-only` in bridge mode omits and refuses remote tools that the
-  catalogue marks `memory:write`, and any remote tool the remote marks as
-  non-read-only in its annotations. `--transport http` is refused in bridge
-  mode (an HTTP client should connect to the remote URL directly).
+- **`--read-only` fails closed.** In bridge mode it passes through only
+  remote tools annotated `readOnlyHint: true`; every other remote tool —
+  annotated `false`, unannotated, or unknown to the catalogue (including
+  account tools) — is omitted from `tools/list` and a call to it is refused
+  locally without being forwarded. A catalogue tool whose remote annotation
+  disagrees with the catalogue's `permission` is also refused.
+- `--transport http` is refused in bridge mode (an HTTP client should connect
+  to the remote URL directly).
 
 ## 6. `remember setup`
 
@@ -346,7 +367,7 @@ three entry shapes:
 
 | Situation | Entry written |
 | --- | --- |
-| Hosted key (signed key whose issuer publishes an `mcp_endpoint`), harness supports remote MCP with OAuth sign-in, interactive use | **Remote entry, OAuth**: the endpoint URL only. The harness signs in through the browser; no secret is written anywhere. |
+| Hosted key (signed key whose issuer publishes a `remember_mcp_endpoint`), harness supports remote MCP with OAuth sign-in, interactive use | **Remote entry, OAuth**: the endpoint URL only. The harness signs in through the browser; no secret is written anywhere. |
 | Hosted key, headless use (`--headless`, or CI detected), harness supports a remote entry whose bearer header can reference an environment variable | **Remote entry, key header**: the URL plus `Authorization: Bearer ${REMEMBER_API_KEY}` in the harness's variable-reference syntax. The literal key is never written. |
 | Hosted key, harness lacks remote support or cannot reference a variable in a header | **Stdio bridge**: `<launcher> mcp` with `REMEMBER_MCP_URL=<endpoint>` in the entry's environment; the key is read at run time from `REMEMBER_API_KEY` or the credential file. |
 | Self-hosted engine (`--self-hosted`, or an explicit `--api-url`) | **Stdio engine mode**: `<launcher> mcp` with `REMEMBER_API_URL`; or, with `--mcp-url URL` naming a self-hoster's own `remember mcp --transport http` listener, a remote entry to it. |
@@ -378,11 +399,11 @@ adapter (`HashedBearerAuth`) is unchanged, and the composite
 | --- | --- |
 | `API_KEY_ISSUER` | Required when signed keys are enabled. The exact `iss` value accepted. |
 | `API_SIGNING_KEYS` / `API_SIGNING_KEYS_URL` | The JWKS, inline or fetched from a URL (one of the two). Ed25519 public keys only, as today. |
-| `API_REVOKED_CREDENTIAL_IDS` / `API_REVOCATION_URL` | Revocation, inline id list or a URL serving the revocation document (§7.5). |
+| `API_REVOCATION_DOCUMENT` / `API_REVOCATION_URL` | The signed revocation document (§7.5), inline (operator push) or fetched from a URL. The plain id list `API_REVOKED_CREDENTIAL_IDS` is removed: an unsigned list carries no sequence or audience binding. |
 | `API_ACCEPTED_AUDIENCES` | Extra audience strings this deployment accepts, comma-separated. The deployment id is always accepted. |
 | `API_KEY_PREFIXES` | Routing prefixes that may precede the JWS, e.g. `rmb_`. Empty = bare JWS only. |
 | `API_KEY_REFRESH_S` | Refresh interval for fetched JWKS and revocation (starting value 60). |
-| `API_REVOCATION_MAX_STALENESS_S` | Age after which a fetched revocation document is too old (starting value 300). |
+| `API_REVOCATION_MAX_STALENESS_S` | Age, measured from the document's `iat`, after which the accepted revocation document is too old (starting value 300). |
 
 Numbers are starting points to be measured, not constants.
 
@@ -441,22 +462,66 @@ The catalogue's `permission` for each tool must equal the scope the engine
 requires for that tool's `http_route` (tested, §10), so a host that refuses
 early refuses exactly what the engine would.
 
-### 7.5 Revocation
+### 7.5 Revocation and key rotation
 
-A revocation source is either the inline id list, or a URL serving a
-**revocation document**: a JWS signed by a key in the same JWKS, header `typ`
-`revocation+jwt`, with claims `iss` (the issuer), `iat`, `exp` (when the next
-document is due) and `revoked` (array of `jti`). The signature lets the
-document travel over any channel, including operator push.
+**The revocation document.** Revocation reaches the engine only as a
+**revocation document**: a JWS signed by an active key of the same JWKS,
+header `typ` `revocation+jwt`, with claims:
 
-- The engine refreshes fetched JWKS and revocation every `API_KEY_REFRESH_S`,
-  keeping the last good copy on failure. A fetched document that fails to
-  parse or verify is rejected and the last good copy kept.
-- **Staleness bound.** When the newest good revocation document is older than
-  `API_REVOCATION_MAX_STALENESS_S`, or past its own `exp`, the engine refuses
-  every signed credential whose lifetime (`exp − iat`) exceeds that bound, and
-  logs a structured error. Shorter-lived credentials do not depend on
-  revocation and continue. The shared secret is unaffected.
+| Claim | Meaning |
+| --- | --- |
+| `iss` | The issuer; must equal `API_KEY_ISSUER`. |
+| `aud` | The deployment (or group) audience the document is for; must intersect the audiences this deployment accepts (§7.2). A document for another deployment is rejected, so documents cannot be replayed across deployments. |
+| `seq` | A non-negative integer the issuer increases with every document it publishes for that audience. |
+| `iat`, `exp` | When it was issued, and when the next document is due. |
+| `revoked` | Array of `jti` values refused despite a valid signature. |
+| `active_kids` | The signing-key ids (`kid`) whose credentials remain valid. |
+
+The signature, audience and sequence let the document travel over any channel
+— fetched from `API_REVOCATION_URL` or pushed inline — without that channel
+being trusted.
+
+**Acceptance and cache.**
+- A candidate document is accepted only if its signature, `iss` and `aud`
+  verify, it is signed by a key in `active_kids` of the currently accepted
+  document (or of itself, for the first document), and its `seq` is strictly
+  greater than the last accepted `seq`. An equal `seq` with identical content
+  is a no-op; an equal `seq` with different content, or a lower `seq`, is
+  rejected and logged as a rollback attempt.
+- The last accepted `seq` and document are persisted in the deployment's
+  spine (a one-row perimeter-state table) and loaded at start-up, so a
+  restart cannot be used to roll back to an older document. The in-memory
+  copy is the cache every request reads; the refresh loop replaces it
+  atomically.
+- The engine fetches `API_REVOCATION_URL` (and `API_SIGNING_KEYS_URL`) every
+  `API_KEY_REFRESH_S`. A failed fetch, or a document that fails any check,
+  keeps the last accepted document.
+- The issuer must publish a new document (higher `seq`, fresh `iat`) at least
+  every `API_KEY_REFRESH_S`, even when nothing changed; that is what keeps a
+  healthy deployment inside the staleness bound.
+
+**Staleness bound and the true worst case.** When `now − iat` of the accepted
+document exceeds `API_REVOCATION_MAX_STALENESS_S` (S), or the document is past
+its `exp`, the engine refuses every signed credential whose lifetime
+(`exp − iat` of the credential) exceeds S, and logs a structured error.
+Shorter-lived credentials do not depend on revocation and continue; the shared
+secret is unaffected. Because the accepted document was issued before any
+revocation it does not contain, a key revoked at time *r* stops working at
+this deployment no later than **r + S + 30 s** (the clock leeway), whatever
+happens to fetches or to the issuer's publication delay: either a document
+listing it is accepted sooner, or the older document goes stale at
+`iat + S ≤ r + S`. A deployment configured with signed keys but no
+revocation source accepts only credentials whose lifetime is at most S.
+
+**Key rotation as revocation.** `active_kids` is the rotation valve. A
+credential whose header `kid` is not in the accepted document's
+`active_kids` is refused even if that key is still present in the JWKS. To
+retire a signing-key generation — including after a suspected compromise —
+the issuer publishes a document without that `kid`; every credential signed
+by it stops working within the same bound, and a later JWKS removes the key.
+Without a revocation document there is no `active_kids` restriction beyond
+the JWKS itself.
+
 - A JWKS fetched as `{"keys": []}` makes the adapter deny every signed
   credential, as the inline form does today.
 
@@ -492,11 +557,15 @@ metadata is unavailable yields a clear error naming the URL.
 
 ### 8.2 One resolver, one precedence
 
-`remember.connection.resolve_connection()` is used by `remember.Client` and
-every CLI command. The CLI passes its flags as the explicit values and enables
-the credential-file step; the SDK never reads the file.
+`remember.connection.resolve_connection()` is used by `remember.Client`
+(and `MemoryClient`) and by every CLI command, with one precedence: explicit
+argument, then environment, then the stored credential file, then values
+derived from the key. The CLI passes its flags as the explicit values. The
+SDK reads the same stored file as the CLI; what keeps an embedded library
+from sending a machine credential somewhere its caller never named is the
+stored-key origin rule below, not a refusal to read the file.
 
-| Setting | 1. explicit | 2. environment | 3. credential file (CLI only) | 4. derived | 5. default |
+| Setting | 1. explicit | 2. environment | 3. credential file | 4. derived | 5. default |
 | --- | --- | --- | --- | --- | --- |
 | Key | `api_key=` / `--api-key` | `REMEMBER_API_KEY` | `key` | — | none |
 | Engine URL | `base_url=` / `--api-url` | `REMEMBER_API_URL` | `api_url` | from the key (§8.3) | `http://127.0.0.1:8000` when the key is not a signed issuer key |
@@ -513,10 +582,13 @@ A key may be given bare or as `Bearer <key>`. The earlier names
 read.
 
 **Stored-key origin rule.** A key taken from the credential file is sent only
-to the file's `api_url` origin, to the issuer, or to a data-plane URL the
-issuer resolved for that key. If an explicit engine URL points elsewhere, the
-stored key is not attached and the command says so. A key the caller passed
-explicitly or through the environment is sent where the caller directed.
+to the file's `api_url` origin, to the issuer, to the issuer-advertised
+`remember_mcp_endpoint` origin (§5.3), or to a data-plane URL the issuer
+resolved for that key. If an explicit engine URL or a remote MCP URL points
+elsewhere, the stored key is not attached and the SDK raises (CLI: exits 2)
+saying an explicit key is required for that destination. A key the caller
+passed explicitly or through the environment is sent where the caller
+directed.
 
 ### 8.3 Resolving the data-plane host from a key
 
@@ -530,9 +602,21 @@ and resolves the target:
    with the key as bearer. The response is
    `{"project": "<id>", "name": "<name>", "api_url": "https://…", "audience": "<aud value>"}`.
    The client checks that `audience` is one of the key's `aud` values and that
-   `api_url` is `https` (or loopback `http`), caches the answer for the process
-   lifetime, and talks to `api_url` directly.
-3. Failure is explicit: an unknown project, a project outside the key, or an
+   `api_url` is `https` (or loopback `http`), and talks to `api_url` directly.
+3. **Cache and moved deployments.** The resolved `api_url` is cached per
+   (issuer, key id, project) in the process for a bounded time (starting
+   value 10 minutes) and re-resolved when it expires. It is also invalidated
+   immediately when a request to it fails with a connection error (DNS
+   failure, refused or reset connection, TLS failure), with `421 Misdirected
+   Request`, or with a `404` whose body is not the engine's error envelope
+   (the host no longer serves that deployment). The client then re-resolves;
+   if the issuer returns a different `api_url` it retries the request once
+   there, and if it returns the same URL (or resolution fails) it surfaces the
+   original error. One retry, never a loop. The retry is safe for every
+   catalogue call: reads are side-effect free, a repeated identical ingest is
+   a no-op at the engine (D55), and deletion is idempotent (D135). The `api_url`
+   claim path (step 1) follows the same invalidation, falling through to step 2.
+4. Failure is explicit: an unknown project, a project outside the key, or an
    unreachable issuer raises `ProjectResolutionError` (CLI exit 1) naming the
    project and issuer. The client never falls back to localhost for a signed
    key.
@@ -542,10 +626,14 @@ remember.dev without the caller knowing any host; SDK and CLI traffic goes to
 the deployment directly, never through the account service. `Client` without
 a key still reaches a self-hosted engine at `REMEMBER_API_URL` or localhost.
 
-The account-side client (`CloudClient`) takes the same key
-(`CloudClient(api_key=…)`), finds the issuer from `iss`, and reads the
-organisation from the key; the account API it calls is defined by the cloud
-design.
+**Account calls live on the same client.** `CloudClient` is removed.
+`remember.Client` exposes an `account` namespace (`client.account.…`) that
+calls the key's issuer's account API with the same key; the issuer is found
+from `iss` and the API location from the issuer metadata. When the key has no
+issuer (a self-hosted shared secret) or the issuer publishes no account API,
+`client.account` raises `AccountApiUnavailable`; memory calls are unaffected.
+The account API's operations and their permissions are defined by the issuer
+(for remember.dev, the cloud design); the engine has no account surface.
 
 ### 8.4 `remember login`, `logout`, `switch`
 
@@ -573,18 +661,30 @@ design.
   `api_url` is set only by `remember setup --self-hosted --api-url …`, where
   `key` is the self-hosted shared secret and `issuer` is absent. The file is
   created `0600` in a `0700` directory with the existing atomic write, lock,
-  fsync and symlink refusal. `extra="forbid"`; version 1 files are refused
-  with "run `remember login` again".
-- A second login revokes the previous key first, keeping the existing
-  pending-revocation journal for revocations that cannot be confirmed.
-- `remember logout` revokes through `revocation_endpoint` and unlinks; the
-  table of outcomes in the metering design §6.4 stays (2xx or already-dead →
-  unlink, 5xx/network → keep the file, exit 1).
+  fsync and symlink refusal. `extra="forbid"`; a file that is not this
+  shape is refused with "run `remember login`".
+- **A second login replaces, then revokes.** Order: (1) mint the new key;
+  (2) durably persist it — atomic replace of `credentials.json` and fsync of
+  the file and directory — so the machine never holds only a dead key; (3)
+  record the old key in the existing pending-revocation journal (keyed by
+  issuer and key id); (4) revoke the old key through `revocation_endpoint`
+  and drop the journal entry on success. A failed or unconfirmed revocation
+  stays in the journal and is retried by every later CLI start and by
+  `remember logout`; the command reports it. If step 2 fails, the new key is
+  revoked immediately (or journalled if that fails) and the old file is left
+  untouched.
+- `remember logout` revokes through `revocation_endpoint` and unlinks:
+  2xx or already dead (`401`/`404`) → unlink, exit 0; 5xx or network
+  failure → keep the file, exit 1; no file → exit 0. It also retries any
+  journalled revocations.
 - `remember switch <project>` sets `default_project` locally after resolving
   it once (§8.3) to prove the key covers it. No new credential is minted.
 - `remember whoami` prints the issuer, key id, expiry, default project and
-  permissions from the key's claims, then the issuer's account view when the
-  key has `account:read`.
+  permissions from the key's own claims, locally. Only when the key has
+  `account:read` and the issuer publishes an account API does it add the
+  issuer's account view (a host call). It never calls the engine: a
+  memory-only key gets the local claim summary and nothing more, and the
+  engine has no identity endpoint.
 
 ## 9. Failure behaviour summary
 
@@ -596,6 +696,12 @@ design.
 | Bridge: no key | Start-up error pointing to `remember login` |
 | Bridge: `401` from remote | JSON-RPC error, re-login hint; bridge keeps running |
 | Bridge: cross-origin redirect | Error; key not sent |
+| Bridge: stored key with a remote URL outside the issuer's `remember_mcp_endpoint` origin | Refuses to start; explicit key required |
+| Bridge `--read-only`: remote tool not annotated `readOnlyHint: true` | Omitted and refused locally |
+| Engine: revocation document with lower `seq`, other audience, or retired signer | Rejected; last accepted document kept; logged |
+| Engine: credential signed by a `kid` absent from `active_kids` | `401` |
+| Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve; retry once if the URL changed |
+| Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
 | HTTP transport: non-loopback bind in front of an unauthenticated engine | Refuses to start without `--allow-unauthenticated-engine` |
 | HTTP transport: bad `Origin` | `403` |
 | Engine: key with no accepted audience / wrong issuer / revoked | `401` |
@@ -603,7 +709,7 @@ design.
 | Engine: valid key lacking permission | `403 insufficient_scope` |
 | Client: project resolution fails | `ProjectResolutionError` / exit 1; no localhost fallback |
 | Stored key with an explicit foreign URL | Key not attached; message says so |
-| Credential file version 1 | Refused; "run `remember login` again" |
+| Credential file not in the version-2 shape | Refused; "run `remember login`" |
 
 ## 10. Tests to add
 
@@ -638,7 +744,9 @@ Engine consistency:
 - bridge: verbatim relay of JSON and event-stream responses; unknown remote
   tools passed through; path ingest substitution only under configured roots
   and matching schema; `404` session recovery; `401` message; cross-origin
-  redirect refusal; `http` non-loopback refusal; key absent from all output.
+  redirect refusal; `http` non-loopback refusal; key absent from all output;
+  stored key refused for a non-advertised remote origin and accepted with an
+  explicit key; `--read-only` refuses unannotated, `false` and unknown tools.
 
 `remember setup`:
 - the four entry shapes per harness; no literal key in any written file;
@@ -652,14 +760,22 @@ Perimeter (`signed_token_auth.py`):
 - permission mapping table, including ignored `account:*` and refused unknown
   `memory:*`; no memory permission → `403`;
 - prefix stripped once from the configured set only;
-- fetched JWKS/revocation: refresh, last-good retention, invalid signature on
-  the revocation document, staleness bound refusing long-lived keys only;
+- revocation documents: lower `seq`, equal `seq` with different content,
+  wrong `aud`, signer not in `active_kids` → rejected; persisted `seq`
+  survives restart; staleness bound refuses long-lived keys only and the
+  worst case `r + S + leeway` holds with fetches failing; a `kid` dropped from
+  `active_kids` is refused while still in the JWKS;
 - audit actor ids `keycred:`/`browsercred:`/`dpcred:`.
 
 Client:
-- one resolver: the precedence table above for SDK and CLI, run as one
-  parametrised test over both entry points; removed variable names have no
-  effect;
+- one resolver: the precedence table above for SDK and CLI, including the
+  stored file, run as one parametrised test over both entry points; removed
+  variable names have no effect; `CloudClient` no longer exists and
+  `client.account` raises `AccountApiUnavailable` without an issuer;
+- host cache: TTL expiry, invalidation on connection failure / `421` /
+  non-engine `404`, single retry only when the URL changed;
+- re-login ordering: crash after step 1, 2 or 3 leaves a usable key and a
+  journalled revocation; `whoami` makes no engine call;
 - host resolution: `api_url` claim, project endpoint, audience mismatch,
   non-https refusal, no localhost fallback for signed keys;
 - stored-key origin rule;

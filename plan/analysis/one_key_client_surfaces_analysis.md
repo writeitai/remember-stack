@@ -250,12 +250,17 @@ containment.
 ### 3.6 Revocation freshness
 
 Today the revocation list is static configuration pushed by the operator. A
-long-lived user key needs faster withdrawal. The design lets the operator
-either push the list or have the engine pull a signed revocation document
-from a URL, refreshed on an interval, with a maximum staleness after which
-long-lived keys are refused. Short-lived credentials whose whole lifetime is
-shorter than that bound do not depend on revocation and keep working. Signing
-the document with the same key set means it can travel over any channel.
+long-lived user key needs faster withdrawal, and an unsigned list can be
+replaced by an older one. The design therefore accepts revocation only as a
+signed document bound to the deployment's audience and carrying a strictly
+increasing sequence; the engine persists the last sequence it accepted, so
+neither a replayed older document nor a restart can roll revocation back. A
+maximum age measured from the document's issue time gives a true worst case
+(a revoked key stops within that age plus clock leeway, even if every fetch
+fails), and short-lived credentials whose whole lifetime is shorter than the
+bound do not depend on revocation. The document's `active_kids` list makes key
+rotation an actual revocation: credentials signed by a retired generation are
+refused even while the old public key is still published.
 
 ### 3.7 Authorisation for the self-hosted HTTP transport
 
@@ -289,10 +294,15 @@ issuer identifier `https://remember.dev`.
 The divergence in §2.5 is fixed by one resolver used by both the SDK and the
 CLI, and one variable per setting: `REMEMBER_API_KEY`, `REMEMBER_API_URL`,
 `REMEMBER_PROJECT`, `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`,
-`REMEMBER_CONFIG_DIR`. The CLI additionally reads the credential file, after
-the environment; the SDK never reads it (the D92 reason still holds: an
+`REMEMBER_CONFIG_DIR`. Both read the stored credential file after the
+environment. (A first draft kept the file CLI-only for D92's reason — an
 embedded library must not pick up a machine credential and send it to a host
-its caller never named). The aliases are removed rather than kept, because
+its caller never named. Review settled that one precedence for both is the
+better UX and that the reason is met more precisely by the stored-key origin
+rule: a stored key goes only to its issuer, its advertised MCP endpoint, its
+recorded URL, or an issuer-resolved deployment. `CloudClient` is folded into
+`remember.Client` as an account namespace for the same one-client reason.)
+The aliases are removed rather than kept, because
 nobody depends on them and each alias is a place where the two resolvers
 could diverge again.
 
@@ -314,16 +324,7 @@ could diverge again.
 - The bridge is a generic MCP relay; it knows nothing about remember.dev's
   account tools and passes them through unchanged.
 
-## 5. Delivery dependencies (for `plan/plans/`, not design content)
-
-The engine's new claim contract and remember.dev's issuer must switch
-together: once the engine requires `permissions` and `kind`, credentials
-minted with the old `scope` claim are refused. The catalogue module must be
-released in a `remember` version before the hosted server can import it. The
-public docs listed in the D136 PR description change only when the behaviour
-ships.
-
-## 6. Sources
+## 5. Sources
 
 - MCP specification 2025-11-25, "Transports" (stdio, Streamable HTTP,
   `Mcp-Session-Id`, `Origin` validation) and "Authorization" (RFC 8414
