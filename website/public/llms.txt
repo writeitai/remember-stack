@@ -31,6 +31,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 ## Guides
 
 - [Supported file types](https://remember.dev/docs/guides/file-types): Which file types RememberStack reads on remember.dev and on a self-hosted deployment, and what to do with everything else.
+- [Bring your existing data](https://remember.dev/docs/guides/bring-your-data): Move your existing files, vector-database contents and chat history into remember.dev or a self-hosted RememberStack, with their dates and sources intact.
 - [Ingest files](https://remember.dev/docs/guides/ingest-files): Send files and raw bytes to RememberStack, name them so later edits land in the same document, and load a whole folder.
 - [Ingest conversations and transcripts](https://remember.dev/docs/guides/ingest-conversations): Turn chat sessions and meeting transcripts into documents RememberStack can date, attribute and cite turn by turn.
 - [Keep a source up to date](https://remember.dev/docs/guides/keep-sources-current): Re-send an edited file as a new version of the same document, and choose what happens to facts that the new version no longer supports.

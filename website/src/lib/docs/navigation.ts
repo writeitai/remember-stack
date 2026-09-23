@@ -42,6 +42,7 @@ export const docsNavigation: NavItem[] = [
     href: "/docs/guides/ingest-files",
     children: [
       { title: "Supported file types", href: "/docs/guides/file-types" },
+      { title: "Bring your existing data", href: "/docs/guides/bring-your-data" },
       { title: "Ingest files", href: "/docs/guides/ingest-files" },
       { title: "Ingest conversations and transcripts", href: "/docs/guides/ingest-conversations" },
       { title: "Keep a source up to date", href: "/docs/guides/keep-sources-current" },

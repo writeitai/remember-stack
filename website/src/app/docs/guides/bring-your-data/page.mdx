@@ -1,0 +1,306 @@
+export const metadata = {
+  title: "Bring your existing data",
+  description: "Move your existing files, vector-database contents and chat history into remember.dev or a self-hosted RememberStack, with their dates and sources intact.",
+};
+
+# Bring your existing data
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+You probably already have the material an agent needs: a folder of specs,
+a wiki export, meeting notes, chat logs, or the text you once loaded into a
+vector database. This page shows how to move it in so that the memory
+knows what each source said, when it said it, and where it came from.
+
+## What moves, and what does not
+
+RememberStack builds its memory from text. It reads each document, keeps
+the statements worth keeping, and works out the facts itself. So what you
+bring over is **the text and when it was written**. Three things do not
+move:
+
+- **Embeddings.** A vector database's vectors were made by a different
+  model for a different index. RememberStack computes its own from the
+  text, so vectors are left behind.
+- **Chunks as documents.** Your old store cut documents into pieces.
+  RememberStack needs whole documents, because a claim is read in the
+  context of its section and its date. Put the pieces back together first.
+- **Another tool's extracted "memories".** A list of summaries that another
+  memory product produced has already lost its sources and dates. Bring the
+  original conversations and documents instead whenever you still have
+  them.
+
+<Callout type="warning" title="On remember.dev, send Markdown or plain text">
+
+remember.dev reads UTF-8 Markdown and plain text only, up to 10,000,000
+bytes per document. Convert PDFs, Word files and web pages to Markdown
+before you send them. A self-hosted deployment can convert more formats
+itself; see [Supported file types](/docs/guides/file-types).
+
+</Callout>
+
+## Three rules that make the import worth it
+
+**Keep the dates.** Pass each document's original date as
+`source_modified_at`. It becomes the date the document's statements were
+made, which is what lets the memory tell January's plan from June's
+correction and read "yesterday" in the text correctly. A whole archive
+sent without dates looks as if everything was said today.
+
+**Name every source.** Give each document a stable `source_kind` and
+`source_ref`, such as `drive` and the file's ID, or `file` and its path.
+Re-running the import is then safe: unchanged documents return
+`created=False` and cost nothing, and changed ones become new versions of
+the same document. See [Name the
+source](/docs/guides/ingest-files#name-the-source-source_kind-and-source_ref).
+
+**One document per real source.** One file, one page, one meeting, one
+conversation. Do not merge a whole folder into one document, and do not
+send chunks one by one.
+
+## From files
+
+If your sources are files, convert the ones that are not Markdown or text,
+then send each with its modification time. This example uses
+[markitdown](https://github.com/microsoft/markitdown), installed on your
+own machine with `pip install "markitdown[all]"`, to convert PDF, Word,
+PowerPoint, Excel and HTML:
+
+```python
+from datetime import UTC, datetime
+from pathlib import Path
+
+from markitdown import MarkItDown
+
+import remember
+from remember import MemoryApiError
+
+client = remember.Client.from_env()
+converter = MarkItDown()
+root = Path("shared-drive-export")
+TEXT_SUFFIXES = {".md": "text/markdown", ".txt": "text/plain"}
+CONVERTED = {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".htm"}
+pending = []
+
+for path in sorted(root.rglob("*")):
+    suffix = path.suffix.lower()
+    if not path.is_file() or (suffix not in TEXT_SUFFIXES and suffix not in CONVERTED):
+        continue
+    ref = path.relative_to(root).as_posix()
+    if suffix in TEXT_SUFFIXES:
+        body, mime = path.read_bytes(), TEXT_SUFFIXES[suffix]
+    else:
+        body, mime = converter.convert(str(path)).text_content.encode("utf-8"), "text/markdown"
+    if not body.strip():
+        print(f"skipped {ref}: no text")
+        continue
+    try:
+        version = client.ingest(
+            content=body,
+            filename=f"{path.stem}.md" if mime == "text/markdown" else path.name,
+            mime=mime,
+            title=path.stem,
+            source_kind="file",
+            source_ref=ref,
+            source_modified_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
+        )
+    except MemoryApiError as error:
+        print(f"skipped {ref}: {error.status_code} {error.detail}")
+        continue
+    if version.created:
+        pending.append(version.version_id)
+
+print(f"{len(pending)} new versions")
+```
+
+File modification times are often reset by copying and exporting. If your
+source system knows the real date (a document's last edit, a meeting's
+date), use that instead.
+
+Scanned PDFs have no text layer. markitdown returns little or nothing for
+them, which the loop skips; run them through an OCR tool first. A
+self-hosted deployment can do OCR itself with the `mistral_ocr` converter.
+
+## From a vector database
+
+A vector database stores chunks of text next to their vectors. To move it,
+read out the text and its metadata, put the chunks of each source back
+together in order, and send each source as one document.
+
+This works only if the text is stored in the database. If your store holds
+vectors and IDs only, go back to the original files and use the section
+above.
+
+### Put chunks back together
+
+Whichever database you use, reduce each record to four fields: the source
+it came from, its position in that source, its text, and a date. This
+function groups them into documents and removes the overlap that most
+chunkers leave between neighbouring chunks:
+
+```python
+from collections import defaultdict
+
+
+def rebuild_documents(chunks):
+    """Group (source, position, text, date) records into one text per source.
+
+    Returns {source: (text, newest date)}. Neighbouring chunks that repeat the
+    end of the previous chunk (a chunker's overlap) are joined without the repeat.
+    """
+    by_source = defaultdict(list)
+    for source, position, text, date in chunks:
+        by_source[source].append((position, text, date))
+    documents = {}
+    for source, parts in by_source.items():
+        parts.sort(key=lambda part: part[0])
+        text = parts[0][1]
+        for _, chunk, _ in parts[1:]:
+            # Treat a shared run of at least 20 characters as chunker overlap;
+            # shorter matches are coincidence.
+            overlap = next(
+                (n for n in range(min(len(text), len(chunk), 2000), 19, -1)
+                 if text.endswith(chunk[:n])),
+                0,
+            )
+            text += ("" if overlap else "\n\n") + chunk[overlap:]
+        dates = [date for _, _, date in parts if date is not None]
+        documents[source] = (text, max(dates) if dates else None)
+    return documents
+```
+
+Then send each document the same way as a file:
+
+```python
+import remember
+
+client = remember.Client.from_env()
+pending = []
+
+for source, (text, date) in rebuild_documents(chunks).items():
+    version = client.ingest(
+        content=text.encode("utf-8"),
+        filename="document.md",
+        mime="text/markdown",
+        title=source,
+        source_kind="vector-import",
+        source_ref=source,
+        source_modified_at=date,  # a timezone-aware UTC datetime, or None
+    )
+    if version.created:
+        pending.append(version.version_id)
+```
+
+If a record carries no date, `source_modified_at` is `None` and the
+document's statements are dated when they are ingested. Recover real dates
+from the original system where you can; it is the part of the import that
+most affects answers about time.
+
+### Read the records out
+
+The field names below (`text`, `source`, `chunk_index`, `updated_at`) are
+examples. Use whatever your import pipeline stored.
+
+**Qdrant**, with `qdrant-client`:
+
+```python
+from datetime import datetime
+
+from qdrant_client import QdrantClient
+
+qdrant = QdrantClient(url="http://localhost:6333")
+chunks, offset = [], None
+while True:
+    points, offset = qdrant.scroll(
+        collection_name="docs", limit=256, offset=offset,
+        with_payload=True, with_vectors=False,
+    )
+    for point in points:
+        p = point.payload
+        date = datetime.fromisoformat(p["updated_at"]) if p.get("updated_at") else None
+        chunks.append((p["source"], p["chunk_index"], p["text"], date))
+    if offset is None:
+        break
+```
+
+**Chroma**:
+
+```python
+from datetime import datetime
+
+import chromadb
+
+collection = chromadb.PersistentClient(path="./chroma").get_collection("docs")
+chunks, start = [], 0
+while True:
+    page = collection.get(include=["documents", "metadatas"], limit=500, offset=start)
+    if not page["ids"]:
+        break
+    for text, meta in zip(page["documents"], page["metadatas"]):
+        date = datetime.fromisoformat(meta["updated_at"]) if meta.get("updated_at") else None
+        chunks.append((meta["source"], meta["chunk_index"], text, date))
+    start += len(page["ids"])
+```
+
+**PostgreSQL with pgvector**:
+
+```python
+import psycopg
+
+with psycopg.connect("postgresql://localhost/app") as conn:
+    chunks = conn.execute(
+        "SELECT source, chunk_index, content, updated_at FROM chunks"
+    ).fetchall()
+```
+
+Make sure the dates you pass are timezone-aware and in UTC; the client
+rejects anything else. For a naive timestamp known to be UTC, use
+`date.replace(tzinfo=UTC)`.
+
+**Pinecone, Weaviate and other stores** follow the same pattern: page
+through the records with the store's own listing or export API, keep the
+text and metadata, and skip the vectors. If the text was never stored in
+the metadata, use the original files.
+
+## From chat history
+
+Export conversations as text and write each one as a Markdown document,
+one line per turn, with the conversation's date as `source_modified_at`.
+[Ingest conversations and transcripts](/docs/guides/ingest-conversations)
+shows the layout and a loop to send them.
+
+If all you have is a list of "memories" that another tool extracted, you
+can still send it, one document per person or topic, dated when the tool
+exported it. Expect less from it: each line is a summary with no source
+behind it, so the memory can only cite the export itself.
+
+## Wait, then check
+
+Processing takes minutes per document, and a large archive takes a while.
+Wait for the new versions in batches of up to 1,000, as in
+[Load a folder](/docs/guides/ingest-files#load-a-folder), then check a few
+answers you already know:
+
+```python
+print(client.resolve_entity("Dana"))
+print(client.facts_context("Who leads the billing migration?").model_dump_json(indent=2))
+```
+
+If names resolve and facts come back with the dates you expect, the import
+worked. If answers come back empty, see [Why is my answer empty or
+wrong?](/docs/guides/unknowns-and-ambiguity#why-is-my-answer-empty-or-wrong).
+
+## Costs on remember.dev
+
+remember.dev charges for processed text, per million characters, and for
+the storage the result takes. A document that fails to process is not
+charged, and re-sending identical bytes is free, so re-running an import
+costs only what is new. Check your balance and set a monthly cap before a
+large import; see [Pricing and credits](/docs/cloud/pricing) and [Spend
+caps and auto top-up](/docs/cloud/spend-controls).
+
+## Next
+
+- [Keep a source up to date](/docs/guides/keep-sources-current) once the
+  import is done.
+- [Time](/docs/concepts/time): why the dates matter so much.
