@@ -80,9 +80,7 @@ class _ScopedAuth:
         """Return a context carrying the scope the credential names."""
         value = credential.value.get_secret_value().decode()
         return AuthenticatedContext(
-            deployment_id=_DEPLOYMENT_ID,
-            principal="agent",
-            scope=PerimeterScope(value),
+            deployment_id=_DEPLOYMENT_ID, principal="agent", scope=PerimeterScope(value)
         )
 
 
