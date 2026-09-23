@@ -158,9 +158,10 @@ answer questions the internal service never had to:
 - Deletion is auditable: currency events (`version_deleted`) and fact
   retractions (`retracted_source_removal`) name the stable run id; claims and
   stored originals remain. It is *not* erasure; D74 remains the only erasure.
-- Watched-source deletion (`sync.py`) still tombstones only the lineage and
-  keeps its own resurrection semantics; bringing it onto the version tombstone
-  is outside this decision.
+- *(Pre-review state, superseded in review rounds 1 and 2; see §5 and §6.)*
+  The first draft left watched-source deletion (`sync.py`) tombstoning only the
+  lineage. It now tombstones the versions too, and its finalization runs per
+  deletion episode against those versions.
 - A deleted document's T4 anchors are cleared at delete time and again if late
   work re-creates them.
 
@@ -194,3 +195,31 @@ The single transaction replaces the "tombstone committed, cascade crashed"
 window that the finish-or-refuse rule was first designed around. The rule
 stays, for tombstones other paths leave (source-observed deletion before
 finalization, a crashed operator run).
+
+## 6. Review round 2 (2026-09-23) and what changed
+
+1. **A recreated watched file could strand deleted testimony.** Source
+   deletion tombstones the lineage and its versions, but its cascade runs at
+   cycle finalization. The finalizer selected lineages that were *still
+   tombstoned*, and a recreate before finalization clears that tombstone, so
+   the old version's claims could stay current forever (visibly so if the new
+   version is parked or fails). If the finalizer had already picked the
+   lineage, its unscoped cascade could also retire the recreated version's
+   claims. Fix: finalization sweeps **deletion episodes by deleted versions**
+   (current claims no live version carries), not by the lineage tombstone.
+   Each episode runs in one transaction that first locks the lineage row, the
+   same row E0 locks to (re)ingest, and the cascade retires only testimony no
+   live version carries.
+2. **A restore verdict could race a deletion.** The verdict checked deletion
+   without a lock. With the claim already non-current, the deletion found no
+   transition to make, and both committed, reviving deleted testimony. Fix:
+   a support verdict takes the claim's lineage row, then its version rows
+   (shared), before the deletion check and the currency write. That is the
+   order deletion takes them (exclusive), so exactly one goes first: either
+   the verdict sees the deletion and is refused, or the deletion sees the
+   restored claim and retires it.
+3. **Source-deletion episodes shared one run id.** `finalize-delete` was
+   derived from `doc_id` alone, so a delete, recreate, delete sequence
+   suppressed the second `evidence_changed`. Fix: the id includes the
+   episode instant (the newest deletion time of the versions it retires),
+   which is stable across retries and new for each episode.

@@ -393,8 +393,14 @@ the information survive its source's reorganization.)
   and **every one of its versions** are tombstoned together, so the deletion outlives a
   later re-observation of the same identity (below).
 - **Source-observed deletion**: the connector finds the file deleted at its source (a trashed
-  Drive file) — treated as a lineage deletion through the same cascade, stamped with the
-  observing sync cycle (the cycle barrier still applies, so a delete-and-recreate or a
+  Drive file) — treated as a lineage deletion through the same cascade (lineage and versions
+  tombstoned), stamped with the observing sync cycle. Finalization settles each deletion
+  **episode** against its deleted versions, not against the lineage tombstone: it retires
+  current claims that no live version carries, one transaction per episode that first
+  locks the lineage row (the row E0 locks to re-ingest), under a run id derived from the
+  lineage and the episode's deletion instant. A file recreated before finalization revives
+  the lineage but never strands the deleted version's testimony, and the recreated
+  version's claims are never retired (the cycle barrier still applies, so a delete-and-recreate or a
   split-then-delete within one sync pass resolves as support swaps, not close-then-reopen; a
   cross-cycle split leaves a brief, visible, self-healing gap).
 - **Hard-forget**: D74's separate fail-closed workflow spans all versions of the selected lineage.
@@ -438,7 +444,11 @@ the information survive its source's reorganization.)
   source has acted and the question is moot: the cascade closes the review as
   `auto_resolved`, so the zero-support guard no longer holds the fact open, and a later
   `restore_support` verdict is refused for a claim of a deleted document or one only
-  deleted versions carry.
+  deleted versions carry. Verdicts and deletions are serialized: a verdict takes the
+  claim's lineage row, then its version rows (shared), before its deletion check and its
+  currency write — the order a deletion takes them exclusively — so either the verdict
+  sees the deletion and is refused, or the deletion sees the restored claim and retires
+  it.
 - **Work still in flight.** Deleting a document never waits for or cancels its pipeline.
   Claim publication refuses a tombstoned lineage and a tombstoned version alike; work past
   that point (fact application over claims extracted just before the tombstone) is

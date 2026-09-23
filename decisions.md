@@ -6133,7 +6133,10 @@ is charged. Analysis: `plan/analysis/public_document_deletion.md`.
    finishes it and answers 200.
 4. Lineage deletion (operator or source-observed) tombstones every version with the
    lineage. Returning bytes are a new version processed afresh; D56 reuse never draws on a
-   deleted version (refines D55).
+   deleted version (refines D55). Source-observed deletions are finalized per episode
+   against their deleted versions (current claims no live version carries), one
+   lineage-locked transaction and one run id per episode, so a recreate before
+   finalization neither strands the old testimony nor loses the new.
 5. Claim publication refuses a deleted version as well as a deleted lineage. Fact work
    that lands after a delete is retired at the reconcile stage through the same cascade,
    recounting and closing every fact the deleted testimony touches; T4 anchors are cleared
@@ -6142,7 +6145,8 @@ is charged. Analysis: `plan/analysis/public_document_deletion.md`.
 6. A `support_withdrawn` review on a claim no live version carries is closed as
    `auto_resolved` by the deletion, so it no longer holds the fact open, and
    `restore_support` refuses a claim of a deleted document or one only deleted versions
-   carry.
+   carry; a verdict locks the claim's lineage and versions (shared, deletion's order)
+   before checking, so it cannot race a deletion.
 7. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
    operations.
 
