@@ -6164,7 +6164,9 @@ chose between deployment and control tokens against a hard-coded
    (OAuth, or a key header by variable reference) where the harness supports
    it, a stdio bridge otherwise, and a self-hosted entry for local engines.
 4. **Perimeter contract.** The signed-credential adapter requires a
-   configured issuer and complete claim sets per `kind`. A `key` must carry
+   configured issuer and complete claim sets per `kind`. A bearer is
+   `<letters>_<JWS>` (remember.dev: `rmb_`) so secret scanners can catch leaked
+   keys; the engine strips the prefix when the token does not start with `eyJ`. A `key` must carry
    `aud = org:<tenant>` and `org = <tenant>` (the deployment's configured
    issuer-tenant id) and `projects` of `"org:*"` or at most 20 project ids
    including this one; a derived `session` credential must carry `aud` = this
@@ -6213,7 +6215,7 @@ memory traffic to the engine (the hosted MCP path); the engine treats it like an
 other caller holding a credential. Public docs change when the behaviour ships.
 
 **Simplicity.** Left out as unnecessary machinery: local multi-target
-routing, per-tool compatibility ranges, key prefixes, inline key-set or
+routing, per-tool compatibility ranges, prefix configuration, inline key-set or
 revocation configuration, bridge path-ingest rewriting, and routing hints
 inside keys.
 

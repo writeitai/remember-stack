@@ -16,7 +16,7 @@ credential-file conversion, no acceptance of the old `scope` claim.
    claim sets (`aud`, `org`, `projects`, `permissions`, `kind`), URL-fetched
    key set, and the signed, sequenced revocation document with `active_kids`;
    delete the inline key set, the plain revocation list and the `umc_dp_`
-   prefix; add the persisted perimeter-state row.
+   special case (any letters-only prefix is stripped); add the persisted perimeter-state row.
 4. **Client resolver and login.** One `resolve_connection()` for SDK and CLI;
    delete the old variable names, `CloudClient` and credential file version 1;
    `client.account`; issuer metadata, RFC 8628 login, journal→mint→replace→revoke re-login,

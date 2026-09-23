@@ -73,7 +73,7 @@ operator who runs a conforming key issuer:
 Every mechanism here exists because a stated requirement or a security
 invariant needs it. Deliberately left out (not deferred — not part of the
 system): local multi-target routing in `remember mcp`, a compatibility range
-per tool version, key routing prefixes, inline key-set or revocation
+per tool version, prefix configuration, inline key-set or revocation
 configuration, per-tool path-ingest rewriting in the bridge, and routing
 hints (`api_url`, `default_project`) inside keys.
 
@@ -393,7 +393,12 @@ The inline JWKS setting and the plain revoked-id list are removed.
 
 ### 7.2 Accepted credential
 
-- **Form**: a bare compact JWS. Header `alg` is `EdDSA`, `kid` names a key in
+- **Form**: `<prefix>_<JWS>`, where the prefix is letters only (remember.dev
+  uses `rmb_`), so secret scanners such as GitHub push protection can
+  recognise leaked keys. When the bearer does not start with a JWS header
+  (`eyJ`), the engine strips everything up to and including the first `_`,
+  then verifies the remainder; a prefix that is not letters only is refused.
+  There is no prefix setting. Header `alg` is `EdDSA`, `kid` names a key in
   the fetched set and in the accepted revocation document's `active_kids`
   (§7.5); the key is selected by `kid`, never by trying keys.
 - **Common rules**: `iss` equals `API_KEY_ISSUER`; `aud` is a single string;
