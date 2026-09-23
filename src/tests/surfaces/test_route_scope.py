@@ -44,6 +44,10 @@ def test_reads_are_reachable_by_a_read_credential(method: str, path: str) -> Non
         ("POST", "/connectors"),
         ("POST", "/connectors/abc/pause"),
         ("DELETE", "/search/claims"),
+        # Deleting a document shares a path prefix with the read-only
+        # inventory; neither a read nor an ingest credential may reach it.
+        ("DELETE", "/documents/cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        ("DELETE", "/documents/cccccccc-cccc-cccc-cccc-cccccccccccc/"),
     ],
 )
 def test_writes_require_write(method: str, path: str) -> None:

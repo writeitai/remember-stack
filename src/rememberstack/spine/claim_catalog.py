@@ -75,7 +75,8 @@ class ClaimCatalog:
         processing (a queued v2 must not adopt a fast v3's claims), and two
         identical runs WITHIN one version keep their own extractions — their
         bundles can differ in section role, which the key deliberately omits
-        (roles are LLM output). The nearest earlier version wins.
+        (roles are LLM output). The nearest earlier version wins. A deleted
+        version is never a reuse source (D135).
         """
         with self._engine.connect() as connection:
             return connection.execute(
@@ -394,6 +395,10 @@ _SELECT_PRIOR_EXTRACTED = text(
            OR c.claimify_input_hash = :claimify_input_hash)
       AND cv.version_no < (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
+      -- deleted testimony is never reused: its claims lost currency when
+      -- the version was deleted, and re-attaching them would leave the new
+      -- version silently testifying nothing (D135)
+      AND cv.deleted_at IS NULL
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
            OR EXISTS (SELECT 1 FROM claim_extraction_decisions d
                       WHERE d.chunk_id = c.chunk_id))

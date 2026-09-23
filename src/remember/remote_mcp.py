@@ -13,9 +13,13 @@ from uuid import UUID
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.mcp_memory_tools import delete_document_tool_descriptor
+from remember.mcp_memory_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_memory_tools import handle_delete_document_tool
 from remember.mcp_memory_tools import handle_memory_write_tool
 from remember.mcp_memory_tools import memory_write_tool_descriptors
 from remember.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
+from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -81,6 +85,10 @@ class _RemoteMemoryWriteBackend:
         """No capability document is served yet — do not invent a client ceiling."""
         return None
 
+    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
+        """Proxy one document deletion through the typed HTTP SDK."""
+        return self._client.delete_document(doc_id=doc_id)
+
 
 class RemoteOperationMcpServer:
     """Render remote writes, assured operations, and open-query tools."""
@@ -94,14 +102,16 @@ class RemoteOperationMcpServer:
     def list_tools(self) -> dict[str, object]:
         """List remote write tools, assured operations, then open-query tools.
 
-        Order is stable: write/readiness tools, operations from
-        ``GET /operations``, then the seven open-query tools when the remote
-        deployment mounts the open facade (same composition gate as local MCP
-        and HTTP).
+        Order is stable: write/readiness tools and ``delete_document``,
+        operations from ``GET /operations``, then the seven open-query tools
+        when the remote deployment mounts the open facade (same composition
+        gate as local MCP and HTTP). ``--read-only`` omits every write tool,
+        deletion included.
         """
         tools: list[dict[str, object]] = []
         if not self._read_only:
             tools.extend(memory_write_tool_descriptors())
+            tools.append(delete_document_tool_descriptor())
         tools.extend(
             {
                 "name": descriptor.name,
@@ -118,6 +128,11 @@ class RemoteOperationMcpServer:
         self, *, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
         """The MCP ``tools/call`` result containing one JSON text block."""
+        if name == DELETE_DOCUMENT_TOOL_NAME:
+            return handle_delete_document_tool(
+                arguments=arguments,
+                backend=None if self._read_only else self._write_backend,
+            )
         if name in MEMORY_WRITE_TOOL_NAMES:
             if self._read_only:
                 return {

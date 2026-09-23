@@ -23,11 +23,11 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Deleting or forgetting a document.** The HTTP API, the SDK, the CLI and
-  the MCP tools cannot delete a document or make the memory forget it.
-- **Listing documents from the SDK or CLI.** The engine serves
-  `GET /documents`, but the `remember` package has no method or command for
-  it; call the route directly ([Ingest, readiness, documents](/docs/reference/http-api/ingest)).
+- **Erasing a document.** Deleting a document removes it from the memory
+  but keeps its claims and stored original as history; the HTTP API, the
+  SDK, the CLI and the MCP tools cannot erase a document's bytes.
+- **Deleting one version.** You can delete a whole document, not a single
+  version of it.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.
@@ -57,6 +57,8 @@ absent from the current release; nothing here has a date.
 - **Source identity on ingest.** The hosted `ingest` tool stores plain notes
   only; it does not accept `source_kind`, `source_ref`, living documents or
   binary files.
+- **Deleting a document.** The hosted server has no `delete_document` tool;
+  use `remember mcp` with a project token, the SDK or the CLI.
 - **Tool schemas and structured errors.** The hosted tools publish no input
   schemas, and a failed call does not come back as a readable tool error.
 

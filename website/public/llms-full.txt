@@ -700,10 +700,11 @@ With the self-hosted server the agent gets these tools:
 | `combined_context` | Facts and claims together, when the agent wants everything in one call. |
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
+| `delete_document` | Remove a document from the memory when the user asks. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-two write tools.
+three write tools (`ingest`, `pipeline_readiness`, `delete_document`).
 
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](https://remember.dev/docs/cloud/hosted-mcp) for its exact list.
@@ -874,6 +875,45 @@ forever. Nothing else about the version changes.
 Bytes that match an **older** version (the file was changed and then changed
 back) create a new version. The document moves forward; it never silently
 jumps back to an old snapshot.
+
+Bytes sent again after the document was [deleted](#deleting-a-document)
+also create a new version (`created=true`), and it is processed from the
+start.
+
+## Deleting a document
+
+Deleting a document removes it from the memory: every version of it, in one
+call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
+`remember documents delete`, or the `delete_document` MCP tool).
+
+Say Dana uploaded a draft of the billing migration plan that says "the
+migration finishes in March", and Ravi's status note says the same. Dana
+deletes the draft. From then on:
+
+- the draft is gone from `GET /documents`, search, facts, the graph and SQL
+  queries;
+- its claims stop counting as evidence (their currency ends with reason
+  `version_deleted`);
+- "the migration finishes in March" stays believed, because Ravi's note still
+  supports it; it now has one supporter instead of two;
+- a fact that only the draft supported is closed, and the closure is recorded
+  as a retraction (`retracted_source_removal`), exactly as when a living
+  document drops a passage.
+
+Deleting is not erasing. The claims, the stored original and the record of
+what changed stay in the deployment as history, which is why a deletion can
+be audited. Erasing a document's bytes and every trace of it is a separate,
+heavier operator operation that is not offered through the API.
+
+If you send the same file again later, it is added back as a new version and
+processed like a new document. The facts that were closed stay closed; its
+new claims support facts in the usual way.
+
+A deletion is all or nothing. A document that was still being processed
+when you deleted it publishes no further claims, and anything it had already
+produced is never visible and is retired when its version reaches the
+`reconcile` stage. Details and errors:
+[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
 ## Document statuses
 
@@ -2177,10 +2217,13 @@ again. The version's `source_modified_at` does not change.
 
 ## Deleting a document
 
-Deleting a document or a version ends the currency of its claims (reason
+Deleting a document ends the currency of its claims (reason
 `version_deleted`) and retracts facts that only it supported, the same way
-as a living removal. Deletion is not exposed through the HTTP API, the
-`remember` package or the CLI yet.
+as a living removal. You delete a whole document, every version at once,
+with `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
+`remember documents delete` or the `delete_document` MCP tool. Deleting a
+single version is not offered. See
+[Deleting a document](https://remember.dev/docs/concepts/documents-and-sources#deleting-a-document).
 
 ## Where to go next
 
@@ -4174,10 +4217,38 @@ versions; the loop waits only for what changed.
 ## Removing a file
 
 Not sending a file does not remove its document: RememberStack has no
-signal that the file is gone, and its claims keep counting. The HTTP API,
-the client and the CLI have no delete call yet. To stop a living document
-from supporting anything, send a version with the passages removed. See
-[What is not built yet](https://remember.dev/docs/project/not-built-yet).
+signal that the file is gone, and its claims keep counting. When a file
+leaves the folder, delete its document too. Each document the loop above
+sent lists its `source_ref` as `source_uri`, so one pass over
+`list_documents` finds the ones whose file is gone:
+
+```python
+from pathlib import Path
+
+import remember
+
+client = remember.Client.from_env()
+root = Path("specs")
+present = {f"specs/{path.name}" for path in root.glob("*.md")}
+
+cursor = None
+while True:
+    page = client.list_documents(cursor=cursor)
+    for document in page.documents:
+        if document.source_kind == "file" and document.source_uri not in present:
+            client.delete_document(doc_id=document.doc_id)
+    if page.cursor is None:
+        break
+    cursor = page.cursor
+```
+
+Deleting removes the document's claims from the evidence and closes the
+facts only it supported; the claims stay as history. If the file comes back
+later, the sync loop adds it back as a new version. See
+[Deleting a document](https://remember.dev/docs/concepts/documents-and-sources#deleting-a-document).
+
+To remove only some passages of a living document, send a version without
+them instead.
 
 ## Next
 
@@ -7438,6 +7509,7 @@ describes for v0.17.0, except where this page says otherwise.
 | Route or feature | What happens |
 |---|---|
 | `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` | Added in v0.17.0. Not present on remember.dev yet (`404`) |
+| `DELETE /documents/{doc_id}` | Added after v0.17.0. Not present on remember.dev yet (`404` with `Not Found`, not `document_not_found`); `remember documents delete` and the `delete_document` MCP tool get the same answer |
 | Connectors (`/connectors…`) | The routes exist on v0.16.0, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
 | Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](https://remember.dev/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
 | Filesystem views of the corpus | Not offered on remember.dev |
@@ -7657,6 +7729,9 @@ Details are in [Tokens and sign-in](https://remember.dev/docs/cloud/tokens-and-s
 - **No availability or latency figures.** There is no service level
   agreement.
 - **No certifications** and no single sign-on.
+- **No erasure of a single document.** Deleting a document removes it from
+  the memory, but its stored original and its claims stay in the project's
+  storage as history until the project is closed.
 - **No per-document permissions.** Anyone who can read a project's memory
   can read all of it. Put material that needs a different audience in a
   different project.
@@ -7677,6 +7752,11 @@ of any kind, so before you start, make sure you still have the source files
 you sent. They are the only copy you can take with you, and re-ingesting
 them is how you rebuild the memory elsewhere, for example in a
 [self-hosted](https://remember.dev/docs/self-hosting/install) deployment.
+
+To take one document out of the memory without closing the project, delete
+the document instead; see
+[Deleting a document](https://remember.dev/docs/concepts/documents-and-sources#deleting-a-document).
+Its stored original stays with the project until the project is closed.
 
 ## Close a project
 
@@ -8951,8 +9031,9 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
 - Each entry must be an `https` origin exactly as a browser sends it:
   lowercase scheme and host, an optional port, nothing else. A malformed
   entry, an empty entry or a trailing comma stops the API at start.
-- Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-  are allowed. Cookies are not; the browser must send a token.
+- Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+  headers are allowed. `DELETE` (deleting a document) still needs a token with
+  `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 
@@ -9446,8 +9527,8 @@ refuses to start with it. For local development, serve the app over
 `https`, or send the API calls through your development server's proxy so
 the browser sees one origin.
 
-Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-are allowed, and cookies are not. See
+Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+headers are allowed, and cookies are not. See
 [Browser origins](https://remember.dev/docs/self-hosting/authentication#browser-origins-cors).
 
 ## A document never becomes queryable
@@ -10342,11 +10423,11 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 27 documented operations:
+The API has 28 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents` |
+| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](https://remember.dev/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
@@ -10480,6 +10561,7 @@ their arguments do not fit in a query string.
 | `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
+| `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
@@ -10619,7 +10701,7 @@ A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins; empty by default). For those origins it allows:
 
-- methods `GET` and `POST`,
+- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.
@@ -10653,10 +10735,11 @@ Source: https://remember.dev/docs/reference/http-api/ingest
 
 Applies to: remember.dev, self-hosted
 
-Three routes cover the write side of memory. `POST /ingest` adds one file.
+Four routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
-document first.
+document first. `DELETE /documents/{doc_id}` removes a document from the
+memory.
 
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](https://remember.dev/docs/reference/http-api).
@@ -10693,7 +10776,9 @@ attribution, which travels in headers so that it never lands in access logs.
 
 Without `source_kind` and `source_ref`, the file's content is its identity:
 the document id is derived from the SHA-256 of the bytes. Sending the same
-bytes again is a no-op, and different bytes are a different document.
+bytes again is a no-op, and different bytes are a different document. After
+you [delete](#delete-documentsdoc_id) a document, sending its bytes again adds
+it back as a new version (`"created": true`), processed from the start.
 
 With `source_kind` and `source_ref`, the pair is the identity. Use it for
 anything that changes over time — a spec that gets edited, a page in another
@@ -10961,8 +11046,122 @@ curl -s "$REMEMBER_API_URL/documents?status=failed&limit=20" \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
-The `remember` Python client has no method for this route yet. Call it over
-HTTP.
+```python
+from remember import Client
+
+memory = Client()
+page = memory.list_documents(status="failed", limit=20)
+for document in page.documents:
+    print(document.doc_id, document.title, document.latest.error)
+# page.cursor is None on the last page; pass it back to read the next one.
+```
+
+`remember documents list` prints the same page as JSON.
+
+## DELETE /documents/{doc_id}
+
+Remove one document from the memory: every version of it, all at once.
+
+**Scope:** `write`. **Spend hold (remember.dev):** none.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | The `doc_id` that `POST /ingest` returned, or that a claim, chunk or `GET /documents` names. |
+
+There is no body.
+
+### What deleting does
+
+When the call returns, the document is out of the memory:
+
+- it no longer appears in `GET /documents`, search, facts, the graph or SQL
+  queries;
+- its claims stop counting as evidence (their reason becomes
+  `version_deleted`);
+- a fact that only this document supported is closed, with a recorded
+  retraction (`retracted_source_removal`); a fact other documents also
+  support stays, with one supporter fewer.
+
+Deleting is not erasing. The claims and the stored original stay in the
+deployment as history, and the retraction is recorded. Erasing a document's
+bytes and every trace of it is a separate operator operation that is not
+offered through the API.
+
+Processing that was still running for the document stops publishing new
+claims. Anything it already produced is never visible and is retired when
+that version reaches the `reconcile` stage.
+
+A pending review of whether the document's claims were extracted correctly is
+closed as moot, because the document is gone.
+
+If you ingest the same file again later, it is added back as a new version
+and processed from the start, like any new document. The facts that closed
+stay closed; the new claims support facts as usual.
+
+The route starts no pipeline work, so it has no spend hold. Its one possible
+model call re-embeds the profile text of entities whose facts changed; that
+call is recorded with the deployment's other request-time model calls. If
+the model provider is down, the deletion still succeeds and those profiles
+catch up the next time the entity's evidence changes.
+
+### Response
+
+`200` with a [`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "deleted_at": "2026-09-23T10:41:07.318Z",
+  "claims_retired": 12,
+  "relations_closed": 2,
+  "observations_closed": 1
+}
+```
+
+The counts describe what this call changed.
+
+### Deleting twice
+
+A deletion is all or nothing: the document is hidden and its evidence
+updated in one step, or nothing changes. A second `DELETE` of the same
+document answers `404` `document_not_found`, the same as an id the deployment
+never held, so retrying after a timeout is safe. The one exception is a
+document that was hidden some other way but whose evidence was never updated;
+deleting it finishes the job and answers `200` with what it finished.
+
+If you ingest the document again while a `DELETE` of it is running, the
+ingest waits for the delete to finish and then adds the document back as a
+new version.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
+| `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
+| `422` | validation list | `doc_id` is not a UUID. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client, MemoryApiError
+
+memory = Client()
+try:
+    deletion = memory.delete_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+    print(deletion.claims_retired, deletion.relations_closed)
+except MemoryApiError as error:
+    if error.status_code != 404:
+        raise
+```
 
 ---
 
@@ -13625,6 +13824,19 @@ A version `status` of `ready` means conversion and structuring are done. It
 does not mean claims and facts have been extracted; check
 [readiness](#pipelinereadinessreport) for that.
 
+### DocumentDeletion
+
+What [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id)
+changed. The counts describe this call only.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | The deleted document. |
+| `deleted_at` | date-time | When the document was deleted. For a call that finished a deletion another path started, when the document was first hidden. |
+| `claims_retired` | integer | Claims that stopped counting as evidence. |
+| `relations_closed` | integer | Relations closed because this document was their only support. |
+| `observations_closed` | integer | Observations closed because this document was their only support. |
+
 ## ToolDescriptor
 
 One assured operation, as `GET /operations` returns it.
@@ -15040,6 +15252,10 @@ The client is synchronous. There is no async client yet
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
 | `Deployment` | model | [Models](#models) |
+| `DocumentDeletion` | model | [Models](#models) |
+| `DocumentPage` | model | [Models](#models) |
+| `DocumentSummary` | model | [Models](#models) |
+| `DocumentVersionSummary` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
 | `LedgerEntry` | model | [Models](#models) |
@@ -15277,6 +15493,8 @@ Raises `ValueError` when `client` is combined with another parameter.
 | [`pipeline_readiness`](#pipeline_readiness) | `POST /readiness` | `PipelineReadinessReport` |
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
+| [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
 | [`facts_context`](#facts_context) | `POST /operations/facts_context` | `Envelope` |
@@ -15456,6 +15674,65 @@ serving: `build_revision` (str), `model_bindings` (dict of str to str),
 ```python
 info = memory.deployment_build_info()
 print(info.build_revision, info.model_bindings.get("claim_extraction"))
+```
+
+#### `list_documents`
+
+```python
+MemoryClient.list_documents(
+    *,
+    limit: int = 50,
+    cursor: str | None = None,
+    status: Literal["ingesting", "converting", "structuring", "ready", "failed"] | None = None,
+) -> DocumentPage
+```
+
+Returns one page of the deployment's documents, newest document first, as a
+[`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
+returned `cursor` to read the next page; it is `None` on the last page.
+`status` keeps only documents whose newest version has that status. `limit`
+is 1 to 200; the deployment answers `422` outside that range. Deleted
+documents are not listed. See
+[`GET /documents`](https://remember.dev/docs/reference/http-api/ingest#get-documents).
+
+```python
+cursor = None
+while True:
+    page = memory.list_documents(cursor=cursor)
+    for document in page.documents:
+        print(document.doc_id, document.title, document.serving)
+    if page.cursor is None:
+        break
+    cursor = page.cursor
+```
+
+#### `delete_document`
+
+```python
+MemoryClient.delete_document(*, doc_id: UUID | str) -> DocumentDeletion
+```
+
+Removes one document, every version of it, from the memory and returns a
+[`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion) with
+`doc_id`, `deleted_at`, `claims_retired`, `relations_closed` and
+`observations_closed`. Its claims stop counting as evidence, and facts that
+only it supported are closed with a recorded retraction. The claims and the
+stored original are kept as history. Needs a `write` credential. See
+[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
+`MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
+when the document does not exist or is already deleted.
+
+```python
+from remember import MemoryApiError
+
+try:
+    deletion = memory.delete_document(doc_id=version.doc_id)
+    print(f"{deletion.claims_retired} claims retired")
+except MemoryApiError as error:
+    if error.status_code != 404:
+        raise
 ```
 
 ### Assured operations
@@ -16119,6 +16396,10 @@ models below are Pydantic models (frozen) unless noted.
 | `Envelope` | The result of every retrieval call: `grain`, `temporal_scope`, `entities`, `facts`, `evidence`, `chunks`, `sources`, graph fields, `truncation`, `negative`, `freshness` and more. |
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool). |
+| `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
+| `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
+| `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
@@ -16171,6 +16452,7 @@ The package also installs a second command, [`remember-status`](#remember-status
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
+| | [`documents`](#remember-documents) | List documents, or delete one from the memory. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
 | | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
@@ -16309,6 +16591,43 @@ Ingest returns before processing ends. To wait, use the SDK's
 `wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
 readiness command. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
+### `remember documents`
+
+```text
+remember documents list [--limit N] [--cursor CURSOR]
+                        [--status {ingesting,converting,structuring,ready,failed}]
+                        [--api-url URL] [--token TOKEN] [--self-hosted]
+remember documents delete DOC_ID [--api-url URL] [--token TOKEN] [--self-hosted]
+```
+
+`list` prints one page of documents as JSON, newest document first, in the
+shape of [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
+page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
+documents whose newest version has that status.
+
+```bash
+remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`delete` removes one document, every version of it, from the memory and
+prints what changed:
+
+```json
+{"doc_id":"…","deleted_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
+```
+
+Its claims stop counting as evidence, and facts that only it supported are
+closed with a recorded retraction. The claims and the stored original stay
+as history. Deleting needs a `write` credential. Deleting a document that
+does not exist, or is already deleted, prints
+`error: API 404: document_not_found` and exits with status 1. See
+[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+```bash
+remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+```
+
 ### `remember query`
 
 ```text
@@ -16417,8 +16736,8 @@ remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
 
 Runs an MCP server on standard input and output for a coding agent. It finds
 the deployment the same way as every other command, so after
-`remember login` it needs no flags. `--read-only` removes the `ingest` and
-`pipeline_readiness` tools.
+`remember login` it needs no flags. `--read-only` removes the `ingest`,
+`pipeline_readiness` and `delete_document` tools.
 
 You rarely start it yourself; `remember setup` writes the agent
 configuration that starts it. The tools, their parameters and the errors are
@@ -16857,8 +17176,8 @@ deployment and token the same way as every other `remember` command: flags,
 then environment variables, then the credential file that `remember login`
 writes. See [CLI: How the CLI finds your deployment](https://remember.dev/docs/reference/cli#how-the-cli-finds-your-deployment).
 
-`--read-only` leaves out the `ingest` and `pipeline_readiness` tools and
-refuses calls to them.
+`--read-only` leaves out the `ingest`, `pipeline_readiness` and
+`delete_document` tools and refuses calls to them.
 
 ### Protocol
 
@@ -16884,7 +17203,8 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest` and `pipeline_readiness`, unless `--read-only` is set.
+1. `ingest`, `pipeline_readiness` and `delete_document`, unless
+   `--read-only` is set.
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -16895,7 +17215,7 @@ this order:
    `memory_v1` query space (schema `memory_v1`, major version 1 and a
    64-character manifest hash). Any error or other answer leaves them out.
 
-A full server therefore lists 13 tools: 2 + 4 + 7.
+A full server therefore lists 14 tools: 3 + 4 + 7.
 
 ### Results
 
@@ -17015,6 +17335,28 @@ ingest that returned `created: false` is polled the same way, because an
 earlier run of the same bytes may still be processing. See
 [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness#over-mcp).
 
+### `delete_document`
+
+Removes one document, every version of it, from the memory. Its claims stop
+counting as evidence, and facts that only it supported are closed with a
+recorded retraction; facts other documents also support stay. The claims and
+the stored original are kept as history. Ingesting the same file again later
+adds it back as a new version.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. No other arguments are accepted. |
+
+The result is a [`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion):
+`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
+`observations_closed`.
+
+The tool description tells the agent to delete only when the user asks to
+remove a specific document, or the document is plainly wrong or unwanted,
+and never as a way to correct a fact: to correct one, ingest a document that
+says the right thing. The token needs `write` scope. See
+[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
@@ -17109,7 +17451,7 @@ Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 Errors come back as a tool result with `isError: true`, so the agent can read
 them. The JSON inside depends on the tool group.
 
-**`ingest` and `pipeline_readiness`** return:
+**`ingest`, `pipeline_readiness` and `delete_document`** return:
 
 ```json
 {
@@ -17129,6 +17471,9 @@ the agent what to do next.
 | `code` | `http_status` | `retryable` | When | `agent_action` in short |
 |---|---|---|---|---|
 | `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
+| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. | Do not retry; check the `doc_id`. |
+| `tool_not_composed` | 404 | no | `delete_document` on a read-only server. | Tell the user deletion is not available here. |
+| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. | Retry later with back-off. |
 | `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
 | `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
 | `empty_body` | 422 | no | The body is empty. | Send non-empty content. |
@@ -17150,7 +17495,8 @@ the agent what to do next.
 
 With `--read-only`, a call to `ingest` or `pipeline_readiness` returns
 `isError: true` with the plain text
-`write tool 'ingest' is disabled on this read-only MCP server`.
+`write tool 'ingest' is disabled on this read-only MCP server`. A call to
+`delete_document` returns the `tool_not_composed` error object.
 
 **Assured operations and SQL query tools** return:
 
@@ -17375,12 +17721,13 @@ It does not answer `ping`.
 | `ingest` bodies | `text`, `content_base64`, `path` | `text` only, stored as Markdown |
 | `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
 | `pipeline_readiness` | Yes | Yes |
+| `delete_document` | Yes | Not yet |
 | Assured operations | The four the deployment lists, with its names and schemas | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
 | SQL query tools | Seven, when the deployment serves the query space | Not yet |
 | Input schemas | Full JSON Schemas | None (any object) |
 | Read-only mode | `--read-only` | No |
 | Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
-| Tool count | Up to 13 | 6 |
+| Tool count | Up to 14 | 6 |
 
 remember.dev serves SQL queries over the query space to every project; the
 hosted MCP server does not expose the seven SQL query tools yet. Until it
@@ -17699,8 +18046,9 @@ known code at its expected status). `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}` or `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}`, `GET /deployment` or `DELETE /documents/{doc_id}`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
+| `404` | `document_not_found` | `DELETE /documents/{doc_id}` for a document that does not exist or is already deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
@@ -17803,9 +18151,10 @@ timeouts, store codes).
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block.
 
-### Ingest and readiness tools
+### Ingest, readiness and delete tools
 
-The `ingest` and `pipeline_readiness` tools return a structured error:
+The `ingest`, `pipeline_readiness` and `delete_document` tools return a
+structured error:
 
 ```json
 {
@@ -17823,6 +18172,8 @@ The `ingest` and `pipeline_readiness` tools return a structured error:
 | `code` | `http_status` | `retryable` | `agent_action` |
 |---|---|---|---|
 | `invalid_arguments` | 422 | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `source_lineage_pair` | 422 | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
 | `empty_body` | 422 | no | Provide non-empty path / text / content_base64 content. |
 | `encoding_error` | 422 | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
@@ -17839,7 +18190,7 @@ The `ingest` and `pipeline_readiness` tools return a structured error:
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
 | `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
 | `transport_error` | 0 | yes | Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and network reachability. |
-| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. |
+| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. (For `delete_document` on a read-only server: Tell the user deletion is not available on this server; do not retry.) |
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
 
@@ -18731,11 +19082,11 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Deleting or forgetting a document.** The HTTP API, the SDK, the CLI and
-  the MCP tools cannot delete a document or make the memory forget it.
-- **Listing documents from the SDK or CLI.** The engine serves
-  `GET /documents`, but the `remember` package has no method or command for
-  it; call the route directly ([Ingest, readiness, documents](https://remember.dev/docs/reference/http-api/ingest)).
+- **Erasing a document.** Deleting a document removes it from the memory
+  but keeps its claims and stored original as history; the HTTP API, the
+  SDK, the CLI and the MCP tools cannot erase a document's bytes.
+- **Deleting one version.** You can delete a whole document, not a single
+  version of it.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.
@@ -18765,6 +19116,8 @@ absent from the current release; nothing here has a date.
 - **Source identity on ingest.** The hosted `ingest` tool stores plain notes
   only; it does not accept `source_kind`, `source_ref`, living documents or
   binary files.
+- **Deleting a document.** The hosted server has no `delete_document` tool;
+  use `remember mcp` with a project token, the SDK or the CLI.
 - **Tool schemas and structured errors.** The hosted tools publish no input
   schemas, and a failed call does not come back as a readable tool error.
 

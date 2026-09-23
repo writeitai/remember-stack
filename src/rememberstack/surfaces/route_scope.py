@@ -11,7 +11,8 @@ but D62 permits a browser to do only the first. The method tells you nothing
 about which is which.
 
 So the mapping is enumerated by hand, and the default for anything not
-enumerated is ``WRITE``.
+enumerated is ``WRITE``. ``DELETE /documents/{doc_id}`` (D135) is deliberately
+left to that default: removing a document is a write, whatever the method.
 
 ## The direction failure runs
 

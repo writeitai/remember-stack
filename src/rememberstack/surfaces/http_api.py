@@ -51,6 +51,8 @@ from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
@@ -192,6 +194,14 @@ class DocumentInventoryPort(Protocol):
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
     ) -> DocumentPage: ...
+
+
+class DocumentDeletionPort(Protocol):
+    """Remove one document's contribution to the live memory (D135)."""
+
+    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
+        """Delete the lineage, or raise ``DocumentNotFoundError`` when absent."""
+        ...
 
 
 class BuildInfoPort(Protocol):
@@ -343,6 +353,7 @@ def build_api(
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
+    deletion: DocumentDeletionPort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
     ingest_body_max_bytes: int | None = None,
@@ -353,7 +364,8 @@ def build_api(
 
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
-    deployment-side connector configuration; `auth` gates every endpoint
+    deployment-side connector configuration; `deletion` adds
+    `DELETE /documents/{doc_id}` (D135); `auth` gates every endpoint
     on one perimeter credential; and `spend_lease` holds estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
@@ -556,6 +568,10 @@ def build_api(
         _mount_document_inventory(
             app=app, documents=documents, deployment_id=deployment_id
         )
+    if deletion is not None:
+        _mount_document_deletion(
+            app=app, deletion=deletion, deployment_id=deployment_id
+        )
     if graph is not None:
         _mount_graph(app=app, graph=graph)
     if build_info is not None:
@@ -674,7 +690,10 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # named origin ride a session cookie it should never see.
         # OPTIONS is absent deliberately: the middleware answers preflight
         # itself, so listing it would only advertise a method no route serves.
-        allow_methods=["GET", "POST"],
+        # DELETE is listed because `DELETE /documents/{doc_id}` exists; it
+        # grants nothing by itself, since the route still demands a
+        # credential with full write scope.
+        allow_methods=["GET", "POST", "DELETE"],
         # Exactly the two headers a browser client sends. `Idempotency-Key`
         # was here for a contract nothing implements — advertising a header no
         # route reads invites a client to rely on it.
@@ -1042,6 +1061,42 @@ def _mount_document_inventory(
             # A cursor that does not parse. 400 rather than a silent restart:
             # returning page one would look like the corpus repeating itself.
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _mount_document_deletion(
+    *, app: FastAPI, deletion: DocumentDeletionPort, deployment_id: UUID
+) -> None:
+    """Expose the lineage-grain delete (D135). Requires write scope."""
+
+    @app.delete(
+        "/documents/{doc_id}",
+        response_model=DocumentDeletion,
+        responses={404: {"description": "document_not_found"}},
+    )
+    def delete_document(doc_id: UUID) -> DocumentDeletion:
+        """Remove one document from the live memory.
+
+        Its claims stop counting as current testimony, facts that no other
+        document supports are closed with a recorded retraction, and it
+        leaves the inventory and every read. The claims and the stored
+        original are kept as history: this is not an erasure.
+
+        The deletion is all or nothing. An unknown id and an already deleted
+        document are both 404: from the caller's side each is absent. A
+        document hidden by another path whose evidence was never updated is
+        finished and answers 200 instead.
+        """
+        try:
+            return deletion.delete_document(deployment_id=deployment_id, doc_id=doc_id)
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ForgetInProgressError as error:
+            # Admission was open when the request arrived, but a hard forget
+            # was already preparing when the delete took the D74 fence. The
+            # delete ran no statement; answer exactly as admission would.
+            raise HTTPException(
+                status_code=503, detail={"code": "forget_in_progress"}
+            ) from error
 
 
 def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
