@@ -70,6 +70,9 @@ consumers are harnesses (requirements §Retrieval); operators install `[server]`
   primitives, the four closed assured operations, D49 envelopes, open SQL with bounded live-graph helpers, and governed
   saved queries. MCP renders the four platform-owned assured descriptors plus open-query
   infrastructure; customer and `examples.*` saved queries do not become top-level intent tools.
+  Every memory tool's definition lives once in the public `remember.mcp_tools` catalogue,
+  which every MCP host imports (D136,
+  [one_key_client_surfaces_design.md](one_key_client_surfaces_design.md)).
 - **Ingest — lineage-aware by contract**: `client.ingest(bytes|path, *, source_kind=…,
   source_ref=…, source_modified_at=…, versioning_mode=…)` / `remember ingest …`. Writes always
   enter through E0 (D60 invariant — no surface writes around the pipeline). The optional
@@ -299,8 +302,10 @@ must be rejected by the operator's transfer verification.
    prove forgotten-data non-resurrection and an independent control green. Production-builder
    delegation remains the separately green WP-7.4/WP-7.5 contract. No library transport feature is
    involved.
-5. **MCP server distribution**: whether the MCP server also ships as a standalone binary/uvx
-   target for harnesses that don't want a Python env — decide with the first external users.
+5. **MCP server distribution** — resolved by D108 and D136: `uvx remember mcp` needs no
+   managed Python environment, harnesses that accept remote servers connect to a URL
+   (a hosted endpoint, or a self-hoster's `remember mcp --transport http`), and the stdio
+   bridge covers harnesses that only launch local servers. No separate binary ships.
 
 ## References
 

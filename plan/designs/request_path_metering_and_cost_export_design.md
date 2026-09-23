@@ -1,5 +1,13 @@
 # Request-path metering, content-free cost export, and device-grant login
 
+> **D136 amendment (2026-09-23).** The login half of this document (D92: §1 item 7,
+> §6, the login rows of §7) is replaced by
+> [one_key_client_surfaces_design.md §8](one_key_client_surfaces_design.md#8-sdk-and-cli-with-one-key):
+> `remember login` discovers the issuer's endpoints from its OAuth metadata (default
+> issuer `https://remember.dev`, no required token host), runs the standard device
+> grant, and stores one signed key in credential file version 2. What stays binding
+> from D92 is restated in §6 below. Metering and export (D91) are unchanged.
+
 > **Binding D98 amendment (2026-08-27).** Public Cypher and Cypher explain are
 > deleted surfaces. They therefore produce neither request paths nor permanent
 > zero-cost rows. Plain SQL explain remains zero-provider-call; typed live-graph
@@ -68,10 +76,9 @@ existing.
 6. **`rememberstack.cost_export.v1` is an immutable path**
    `GET /ops/cost-export/v1`. A later contract is a new path. v1 never
    grows fields. Extra keys are forbidden on the page and on each receipt.
-7. **`remember login` / `logout`** (D92) are CLI-only. They require an
-   explicit token host. They do not change `MemoryClient` /
-   `ClientSettings` defaults. The engine does not grow a second
-   credential store.
+7. **`remember login` / `logout`** (D92, amended by D136) are CLI-only.
+   They do not make `MemoryClient` read the credential file. The engine
+   does not grow a second credential store.
 
 ### 1.1 Documented non-goals (not deferrals)
 
@@ -81,7 +88,7 @@ existing.
 | Redacting pre-existing Uvicorn access logs of `GET /search?query=` | Those logs already contain query text today. This design makes **new** rows, export payloads, and export-specific logs content-free. Access-log redaction is a separate ops concern. |
 | Cypher or SQL EXPLAIN metering | Those paths do not call the provider today. |
 | `resolve` surface kind | `GET /resolve` / `QueryEngine.resolve` makes no provider call. Adding a reserved enum value “for a future embed” is undefined machinery. When resolve grows an embed, the enum and call-site vocabulary are amended together. |
-| Engine-native second credential for humans | The token host already mints audited deployment tokens. |
+| Engine-native second credential for humans | The key issuer mints audited keys; the engine only verifies them (D136 §7). |
 | Push from the engine to a supervisor URL | Would make the library a client of a commercial control plane (D60/D61). |
 | Export behind the customer perimeter token | Blast radius; the customer app’s dependency list cannot exempt a sibling route anyway. |
 
@@ -625,190 +632,27 @@ deployment (D50); mismatch → exit 2.
 
 ---
 
-## 6. Human login and logout (D92)
+## 6. Human login and logout (D92, amended by D136)
 
-This is a **CLI** feature. `MemoryClient` and `ClientSettings` continue
-to resolve **only** from constructor arguments and `REMEMBERSTACK_API_*`
-environment variables. They **do not** read the credential file. Ambient
-file pickup would send an embedded library to a host the caller never
-configured.
+The login, logout, credential-file and CLI-resolution contract is
+[one_key_client_surfaces_design.md §8](one_key_client_surfaces_design.md#8-sdk-and-cli-with-one-key).
+The parts of the original D92 contract that remain binding:
 
-### 6.1 Commands
-
-```text
-remember login --token-host URL [--api-url URL]
-remember logout [--token-host URL]
-```
-
-`--token-host` is **required** on login (or `REMEMBERSTACK_TOKEN_HOST`).
-There is **no** derivation of a token host from `--api-url`. The engine
-must not encode a commercial control plane’s `/dp/v1` layout.
-
-`--api-url` on login is an explicit query-API override stored in the file. If
-it is omitted, login derives `https://{data_plane_hostname}` from a live
-hostname advertised by the token host. It does not fall back to
-`REMEMBERSTACK_API_URL` or localhost: doing so could bind a newly minted
-deployment credential to an unrelated endpoint. A self-hosted or local token
-host that does not advertise a hostname therefore requires the flag. The query
-API is not the device-grant host.
-
-Without the explicit override, the hostname must be present, structurally
-valid, and advertised as live. Concretely, it is one printable ASCII host or
-`host:port`, with no scheme, path, query, fragment, userinfo, or whitespace; a
-port is 1..65535, and the host is either an IP literal or nonempty DNS labels
-of at most 63 characters and 253 characters in total. Underscore labels and
-one trailing DNS root dot are accepted; an empty label, including one left by
-a second trailing dot, is not. A missing hostname asks for `--api-url`; an
-invalid hostname or a present hostname whose live flag is false or null exits
-nonzero and prints the hostname and reason. These checks occur after the token
-is minted, so every refusal withdraws the new credential (or keeps its secret
-in the pending-revocation journal when withdrawal cannot be confirmed) and
-does not write or replace `credentials.json`.
-
-`logout` uses `--token-host`, else `REMEMBERSTACK_TOKEN_HOST`, else the
-file’s `token_host`. It does not take `--api-url`.
-
-### 6.2 Device-grant HTTP (token host)
-
-JSON, `Content-Type: application/json`. This is the **token host’s**
-contract (UMC device-grant v1), not RFC 8628 form-encoding. Only the
-`grant_type` URN is borrowed from the RFC. A form-only host is a
-different contract.
-
-**Authorize** `POST {token_host}/v1/device/authorize`
-
-Request body (optional): `{ "client_name": "remember-cli" }` (`client_name`
-max 64 chars). Empty body is accepted.
-
-Success **200**:
-
-```text
-{
-  "device_code": "<string>",
-  "user_code": "<string>",
-  "verification_uri": "<url>",
-  "verification_uri_complete": "<url>",
-  "expires_in": <int seconds>,
-  "interval": <int seconds>
-}
-```
-
-Print `user_code` and both URIs. Do not print `device_code`.
-
-**Poll** `POST {token_host}/v1/device/token`
-
-```text
-{
-  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-  "device_code": "<from authorize>"
-}
-```
-
-The CLI sends this exact `grant_type` string. A token host that uses a
-different URN is a different contract and needs a design amendment, not
-a silent client guess.
-
-Poll errors are HTTP **400** with body
-`{ "error": "<code>", "error_description": "<string>" }` (no extra
-keys). Poll every `interval` seconds (cap 30s). `slow_down` → increase
-sleep by 5s, cap 30s. `authorization_pending` → continue.
-`expired_token`, `access_denied`, `invalid_grant` → exit 1 with
-`error_description`. `temporarily_unavailable` → back-off until
-`expires_in` elapses. Respect `Retry-After` when present. **Do not
-follow cross-host redirects** on authorize or token (host-preserving
-same-origin redirects only). Ctrl-C / SIGINT: exit 130, write no file,
-leave no device_code on disk.
-
-Success **200**:
-
-```text
-{
-  "access_token": "<secret>",
-  "token_type": "Bearer",
-  "token_id": "<uuid>",
-  "org_id": "<uuid>",
-  "deployment_id": "<uuid>",
-  "label": "<string>",
-  "token_prefix": "<string>",
-  "data_plane_hostname": "<hostname or null>",
-  "data_plane_hostname_live": "<boolean or null>"
-}
-```
-
-The two data-plane fields let login bind the new credential to its deployment.
-Older or self-hosted token services may omit them; that is the missing-hostname
-case in §6.1. A null live flag is treated as false. The response model ignores
-additional fields so the separately deployed token service can evolve without
-breaking older clients.
-
-TTL: if authorize’s `expires_in` elapses before 200, stop. Do not keep
-polling a dead grant.
-
-### 6.3 Credential file
-
-Directory (first existing, else create the first):
-
-1. `$REMEMBERSTACK_CONFIG_DIR`
-2. `$XDG_CONFIG_HOME/rememberstack`
-3. `~/.config/rememberstack`
-
-File: `credentials.json`. Create with `0600` from the first byte
-(`os.open` with `O_CREAT|O_EXCL` or write-to-temp + `os.replace` in the
-same directory), `fsync`, refuse to follow a symlink at the final path.
-Directory `0700`.
-
-```text
-{
-  "version": 1,
-  "api_url": "<query API>",
-  "token_host": "<explicit token host>",
-  "access_token": "<secret>",
-  "token_type": "Bearer",
-  "token_id": "<uuid>",
-  "org_id": "<uuid>",
-  "deployment_id": "<uuid>",
-  "label": "<string>",
-  "token_prefix": "<string>"
-}
-```
-
-`extra` forbid; `version` is the discriminator. Unknown version → refuse
-to read.
-
-Never print `access_token`. `login` may print `token_prefix`,
-`deployment_id`, `api_url`.
-
-**Second login while a file exists:** attempt `logout` (revoke + unlink)
-first; if revoke is already-revoked (`401`/`404`), unlink and continue;
-if revoke is 5xx, abort (do not leave a second live token + a replaced
-file without saying so). Then write the new file.
-
-### 6.4 Logout
-
-`DELETE {token_host}/v1/api-tokens/self` with the stored bearer.
-
-| Revoke result | File | Exit |
-| --- | --- | --- |
-| 2xx | unlink | 0 |
-| 401 / 404 (already dead) | unlink | 0 |
-| 5xx / network | **keep** | 1 |
-| no file | n/a | 0 |
-
-### 6.5 CLI credential use
-
-Only the `remember` CLI (and `remember mcp` stdio entry) loads the file,
-after flags and env:
-
-1. `--token` / `--api-url` on the subcommand, when present.
-2. `REMEMBERSTACK_API_AUTHORIZATION` / `REMEMBERSTACK_API_URL`.
-3. Credential file (CLI only).
-4. SDK defaults.
-
-The CLI then constructs `MemoryClient(base_url=..., authorization=...)`.
-`--token` may be raw or `Bearer …`.
-
-Filesystems without POSIX modes: write best-effort and warn; refuse to
-read if the platform reports a world-readable mode.
+- Login and logout are **CLI** features. `MemoryClient` and
+  `ClientSettings` never read the credential file; ambient file pickup would
+  send an embedded library's requests to a host its caller never configured.
+- The credential file is created `0600` from the first byte in a `0700`
+  directory (atomic write, fsync, refusal to follow a symlink at the final
+  path); on filesystems without POSIX modes it is written best-effort with a
+  warning and refused on read if the platform reports it world-readable.
+- The secret is never printed after login; a device code is never written
+  to disk; Ctrl-C exits 130 and writes nothing.
+- Redirects during the grant are followed only to the same origin.
+- Logout revokes, then unlinks: 2xx or already-dead (401/404) → unlink,
+  exit 0; 5xx or network failure → keep the file, exit 1; no file → exit 0.
+- A second login revokes the previous credential first; a revocation that
+  cannot be confirmed is kept in the pending-revocation journal rather than
+  forgotten.
 
 ---
 
@@ -825,10 +669,7 @@ read if the platform reports a world-readable mode.
 | Export token wrong | 401 |
 | Export cursor malformed | 422, no receipts |
 | Empty page inside horizon | 200 heartbeat |
-| Login without `--token-host` / env | Exit 2; no derive-from-api-url |
-| Login without `--api-url` or an advertised hostname | Exit 1; ask for `--api-url`; withdraw the mint; keep any existing file |
-| Login with an invalid advertised hostname | Exit 1; print the hostname; ask for `--api-url`; withdraw the mint; keep any existing file |
-| Login with a hostname that is not live | Exit 1; print the hostname; withdraw the mint; keep any existing file |
+| Issuer metadata unavailable at login | Exit 1; name the issuer URL (D136 §8.1) |
 | Logout revoke 5xx | Keep file; exit 1 |
 | Credential file world-readable | Refuse to read |
 
@@ -880,7 +721,7 @@ read if the platform reports a world-readable mode.
 | --- | --- |
 | `website/src/app/docs/reference/api/page.mdx` | Export lives on the ops listener, path `/ops/cost-export/v1`, not on the query API |
 | `website/src/app/docs/reference/cli/page.mdx` | `login`, `logout`, `ops cost-export` |
-| `website/src/app/docs/configuration/page.mdx` | `REMEMBERSTACK_COST_EXPORT_TOKEN`, `REMEMBERSTACK_COST_EXPORT_BIND`, `REMEMBERSTACK_TOKEN_HOST`, `REMEMBERSTACK_CONFIG_DIR` |
+| `website/src/app/docs/configuration/page.mdx` | `REMEMBERSTACK_COST_EXPORT_TOKEN`, `REMEMBERSTACK_COST_EXPORT_BIND` (client login variables: D136 §8.2) |
 | `website/src/app/docs/deployment/page.mdx` | Separate bind; one export worker; do not put export on the public query port |
 | `website/src/app/docs/project-status/page.mdx` | Truthful: request-path metering and export exist when this ships |
 
@@ -899,7 +740,7 @@ Docs describe what the tree runs.
 | Push to a cloud URL | Library becomes a cloud agent |
 | Export route on `build_api` | Unimplementable exemption from app-level `Depends`; also inherits D74 503 |
 | Customer token for export | Blast radius |
-| Derive token host from `--api-url` | Wrong-host footgun; encodes a commercial URL layout |
+| Derive token host from `--api-url` | Wrong-host footgun; encodes a commercial URL layout (D136 discovers endpoints from the issuer instead) |
 | Ambient credential file in `MemoryClient` | Embedded callers silently acquire a human cloud token |
 | UNIQUE `(request_id, call_site, ordinal)` | No redelivery path; collisions hide spend |
 | `numeric(12,6)` on surface amounts | Rounds typical embeds to zero |
@@ -941,7 +782,7 @@ Docs describe what the tree runs.
 | Access-log claim | both | Narrowed; redaction is a non-goal |
 | Rule 2 ceiling/retention | Claude | Ceiling non-goal with reason; monthly partitions, no silent GC |
 | v1 path versioning | both | `/ops/cost-export/v1`; golden field set |
-| token_host derive | both | Required explicit host |
+| token_host derive | both | Required explicit host (superseded by D136 issuer discovery) |
 | SDK file pickup | Claude | CLI only |
 | Scope / ContextVar | both | Async middleware; explicit `call_site`; immutable scope |
 | Wrong embed inventory | both | Cypher/EXPLAIN 0; combined_context 3; resolve removed |

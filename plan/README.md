@@ -12,6 +12,13 @@ explains why GitHub preserves the `remember-stack` history while public Python
 releases expose only `remember`, and why the retired PyPI name is archived
 rather than deleted.
 
+For credentials and client surfaces — the one signed key, the shared
+`remember.mcp_tools` catalogue, the `project` routing argument, `remember mcp`
+engine and bridge modes, `remember setup`, and the perimeter's signed-key
+contract — start with [D136's design](designs/one_key_client_surfaces_design.md)
+and its [analysis](analysis/one_key_client_surfaces_analysis.md). It amends the
+credential and login parts of D92/D108.
+
 For the temporal program, start with [D118 mutable fact windows](designs/mutable_fact_windows_design.md)
 and the [implementation sequence](plans/temporal_clocks.md). The
 [analysis](analysis/lean_mutable_fact_windows.md) explains the independent audits

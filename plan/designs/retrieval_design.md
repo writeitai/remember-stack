@@ -71,8 +71,9 @@ be **composable, self-describing, and honest**:
 
 - **Composable** — a small set of typed, orthogonal primitives (§3) that agents chain; assured
   operations (§4) are frozen compositions, not new capabilities.
-- **Self-describing** — the system teaches its consumers: MCP tool descriptions render from
-  the assured-operation registry; a shipped **consumption skill** (§8) teaches the memory model itself.
+- **Self-describing** — the system teaches its consumers: MCP tool descriptions are defined
+  once in the public `remember.mcp_tools` catalogue, from which the assured-operation registry
+  takes its agent-facing fields (D136); a shipped **consumption skill** (§8) teaches the memory model itself.
 - **Honest** — every response carries a machine-readable account of its own limitations:
   grain, freshness, contradictions, truncation, and a typed taxonomy of "no" (§5, §6).
 
@@ -269,9 +270,11 @@ the control-plane tables in
    enforcement mechanism.
 2. **The eval harness measures per operation.** Recall@k per operation per scenario class
    (D22's retrieval half); operation versions make regressions attributable.
-3. **MCP tools render from the closed registry** — the assured tool list is the four
-   platform-owned rows (name/description/parameters), exactly as extraction prompts render
-   from the ontology registry. Customer-authored behavior belongs in the saved-query registry
+3. **MCP tools render from the closed catalogue** — the assured tool list is the four
+   platform-owned rows (name/description/parameters). Their agent-facing fields are defined
+   once in `remember.mcp_tools` and the registry rows are generated from it, so every MCP
+   host, in this repository or outside it, renders identical tools (D136,
+   [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)). Customer-authored behavior belongs in the saved-query registry
    and never becomes a top-level intent tool merely by inserting a row.
 
 Assured operations never add base capability — anything they do is composed from §3 and the
