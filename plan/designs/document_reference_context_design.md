@@ -118,9 +118,10 @@ invalidation; shifting chunk boundaries can also change actual input context.
 
 ## Relationship to E3 and entity resolution
 
-> **Amended by D134.** Every Selection request also receives one **self card** for the
-> document being processed, outside the card caps above. A claim citing the self card
-> carries a structured document-self marker and binds to the document entity without
+> **Amended by D134.** Every Selection and Claimify request also receives an engine-supplied
+> `DOCUMENT` metadata passage (supporting-only, never an origin) and a **self card** for the
+> document being processed, outside the caps above. A claim citing it sets the persisted
+> `subject_is_document` flag, and its matching subject reference binds to the document entity without
 > the resolution cascade — the only card for which choosing it bypasses resolution.
 > Authority: [`document_subject_entity_design.md`](document_subject_entity_design.md).
 

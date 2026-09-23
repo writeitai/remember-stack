@@ -18,16 +18,21 @@ most design.
    (DOCX/PPTX/ODT/ODP/RTF), HTML, e-book, email body, captions, notebooks,
    calendar/contacts, digital-PDF text layer. Install the parser extras.
    Every one emits a real source map.
-3. **Profiles and `data_query`.** The `computed` evidence mode; E2 extraction
-   eligibility by `derivation_kind`; spreadsheet, delimited, JSON,
-   columnar/SQLite and log profilers; normalized Parquet assets;
-   `data_query` with DuckDB isolation; new locator kinds.
-4. **Document subject entities (D134).** Self card, document-self marker,
-   document-subject binding, metadata aliases. Lands with or right after
+3. **Profiles and `data_query`.** The `computed` evidence mode; the
+   extraction eligibility policy, E1 eligibility boundaries and E2 scheduling;
+   spreadsheet, delimited, JSON, columnar/SQLite and log profilers; private
+   Parquet query assets; the isolated `data_query` worker; new locator kinds.
+4. **Document subject entities (D134).** `DOCUMENT` passage and self card,
+   `subject_is_document`, the unique binding with row-locked minting and merge
+   guard, `document_metadata` aliases, metadata observations for renames, and
+   the forget scrub. Lands with or right after
    profiles, which produce the most self-subject claims.
-5. **Expansion.** Member records and child documents; archives; email
-   attachments; mailboxes and message exports with the dialogue-transcript
-   converter; embedded images through the image route; expansion bounds.
+5. **Expansion.** The `expand` sub-worker, member descriptors, member records
+   and suppressions; `counting_lineage_id` on lineages and evidence rows (a
+   migration of existing rows to `counting_lineage_id = doc_id`); descendant-
+   closure delete and forget; archives; email attachments; mailboxes and
+   message exports with the dialogue-transcript converter; embedded images
+   through the image route; whole-tree expansion bounds.
 6. **File cards** for recognized opaque formats.
 7. **Remaining media routes** (audio, video) per `media_design.md`.
 

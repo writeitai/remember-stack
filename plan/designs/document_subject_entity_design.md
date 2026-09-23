@@ -2,10 +2,11 @@
 
 **Status:** D134, accepted 2026-09-23; binding when merged.
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md) §5.
-**Amends:** D122 (source reference cards: one card binds without resolution)
-and D96/D102 entity identity (one entity origin that is not a name
-cascade). **Motivated by:** D133 profiles and file cards
-([format conversion design](format_conversion_design.md)).
+**Amends:** D122 (one engine-supplied passage and card that binds without
+the resolution cascade), the D18-era `documents.document_entity_id` bridge
+(`postgres_schema_design.md`), and D96/D102 entity identity (one entity
+origin that is not the name cascade). **Motivated by:** D133 profiles and
+file cards ([format conversion design](format_conversion_design.md)).
 
 ## Problem
 
@@ -18,10 +19,10 @@ Some claims are about a file, not about the world the file describes:
 
 Provenance already links every claim to the document version it came from
 (claim → source span → version → document). That answers *where did this come
-from*. It does not answer *who or what is this claim about*: the entity layer
-has no entity for the document, so the claim's subject is either an invented
-name entity ("Q3 sales workbook") that the resolver may confuse with other
-workbooks, or nothing at all.
+from*. It does not answer *what is this claim about*: the entity layer has no
+entity for the document, so the claim's subject is either an invented name
+entity ("Q3 sales workbook") that the resolver may confuse with other
+workbooks, or nothing.
 
 A file name alone is not an identity. Names collide (`Book1.xlsx`,
 `export (3).csv`), change on rename, and the same name in two folders is two
@@ -31,107 +32,166 @@ files.
 
 A document can be the subject of a claim. When it is, the claim binds to a
 **document entity**: an ordinary entity (D96 — no types) whose identity comes
-from the document's lineage (`doc_id`), not from name resolution.
+from the document's lineage, not from name resolution.
 
-### 1. Minting — when, and only when, a claim needs it
+### 1. The binding and minting
+
+The existing `documents.document_entity_id` column becomes the
+**document-subject binding**. It was a nullable bridge to a D18
+"Document-typed" entity; types no longer exist (D96), and the column now
+means exactly: *this entity is this document*. It gains a uniqueness
+constraint (`UNIQUE (deployment_id, document_entity_id)`), so the binding is
+one-to-one.
 
 A document entity is minted the first time a claim from that document takes
-the document itself as its subject. Documents nobody makes claims about never
-get one, so millions of ingested documents do not add millions of entities to
-entity search and resolution candidate lists.
+the document as its subject (§3). Documents nobody makes claims about never
+get one, so millions of ingested documents do not add millions of entities
+to entity search and resolution candidate lists.
 
-A **document-subject binding** records `(entity_id, doc_id)`, one-to-one.
-It is the only thing that makes an entity a document entity; there is no
-entity type.
+**Minting is atomic.** In one transaction the resolver locks the `documents`
+row (`SELECT … FOR UPDATE`), reads `document_entity_id`, and either reuses
+the bound entity or inserts a new entity with its aliases (§2) and sets the
+column. A concurrent minter blocks on the row lock and then reuses the
+winner's entity. The decision is recorded in `resolution_decisions` with
+tier `document_self`.
+
+**Merge guards.** Two entities bound to different documents never merge:
+T3/T4 exclude a candidate pair where both are bound, and review tooling
+refuses such a merge. A bound entity may absorb an unbound one (the bound
+entity survives and keeps the binding); unmerge restores both as D21
+defines.
+
+This is distinct from D102's `document_entity_bindings`, which records
+per-document name anchors for resolution replay and is unchanged.
 
 ### 2. Aliases — the names the document goes by
 
-On mint, and whenever a new version or rename is observed, E0 writes aliases
-with provenance `document_metadata`:
+On mint, E0 writes the document's names as aliases with a new provenance
+value, `document_metadata`, and the source `doc_id` recorded on the alias
+row:
 
 - the file name, with and without its extension;
 - the document title, where the format declares one or the profile/card
   heading names one;
 - the last segment of the source path, where the connector provides one.
 
-Renaming a file adds an alias; old aliases remain (the file was known by
-them). Aliases feed search and candidate generation like any other alias.
+**Renames.** Today E0 treats an upload with identical bytes as a no-op. It
+gains a **metadata observation**: identical bytes arriving with a different
+name, title or path update the lineage's `title`/`source_uri` without
+creating a version, and — when the document has an entity — add the new
+names as `document_metadata` aliases. Old aliases remain (the file was known
+by them) with their `last_seen` unchanged.
 
-### 3. The self card — how a claim takes the document as subject
+### 3. The self passage — how a claim takes the document as subject
 
-D122 gives Claimify a bounded set of **source reference cards**: things the
-source introduces, with passages supporting them. Every Selection request
-additionally receives one **self card** for the document being processed.
-Its label is the document's current name (title if present, else file name)
-and its support is the document header Selection already sees. It does not
-count against D122's per-request card cap.
+Claimify cites engine-supplied **source passages** by label
+(`CandidateClaim.source_refs`), and D122 adds reference cards built from
+those passages. Each Selection and Claimify request additionally receives
+one engine-supplied **self passage**, labeled `DOCUMENT`, whose text is the
+document's names from lineage metadata (title if present, then file name),
+and a **self card** pointing at it. Neither counts against D122's card or
+passage caps.
 
-When a proposition's subject is the document itself — a profile's
-overview, a file card, or prose that refers to itself ("this report", "the
-attached spreadsheet" inside the spreadsheet's own profile) — Claimify
-writes a self-contained claim naming the document and cites the self card.
-The claim text is grounded because the name appears in the header or the
-profile heading (D32 layer-2 token check unchanged).
+- The `DOCUMENT` passage is **metadata, not body**. It may be cited only as
+  a supporting reference, never as the origin, and it produces no evidence
+  span in `document.md`. Its tokens count as grounded context for the D32
+  layer-2 check — they are system-supplied, not model-invented — which is
+  the exact grounding exception this design adds.
+- When a proposition's subject is the document itself — a profile's
+  overview, a file card, or prose referring to itself ("this report") —
+  Claimify writes a self-contained claim naming the document and cites
+  `DOCUMENT`.
+- The grounding gate validates the citation and sets a persisted claim flag,
+  **`subject_is_document`**, from it. The flag is part of the claim and so
+  survives D56 reuse with it.
 
-E3 carries the self-card citation into the `EntityRef` as a structured
-**document-self** marker (not inferred from text). The resolver binds a
-document-self reference directly to the document entity — minting it if
-absent — without running the T0–T4 cascade. This is the one amendment to
-D122's rule that choosing a card never bypasses resolution: the self card's
-identity is known from provenance, so there is nothing to resolve.
+### 4. Binding in E3
 
-### 4. Mentions from other documents go through normal resolution
+E3's `EntityRef` does not change and the model marks nothing. When a claim
+has `subject_is_document=true`, the resolver compares each emitted
+`EntityRef`'s normalized `name` and `surface` with the document's
+`document_metadata` aliases and the `DOCUMENT` passage names. The matching
+reference binds to the document entity through §1, without the T0–T4
+cascade. If none matches, nothing binds specially: the references resolve
+through the normal cascade and a diagnostic records the miss.
+
+This is the one amendment to D122's rule that choosing a card never bypasses
+resolution: the self card's identity is known from provenance, so there is
+nothing to resolve.
+
+### 5. Mentions from other documents go through normal resolution
 
 A different document that mentions the file ("see Q3_sales_2025.xlsx for
-the numbers") does not get the self card for it. Its mention is an ordinary
-name that runs the identity cascade. The document entity's file-name
-aliases make it a T0 candidate; T3/T4 decide as for any entity, and globally
-T0 still never auto-accepts (D95/D100). Two files with the same name remain
-two candidates.
+the numbers") does not get that file's self passage. Its mention is an
+ordinary name that runs the identity cascade. The document entity's
+`document_metadata` aliases make it a T0 candidate; T3/T4 decide as for any
+entity, and globally T0 still never auto-accepts (D95/D100). Two files with
+the same name remain two candidates.
 
-### 5. Claim text is immutable; the entity is the stable link
+### 6. Claim text is immutable; the entity is the stable link
 
-A stored claim names the document the way that version named itself. A later
+A stored claim names the document the way that version named itself. A
 rename does not rewrite old claims — claims are immutable evidence — but
-adds an alias to the entity, so search on the new name still reaches the
-entity and, through it, every claim about the document.
+adds an alias (§2), so a search on the new name reaches the entity and,
+through it, every claim about the document.
 
-### 6. What an agent can do with it
+### 7. What an agent can do with it
 
-`resolve_entity("Q3_sales_2025.xlsx")` returns the document entity with its
-observations (the claims about the file) and its document binding. From the
-binding the agent reaches the document: P3 stub, `source_open`, or
-`data_query` for a profiled data file. The entity is the handle that turns
+`resolve("Q3_sales_2025.xlsx")` returns the document entity with its
+observations (the claims about the file). `lookup entity(id)` includes the
+document binding, from which the agent reaches the document: P3 stub,
+`source_open`, or `data_query` for a profiled data file. The entity turns
 "memory knows this file exists" into "the agent can open or query it".
 
-### 7. Lifecycle
+### 8. Lifecycle and forgetting
 
 - **New versions** keep the same document entity (the lineage is the
-  identity). Claims from each version bind to it as usual, and the lifecycle
-  rules for superseded versions apply to those claims unchanged.
-- **Forgetting the document** retires the document-subject binding and the
-  document's own claims through the existing cascade. The entity remains if
-  claims from other documents still reference it, like any entity whose
-  source of introduction was forgotten.
+  identity). Claims from each version bind to it, and the lifecycle rules
+  for superseded versions apply to those claims unchanged.
+- **Normal deletion** of the document clears the binding with the lineage
+  tombstone; its own claims stop being current testimony through the
+  existing cascade.
+- **Hard forget (D74)** deletes the binding, every alias whose source
+  `doc_id` is the forgotten document, and the document's claims. If the
+  entity is still referenced by claims from other lineages, it survives with
+  only the aliases those lineages contributed; its canonical name is
+  recomputed from them and its profile cache recomputed from remaining
+  evidence (the existing D74 shared-entity rule). If no alias remains, the
+  entity is retired. Nothing unique to the forgotten file — its name, title,
+  path or profile — survives on the entity.
 - **Container children** (D133 §5) are documents; each child can have its
   own document entity. A parent's listing claim ("the archive contains 40
   invoices") binds to the parent's entity.
+
+## Schema changes
+
+Reconciled into [`postgres_schema_design.md`](postgres_schema_design.md):
+
+- `documents.document_entity_id`: now the one-to-one document-subject
+  binding, `UNIQUE (deployment_id, document_entity_id)`.
+- `alias_provenance` gains `document_metadata`; `aliases` gains nullable
+  `source_doc_id`, set for `document_metadata` rows.
+- `resolution_tier` gains `document_self`.
+- `claims` gains `subject_is_document boolean NOT NULL DEFAULT false`.
 
 ## Alternatives
 
 | Alternative | Why not |
 |---|---|
-| File name in claim text only | A string is not an identity: collisions and renames break it, nothing binds the claim to the document. |
+| File name in claim text only | A string is not an identity: collisions and renames break it; nothing binds the claim to the document. |
 | Provenance only | Answers where a claim came from, not what it is about; document-subject claims would float without a holder. |
 | Mint a document entity for every document at ingest | Correct identity, but floods entity search and T0 candidate lists at millions of documents with entities nobody talks about. |
 | Let the name cascade resolve self-references | Guesses an identity already known from provenance, and invites merging two same-named files. |
+| Have the E3 model mark document-self references | A model judgment where a deterministic citation and alias match suffice. |
 
 ## Tests
 
-Self-reference in a profile, a file card and prose; two same-named files in
-different folders stay two entities; rename adds an alias and old claims
-still reach the entity; a mention from another document is a candidate but
-never auto-accepted; a document with no self-referencing claims mints no
-entity; forget of the document retires the binding while another document's
-claim about it keeps the entity; version reuse (D56) preserves the binding
-without a second mint.
+Self-reference in a profile, a file card and prose; `DOCUMENT` cited as an
+origin is rejected; two same-named files stay two entities and never merge;
+concurrent first claims mint one entity; rename through a metadata
+observation adds an alias and old claims still reach the entity; a mention
+from another document is a candidate but never auto-accepted; a document with
+no self-referencing claims mints no entity; hard forget removes the
+document's aliases and binding while another lineage's claim keeps a renamed,
+scrubbed entity; D56 reuse preserves `subject_is_document` without a second
+mint.

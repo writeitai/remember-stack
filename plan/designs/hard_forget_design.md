@@ -25,6 +25,17 @@ cannot surface content unique to that lineage, and their public negative is the 
 that never existed (S55). Information independently supported by another live lineage remains: the
 operation forgets a source contribution, not every independently obtained copy of a fact.
 
+> **Amended 2026-09-23 (D133, D134).** Forgetting a **container** forgets its descendant
+> closure — every lineage reachable through `document_members` — under **one** manifest whose
+> inventory lists every lineage in the closure, admitted behind one barrier. Forgetting one
+> **member** writes a content-free `document_member_suppressions` key so re-expanding the
+> parent (including after restore) skips it. Private query assets and staged member bytes are
+> inventoried with their representation. A **document entity** loses its binding and every
+> `document_metadata` alias sourced from the forgotten lineage; if claims from other lineages
+> keep it alive, its canonical name is recomputed from the surviving aliases (or it is retired
+> when none remain). Authority: [`format_conversion_design.md`](format_conversion_design.md) §5.4,
+> [`document_subject_entity_design.md`](document_subject_entity_design.md) §8.
+
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**
 > surviving entity must invalidate and recompute that cache from remaining

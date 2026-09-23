@@ -1703,6 +1703,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+**Refined by D133.** A container and its members count as one lineage: the counting key is
+`documents.counting_lineage_id` (the root container's lineage for a member), so the count is
+`COUNT(DISTINCT counting_lineage_id)`. Everything else in this entry remains binding.
+
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
 
@@ -2791,6 +2795,11 @@ status documentation, but adds no new public runtime feature or configuration su
 D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
+
+**Refined by D133 and D134.** Forgetting a container forgets its descendant closure under one
+manifest; forgetting one member records a content-free suppression so re-expansion skips it.
+Forgetting a document removes its document-subject binding and the aliases it sourced; a
+surviving document entity is renamed from its remaining aliases or retired.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -5890,9 +5899,9 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
-**Amended by D134.** Every Selection request also receives one self card for the
-document being processed, outside the card cap. A claim citing the self card binds
-to the document entity without the resolution cascade — the single exception to
+**Amended by D134.** Every Selection and Claimify request also receives an engine-supplied
+`DOCUMENT` metadata passage and a self card for the document being processed, outside the
+caps. A claim citing it binds to the document entity without the resolution cascade — the single exception to
 this entry's rule that choosing a card never bypasses resolution.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
@@ -6117,13 +6126,13 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 ## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
 
 **Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
-PR #452.)
+PR #452, which this decision builds on.)
 
 **Context.** Out of the box the engine converts two formats (text, Markdown).
 Routes are an exact lookup on the declared MIME in a table each deployment must
 rebuild by hand, and configuring one route replaces the defaults. The office/HTML
 converter is the thinnest and emits no source map, and the parser extras it needs
-are not installed. The pipeline also assumes every file is prose to extract claims
+are not installed. The pipeline assumes every file is prose to extract claims
 from, which is wrong for structured data: row-by-row extraction scales model cost
 with rows and still cannot answer aggregations. Containers (archives, email with
 attachments, mailboxes, message exports, documents with embedded images) have no
@@ -6132,34 +6141,41 @@ way to become several documents.
 **Decision.**
 1. An engine-shipped **format registry** maps each format family to detection,
    canonical MIME types and aliases, a **posture**, a converter, provider
-   requirements, size limit, an opaque cost-class label and a storage class.
+   requirements, a size limit, an opaque cost-class label and a storage class.
    Deployments overlay it (turn families off, configure providers, lower limits);
-   they never replace it. Routing keys are normalized (lower case, no parameters,
-   aliases resolved).
+   they never replace it. Detection is byte-first in a fixed precedence (D132's
+   binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
+   then deterministic structural tests on text). **This refines D132's text-flavour
+   rule:** JSON, NDJSON, delimited and log text route to their own families when
+   their structural test passes. A family needing an unconfigured provider parks
+   (D117); a disabled family is refused.
 2. Four postures: **full** (complete reading), **profile** (a description of a data
    file — overview, structure, identifying values, formulas — never its rows),
    **expand** (members become child documents routed on their own), and **card**
    (a deterministic file card for recognized formats with no reading). Structured
-   families use a size-and-shape rule: small files are read fully.
-3. `evidence_mode` gains `computed` for deterministic statistics. Claim extraction
-   skips profile structure ranges; they remain searchable.
-4. Profiled tables are stored as normalized Parquet derived assets, and a new direct
-   retrieval primitive, **`data_query`**, runs one read-only SQL statement over them
-   in an isolated, resource-capped DuckDB instance.
-5. Child documents are ordinary E0 documents with a member record to the parent;
-   they count as one source with their root container (D54), re-expand per parent
-   version with content-hash reuse, cascade on parent forget, and are bounded
-   against zip bombs. Embedded images run the image route.
+   families are read fully only within hard bounds (200 rows, 20,000 characters).
+3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
+   structure searchable but not claim-extracted; E1 cuts chunks where eligibility
+   changes and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as private normalized Parquet (never mounted), and a
+   new direct primitive, **`data_query`**, runs one read-only SQL statement over them
+   in DuckDB inside an isolated worker process with OS limits, a staged read-only
+   directory, disabled external access and extensions, and a parent-enforced wall
+   time. It is exposed on MCP beside `source_open`.
+5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
+   ordinary E0 lineages keyed by a collision-safe member key, linked by member
+   records; the parent does not wait for its children. A container and its members
+   count as one source (`counting_lineage_id`, refining D54); deleting or forgetting
+   a parent covers its descendant closure under one manifest, and a forgotten member
+   stays suppressed (refining D74). Bounds apply to the whole tree.
 6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
-7. Detection (D132) must recognize every registry family; a family whose converter
-   needs an unconfigured provider parks (D117); a disabled family is refused.
 
 **Alternatives and consequences.** Full-row extraction for structured data,
 loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
-query dialects, a separate conversation-ingest path, and minting per-image captions
-through the OCR provider instead of image children were rejected (analysis §6–§7).
-Normalized Parquet stores data a second time. The log event digest is a documented
-alternative with an adoption trigger.
+query dialects, in-process DuckDB relying on its settings alone, a separate
+conversation-ingest path, and OCR-provider captions instead of image children were
+rejected (analysis §6–§7). Normalized Parquet stores data a second time. The log
+event digest is a documented alternative with an adoption trigger.
 
 **Authority:** [design](plan/designs/format_conversion_design.md),
 [analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
@@ -6173,18 +6189,25 @@ alternative with an adoption trigger.
 claims about the file itself. Provenance says where a claim came from, not what it
 is about, and a file name is not an identity (collisions, renames).
 
-**Decision.** A **document entity** is minted the first time a claim takes a
-document as its subject; a one-to-one document-subject binding to the lineage is
-its identity, with file name, title and path segment as `document_metadata`
-aliases. Every Selection request gets a **self card** for its document; a claim
-citing it carries a structured document-self marker and binds to the document
-entity without the resolution cascade. Mentions of the file from other documents
-resolve normally with no auto-accept. Claim text is immutable; renames add aliases.
+**Decision.** `documents.document_entity_id` becomes a unique, one-to-one
+**document-subject binding**, replacing the D18-era typed-Document bridge. The
+entity is minted atomically (documents row lock) the first time a claim takes the
+document as its subject, with file name, title and path segment as
+`document_metadata` aliases that record their source document. Every Selection and
+Claimify request gets an engine-supplied `DOCUMENT` metadata passage and self card;
+citing it (supporting only, never origin; its tokens count as grounded context)
+sets the persisted claim flag `subject_is_document`. The resolver binds the
+reference matching the document's names to the document entity without the
+cascade (tier `document_self`). Two bound entities never merge. Mentions from
+other documents resolve normally with no auto-accept. Identical bytes under a new
+name are a metadata observation that adds aliases. Hard forget removes the binding
+and the document's aliases; a surviving entity is renamed or retired.
 
 **Alternatives and consequences.** File name in text only, provenance only,
-minting an entity for every document at ingest, and resolving self-references by
-name were rejected (design §Alternatives). Amends D122 for the self card only and
-refines D96 without introducing types.
+minting an entity for every document at ingest, resolving self-references by
+name, and model-marked self references were rejected (design §Alternatives).
+Amends D122 for the self passage and card only and refines D96 without
+introducing types.
 
 **Authority:** [design](plan/designs/document_subject_entity_design.md),
 [analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.

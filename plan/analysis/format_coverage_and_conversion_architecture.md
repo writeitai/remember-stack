@@ -220,11 +220,15 @@ Options considered:
 | Make every document an entity at ingest | Correct identity, but at millions of documents it floods entity search and T0 candidate lists with entities nobody talks about. |
 | **Mint a document entity when a claim first takes the document as its subject** | Identity from the lineage (no resolution guesswork), aliases from file name/title/path, created only when needed. **Chosen.** |
 
-Binding mechanism: D122 already shows Claimify a bounded set of *source
-reference cards* (things the source introduces). A document gets one extra,
-always-present **self card** naming the document. A claim whose subject is
-the document cites the self card, and E3 binds that mention to the document
-entity from provenance, without running the identity cascade. Mentions of the
+Binding mechanism: Claimify already cites engine-supplied source passages by
+label, and D122 adds *source reference cards* built from them. A document gets
+one extra, always-present **`DOCUMENT` metadata passage** naming it, with a
+self card. A claim whose subject is the document cites it; the grounding gate
+turns the citation into a persisted flag, and the resolver binds the reference
+matching the document's names to the document entity from provenance, without
+running the identity cascade. The first draft of this analysis supported the
+self card with "the header"; review (§9) showed D122 requires a citable
+passage, which is why the passage exists. Mentions of the
 file *from other documents* ("see Q3_sales_2025.xlsx") go through the normal
 cascade, where the document entity's file-name aliases make it a candidate —
 no auto-accept, preserving D95/D100.
@@ -249,16 +253,21 @@ The agent needs to answer aggregations over a profiled file. Alternatives:
 | Per-format query languages (jq for JSON, SQL for SQLite, pandas for XLSX) | Several dialects and sandboxes to secure. Rejected for surface area. |
 | **One embedded analytical engine (DuckDB) over a normalized copy** | One SQL dialect for CSV, XLSX sheets, Parquet, JSON and SQLite; in-process; reads Parquet natively. **Chosen.** |
 
-DuckDB is untrusted-SQL capable when configured defensively. Its security
-guide recommends disabling external access (`enable_external_access=false`,
-which blocks file and network reads outside what was attached), restricting
-`allowed_directories`, capping `memory_limit` and `threads`, and then
-`lock_configuration=true` so a query cannot re-enable anything. Sources:
-<https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview>,
+DuckDB's settings are **not** a sandbox on their own. Its security guide
+says to treat SQL like shell code: untrusted SQL needs a separate
+minimal-privilege process or container, network isolation and
+application-level timeouts, and the settings (`enable_external_access=false`,
+`allowed_directories`, disabling extension autoload/autoinstall and community
+extensions, `memory_limit`, `threads`, `max_temp_directory_size`, then
+`lock_configuration=true`) are defence in depth. It also warns that malicious
+queries can exhaust memory, disk, CPU or network. Sources:
+<https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview>,
 <https://duckdb.org/2025/03/06/gems-of-duckdb-1-2> (both retrieved
-2026-09-23). The engine attaches only the one representation's normalized
-tables read-only, applies those settings, then runs the agent's query with a
-time limit and a returned-row cap.
+2026-09-23). The first draft of this analysis treated the settings as
+sufficient; review (§9) corrected it. The design therefore runs each query in
+an isolated worker process over a staged read-only copy of only the needed
+tables, with OS resource limits and a parent-enforced wall time, and applies
+the settings inside it.
 
 **The normalized copy.** Converting each table to Parquet at conversion time
 (stored as a derived asset) makes the query path format-independent, fast and
@@ -292,3 +301,28 @@ time and would re-parse XLSX on every call. The storage cost is accepted.
 
 Sequencing is in [the delivery plan](../plans/format_coverage_delivery.md);
 it does not belong in the design.
+
+## 9. Independent review
+
+Codex (gpt-6-sol, high reasoning) reviewed the first draft adversarially and
+returned 15 findings (12 must-fix, 3 should-fix; verdict "not
+implementation-ready"). All were accepted; none was rejected. The
+substantive corrections:
+
+| Finding | Resolution in the design |
+|---|---|
+| Registry had no concrete entries, precedence, or D132 compatibility | Full shipped registry (§3), fixed detection precedence (§2.2), explicit refinement of D132's text-flavour rule |
+| JSON "object top level" exception was unbounded | Hard 200-row / 20,000-character bounds, no shape exceptions (§4.1) |
+| Sample rows, Parquet copies and identifying values were under-specified | Copies-and-disclosures table, eligibility and sensitive-field rules, minimum frequency (§4.4) |
+| E2 has no eligibility hook; chunks could mix ranges | Versioned eligibility policy, E1 boundary rule, Selection scheduling, reuse basis (§4.5) |
+| DuckDB settings are not isolation | Isolated worker process, staged directory, OS limits, extension controls, wall time (§4.6; §6 above) |
+| Parquet under `media/` would be mounted and unaudited | Private `query/` prefix, never mounted (§4.6) |
+| `data_query` contradicted retrieval's primitive list and MCP rule | Added to retrieval §3 and the MCP exposure rule |
+| Converter contract cannot emit children; no member schema | `expand` sub-worker, member descriptors, `document_members`, partial failure, readiness (§5.1) |
+| Member paths collide and renumber | Collision-safe member keys per container kind (§5.2) |
+| D54 counts `DISTINCT doc_id`, so children inflate counts | `counting_lineage_id` on lineages and evidence rows (§5.3) |
+| Forget cascade and zip bombs were assertions | Descendant-closure manifest, member suppressions, whole-tree bounds (§5.4–§5.5) |
+| Self card had no citable passage or persisted marker | `DOCUMENT` metadata passage, `subject_is_document` flag, deterministic alias match (D134 §3–§4) |
+| Binding, mint race, alias enum undefined | Reuse `documents.document_entity_id` as a unique binding, row-locked mint, `document_metadata` provenance, merge guard (D134 §1–§2) |
+| Rename and forget left names behind | Metadata observation for renames; forget removes sourced aliases and renames or retires the entity (D134 §2, §8) |
+| Old contract still in binding text and evals | Retrieval, schema, E1, E0, lifecycle, hard-forget designs and eval checks updated |

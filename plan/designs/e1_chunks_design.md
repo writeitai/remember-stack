@@ -67,8 +67,10 @@ returns plain Markdown; docling/PyMuPDF-class tools expose richer structure) —
 1. **Converters produce `document.md` + a source map + derived assets + a manifest** (refines
    D38; generalized by D65 — the *page map* is the paper case of the source map). Mistral OCR:
    concatenate `pages[].markdown`, recording each page's char-range — the page map falls out
-   of concatenation. markitdown: Markdown, no source map (emails/HTML have no pages — the
-   locator is nullable). Media routes (ASR, VLM description — `media_design.md` §2) emit
+   of concatenation. Pageless formats (HTML, email, office documents) map to `source_range` or
+   `line_range` locators; structured formats to `sheet_range` / `table_region` /
+   `json_pointer` (D133, `format_conversion_design.md` §7). A converter that cannot map a range
+   names it in `coverage.gaps` rather than omitting the map. Media routes (ASR, VLM description — `media_design.md` §2) emit
    time-range / image-region locators the same way. Tools that expose real layout use it to
    render *better-segmented Markdown* (true paragraph breaks, correctly fenced tables) —
    structure informs rendering; it never bypasses the next step.
@@ -209,6 +211,11 @@ by **semchunk** (the imposed constraint, kept as the packer) to the token budget
   becomes its own oversized chunk rather than being split mid-row; a pathological giant
   paragraph falls back to deterministic sentence-splitting.
 - **Never cross a section boundary** (§3 makes this well-defined).
+- **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
+  `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
+  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
+  chunk is wholly eligible or wholly ineligible; `chunks.extraction_eligible` records it and
+  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost

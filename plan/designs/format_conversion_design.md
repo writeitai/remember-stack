@@ -3,233 +3,341 @@
 **Status:** D133, accepted 2026-09-23; binding when merged.
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md).
 **Refines:** D38 (router), D65 (converter contract and locators), D117
-(parking scope). **Composes with:** D132 (byte-class detection, PR #452) and
-D134 ([document subject entities](document_subject_entity_design.md)).
+(parking scope), D132 (text-flavour routing), D54 (counting identity), D74
+(forget inventory). **Composes with:** D134
+([document subject entities](document_subject_entity_design.md)).
 Numbers below are starting points to measure, not committed constants.
 
 This design is the one home for *which formats the engine accepts and what
-it does with each*. [`e0_files_design.md`](e0_files_design.md) §3 keeps the
+it does with each*. [`e0_files_design.md`](e0_files_design.md) keeps the
 conversion stage's place in E0; [`media_design.md`](media_design.md) keeps
 the audio, video and image routes and the normative locator schema (§4),
-which this design extends.
+which this design extends; [`retrieval_design.md`](retrieval_design.md) §3
+lists `data_query` among the primitives.
 
 ## 1. The model: family → posture → converter
 
 Every accepted file belongs to a **format family** (a group of formats handled
 the same way, e.g. "spreadsheet" covers XLSX, XLS and ODS). Each family has
 one **posture** — what the engine produces from it — and a converter that
-implements that posture through the unchanged D65 contract
-(`document.md` + `source_map` + `derived_assets` + `manifest`).
+implements that posture through the D65 contract (`document.md` +
+`source_map` + `derived_assets` + `manifest`, extended by §5.1 with member
+descriptors for expanding families).
 
 | Posture | What `document.md` holds | Used for |
 |---|---|---|
 | **full** | A complete reading of the content | Prose and testimony: text, Markdown, HTML, DOCX, PPTX, EPUB, email bodies, PDF, images, audio, video; small structured files (§4.1) |
 | **profile** | A description of the file: what it is about, its structure, identifying values, formulas — *not* its rows (§4) | Structured data: spreadsheets, CSV/TSV, large JSON/NDJSON, Parquet/Arrow, SQLite, logs |
-| **expand** | A listing of the container's members; each member becomes a **child document** that is routed on its own (§5) | Archives (ZIP, TAR, 7z), mailboxes (mbox, PST), message exports, email attachments, images embedded in documents |
-| **card** | A short deterministic **file card**: name, detected type, size, embedded metadata the format exposes (§6) | Recognized formats with no reading by design (CAD, disk images, audio plugins, fonts, proprietary binaries) |
+| **expand** | A listing of the container's members; each member becomes a **child document** routed on its own (§5) | Archives, mailboxes, message exports, email attachments, images embedded in documents |
+| **card** | A short deterministic **file card**: name, detected type, size, embedded metadata the format exposes (§6) | Recognized formats with no reading by design (CAD, fonts, disk images, executables) |
 
 A file can combine postures where the format is both: an email (`.eml`) is
 **full** for its headers and body and **expand** for its attachments; a DOCX
 with embedded figures is **full** for its text and **expand** for its figures.
 
-Postures are chosen per family in the registry (§2), and per file by the
-size-and-shape rule where a family allows both **full** and **profile**
-(§4.1).
-
 ## 2. The format registry
 
 One engine-shipped registry replaces the operator-built route table. Each
-entry states, for one family:
+entry states, for one family: detection (§2.2), canonical MIME types and
+aliases, posture, converter, provider requirements, `max_bytes`, an opaque
+`cost_class` label, and the original's storage class. The complete shipped
+entries are §3.
 
-| Field | Meaning |
+### 2.1 Configuration is an overlay
+
+A deployment can turn a family off, select or configure a provider for a
+converter that needs one (keys, model), and lower `max_bytes`. It cannot
+delete the registry by omission, and setting one route never removes the
+others. Outcomes at ingest:
+
+| Situation | Outcome |
 |---|---|
-| `family` | Stable name (`spreadsheet`, `delimited`, `json`, `office_document`, …) |
-| `detection` | The byte signatures or structural tests that identify it. Detection runs on bytes (D132); the declared MIME and file extension are hints only. |
-| `canonical_mimes` | The MIME types the family stores and routes under, plus an alias list (`application/x-zip-compressed` → `application/zip`, `text/x-markdown` → `text/markdown`) |
-| `posture` | `full`, `profile`, `expand`, `card`, or a size-and-shape rule choosing between `full` and `profile` |
-| `converter` | The converter implementing the posture, by name |
-| `requires` | What the converter needs to run: nothing (library-local), or a named provider capability (OCR, vision, ASR) |
-| `max_bytes` | The accepted size for this family |
-| `cost_class` | An opaque label the metering port receives (`text`, `scan_page`, `image`, `audio_minute`, `video_minute`, `data_profile`, …). The engine never prices; a deployment's metering maps labels to prices (D61). |
-| `storage_class` | Hot or cold for the original (D51, D132) |
+| Bytes not recognized as any family | Refused (D132 typed refusal) |
+| Family turned off by the deployment | Refused with a typed error naming the family |
+| Over the family's `max_bytes` | Refused with a typed error naming the limit |
+| Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
+| Family on and ready | Stored and converted |
 
-**Routing key normalization.** The routing key is the stored MIME after D132
-detection, lower-cased, with parameters removed (`text/plain;
-charset=utf-8` → `text/plain`) and aliases resolved. An exact entry wins; a
-family wildcard (`image/*`) applies only when the registry declares one.
+`cost_class` is a label the metering port receives (`text`, `scan_page`,
+`image`, `audio_minute`, `video_minute`, `data_profile`, `archive`, `card`).
+The engine never prices; a deployment's metering maps labels to prices
+(D61).
 
-**Deployment configuration is an overlay, not a table.** A deployment can:
-turn a family off; select or configure a provider for a converter that needs
-one (keys, model); and lower `max_bytes`. It cannot delete the registry by
-omission. Setting one route never silently removes the others — the failure
-mode that left a hosted deployment with three working formats.
+### 2.2 Detection and precedence
 
-**Requirements decide readiness, not acceptance.** A family whose converter
-needs an unconfigured provider (PDF OCR without an OCR key) is still
-accepted: the original is stored and conversion parks with `no_route`
-exactly as D117 defines, and the operator's `resume-no-route` releases it
-after configuration. A family the deployment turned off is refused at ingest
-with a typed error naming the family — storing something the operator has
-explicitly disabled would be surprising. An unrecognized byte class stays a
-D132 refusal.
+Detection decides the family from bytes, in this fixed order; the first
+match wins. The declared MIME and the file extension are **hints** used only
+where a step says so.
 
-**Detection must cover every family in §3.** D132's class list (PDF, image,
-audio, video, office, text) is extended with SQLite (`SQLite format 3\0`),
-Parquet (`PAR1` head and tail), Arrow IPC, generic ZIP, TAR, gzip, 7z, mbox
-(`From ` line structure), OLE containers beyond office (PST, MSG), and
-text-level structure tests for JSON, NDJSON, CSV/TSV and common log formats
-(done after the strict UTF-8 check establishes text). A container's members
-are detected again from their own bytes; a member's name is only a hint.
+1. **Binary signatures (D132's classes, extended).** PDF; images, audio and
+   video by signature and ISO BMFF brand (D132); SQLite (`SQLite format 3\0`
+   header); Parquet (`PAR1` at both ends); Arrow IPC (`ARROW1`); 7z; gzip
+   (then a TAR test on the decompressed head); TAR (`ustar` at offset 257).
+2. **ZIP packages by member names**, most specific first: EPUB and ODF
+   (a stored `mimetype` member naming the type); OOXML (`[Content_Types].xml`
+   plus `word/`, `ppt/` or `xl/` members, D132); notebook bundles are not ZIP
+   and are handled at step 4. A ZIP matching none of these is an **archive**.
+3. **OLE containers by stream names:** legacy Word, Excel and PowerPoint
+   (D132, with the declared legacy office MIME selecting the subtype), MSG
+   (`__properties_version1.0` stream), PST (`!BDN` header). An OLE container
+   matching none is refused.
+4. **Text.** Strict UTF-8 validation as D132 defines it. Then structural
+   tests on the whole file, in order:
+   1. **mbox** — the first line starts `From ` and at least one RFC 5322
+      header block follows.
+   2. **Email message** — an RFC 5322 header block containing `From:` and
+      at least one of `Date:`, `Message-ID:`, `Received:`, followed by a
+      blank line.
+   3. **Captions** — WebVTT (`WEBVTT` first line) or SRT (numbered cues with
+      `-->` timestamps in the first cue).
+   4. **Calendar / contacts** — `BEGIN:VCALENDAR` or `BEGIN:VCARD`.
+   5. **JSON** — the whole file parses as one JSON value; **NDJSON** — every
+      non-empty line parses as a JSON value and there are at least two. A
+      JSON value with `nbformat` and `cells` keys is a **notebook**; a
+      FeatureCollection/Feature with `type` and `geometry` is **GeoJSON**.
+      Known export shapes (a list of conversations with message arrays, as
+      the message-export converters declare) are **message exports**.
+   6. **HTML** — D132's recognizable-markup test.
+   7. **XML** — a well-formed document; KML and GPX by root element.
+   8. **Delimited** — only when the declared MIME or extension says CSV or
+      TSV (a hint): the file parses with that delimiter under RFC 4180
+      quoting and every record has the header's column count. A failed test
+      falls through.
+   9. **Log** — only when the declared MIME or extension says log: at least
+      80% of lines match one of the log grammars the log profiler declares.
+   10. **YAML / TOML** — only on a declared hint, and the file parses.
+   11. Otherwise **Markdown** when declared as Markdown (D132 rendering hint),
+       else **plain text**.
 
-## 3. The family table
+A declaration that contradicts a binary class is a D132 refusal. Within the
+text class a failed structural test never refuses — it falls through to the
+next test, ending at plain text — so the outcome is deterministic for given
+bytes and hints.
 
-The shipped registry covers at least these families. "Local" means a library
-in the engine's install, no provider call.
+**This refines D132's text-flavour rule.** D132 routes CSV, JSON and code
+with plain text. Under D133 JSON, NDJSON, delimited and log text route to
+their families when the structural test passes, and meter under their
+family's `cost_class`. Code and other text stay plain text.
 
-| Family | Examples | Posture | Converter (requires) | Primary locator |
-|---|---|---|---|---|
-| Plain text | `.txt`, source code | full | passthrough (local) | `line_range` |
-| Markdown | `.md` | full | passthrough (local) | `source_range` |
-| HTML | `.html`, saved pages | full | web document (local) | `source_range` |
-| Word processing | DOCX, ODT, RTF, DOC | full + expand (embedded images) | office document (local) | `source_range`; `page` where the format paginates |
-| Presentation | PPTX, ODP, PPT | full + expand (embedded images) | office document (local) | `page` (one slide = one page) |
-| E-book | EPUB | full | e-book (local) | `source_range` |
-| PDF, digital | text-layer PDF | full + expand (embedded images) | PDF text (local) | `page` with region |
-| PDF, scanned or mixed | image-only pages | full + expand (embedded images) | OCR (OCR provider) | `page` with region |
-| Image | PNG, JPEG, WebP, HEIC, TIFF, GIF (first frame) | full | image OCR + description (OCR and vision providers; D115) | `image_region` |
-| Audio | MP3, WAV, M4A, OGG, FLAC | full | diarized ASR (ASR provider; D65) | `time` |
-| Video | MP4, MOV, WebM, MKV | full | ASR + keyframes (ASR and vision providers; D65) | `time`, `video_region` |
-| Captions | SRT, VTT | full | caption (local) | `time` |
-| Email message | EML, MSG | full + expand (attachments) | email (local) | `source_range` |
-| Mailbox | mbox, PST | expand (one child per message) | mailbox (local) | member record |
-| Message export | Slack/Teams/ChatGPT/WhatsApp exports | expand (one child per conversation) + full per child | message export → dialogue transcript (local) | `json_pointer` / `line_range` |
-| Spreadsheet | XLSX, XLSM, XLS, ODS | profile, or full when small | spreadsheet profiler (local + one model call) | `sheet_range` |
-| Delimited | CSV, TSV | profile, or full when small | table profiler (local + one model call) | `table_region` |
-| JSON | JSON, NDJSON/JSONL | profile, or full when small or document-shaped | JSON profiler (local + one model call) | `json_pointer` |
-| Columnar / database | Parquet, Arrow, SQLite | profile | table profiler (local + one model call) | `table_region` |
-| Log | syslog, access logs, JSON logs, `.log` | profile | log profiler (local + one model call) | `line_range` |
-| Notebook | `.ipynb` | full (cells and text outputs), expand (image outputs) | notebook (local) | `json_pointer` |
-| Structured markup | XML, YAML, TOML | full when small, else profile | markup (local) | `json_pointer`-style path |
-| Geo | GeoJSON, KML, GPX | profile | geo profiler (local + one model call) | `json_pointer` |
-| Calendar / contacts | ICS, VCF | full (one entry per event/contact) | calendar/contact (local) | `source_range` |
-| Archive | ZIP, TAR, TGZ, 7z | expand | archive (local) | member record |
-| Opaque, recognized | CAD, fonts, disk images, executables, proprietary binaries | card | file card (local) | none |
+**The routing key** is the family's canonical MIME: lower-cased, parameters
+removed (`text/plain; charset=utf-8` → `text/plain`), aliases resolved
+(`application/x-zip-compressed` → `application/zip`). Container members are
+detected again from their own bytes; a member's name is only a hint.
 
-Formats not listed are refused by D132 until a registry entry recognizes
-them. Adding a family is a registry entry plus, where needed, a converter —
+## 3. The shipped registry
+
+"Local" means a library installed with the engine, no provider call. `max_bytes`
+values are starting points.
+
+| Family | Canonical MIME | Posture | Converter (requires) | `max_bytes` | `cost_class` | Primary locator |
+|---|---|---|---|---:|---|---|
+| Plain text | `text/plain` | full | passthrough (local) | 100 MB | text | `line_range` |
+| Markdown | `text/markdown` | full | passthrough (local) | 100 MB | text | `source_range` |
+| HTML | `text/html` | full | web document (local) | 50 MB | text | `source_range` |
+| Word processing | DOCX, ODT, RTF, DOC types | full + expand (images) | office document (local) | 100 MB | text | `source_range`, `page` where paginated |
+| Presentation | PPTX, ODP, PPT types | full + expand (images) | office document (local) | 200 MB | text | `page` (slide) |
+| E-book | `application/epub+zip` | full + expand (images) | e-book (local) | 100 MB | text | `source_range` |
+| PDF | `application/pdf` | full + expand (images) | PDF: text layer (local) per page, OCR (OCR provider) for pages without one | 200 MB | text; `scan_page` per OCR'd page | `page` with region |
+| Image | PNG, JPEG, WebP, HEIC, TIFF, GIF types | full | image OCR + description (OCR and vision providers; D115) | 50 MB | image | `image_region` |
+| Audio | MP3, WAV, M4A, OGG, FLAC types | full | diarized ASR (ASR provider; D65) | 2 GB | audio_minute | `time` |
+| Video | MP4, MOV, WebM, MKV types | full | ASR + keyframes (ASR and vision providers; D65) | 10 GB | video_minute | `time`, `video_region` |
+| Captions | `text/vtt`, `application/x-subrip` | full | caption (local) | 10 MB | text | `time` |
+| Email message | `message/rfc822`, `application/vnd.ms-outlook` | full + expand (attachments) | email (local) | 100 MB | text | `source_range` |
+| Mailbox | `application/mbox`, PST type | expand (messages) | mailbox (local) | 20 GB | archive | member record |
+| Message export | per export shape | expand (conversations); each child full | message export → dialogue transcript (local) | 5 GB | archive; children text | `json_pointer` |
+| Spreadsheet | XLSX, XLSM, XLS, ODS types | profile, or full when small | spreadsheet profiler (local + one model call) | 200 MB | data_profile | `sheet_range` |
+| Delimited | `text/csv`, `text/tab-separated-values` | profile, or full when small | table profiler (local + one model call) | 5 GB | data_profile | `table_region` |
+| JSON | `application/json`, `application/x-ndjson` | profile, or full when small | JSON profiler (local + one model call) | 5 GB | data_profile | `json_pointer` |
+| Columnar / database | Parquet, Arrow, SQLite types | profile | table profiler (local + one model call) | 20 GB | data_profile | `table_region` |
+| Log | `text/x-log` | profile | log profiler (local + one model call) | 20 GB | data_profile | `line_range` |
+| Notebook | `application/x-ipynb+json` | full + expand (image outputs) | notebook (local) | 100 MB | text | `json_pointer` |
+| Markup | XML, YAML, TOML types | profile, or full when small | markup (local + one model call when profiled) | 1 GB | text / data_profile | `json_pointer`-style path |
+| Geo | GeoJSON, KML, GPX types | profile | geo profiler (local + one model call) | 5 GB | data_profile | `json_pointer` |
+| Calendar / contacts | `text/calendar`, `text/vcard` | full | calendar/contact (local) | 50 MB | text | `source_range` |
+| Archive | ZIP, TAR, gzip, 7z types | expand | archive (local) | 20 GB | archive | member record |
+| Opaque, recognized | CAD, font, disk-image, executable types | card | file card (local) | 20 GB | card | none |
+
+Bytes not recognized as any family are refused by D132. Adding a family is a
+registry entry (detection step, row above) plus, where needed, a converter —
 never a change to the contract or the pipeline.
 
-**Local by default.** Every family without a provider requirement works in
-a stock deployment with no configuration. The office, e-book, email and
-notebook converters use maintained open-source parsers installed with the
-engine (for example markitdown with its `docx`, `pptx`, `xlsx`, `xls` and
-`outlook` extras, which the bare package does not include). Each local
-converter emits a real source map; a converter that cannot map a range
-leaves it unmapped and says so in `coverage.gaps` — it never claims
-`complete=True` with no map for a format that has structure.
+**Local by default, with real source maps.** Every family without a provider
+requirement works in a stock deployment with no configuration. Office,
+e-book and email converters use maintained open-source parsers installed
+with the engine (for example markitdown with its `docx`, `pptx`, `xlsx`,
+`xls` and `outlook` extras, which the bare package does not include). Each
+local converter emits a source map. A range it cannot map is named in
+`coverage.gaps`; a converter never reports `complete=True` without a map for
+a format that has structure.
 
 ## 4. The profile posture
 
 A **profile** tells memory what a data file is, so an agent knows it exists,
 what it contains and how to query it, without memory ingesting its rows.
 
-### 4.1 Full or profile: the size-and-shape rule
+### 4.1 Full or profile: the size rule
 
-For families that allow both, a file is read **fully** when it is small
-enough that its content *is* the knowledge, and **profiled** otherwise.
-Starting values: delimited or spreadsheet data with at most 200 data rows per
-table and at most 20,000 rendered characters in total; JSON of at most
-32 KiB, or any JSON whose top level is an object rather than an array of
-similar records (a config file, a single record). The manifest records which
-branch was taken and why.
+For families that allow both, the converter first renders the full reading,
+measures it, and keeps it only when it is within **both** bounds; otherwise
+it discards it and profiles:
+
+- at most **200 data rows in total** across all sheets or tables (for JSON
+  and markup: at most 200 array elements in total across all arrays);
+- at most **20,000 characters** of rendered `document.md`.
+
+The bounds are hard: no shape exception makes a large file a full reading.
+Rendering stops as soon as either bound is exceeded, so a large file is
+never fully rendered. The manifest records the branch taken and the measured
+values.
 
 ### 4.2 What a profile contains
 
-`document.md` for a profiled file, in this order:
+`document.md` for a profiled file, in this order. Each numbered item is its
+own Markdown section, and each section is one labeled range:
 
 1. **Heading** — the file name as the source version names it.
+   Label: `profile_heading` / `source_expression`.
 2. **Overview** — a short paragraph written by one bounded model call from
    the deterministic profile and a few sample rows: what the data is about,
-   its time span, its grain ("one row per order line"). The sample rows are
-   model input only; they are never written to `document.md` or stored.
+   its time span, its grain ("one row per order line").
    Label: `profile_overview` / `model_interpretation`.
 3. **Structure** — per sheet or table: row and column counts; per column the
    name, inferred type, null rate, distinct count, and minimum/maximum for
-   ordered types. Label: `profile_structure` / `computed` (names copied
-   verbatim are `source_expression`).
-4. **Identifying values** — for columns detected as categorical or
-   identifier-like (low distinct-to-row ratio, or name/code-shaped values):
-   the top values by frequency, capped (starting value 20 per column,
-   200 per file). Also date spans and totals of summable columns. Measure
-   and free-text columns never contribute values. Label:
-   `profile_values` / `computed`.
+   ordered types. Label: `profile_structure` / `computed`.
+4. **Identifying values** (§4.4). Label: `profile_values` / `computed`.
 5. **Formulas and relations** (spreadsheets, databases) — named ranges,
    defined tables, pivot tables, cross-sheet references, foreign keys, and
-   the formulas behind cells that other sheets or summaries reference
-   (headline formulas), capped (starting value 50). Label:
-   `profile_formulas` / `source_expression`.
+   the formulas of cells referenced from other sheets or named ranges
+   (headline formulas), capped at 50 (starting value).
+   Label: `profile_formulas` / `source_expression`.
 
 The manifest's coverage is `policy="profile"`, `complete=False`, with gaps
 naming what is not represented ("rows of `Orders` (48,210) not
-represented"). This is the honest statement that the file holds more than
-memory read.
+represented").
 
 ### 4.3 The `computed` evidence mode
 
 `DerivationRange.evidence_mode` gains a fourth value, `computed`: text a
 deterministic library derived from source values (counts, ranges, totals,
 inferred types). It is neither the source's own words (`source_expression`)
-nor a model's output (`model_observation`, `model_interpretation`), and
-labeling it as either would misstate how it was produced. Everything that
-consumes evidence modes treats `computed` as deterministic but not verbatim.
+nor a model's output (`model_observation`, `model_interpretation`).
+Mediation order for claims crossing ranges (`media_design.md` §5):
+`model_interpretation` > `model_observation` > `computed` >
+`source_expression`.
 
-### 4.4 What E2 extracts from a profile
+### 4.4 Identifying values and what leaves the file
 
-Claim extraction runs on `profile_overview`, `profile_values` and
-`profile_formulas` ranges and **not** on `profile_structure` ranges. Structure
-is chunked, embedded and searchable — it is how a file is found by a column
-name — but turning it into claims ("Sheet Q3 has a column Revenue") would
-flood the fact layer with schema trivia. The rule is keyed on
-`derivation_kind`, so it holds for every profiler. Claims whose subject is
-the file bind to its document entity (D134).
+Identifying values let memory link a data file to the people, companies and
+products it concerns ("which file has Acme's orders?") without storing rows.
 
-### 4.5 The queryable copy and `data_query`
+- **Eligible columns:** at most 1,000 distinct values and a distinct-to-row
+  ratio of at most 0.2 (categorical), or name- or code-shaped values under
+  the same distinct cap (identifier-like). Measure (numeric) and free-text
+  columns (median length over 64 characters) are never eligible.
+- **Excluded columns:** any column whose name or values match the profiler's
+  versioned sensitive-field patterns — email addresses, phone numbers,
+  payment card and bank account numbers, government identifiers, and
+  names containing `password`, `secret`, `token`, `key`. These contribute
+  statistics only.
+- **Selection:** the top values by frequency, each occurring in at least 3
+  rows, capped at 20 per column and 200 per file. Also date spans and totals
+  of summable columns.
+
+These rules limit what is amplified into searchable, claim-extracted text.
+They are not access control: a deployment is one trust domain (D50), and the
+original is stored and reachable as always (D51).
+
+**Copies and disclosures of the data**, stated exactly:
+
+| Copy | Where | Who reads it |
+|---|---|---|
+| The original | raw store (D51) | raw mount and `source_open`, audited |
+| Normalized tables | private query store (§4.6) | `data_query` only, audited |
+| Profile text (no rows) | `document.md` and downstream indexes | all read surfaces |
+| Up to 20 sample rows per table | the overview model call | the configured model provider (D61 execution context `provider:<name>` in the manifest) |
+
+The sample rows are not written to `document.md`, chunks, claims, or the
+manifest. They are subject to the deployment's existing model-call recording
+policy exactly like every other provider call's inputs; a deployment that
+records full prompts records them there.
+
+### 4.5 What E2 extracts from a profile
+
+Claims come from `profile_heading`, `profile_overview`, `profile_values` and
+`profile_formulas` ranges, and **not** from `profile_structure` ranges.
+Structure is chunked, embedded and searchable — it is how a file is found by
+a column name — but turning it into claims ("Sheet Q3 has a column Revenue")
+would flood the fact layer with schema trivia.
+
+The mechanism:
+
+1. An engine-level, versioned **extraction eligibility policy** maps
+   `derivation_kind` to eligible or not. Its only ineligible kind is
+   `profile_structure`.
+2. **E1 cuts chunks at eligibility boundaries.** A chunk never contains both
+   eligible and ineligible ranges, so eligibility is a property of whole
+   chunks, computed deterministically from the representation's labeled
+   ranges and the policy version, and stored on the chunk.
+3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk
+   completes deterministically with zero propositions and publishes no D122
+   reference cards, like an empty Selection result; the Selection barrier
+   counts it complete.
+4. **Reuse (D56):** the policy version joins Selection's reuse basis, so a
+   policy change re-extracts exactly the affected chunks.
+
+### 4.6 The queryable copy and `data_query`
 
 At conversion time a profiler writes each table it profiled as a normalized
-Parquet file, stored as a derived asset of kind `data_table`
-(`media/data/<table>.parquet`) with a `table_region` locator naming the
-table. JSON arrays of records and parsed log lines are normalized the same
-way; SQLite and Parquet originals are normalized table by table. Parquet
-gives one typed, fast, format-independent layout for querying; the cost is a
-second stored copy of the data, accepted because the alternative re-parses
-the original format on every query.
+Parquet file: sheets, CSV, database tables, JSON arrays of records and
+parsed log lines. These are not `media/` assets. They are **private query
+assets** under the representation's `query/` prefix in the artifacts store:
+never published to a mount or P3, never returned by `hydrate`, purged with
+the representation and inventoried by hard forget (§5.4). The manifest lists
+them with hashes and table names. Parquet gives one typed layout for every
+format; the cost is a second stored copy, accepted because the alternative
+re-parses the original on every query.
 
-**`data_query` is a direct retrieval primitive** (like `source_open`, D115;
-not an assured operation, D87):
+**`data_query` is a direct retrieval primitive**, bound in
+[`retrieval_design.md`](retrieval_design.md) §3:
 
 ```
-data_query(version_id, representation_id?, sql, params?) → QueryResult
+data_query(version_id, representation_id?, sql, params?) → envelope (evidence grain) + QueryResult/v1
 ```
 
-- It runs one read-only SQL statement in DuckDB (an in-process analytical
-  engine) against the representation's `data_table` assets, exposed as views
-  named by their tables.
-- Isolation follows DuckDB's security guidance: attach only that
-  representation's tables, then `enable_external_access=false`, a
-  `memory_limit` and `threads` cap, and `lock_configuration=true` before any
-  agent SQL runs. No file, network or extension access is reachable from the
-  query. Starting limits: 10 seconds, 1 GiB memory, 2 threads, 1,000 returned
-  rows.
-- The result reuses the open-query-space conventions: typed columns, a row
-  cap with an explicit `truncated` flag, and provenance naming the
-  document version, representation and tables read. Errors use the existing
-  sandbox error taxonomy extended with DuckDB-specific causes.
-- It is audited like `hydrate depth=bytes` and `source_open`: principal,
-  document version, statement hash, rows returned.
-- It is exposed on the HTTP API, SDK, CLI and MCP.
-
-A document without `data_table` assets returns a typed `boundary` naming
-why (not a structured family, or conversion not complete).
+- **What it runs:** one read-only SQL statement in DuckDB (an in-process
+  analytical database) over that representation's tables, exposed as views
+  named by table.
+- **Isolation.** DuckDB's own guidance is that its settings are defence in
+  depth and untrusted SQL needs a sandbox
+  (<https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview>,
+  retrieved 2026-09-23). So:
+  - each query runs in a **separate worker process** with no credentials,
+    no network access (OS-level network isolation where the platform
+    provides it; the process is never given connection details), and OS
+    resource limits on CPU time, address space, open files and file size;
+  - the parent stages read-only copies of only the needed Parquet files into
+    a per-query temporary directory;
+  - DuckDB is configured before any agent SQL: `allowed_directories` = that
+    directory, `enable_external_access=false`,
+    `autoinstall_known_extensions=false`, `autoload_known_extensions=false`,
+    `allow_community_extensions=false`, `temp_directory` inside the staging
+    directory with `max_temp_directory_size`, `memory_limit`, `threads`, then
+    `lock_configuration=true`;
+  - the parent enforces **wall time** by killing the process and cancels on
+    caller disconnect; the staging directory is deleted afterwards.
+  - Starting limits: 10 seconds wall time, 1 GiB memory, 2 threads, 1 GiB
+    temporary disk, 1,000 returned rows.
+- **Result:** the D49 envelope at evidence grain carrying a `QueryResult/v1`
+  as the open query space defines it — typed columns, rows, an explicit
+  `truncated` flag — with provenance naming the document version,
+  representation and tables read. Errors extend the open-query-space error
+  taxonomy; a document without query assets returns a typed `boundary`
+  saying why (not a profiled family, or conversion incomplete).
+- **Authorization and audit:** the same authorization path as
+  `hydrate depth=bytes` and `source_open`; every call audits principal,
+  document version, statement hash and rows returned.
+- **Surfaces:** HTTP API, SDK, CLI and MCP (retrieval §7). No mount
+  equivalent: mounted agents already have the original on the raw mount.
 
 ## 5. The expand posture — child documents
 
@@ -238,73 +346,136 @@ written through the normal ingest path (ingestion always writes through E0,
 D60/D61), detected from their own bytes, routed by the registry, and
 processed like any upload.
 
-### 5.1 Identity and provenance
+### 5.1 The expand stage
 
-- A child lineage's identity is `source_kind="container_member"`,
-  `source_ref="<parent doc_id>:<member path>"` (D55). The member path is the
-  archive path, the MIME part path of an attachment, the message index in a
-  mailbox, or `page-<n>/image-<k>` for an embedded image.
-- A child's bytes are the member's exact bytes where the container delimits
-  them (a ZIP entry, an attachment, an mbox message, an embedded image
-  stream). Where the container has no byte boundary for a member (one
-  conversation inside a chat-export JSON), the child's bytes are a canonical
-  serialization of that member, and the member record says so.
-- A **member record** links parent version → child document version, with
-  the member path, relation (`archive_member`, `attachment`, `message`,
-  `conversation`, `embedded_image`), and the member's locator in the parent
-  (for an embedded image: page and region).
+Expansion is an E0 sub-worker, `expand`, after `convert`:
+
+```
+ingest ──► convert ──► expand ──► structure ──► crossref
+```
+
+- `convert` returns the parent's own reading plus **member descriptors**
+  (`ConversionResult.members`): for each member its member key (§5.2),
+  member path, relation (`archive_member`, `attachment`, `message`,
+  `conversation`, `embedded_image`), its locator in the parent, its own
+  timestamp when the container records one, and its bytes staged as a
+  private conversion object keyed by the parent's content hash and the
+  member key.
+- `expand` reads the descriptors and, for each member, performs one E0
+  ingest write with the child's lineage identity. It is idempotent: the
+  member record's primary key and E0's content-hash no-op make a replay a
+  no-op.
+- **Member records** (schema: `document_members`) link parent version →
+  child document version: `(parent_version_id, member_key)` primary key,
+  member path, relation, child `doc_id` and `version_id`, parent locator,
+  and a per-member status (`ingested`, `skipped` with reason, `failed`).
+- **Partial failure:** a member that fails ingest (refused by detection,
+  over its family's limit) is recorded `skipped` or `failed` with the reason
+  and named in the parent's `coverage.gaps`. Other members proceed.
+- **Readiness:** the parent's representation becomes current when its own
+  reading completes; it does not wait for its children. The parent version
+  carries a separate expansion status (`pending`, `complete`, `partial`)
+  — a scoped readiness fact in the sense of `media_design.md` §4b. Each
+  child becomes ready on its own schedule.
 - The parent's `document.md` lists its members with links to their P3
   stubs. It does not inline their content, so the same text is never
   extracted twice.
 
-### 5.2 Counting, versions, forgetting
+### 5.2 Member identity
+
+A child lineage's identity is `source_kind="container_member"`,
+`source_ref="<parent doc_id>:<member key>"` (D55). The member key must be
+unique within one parent version and stable across parent versions where
+the member is "the same thing":
+
+| Container | Member key |
+|---|---|
+| Archive | Normalized path; when a path repeats inside one archive, the path plus `#<n>` by order of appearance |
+| Email attachment | MIME part path plus attachment file name |
+| Mailbox | `Message-ID` when present and unique in the mailbox; otherwise `sha256:` of the message bytes; repeats get `#<n>` |
+| Message export | The export's native conversation identifier; otherwise `sha256:` of the canonical serialization |
+| Embedded image | `sha256:` of the image bytes; repeats get `#<n>` in document order |
+
+Consequences, stated so they are not surprises: renaming a file inside an
+archive is a new child lineage (the old one is retired as absent); inserting
+a message into a mailbox does not renumber others; an unchanged figure in an
+edited document keeps its child lineage.
+
+A child's bytes are the member's exact bytes where the container delimits
+them. Where it does not (one conversation inside a chat-export JSON), the
+bytes are a canonical serialization of that member, and the member record
+says so. A child inherits the parent's `versioning_mode`; its
+`source_modified_at` is the member's own timestamp (ZIP entry time, email
+`Date`, message timestamp) when the container records one, else the
+parent's.
+
+### 5.3 Counting and versions
 
 - **Counting (D54).** A child and its parent are one source for confirmation
-  counting: a fact supported by an email and by its attachment counts as one
-  witness. The counting identity of a child is its root container's lineage.
+  counting. `documents.counting_lineage_id` is written once at lineage
+  creation: the lineage's own `doc_id` for a root, the root container's
+  `counting_lineage_id` for a child. Evidence rows denormalize it write-once
+  like `doc_id`, and D54 counts `COUNT(DISTINCT counting_lineage_id)`
+  (`postgres_schema_design.md` §13.1). Relation and observation counts,
+  confirmation, reconciliation and projections all use it.
 - **Versions (D55/D56).** A new parent version re-expands. A member with the
-  same member path and the same content hash reuses the existing child
-  version; a changed member becomes a new child version; a vanished member's
-  child lineage is retired as absent from the new parent version.
-- **Forgetting.** Forgetting a parent cascades to all its children. A child
-  can be forgotten alone; re-expanding the unchanged parent version does not
-  resurrect it.
+  same key and content hash reuses the existing child version; a changed
+  member becomes a new child version; a member absent from the new parent
+  version has its child lineage retired as absent.
 
-### 5.3 Bounds
+### 5.4 Forgetting
+
+- **Normal deletion** of a parent tombstones its **descendant closure** —
+  every lineage reachable through `document_members` — in the same
+  lifecycle operation.
+- **Hard forget (D74)** of a parent builds one forget manifest whose
+  inventory is the descendant closure, admitted behind one barrier;
+  every child is scrubbed like the parent, including private query assets
+  and staged member objects.
+- **Forgetting one child** records a **member suppression** (schema:
+  `document_member_suppressions`: parent `doc_id`, member key). `expand`
+  skips suppressed keys in every later expansion of that parent — including
+  re-expansion of an unchanged parent version after restore — and names the
+  skip in the parent's `coverage.gaps`. The suppression record is
+  content-free (a key, not bytes).
+
+### 5.5 Bounds
 
 Expansion is bounded against hostile or accidental blow-up (zip bombs,
-recursive archives): starting values of nesting depth 4, 10,000 members per
-container and 10× the container's size in total expanded bytes. Member paths
-are normalized and rejected if absolute or escaping (`..`). Anything skipped
-is named in the parent's `coverage.gaps`, never silently dropped.
+recursive archives). Bounds apply to the **whole tree under one root**,
+not per level: nesting depth at most 4; at most 10,000 members in total;
+total expanded bytes at most 10× the root's size and never more than
+50 GB. Decompression is streamed and stops when a bound is reached. Member
+paths are normalized and rejected when absolute or escaping (`..`).
+Anything skipped is named in the relevant parent's `coverage.gaps`.
 
-### 5.4 Embedded images
+### 5.6 Embedded images
 
-Images embedded in documents (PDF figures, DOCX/PPTX images, notebook
+Images embedded in documents (PDF figures, DOCX/PPTX/EPUB images, notebook
 outputs) become `embedded_image` children and run the image route (D115),
 so a chart's labels and a diagram's structure become searchable text with a
 locator back to the parent's page and region. Decorative images are skipped
-by a size floor (starting value: under 64 × 64 pixels or under 4 KiB), and
-the skip is recorded in the parent's coverage. The parent keeps its
-`media/` copy and link for display.
+below a size floor (starting value: under 64 × 64 pixels or under 4 KiB),
+recorded in the parent's coverage. The parent keeps its `media/` copy and
+link for display.
 
-### 5.5 Message exports and mailboxes
+### 5.7 Message exports and mailboxes
 
-A mailbox or chat export expands into one child per message (mailbox) or per
-conversation (chat export). A conversation child converts to a **dialogue
-transcript** — speaker turns with timestamps — the same shape conversational
-documents already have, so D131's cross-turn extraction applies unchanged.
-There is no separate ingestion path for conversations.
+A mailbox expands into one child per message; a chat export into one child
+per conversation. A conversation child converts to a **dialogue
+transcript** — speaker turns with timestamps — the same shape
+conversational documents already have, so D131's cross-turn extraction
+applies unchanged. There is no separate ingestion path for conversations.
 
 ## 6. The card posture
 
-A **file card** is a deterministic `document.md` for a recognized format
-the engine does not read: file name, detected family and MIME, size, and the
-metadata the format itself exposes (for example a font's family name, an
-image's EXIF camera model, a CAD file's declared units). Label: `file_card`
-/ `computed` (copied metadata strings are `source_expression`). Coverage is
-`policy="card"`, `complete=False`. The card makes the file discoverable and
-gives it a document entity to hang claims on (D134); the original is
+A **file card** is a deterministic `document.md` for a recognized format the
+engine does not read: a heading with the file name, then detected family and
+MIME, size, and the metadata the format itself exposes (a font's family
+name, a CAD file's declared units). Labels: `file_card` / `source_expression`
+for copied names and metadata strings, `computed` for sizes and counts.
+Coverage is `policy="card"`, `complete=False`. The card makes the file
+discoverable and gives claims a document to be about (D134); the original is
 served as always (D51).
 
 ## 7. New locator kinds
@@ -333,10 +504,12 @@ version and representation):
 
 ## 8. What this does not change
 
-- The converter contract's shape (D65): profiles, cards and expansions are
-  ordinary `document.md` + source map + derived assets + manifest.
+- The converter contract's shape (D65), apart from the member descriptors
+  of §5.1: profiles and cards are ordinary `document.md` + source map +
+  derived assets + manifest.
 - D117 parking for families whose converter needs an unconfigured provider.
-- D132's byte-class decision and refusal of unrecognized bytes.
+- D132's byte classes, refusals and object storage classes; §2.2 extends the
+  detection list and refines only the text-flavour rule.
 - The media routes and their binding details (`media_design.md` §2).
 - Conversion pinning per lineage (D57): changing a family's converter or
   posture is a converter version bump flowing the lifecycle's
@@ -346,8 +519,8 @@ version and representation):
 
 - **Row-level memory for structured data.** Rows are queried with
   `data_query`, not extracted.
-- **Log event digests.** Not part of the log profiler; recorded with its
-  adoption trigger in the analysis §7.
+- **Log event digests.** Recorded with its adoption trigger in the
+  analysis §7.
 - **Executing active content.** Macros, scripts in documents, and
   executables are never run; a macro-enabled spreadsheet is profiled from
   its stored values and formula text only.

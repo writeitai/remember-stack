@@ -23,11 +23,15 @@ and E2 (claim extraction) need. E0 is not a single worker; it is a short chain o
 sub-workers**, because document ingestion is genuinely several distinct, separately-failing jobs:
 
 ```
-ingest ──► convert ──► structure ──► crossref
-(store raw  (raw → md,   (PageIndex     (citations /
- + hash)    OCR/logic)   tree + roles    document links)
-                         + placement)
+ingest ──► convert ──► expand ──► structure ──► crossref
+(store raw  (raw → md,   (container   (PageIndex     (citations /
+ + hash)    OCR/logic)   members →    tree + roles    document links)
+                         child docs)  + placement)
 ```
+
+`expand` runs only for families with the expand posture (archives, email attachments,
+mailboxes, message exports, embedded images) and is otherwise a no-op; it is bound in
+[`format_conversion_design.md`](format_conversion_design.md) §5.
 
 These are *sub-workers of E0*, not new top-level stages: **the E-numbers name product layers**
 (files → chunks → claims → relations), and PageIndex structure is metadata *about the document*
@@ -78,7 +82,10 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   sidecar. `media/` may additionally hold a `.vtt`/JSON **interchange** copy of a transcript
   (timing-preserving, provenance-linked, for players and external tools), but text that
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
-  does not exist as testimony.
+  does not exist as testimony. A profiled data file's representation also holds a private
+  **`query/`** prefix of normalized Parquet tables (D133): never mounted, never in P3, read only
+  by `data_query`, purged and forgotten with the representation
+  (`format_conversion_design.md` §4.6).
 
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's
@@ -126,7 +133,9 @@ re-run on a version change; downstream E1/E2/P3 invalidation keys include `struc
 versions, so a converter or structurer bump reprocesses exactly the affected documents.
 
 Re-ingesting an identical file is a `content_hash` no-op (this is the *only* surviving "dedup" — as
-idempotency, never a value tier, per D25). **A changed file from a watched source is a new
+idempotency, never a value tier, per D25) — except that identical bytes arriving under a different
+name, title or path are a **metadata observation** (D134): the lineage's `title`/`source_uri`
+update without a new version, and a bound document entity gains the new names as aliases. **A changed file from a watched source is a new
 *version* of its lineage** (D55): connectors debounce rapid edits to one ingested version per
 stability window; unchanged chunks of the new version **reuse** their prior extraction and
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to
