@@ -65,6 +65,8 @@ own `char_start`/`char_end`, its section's role and the version's
 
 ## From a fact to the characters
 
+![The fact that Dana leads the billing migration links to the claim, the claim to a passage in the June retro, and the passage to the exact characters in the original file.](../assets/diagrams/provenance.svg)
+
 Here is the complete path, from a fact in an answer to the text.
 
 **1. The answer names the fact.** A `facts_context` result lists facts, and

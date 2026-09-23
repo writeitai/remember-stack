@@ -12,8 +12,11 @@ holds true. For that, use [`facts_context`](../assured-operations.md#facts_conte
 or the [lookup routes](entities-and-facts.md).
 
 Each search exists in two forms. The `GET` form puts the query in the URL; the
-`POST` form puts it in the body. A URL is written to access logs and proxy
-caches, so prefer `POST` for anything a person typed.
+`POST` form puts it in the body. A query is often a person's own words, and a
+URL is written to access logs, kept by proxies and saved in browser history.
+The `POST` form keeps the query text out of all three, so prefer it for
+anything a person typed. The `GET` form stays for existing clients; both
+return the same result and cost the same.
 
 All six routes need the `read` scope. On remember.dev each carries a `search`
 spend hold. Base URL, authentication and error shapes are described in

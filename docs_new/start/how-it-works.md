@@ -56,6 +56,8 @@ background.
    words the source does not contain. This is where invented detail is
    caught.
 
+![The stages a document passes through, from storing the file to being queryable.](../assets/diagrams/pipeline.svg)
+
 ## 3. RememberStack connects it
 
 1. **Resolve entities.** Names become *entities*. "Ravi", "Ravi K." and
@@ -108,6 +110,8 @@ until the memory changes.
 Every fact links to the claims behind it. Every claim links to a passage,
 and every passage to a document version. Your agent can quote the stand-up
 notes word for word. You can open the file and find the sentence.
+
+![From a fact back to the sentence in the source document.](../assets/diagrams/provenance.svg)
 
 ## Where to go next
 

@@ -32,11 +32,53 @@ Timestamps are ISO 8601 with a time zone; they are converted to UTC. `to`
 must not be before `from`. The result's `temporal_scope` echoes the mode
 you asked for, with the instant it was evaluated.
 
+## Choose a time mode
+
+| The question | Mode |
+|---|---|
+| "Who owns the invoice exporter?" "Is the migration still planned for October?" | `current` |
+| "Who owned the exporter on 1 July?" | `at` |
+| "Who worked on the migration during Q3?" | `overlap` |
+| "Which teams has Ravi been on?" "Has the date ever changed?" Biographies, achievements, timelines, anything with "ever". | `history` |
+
+A `current` read leaves out everything that has ended, so it is the wrong
+mode for "what has Ravi done": his finished work is exactly what you want.
+Use `history` for those.
+
+**Counting.** "How many times did the go-live date move?" Count only facts
+whose `temporal_match` is `confirmed`. If any returned fact is `possible`,
+or the result is truncated, you cannot state an exact count: say "at least
+N", and list the possible ones separately.
+
+**Two steps for "when X happened".** "Who owned the exporter when the
+migration went live?" names a time by an event. Ask for the event first,
+read its date, then ask the real question at that date:
+
+```python
+import remember
+
+client = remember.Client.from_env()
+event = client.facts_context("billing migration went live", time={"mode": "history"})
+dated = [f for f in event.facts if f.validity.valid_from is not None]
+
+if dated:
+    went_live = dated[0].validity
+    owners = client.facts_context(
+        "Who owns the invoice exporter?",
+        time={"mode": "at", "at": went_live.valid_from.isoformat()},
+    )
+```
+
+Check the event's `valid_precision` before you use its date as an instant.
+If it is `month` or coarser, ask with `overlap` over that month instead of
+`at` its first day. If the event has no date at all, say so rather than
+guessing one.
+
+## What holds now
+
 The examples below use a memory that holds the team's notes from May to
 September 2026: the migration was planned for June, then moved to October
 on 17 September.
-
-## What holds now
 
 ```python
 import remember

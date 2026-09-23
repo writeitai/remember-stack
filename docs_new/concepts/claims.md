@@ -14,7 +14,9 @@ RememberStack does that reading once, at write time. It turns each document
 into **claims**: short statements that stand on their own, each tied to the
 exact characters of the source that support it. A claim records *what a
 source said*, not whether it is true. Deciding what is true is the job of
-[facts](facts.md).
+[facts](facts.md). Claims are the transcript; facts are the verdict.
+
+![Three sources make claims about Ravi. Two support the fact that he works on the billing migration; the retro supports a new fact, that he works on the search team from 1 June, and closes the earlier fact on that date.](../assets/diagrams/claims-and-facts.svg)
 
 ## What a claim is
 

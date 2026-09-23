@@ -144,6 +144,77 @@ says "the migration is in June" does not make it true now. Answer "is it
 true" questions from `facts_current`, and join to
 `fact_claim_evidence_live` and `claims_live` to show why.
 
+### Wrong and right: "who owns the invoice exporter now?"
+
+**Wrong.** This reads testimony and takes the newest statement as the
+answer:
+
+```sql
+SELECT claim_text, source_handle, asserted_at
+FROM claims_live
+WHERE claim_text ~~* $1
+ORDER BY asserted_at DESC
+LIMIT 20
+```
+
+`claims_live` holds every statement that is still current testimony.
+"Ravi owns the invoice exporter" from a May spec and "Dana took over the
+exporter" from a September retro are both in it, and the newest one is not
+necessarily what the memory holds true: it may be one side of a
+disagreement, or a statement that did not change the facts at all. The
+claims' `claim_valid_from` and `claim_valid_until` do not help either:
+they are what the source said about time, not the memory's verdict.
+
+**Right.** Start from the facts and join to the testimony behind each one:
+
+```sql
+SELECT f.fact_label, f.valid_from, f.evidence_count, f.contradiction_group,
+       e.stance, e.source_handle, e.asserted_at
+FROM facts_current AS f
+JOIN fact_claim_evidence_live AS e
+  ON e.fact_kind = f.fact_kind AND e.fact_id = f.fact_id
+WHERE f.fact_label ~~* $1
+ORDER BY f.evidence_count DESC, f.fact_id, e.stance, e.asserted_at DESC
+LIMIT 50
+```
+
+Run both with `parameters=["%invoice exporter%"]`. The second answers with
+what the memory holds true now, shows each fact's supporting and
+contradicting claims, and a non-null `contradiction_group` tells you the
+owner is disputed.
+
+### Facts whose newest testimony disagrees
+
+A fact can stand while the latest thing any source said about it
+contradicts it: the October plan is still the fact, but yesterday's
+standup note says the date is slipping again. This query finds those
+facts, with the contradicting statement:
+
+```sql
+WITH ranked AS (
+  SELECT e.fact_kind, e.fact_id, e.claim_id, e.stance,
+         c.claim_text, c.source_handle, c.asserted_at,
+         row_number() OVER (
+           PARTITION BY e.fact_kind, e.fact_id
+           ORDER BY c.asserted_at DESC NULLS LAST, c.claim_id
+         ) AS testimony_rank
+  FROM fact_claim_evidence_live AS e
+  JOIN claims_live AS c ON c.claim_id = e.claim_id
+)
+SELECT f.fact_label, f.evidence_count, f.contradict_count,
+       r.claim_text AS newest_claim, r.source_handle, r.asserted_at
+FROM facts_current AS f
+JOIN ranked AS r ON r.fact_kind = f.fact_kind AND r.fact_id = f.fact_id
+WHERE r.testimony_rank = 1
+  AND r.stance = 'contradicts'
+ORDER BY r.asserted_at DESC
+LIMIT 50
+```
+
+Each row is a fact worth a second look: report it together with the newer
+statement, not as settled. `describe_query_space` returns this pattern and
+the wrong/right pair above in its `worked_examples`.
+
 ## 4. Functions
 
 Functions go in `FROM`, like a table:

@@ -74,8 +74,13 @@ remember ingest specs/billing-migration-plan.md \
 
 | Mode | Use it for | What a new version does |
 |---|---|---|
-| `snapshot` (default) | Minutes, reports, dated notes, anything where each version is a record of its moment. | Every version stays dated testimony forever. An old version's claims keep counting. |
+| `snapshot` (default) | Minutes, reports, dated notes, rolling logs, anything where each version is a record of its moment. | Every version stays dated testimony forever. An old version's claims keep counting. |
 | `living` | Specs, plans, wikis, a README: documents whose latest version is what the author currently stands behind. | The latest version is the document's standing statement. Claims whose passages left it stop counting as current testimony. |
+
+A file that drops old lines by itself, such as a log that keeps its last
+thousand lines, is `snapshot` even though you re-send the same path. The
+lines that scroll off were not taken back; in `living` mode their removal
+would retract the facts they alone supported.
 
 The mode belongs to the document and is set by its first ingest. Later
 calls with a different `versioning_mode` for the same source pair are
@@ -96,13 +101,11 @@ the June fact, contradict it, or corroborate something else. The June
 statement is not deleted; it becomes history with an end date.
 
 **In `living` mode, removal retracts.** If a fact's only current support
-was a passage that is gone from the latest version, the fact is closed:
-
-- a relation or a state (Ravi owns the invoice exporter) gets
-  `valid_until` set to the new version's `source_modified_at`;
-- a measurement for a fixed period (Q3 invoices: 4,120) keeps its validity
-  and is marked no longer believed (`invalidated_at`), because the figure
-  was true of its period; what ended is the belief.
+was a passage that is gone from the latest version, the fact is retracted:
+its `invalidated_at` is set and the decision is recorded. Its `valid_until`
+is not touched, because a removed line says nothing about when the thing
+stopped being true in the world. It only says the source no longer says
+it.
 
 If other documents still support the fact, it only loses this document's
 support; its `evidence_count` goes down by one and it stays current.
@@ -110,18 +113,23 @@ support; its `evidence_count` goes down by one and it stays current.
 **In `snapshot` mode, nothing is retracted by a new version.** Removing a
 sentence from version 3 does not unsay what version 2 said.
 
-Retraction is visible, never silent. A closed relation or state keeps its
-`valid_until` and is still returned by a fact query in [history
-mode](ask-about-the-past.md). A withdrawn measurement is no longer
-believed, so fact operations stop returning it; the SQL view
-`facts_visible_history` still shows it with its `invalidated_at`.
+Retraction is visible, never silent. A retracted fact is no longer
+believed, so the fact operations stop returning it, in every time mode. The
+SQL view `facts_visible_history` still shows it with its `invalidated_at`,
+and `hydrate_relation` still returns a retracted relation with its
+evidence.
+
+**A new release is a different problem.** When an upgrade re-reads a file
+you did not change and no longer finds a claim, nothing is retracted: the
+fact is marked `support: "withdrawn"` and still returned. Only a change in
+the source takes a fact back. See [Updating a
+source](../concepts/updating-sources.md#two-different-problems).
 
 ## `source_modified_at` and `source_version_ref`
 
 - `source_modified_at` is when the source last changed, as a
   timezone-aware UTC `datetime`. Claims extracted from the version get it
-  as `asserted_at`, and in living mode it is the time a retracted fact
-  stops holding. Send the source's own modification time, not the time you
+  as `asserted_at`. Send the source's own modification time, not the time you
   uploaded. It is fixed once the version exists; re-sending identical bytes
   with a different `source_modified_at` does not change it.
 - `source_version_ref` is your label for the upstream revision: a git

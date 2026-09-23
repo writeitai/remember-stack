@@ -18,6 +18,8 @@ what happens in those minutes and how to know when it is done.
 
 ## The stages
 
+![A document is stored, converted, structured, chunked, turned into claims and checked against the source; then names are resolved to entities, claims become facts, facts are adjudicated and reconciled, and everything is indexed until the document is queryable.](../assets/diagrams/pipeline.svg)
+
 `POST /ingest` (or `memory.ingest`) returns as soon as the bytes are stored
 and a version is recorded. Everything after that runs in workers, one stage
 at a time, with some stages running in parallel:

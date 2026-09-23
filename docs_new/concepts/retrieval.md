@@ -22,8 +22,20 @@ open:
 3. **SQL queries** over the query space, for questions no fixed read
    anticipates.
 
-None of them calls a language model. Every result comes back in the same
-self-describing [envelope](reading-results.md).
+None of them calls a language model. The operations and primitives return
+the same self-describing [envelope](reading-results.md); SQL queries return
+a table with its own account of limits and drops.
+
+## Ways to reach the memory
+
+The same reads are available from four places. Pick by who is asking:
+
+| Surface | Use it for | What it reaches |
+|---|---|---|
+| [Python client](../reference/python-sdk.md) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
+| [CLI](../reference/cli.md) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
+| [MCP](../reference/mcp.md) (`remember mcp`, or the hosted server on remember.dev) | A coding agent such as Claude Code or Codex. | Ingest, readiness and the four operations; `remember mcp` also has the seven SQL query tools. No primitives. |
+| [HTTP API](../reference/http-api/index.md) | Any other language or runtime. | Every route; the other three are built on it. |
 
 ## The four assured operations
 
@@ -164,6 +176,8 @@ See [Explore memory with SQL](../guides/sql.md),
 [Query space](../reference/query-space.md).
 
 ## How hybrid retrieval works
+
+![A question goes to meaning, keyword and graph search, which nominate candidates; PostgreSQL confirms each against the live state in one snapshot and drops anything withdrawn or superseded; the result lists facts, evidence, time windows and contradictions, and how many candidates were dropped.](../assets/diagrams/read-path.svg)
 
 Underneath, every read that searches follows the same pattern: **nominate,
 fuse, confirm**.

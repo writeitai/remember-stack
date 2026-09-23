@@ -61,14 +61,16 @@ and get things wrong. Search treats every sentence as equally current.
 search still returns the closest text it can find. The assistant then
 answers from that, confidently, and nobody notices the gap.
 
+![Asked who leads the billing migration, search returns three passages that look equally relevant; a memory system returns one current fact with its date and source, and keeps the older statements as history.](../assets/diagrams/search-vs-memory.svg)
+
 ## What a memory system does
 
 A memory system reads your documents the way a careful colleague would, and
 keeps four things that search loses.
 
 **What each source said.** Every statement worth keeping is stored with the
-exact sentence it came from and the date it was said. Nothing is rewritten
-or thrown away.
+exact sentence it came from and the date it was said. The source itself is
+never altered or thrown away.
 
 **What is true now.** From everything that was said, the memory works out
 what currently holds. When a newer source changes something, the memory
@@ -98,8 +100,8 @@ Here is how a small team's memory changes over a few months.
 
 Ask "who leads the billing migration?" in August and the answer is Dana,
 since 1 June, according to the June retro. Ask "who led it in March?" and
-the answer is Ravi. Ask "when was the launch?" and you get October, with a
-note that it was June until April.
+the answer is Ravi. Ask "when is the launch?" and you get October, with a
+note that it was planned for June until April.
 
 A search over the same four documents would return all of them and leave
 the rest to chance.

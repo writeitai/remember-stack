@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="t d">
+  <title id="t">Claims and facts</title>
+  <desc id="d">Three sources make claims about Ravi: kickoff notes on 15 January, slides in February and a retro on 12 June. The first two support the fact that Ravi works on the billing migration, from 14 January. The retro supports a new fact, Ravi works on the search team from 1 June, and closes the earlier fact on 1 June. The claims never change; the facts change and keep their evidence.</desc>
+  <defs>
+    <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="sphereT" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9f0e6"/><stop offset=".35" stop-color="#5cc8b6"/><stop offset="1" stop-color="#2a6f66"/></radialGradient>
+    <radialGradient id="sphereC" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffc2b5"/><stop offset=".35" stop-color="#ff7a62"/><stop offset="1" stop-color="#a8392a"/></radialGradient>
+    <radialGradient id="sphereS" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#f3e6de"/><stop offset=".4" stop-color="#c9b2a6"/><stop offset="1" stop-color="#7d665c"/></radialGradient>
+    <marker id="arrT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5cc8b6"/></marker>
+    <marker id="arrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff7a62"/></marker>
+    <marker id="arrM" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#66739c"/></marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .h { fill: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .h2 { fill: #ffffff; font-size: 17px; font-weight: 700; }
+      .k { fill: #66739c; font-size: 12px; font-weight: 600; letter-spacing: .16em; }
+      .b { fill: #d9def0; font-size: 15px; }
+      .m { fill: #9faaca; font-size: 13px; }
+      .sm { fill: #66739c; font-size: 12px; }
+      .w { fill: #ffffff; }
+      .tc { fill: #5cc8b6; }
+      .cc { fill: #ff7a62; }
+      .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      .card { fill: #101c42; stroke: #25335f; }
+      .cardT { fill: #0f2a3a; stroke: #3e9b8e; stroke-opacity: .7; }
+      .flow { stroke-dasharray: 5 7; animation: flow 1.6s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -24; } }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+      .s1 { animation: s1 14s ease-out infinite both; }
+@keyframes s1 { 0%, 6% { opacity: 0; transform: translateY(8px); } 11%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s2 { animation: s2 14s ease-out infinite both; }
+@keyframes s2 { 0%, 12% { opacity: 0; transform: translateY(8px); } 17%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s3 { animation: s3 14s ease-out infinite both; }
+@keyframes s3 { 0%, 18% { opacity: 0; transform: translateY(8px); } 23%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s4 { animation: s4 14s ease-out infinite both; }
+@keyframes s4 { 0%, 24% { opacity: 0; transform: translateY(8px); } 29%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s5 { animation: s5 14s ease-out infinite both; }
+@keyframes s5 { 0%, 30% { opacity: 0; transform: translateY(8px); } 35%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s6 { animation: s6 14s ease-out infinite both; }
+@keyframes s6 { 0%, 36% { opacity: 0; transform: translateY(8px); } 41%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s7 { animation: s7 14s ease-out infinite both; }
+@keyframes s7 { 0%, 42% { opacity: 0; transform: translateY(8px); } 47%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s8 { animation: s8 14s ease-out infinite both; }
+@keyframes s8 { 0%, 48% { opacity: 0; transform: translateY(8px); } 53%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s9 { animation: s9 14s ease-out infinite both; }
+@keyframes s9 { 0%, 54% { opacity: 0; transform: translateY(8px); } 59%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .rm-hide { display: none; } }
+    </style>
+  </defs>
+  <rect width="1200" height="640" rx="24" fill="#0a1230"/>
+  <rect width="1200" height="640" rx="24" fill="url(#glowC)"/>
+  <rect width="1200" height="640" rx="24" fill="url(#glowT)"/>
+  <text class="k" x="60" y="70">WHAT SOURCES SAID</text>
+  <text class="h" x="60" y="100">Claims</text>
+  <text class="m" x="60" y="124">Never edited. Each keeps its passage and date.</text>
+  <text class="k" x="700" y="70">WHAT IS HELD TRUE</text>
+  <text class="h" x="700" y="100">Facts</text>
+  <text class="m" x="700" y="124">Updated as claims arrive. Each keeps its evidence.</text>
+  <g class="s1">
+    <rect class="card" x="60" y="160" width="440" height="104" rx="14"/>
+    <rect x="60" y="160" width="6" height="104" rx="3" fill="#ee5b44"/>
+    <circle cx="94" cy="190" r="9" fill="url(#sphereC)"/>
+    <text class="m" x="114" y="195">Kickoff notes · 15 Jan</text>
+    <text class="b" x="86" y="226">“Ravi has been on the billing</text>
+    <text class="b" x="86" y="248">migration since yesterday.”</text>
+  </g>
+  <g class="s2">
+    <rect class="card" x="60" y="290" width="440" height="104" rx="14"/>
+    <rect x="60" y="290" width="6" height="104" rx="3" fill="#ee5b44"/>
+    <circle cx="94" cy="320" r="9" fill="url(#sphereC)"/>
+    <text class="m" x="114" y="325">Slides · Feb</text>
+    <text class="b" x="86" y="356">“Ravi is working on the billing</text>
+    <text class="b" x="86" y="378">migration.”</text>
+  </g>
+  <g class="s3">
+    <rect class="card" x="60" y="420" width="440" height="104" rx="14"/>
+    <rect x="60" y="420" width="6" height="104" rx="3" fill="#ee5b44"/>
+    <circle cx="94" cy="450" r="9" fill="url(#sphereC)"/>
+    <text class="m" x="114" y="455">Retro · 12 Jun</text>
+    <text class="b" x="86" y="486">“Ravi moved to the search team</text>
+    <text class="b" x="86" y="508">on 1 June.”</text>
+  </g>
+  <g class="s5">
+    <rect class="cardT" x="700" y="175" width="440" height="150" rx="16"/>
+    <circle cx="736" cy="212" r="14" fill="url(#sphereT)"/>
+    <text class="h2" x="762" y="218">Ravi works on the billing migration</text>
+    <text class="m" x="762" y="246">valid 14 Jan – 1 Jun</text>
+    <text class="m" x="762" y="270">supported by 2 documents</text>
+    <rect x="762" y="284" width="112" height="24" rx="12" fill="#18244f" stroke="#25335f"/>
+    <text class="sm" x="776" y="301">now: history</text>
+  </g>
+  <g class="s7">
+    <rect class="cardT" x="700" y="380" width="440" height="120" rx="16"/>
+    <circle cx="736" cy="417" r="14" fill="url(#sphereT)"/>
+    <text class="h2" x="762" y="423">Ravi works on the search team</text>
+    <text class="m" x="762" y="451">valid from 1 Jun</text>
+    <text class="m" x="762" y="475">supported by 1 document</text>
+  </g>
+  <g class="s4">
+    <path class="flow" d="M500 212 C 600 212, 600 222, 696 222" fill="none" stroke="#ff7a62" stroke-width="2" marker-end="url(#arrC)"/>
+    <path class="flow" d="M500 342 C 600 342, 600 250, 696 246" fill="none" stroke="#ff7a62" stroke-width="2" marker-end="url(#arrC)"/>
+  </g>
+  <g class="s6">
+    <path class="flow" d="M500 472 C 600 472, 600 432, 696 432" fill="none" stroke="#ff7a62" stroke-width="2" marker-end="url(#arrC)"/>
+    <path class="flow" d="M500 460 C 610 440, 620 300, 696 280" fill="none" stroke="#5cc8b6" stroke-width="2" marker-end="url(#arrT)"/>
+    <text class="sm tc" x="636" y="352">closes on 1 Jun</text>
+  </g>
+  <g class="s8">
+    <text class="b" x="60" y="585"><tspan class="cc">Claims are the transcript;</tspan><tspan class="tc"> facts are the verdict.</tspan></text>
+    <text class="m" x="60" y="610">The retro did not erase Ravi's billing work. It gave it an end date, and the history stays queryable.</text>
+  </g>
+</svg>

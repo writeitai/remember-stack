@@ -312,5 +312,6 @@ it:
 | `GET /ops/cost-export/v1` | Served on a separate listener, only when `REMEMBERSTACK_COST_EXPORT_BIND` is set. Self-hosted operators only. See [Deployment](deployment.md#get-opscost-exportv1). |
 
 The running server does not serve its own schema: `/openapi.json`, `/docs`
-and `/redoc` answer `404`. Use the `openapi.json` file checked into the
-repository for the release you run.
+and `/redoc` answer `404`. Those pages would answer without a credential, and
+the API is for programs, not browsers, so they are switched off. Use the
+`openapi.json` file checked into the repository for the release you run.

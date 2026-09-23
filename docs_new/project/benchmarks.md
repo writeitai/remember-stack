@@ -16,6 +16,21 @@ means something only next to all of those.
 RememberStack's harness therefore fixes all of them in a named **protocol**,
 checks that the running engine matches it, and refuses to run otherwise.
 
+The dependence runs one way that matters when you read any score, ours
+included: a weak answer model or a clumsy harness lowers accuracy even when
+the memory holds every answer. A wrong answer has two possible causes, and
+they need different fixes:
+
+- **Retrieval**: the evidence for the gold answer never reached the answer
+  model.
+- **Answering**: the evidence was in what the model retrieved, and it
+  answered wrong anyway, or chose a tool that could not find it.
+
+Diagnose them separately. The run directory keeps, for every question, the
+gold evidence, each tool call with its result, and the answer, so you can
+check which of the two failed before blaming either the memory or the
+model.
+
 !!! warning
     No score has been recorded for the current protocol,
     `RS-LoCoMo-Full-v38`. The numbers under [Recorded results](#recorded-results)

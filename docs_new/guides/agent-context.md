@@ -220,6 +220,24 @@ Render, count, and trim from the bottom of each list: results come ranked.
 If you trim, tell the model the list is partial, the same way the
 truncation line above does.
 
+## Mistakes to avoid
+
+Each of these turns a correct result into a wrong answer. Put the ones
+your agent is prone to into its instructions.
+
+| Don't | Do |
+|---|---|
+| Answer "is it true now?" from `claims_and_sources_context`. A claim is what one source said, possibly months ago. | Answer from `facts_context`. Use claims to quote and cite. |
+| Read a claim's `claim_valid_from`/`claim_valid_until` as proof that something held at a date. That window is the source's statement. | Ask `facts_context` with `time` set, and read the fact's `validity`. See [Ask about the past](ask-about-the-past.md). |
+| Read `asserted_at` or `ingested_at` as when something happened. | Use the fact's `valid_from`/`valid_until`; `asserted_at` is when a source said it, `ingested_at` when the memory learned it. |
+| Treat an empty result as "no" or "unknown name". | Read `negative.kind`: `unknown_entity`, `known_empty` and `boundary` need three different answers. |
+| Count a truncated list as complete. | When `truncation.truncated` is `true`, say "at least N", raise `k`, or narrow the query. |
+| Report one side of a contradiction, or pick the side with more sources. | Give every side in `contradiction.co_members` with its sources, and say when `returned` is less than `total`. |
+| Take the first of several `resolve_entity` candidates. | Ask which one is meant, rank them with context, or pass them all as `entity_ids`. See [Handle unknowns and ambiguity](unknowns-and-ambiguity.md#names-that-match-more-than-one-entity). |
+| Count `temporal_match: possible` facts as matches. | Report them apart from `confirmed` ones. |
+| Present a fact with `support: withdrawn` as settled. | Say it is unconfirmed and check its evidence. |
+| Ask about a document right after ingesting it and conclude it says nothing. | Wait until [readiness](wait-for-readiness.md) reports `ready`. |
+
 ## Next
 
 - [Ask about the past](ask-about-the-past.md)

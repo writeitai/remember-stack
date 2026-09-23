@@ -43,6 +43,29 @@ and, when the answer is "no", which kind of "no".
 Lists a read does not fill are empty (`[]`); single values it does not fill
 are `null`.
 
+## Read a result in this order
+
+Before your agent uses the results, have it check the envelope in this
+order. Each step can change what the results mean.
+
+1. **`grain`**: is this what the question needs? `evidence` is testimony;
+   do not answer "is it true now" from it.
+2. **`negative`**: if it is set, the answer is empty. Branch on its `kind`
+   and stop.
+3. **`contradiction`** on each fact: report every side, not only the
+   first. When its `returned` is less than its `total`, there are more
+   sides than you see.
+4. **`truncation`**: if `truncated` is `true`, the list is not complete.
+   Raise `k`, narrow the query, or say the answer is partial.
+5. **`dropped_by_hydration`**: a large number right after an ingest means
+   processing is still settling; ask again later.
+6. **`fact_evidence` and `evidence_totals`**: which claims back which fact,
+   and whether you are seeing all of them or a sample.
+7. **[ContextBundle/v2](#contextbundlev2)**: read each of its two
+   envelopes on its own, steps 1 to 6 for each.
+
+Each field is explained under [Field reference](#field-reference).
+
 ## An annotated example
 
 Ravi's `entity_id` was found with `resolve_entity`. This asks what he is

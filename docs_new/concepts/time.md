@@ -30,6 +30,8 @@ source of wrong answers about time, so they never share a field.
 | **Said-on time** | When did the source say it? | Claims: `asserted_at`. |
 | **Belief time** (system time) | When did the memory learn it, and when did it stop believing it? | Facts: `ingested_at`, `invalidated_at`. |
 
+![One fact on three timelines: valid 14 January to 1 June in the world, said on 15 January and 12 June by two sources, learned by the memory on 15 January and still believed. A query at 1 March finds it true; a query at 1 July finds it ended.](../assets/diagrams/three-clocks.svg)
+
 A worked example makes the difference concrete. The team's notes contain
 two documents:
 

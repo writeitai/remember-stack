@@ -32,7 +32,7 @@ version = client.ingest(
 report = client.wait_for_readiness(
     [version.version_id],
     timeout=1800,
-    poll_interval=15,
+    poll_interval=30,
 )
 print(report.ready)
 ```
@@ -47,8 +47,9 @@ raises `TimeoutError`, whose message includes the last report.
     half a second. A small Markdown file takes minutes to process, so the
     defaults time out on almost every real document while polling twice a
     second. Always pass both. `timeout=1800` (30 minutes) and
-    `poll_interval=15` suit single documents; raise the timeout for bulk
-    loads.
+    `poll_interval=30` suit single documents; raise the timeout for bulk
+    loads. The same pacing applies everywhere: first check after about 30
+    seconds, then every 30 to 60 seconds, never more often than every 15.
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
@@ -183,19 +184,27 @@ An agent uses the `pipeline_readiness` tool with the arguments the
 }
 ```
 
-The tool tells the agent how to poll, and your agent's instructions should
-say the same:
+Both the tool's description and the `ingest` result spell out the poll
+algorithm. Your agent's instructions should say the same:
 
 1. Wait about 30 seconds after ingest before the first check.
-2. Poll every 30 to 60 seconds, backing off gently, never faster than every
-   15 seconds.
-3. Stop at once if any stage is `failed` or `dead_letter`, and report that
-   stage.
+2. Then check every 30 to 60 seconds, backing off gently. Never check more
+   often than every 15 seconds.
+3. Stop at once if any `stages[].status` is `failed` or `dead_letter`, and
+   report that stage. Waiting does not heal either.
 4. After 20 to 30 minutes without `ready: true` and without a failure, stop
-   and hand the `version_id` and the last `stages` to a person.
+   and escalate to the operator with the `version_id` and the last
+   `stages[]`.
 
-An ingest that returned `created: false` needs one readiness check, not a
-polling loop.
+Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
+the agent also reads a published corpus snapshot. `ready: true` means the
+assured operations can see the content; whether a given question finds it
+still depends on relevance.
+
+An ingest that returned `created: false` started no new processing. Check
+readiness once: `ready: true` means the content is already queryable, and a
+`failed` or `dead_letter` stage means stop and report. If it is neither, an
+earlier run of the same bytes is still going; poll it as above.
 
 ## Next
 

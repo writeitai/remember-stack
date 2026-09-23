@@ -254,6 +254,12 @@ Documents are ordered by when each was first seen, then by id. Re-ingesting a
 document does not move it: it is the same document, first seen when it was
 first seen. Deleted documents and deleted versions are not listed.
 
+The order is fixed on purpose. "Most recently changed first" would move a
+document every time a new version arrived, and a client paging through the
+list would skip it or see it twice. `first_seen_at` never changes, so the
+cursor stays exact while documents are being added. A new document still
+appears at the top of the first page.
+
 Each row reports the newest surviving version (`latest`) and, separately,
 whether any version is being served (`serving`). A document whose newest
 upload failed can still be served from an older, working version.

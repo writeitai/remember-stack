@@ -20,7 +20,7 @@ its **versioning mode**.
 
 | Mode | An edit means… | Right for |
 |---|---|---|
-| `snapshot` (default) | Another dated statement. Every version stays standing testimony, forever. | Archives and anything whose versions are separate statements: meeting notes, dated reports, transcripts, exported chat logs. |
+| `snapshot` (default) | Another dated statement. Every version stays standing testimony, forever. | Archives and anything whose versions are separate statements: meeting notes, dated reports, transcripts, exported chat logs, rolling logs. |
 | `living` | The source's current statement. The newest version replaces what the older ones said. | Documents that are kept up to date in place: a spec, a roadmap, a README, a status page, an agent's own running notes. |
 
 You choose the mode when you ingest, and it needs a source
@@ -41,6 +41,12 @@ with remember.Client() as memory:
 `snapshot` is the default because it is the safe one: it never removes
 anything. Use `living` when "the newest version is what we mean now" is
 true of the source.
+
+Ask what a missing line means before you pick `living`. A rolling log that
+keeps only its last thousand lines, or a chat export that holds the last 30
+days, drops old lines because they are old, not because anyone took them
+back. Ingest those as `snapshot`. As `living`, every line that scrolled off
+would retract the facts it alone supported.
 
 ## What happens on a new version
 
@@ -102,11 +108,20 @@ A retraction never deletes anything:
 If the content comes back in a later version, it is new testimony and goes
 through ordinary processing again.
 
-Retraction applies only when the **source** acted. When the source is
-unchanged but a newer extractor fails to find a claim the old one found,
-RememberStack cannot tell which reading is right, so it does not retract.
-It marks the fact `support: "withdrawn"` instead and keeps returning it.
-See [Facts](facts.md#support-withdrawn).
+## Two different problems
+
+A document's claims can change for two unrelated reasons, and RememberStack
+keeps them apart:
+
+| What changed | Example | A fact that loses its only support |
+|---|---|---|
+| **The source itself** | The spec no longer says "Ravi owns the schema change". | Is retracted in a `living` document (`invalidated_at` set, recorded as `retracted_source_removal`). In a `snapshot` document the old version still supports it, so it does not lose support. |
+| **Only the reading of it** | A new release re-reads an unchanged file with a newer extractor, converter or chunker, and does not find the claim again. | Is not retracted. It is marked `support: "withdrawn"`, flagged for review and still returned. |
+
+The first is the source speaking: it stopped saying something. The second
+is RememberStack reading the same bytes differently, and it cannot tell
+whether the old reading or the new one is right. So a fact is taken back
+only when the source acts, or when its document is deleted. See [Facts](facts.md#support-withdrawn).
 
 ## Unchanged bytes and `source_version_ref`
 
