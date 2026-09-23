@@ -8956,16 +8956,12 @@ several reads use `POST` because their arguments do not fit in a URL.
 | `write` | Everything, including every route not listed above |
 
 Routes that are not in the `read` or `ingest` list need `write`. Today that
-includes `POST /connectors`, `POST /connectors/{id}/pause` and
-`GET /deployment`.
+includes `POST /connectors` and `POST /connectors/{id}/pause`.
 
 `POST /operations/{name}` (the [assured operations](https://remember.dev/docs/reference/assured-operations))
 decides per operation: an operation that declares itself read-only needs
-`read`, any other needs `write`. No shipped operation declares itself
-read-only yet, so **every assured operation currently needs `write`**,
-although they only read. A `read` token can list operations but not run
-them; use `search`, `graph` or `query` routes with it, or give the caller a
-`write` token.
+`read`, any other needs `write`. All four shipped operations only read and
+declare it (`mutates: false`), so a `read` token can run them.
 
 `GET /healthz` never needs a credential.
 
@@ -9472,12 +9468,10 @@ The API sends one of four `detail` strings:
 | `403` `credential is for another deployment` | The shared-secret bind or the token's `aud` names a different deployment id. | Bind the secret, or mint the token, for the id in your `.env`. |
 | `403` `credential may not perform this operation` | The token's scope does not cover the route. | See below. |
 
-The scope surprise that catches most people: **every assured operation
-needs `write`**, although they only read. A `read` token gets `403` on
-`POST /operations/facts_context` and on the other three. `GET /deployment`
-needs `write` too. Give an agent that calls operations a `write` token, or
-limit it to the search, graph and SQL routes a `read` token may call. The
-full table is in [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication#scopes).
+A `read` token can call every route that only reads, including the four
+assured operations and `GET /deployment`. It cannot ingest or change
+anything; that needs `ingest` or `write`. The full table is in
+[Authentication and scopes](https://remember.dev/docs/self-hosting/authentication#scopes).
 
 ## A browser app cannot reach the API
 
@@ -10527,20 +10521,16 @@ their arguments do not fit in a query string.
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
 | `GET` | `/operations` | `read` |
-| `POST` | `/operations/{name}` | `write` (see below) |
+| `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |
-| `GET` | `/deployment` | `write` (see below) |
+| `GET` | `/deployment` | `read` |
 | any other | any other | `write` |
 
-Two entries need a note:
-
-- **`POST /operations/{name}` requires `write` today.** The route asks each
-  operation's descriptor whether it changes memory (`mutates`). None of the
-  four shipped descriptors sets that field, and an operation that has not
-  declared itself read-only is refused to a `read` credential. All four
-  operations only read, but a `read` credential cannot run them.
-- **`GET /deployment` requires `write`.** It is not in the list of read routes,
-  and any route not listed requires `write`.
+One entry needs a note: **`POST /operations/{name}` decides per
+operation.** The route asks the operation's descriptor whether it changes
+memory (`mutates`). All four shipped operations only read and declare
+`mutates: false`, so a `read` credential can run them. An operation that
+did not declare itself read-only would need `write`.
 
 Any route added later without a classification also requires `write`.
 
@@ -11045,7 +11035,7 @@ ordered by the registry. Each descriptor carries the operation's `name`,
 `description`, closed `input_schema` (JSON Schema, `additionalProperties:
 false`), `result_schema`, `result_contract` (`envelope` or
 `context_bundle_v2`), `output_grain`, `answer_intent`, `version` and
-`implementation_plan_hash`. `mutates` is `null` on all four.
+`implementation_plan_hash`. `mutates` is `false` on all four.
 
 ```json
 [
@@ -11062,7 +11052,7 @@ false`), `result_schema`, `result_contract` (`envelope` or
     "result_contract": "envelope",
     "output_grain": "fact",
     "answer_intent": "identity",
-    "mutates": null,
+    "mutates": false,
     "version": 1,
     "implementation_plan_hash": "fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a"
   }
@@ -11088,9 +11078,8 @@ for descriptor in memory.list_operations():
 
 Run one assured operation over a JSON object of arguments.
 
-**Scope:** `write` today. The route checks the operation's descriptor, and
-none of the four declares itself read-only (`mutates` is `null`), so a `read`
-credential is refused with `403`. See
+**Scope:** `read`. The route checks the operation's descriptor, and all
+four declare themselves read-only (`mutates: false`). See
 [HTTP API conventions](https://remember.dev/docs/reference/http-api#scopes).
 
 **Spend hold (remember.dev):** yes, named after the operation.
@@ -13686,7 +13675,7 @@ One assured operation, as `GET /operations` returns it.
 | `result_contract` | string | `envelope` or `context_bundle_v2`. |
 | `output_grain` | string, nullable | `fact`, `evidence`, or `null` for `combined_context`. |
 | `answer_intent` | string | `identity`, `claims_and_sources`, `facts` or `combined_context`. |
-| `mutates` | boolean, nullable | Whether the operation changes memory. `null` on all four today. |
+| `mutates` | boolean, nullable | Whether the operation changes memory. `false` on all four shipped operations. |
 | `version` | integer ≥ 1, nullable | |
 | `implementation_plan_hash` | string of 64 hex characters, nullable | Identifies the exact plan. |
 

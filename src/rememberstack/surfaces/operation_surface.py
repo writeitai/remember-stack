@@ -117,6 +117,10 @@ def _descriptor(
             None if operation.output_grain is None else operation.output_grain.value
         ),
         answer_intent=operation.answer_intent.value,
+        # The catalog is closed to four assured operations, and every one only
+        # reads: none stores, changes or deletes anything. Declaring it lets a
+        # read-only credential run them; an undeclared operation stays WRITE.
+        mutates=False,
         version=operation.version,
         implementation_plan_hash=_plan_hash(
             operation=operation, child_hashes=child_hashes
