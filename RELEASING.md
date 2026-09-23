@@ -24,8 +24,8 @@ The one-time owner setup is complete:
    published from this repository starting with `v0.17.0`. The container image package is `ghcr.io/writeitai/remember-stack`.
 3. The GitHub environment `pypi` requires an owner review, so a tag cannot publish to PyPI without
    explicit approval.
-4. The PyPI account uses two-factor authentication and has a
-   [pending Trusted Publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+4. The PyPI account uses two-factor authentication and has an active
+   [Trusted Publisher](https://docs.pypi.org/trusted-publishers/)
    with these exact values:
 
    | Field | Value |
@@ -36,10 +36,11 @@ The one-time owner setup is complete:
    | Workflow | `release.yml` |
    | Environment | `pypi` |
 
-   A pending publisher does not reserve the PyPI name. Configure it only after the repository
-   rename and publish promptly once the release gates are clear.
+   This publisher replaced the retired `writeitai/ultimate-memory-cloud` / `release-remember.yml`
+   / `pypi-remember` publisher after the `0.17.0` upload succeeded. Do not restore a second
+   publisher for the same package.
 5. The active `Protect release tags` ruleset restricts creation, update, and deletion of tags
-   matching `v*` to repository administrators.
+   matching `v*` to repository administrators. The workflow token cannot create these tags.
 
 No PyPI password or long-lived API token belongs in GitHub secrets. The workflow requests a
 short-lived OpenID Connect credential and grants `id-token: write` only to the PyPI job.
@@ -77,6 +78,12 @@ git tag -a v0.17.0 -m "Remember 0.17.0"
 git push origin v0.17.0
 ```
 
+An administrator must push the tag at the exact verified source commit before
+the GitHub-release job runs. A `main` push may start the workflow before the
+tag exists; if the job then fails with the tag-creation rule, create the
+annotated tag at that immutable source SHA and rerun only the failed jobs.
+Never move an existing release tag.
+
 The workflow validates the tag, runs the release test suite, builds the wheel and source
 distribution, and publishes `remember==0.17.0` plus
 `ghcr.io/writeitai/remember-stack:0.17.0` and the multi-architecture PostgreSQL
@@ -86,6 +93,31 @@ their artifacts and the PostgreSQL manifest proves amd64 plus arm64 digests.
 PyPI and GHCR do not support an atomic cross-registry transaction. Never reuse a published
 version after a partial failure: fix the cause, complete the missing publish when safe, or cut the
 next patch version.
+
+## `0.17.0` cutover record (2026-09-23)
+
+- Source commit: `78fee141484729be3763fe886c4d7cff595c09e7` (PR #446).
+  The owner-created annotated `v0.17.0` tag resolves to that commit.
+- [Release run 35788878236](https://github.com/writeitai/remember-stack/actions/runs/35788878236)
+  completed on attempt 3. Attempt 1 exposed the missing `remember` PyPI
+  trusted publisher; attempt 2 published both Python distributions but the
+  workflow token could not create the administrator-protected tag. The owner
+  added the publisher and tag, then resumed the same release.
+- PyPI has [`remember==0.17.0`](https://pypi.org/project/remember/0.17.0/)
+  wheel and source archive. The one-time
+  [`rememberstack==0.17.0`](https://pypi.org/project/rememberstack/0.17.0/)
+  forwarder was also published, then the `rememberstack` project was archived
+  rather than deleted. Its 24 releases and existing pins remain available;
+  new uploads are blocked and PyPI search no longer promotes the name.
+- The [GitHub release](https://github.com/writeitai/remember-stack/releases/tag/v0.17.0)
+  is titled `remember 0.17.0` and attaches only canonical `remember` Python
+  files alongside deployment inputs and image receipts. Application image:
+  `sha256:df9ca49f6249b8a848f429a1688324467615ce7818de37dfc19e8c589678b587`.
+  PostgreSQL multi-architecture manifest:
+  `sha256:59ed1414da1f5f366b7e1c5f0f6028a9bc99a15183debbd6d52d3b4a94062684`
+  (amd64 and arm64 receipts attached).
+- The PyPI `remember` project now lists only this repository's `release.yml`
+  / `pypi` trusted publisher. No long-lived publishing token was created.
 
 ## GHCR visibility
 
