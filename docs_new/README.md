@@ -162,6 +162,7 @@ a competitor's docs.
 docs_new/
 ├── index.md                          Why RememberStack                         both
 ├── start/
+│   ├── what-is-a-memory-system.md    What is a memory system? (any reader)     both
 │   ├── how-it-works.md               A five-minute tour                        both
 │   ├── choose.md                     remember.dev or self-hosted?              both
 │   ├── quickstart.md                 Quickstart (tabs)                         both
@@ -176,6 +177,7 @@ docs_new/
 │   ├── contradictions.md             Contradictions, corroboration, supersession both
 │   ├── updating-sources.md           Updating a source: snapshot and living     both
 │   ├── pipeline.md                   The pipeline and readiness                both
+│   ├── architecture.md               What lives where                          both
 │   ├── retrieval.md                  Retrieval: operations, search, graph, SQL both
 │   └── reading-results.md            Reading a result                          both
 ├── guides/
@@ -211,6 +213,7 @@ docs_new/
 │   ├── authentication.md             Authentication and scopes                 self-hosted
 │   ├── scaling.md                    Scaling                                   self-hosted
 │   ├── operating.md                  Operating the pipeline                    self-hosted
+│   ├── troubleshooting.md            Troubleshooting                           self-hosted
 │   ├── observability.md              Observability                             self-hosted
 │   ├── upgrades.md                   Upgrades and migrations                   self-hosted
 │   └── filesystem-views.md           Filesystem views                          self-hosted

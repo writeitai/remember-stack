@@ -154,6 +154,12 @@ evidence and present it as settled; `evidence_count` counts distinct
 documents, not truth. The SQL view `contradiction_members_current` lists
 every member of every live group.
 
+A fact can also stand while the newest statement linked to it contradicts
+it. That is worth a second look even without a contradiction group.
+[Explore memory with
+SQL](sql.md#facts-whose-newest-testimony-disagrees) has a query that finds
+those facts.
+
 Two related signals:
 
 - **`support: withdrawn`** means the fact lost all its current supporting
@@ -200,6 +206,38 @@ about the team's work; do not fill gaps from general knowledge.
 ```
 
 Adapt the wording, not the rules.
+
+## Why is my answer empty or wrong?
+
+Before you suspect the memory, check how the question was asked. In this
+order:
+
+1. **Is the document processed?** A question sent before
+   [readiness](wait-for-readiness.md) reports the version ready gets an
+   answer without it, and nothing in that answer says so.
+2. **What does `negative` say?** `unknown_entity`, `known_empty` and
+   `boundary` each need a different next step; see
+   [Three kinds of "nothing"](#three-kinds-of-nothing).
+3. **Which time did you ask about?** `facts_context` returns facts true
+   now unless you pass `time`. A fact that ended in June is not in a
+   `current` answer; ask with `history` or `at`. See
+   [Time](../concepts/time.md#asking-about-time).
+4. **Facts or claims?** `claims_and_sources_context` returns what sources
+   said, including statements that were later replaced. `facts_context`
+   returns what holds.
+5. **Which entity?** A name that matches two people needs resolving first;
+   see [Names that match more than one entity](#names-that-match-more-than-one-entity).
+6. **Is the list complete?** Check `truncation` before you count.
+7. **SQL:** an empty result has no `negative`. Check
+   `termination_reason` and `error_code` first: a rejected statement also
+   comes back with no rows.
+
+If the question is right and the answer is still wrong, the cause is on
+the deployment side. On a self-hosted deployment, work through
+[Troubleshooting](../self-hosting/troubleshooting.md). On remember.dev,
+send [Support](../cloud/support.md) the request, the full response, the
+time it was sent, and the `version_id` of the document you expected to
+see.
 
 ## Next
 

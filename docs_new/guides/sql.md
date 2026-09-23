@@ -320,10 +320,16 @@ and returns the database plan without executing it.
 
 ## 8. Errors
 
-A rejected or failed query raises `remember.MemoryApiError` with `code` set
-to one of these:
+A statement that is rejected or fails still returns a result (HTTP 200).
+Check `termination_reason`: it is `completed`, `rejected` (the statement or
+its limits were refused before running) or `failed` (it stopped while
+running). When it is not `completed`, `error_code` and `error_message` say
+why. Saved-query refusals and malformed requests are different: they raise
+`remember.MemoryApiError`, with the HTTP status shown below.
 
-| Code | HTTP | Meaning |
+The error codes:
+
+| Code | HTTP status when raised | Meaning |
 |---|---|---|
 | `parse_error` | 422 | Not valid SQL. |
 | `multiple_statements` | 422 | More than one statement. Send one. |
@@ -341,12 +347,10 @@ to one of these:
 | `pg_unavailable`, `p1_unavailable`, `graph_unavailable`, `corpus_body_unavailable`, `generation_unavailable` | 503 | A store the query needs is not available. Retry later. |
 
 ```python
-from remember import MemoryApiError
-
-try:
-    client.open_query("DELETE FROM facts_current")
-except MemoryApiError as error:
-    print(error.status_code, error.code, error.detail)  # 422 statement_not_allowed …
+result = client.open_query("DELETE FROM facts_current")
+if result["termination_reason"] != "completed":
+    print(result["termination_reason"], result["error_code"], result["error_message"])
+    # rejected statement_not_allowed …
 ```
 
 ## Next

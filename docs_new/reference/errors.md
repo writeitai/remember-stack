@@ -138,9 +138,9 @@ an HTTP error at the status below, with
 When a code arrives inside a `200` result, `termination_reason` is `rejected`
 if the statement was refused before the engine opened a transaction (parse
 and grammar codes, `unbounded_recursion`, parameter-count and size problems,
-`quota_exceeded`, `concurrency_exceeded`), and `failed` if it was refused or
-failed after that (`schema_version_mismatch`, bad search filters, timeouts,
-store codes).
+`quota_exceeded`, `concurrency_exceeded`, `schema_version_mismatch`), and
+`failed` if it was refused or failed after that (bad search filters,
+timeouts, store codes).
 
 ## MCP tool errors
 

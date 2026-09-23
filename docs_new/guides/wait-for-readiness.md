@@ -65,10 +65,11 @@ finished one returns ready on the first poll.
 
 ## Stop on failure
 
-`wait_for_readiness` does not stop when a stage fails. A failed version is
-never ready, so the call keeps polling until the timeout. When you wait on
+`wait_for_readiness` does not stop when a stage dead-letters. A
+dead-lettered version is never ready, so the call keeps polling until the
+timeout. When you wait on
 many versions or long timeouts, poll yourself and stop on the first
-terminal failure:
+dead letter:
 
 ```python
 import time
@@ -76,7 +77,7 @@ import time
 import remember
 from remember import ReadinessRequirements
 
-TERMINAL = {"failed", "dead_letter"}
+TERMINAL = {"dead_letter"}
 
 
 def wait_or_fail(client, version_ids, *, timeout=1800.0, poll_interval=30.0):
@@ -137,8 +138,9 @@ The check reads state; it never starts or speeds up work.
 
 ## When a version fails
 
-- **`failed`** means a stage gave up on this attempt; **`dead_letter`**
-  means it ran out of attempts. Neither heals by waiting.
+- **`failed`** means the last attempt failed and a retry is scheduled; it
+  can still succeed. **`dead_letter`** means the stage ran out of attempts.
+  It does not heal by waiting.
 - **Stuck at `pending` on the first stage** on a self-hosted deployment
   usually means the file's MIME type has no converter: the version is
   parked until one is configured. See [File formats and
@@ -191,10 +193,14 @@ algorithm. Your agent's instructions should say the same:
 2. Then check every 30 to 60 seconds, backing off gently. Never check more
    often than every 15 seconds.
 3. Stop at once if any `stages[].status` is `failed` or `dead_letter`, and
-   report that stage. Waiting does not heal either.
+   report that stage.
 4. After 20 to 30 minutes without `ready: true` and without a failure, stop
    and escalate to the operator with the `version_id` and the last
    `stages[]`.
+
+   Step 3 follows the tool's guidance, which treats `failed` as a stop signal so an agent does
+   not sit on a retry loop. A `failed` stage can still recover on its own;
+   if you are not in a hurry, check again later before reporting it.
 
 Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
 the agent also reads a published corpus snapshot. `ready: true` means the

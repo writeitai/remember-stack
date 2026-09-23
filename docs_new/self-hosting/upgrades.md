@@ -48,10 +48,10 @@ by the new code.
 
 !!! warning "Upgrading to 0.17.0 from an earlier release"
     0.17.0 changes how facts carry their time windows and how claims point
-    at their evidence. Two of its migrations cannot convert data written by
+    at their evidence. Three of its migrations cannot convert data written by
     earlier releases, and `setup` stops with an error if the database
-    already holds claims ("does not convert a store that already holds
-    claims; recreate the deployment and ingest its sources again"). To move
+    already holds claims or chunks ("does not convert a store that already
+    holds claims; recreate the deployment and ingest its sources again"). To move
     to 0.17.0, start from an empty deployment and send your source
     documents again. Keep your source files for this reason.
 

@@ -6,6 +6,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 
 ## Start
 
+- [What is a memory system?](start/what-is-a-memory-system.md): Why AI assistants forget, why searching your documents is not the same as remembering, and what a memory system does about it. No technical background needed.
 - [Why RememberStack](index.md): Memory for AI agents that keeps what each source said, what is true now, and when, with the path back to the source.
 - [A five-minute tour](start/how-it-works.md): What happens to a document from the moment you send it to the moment your agent asks about it.
 - [remember.dev or self-hosted?](start/choose.md): The same engine either way. What changes is who runs it.
@@ -23,6 +24,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Contradictions, corroboration and supersession](concepts/contradictions.md): How RememberStack shows disagreement between sources instead of hiding it, how it counts independent support, and how it tells a change from a conflict.
 - [Updating a source: snapshot and living](concepts/updating-sources.md): What a new version of a document means to RememberStack, and how a living source retracts facts when its content is removed.
 - [The pipeline and readiness](concepts/pipeline.md): What happens to a document between ingest and recall, stage by stage, how long it takes, and how to know when it can be queried.
+- [What lives where](concepts/architecture.md): The pieces of a RememberStack deployment, where each kind of data is kept, which copy is the authority, and why a stale search index can cost recall but never serve a withdrawn fact.
 - [Retrieval: operations, search, graph and SQL](concepts/retrieval.md): The ways to read from RememberStack, from four assured operations for everyday agent context to search, graph traversal and SQL queries, and how hybrid retrieval works underneath.
 - [Reading a result](concepts/reading-results.md): The envelope every RememberStack read returns, field by field, with an annotated example, and the ContextBundle/v2 wrapper.
 
@@ -64,6 +66,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Authentication and scopes](self-hosting/authentication.md): Protect a self-hosted RememberStack API with a shared secret or signed tokens, understand read, ingest and write scopes, and allow browser origins.
 - [Scaling](self-hosting/scaling.md): The bounds a self-hosted RememberStack runs within — worker claim rates, replicas per stage, connection pools for retrieval and graph queries, and SQL query limits.
 - [Operating the pipeline](self-hosting/operating.md): Inspect a self-hosted RememberStack pipeline, replay failed work, release parked conversions, set spend budgets, and repair the graph catalog.
+- [Troubleshooting](self-hosting/troubleshooting.md): Symptom, first check and fix for a self-hosted RememberStack that does not start, refuses requests, never finishes a document, or gives answers you did not expect.
 - [Observability](self-hosting/observability.md): What a self-hosted RememberStack logs, how to send its errors to Sentry or a compatible service, and how to export what it spent on models.
 - [Upgrades and migrations](self-hosting/upgrades.md): Move a self-hosted RememberStack to a new release, understand what setup migrates, keep the deployment id stable, and back up the data yourself.
 - [Filesystem views](self-hosting/filesystem-views.md): Publish a self-hosted RememberStack memory as a read-only directory tree that an agent can browse with ls, cat and grep.
