@@ -6141,7 +6141,8 @@ is charged. Analysis: `plan/analysis/public_document_deletion.md`.
    chain ends there.
 6. A `support_withdrawn` review on a claim no live version carries is closed as
    `auto_resolved` by the deletion, so it no longer holds the fact open, and
-   `restore_support` refuses a claim no live version carries.
+   `restore_support` refuses a claim of a deleted document or one only deleted versions
+   carry.
 7. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
    operations.
 

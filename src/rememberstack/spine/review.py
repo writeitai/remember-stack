@@ -366,8 +366,8 @@ class ReviewQueue:
             fact_id=fact_id,
             claim_id=claim_id,
         )
-        if not connection.execute(
-            _CLAIM_LIVE, {"claim_id": claim_id, "deployment_id": deployment_id}
+        if connection.execute(
+            _CLAIM_DELETED, {"claim_id": claim_id, "deployment_id": deployment_id}
         ).scalar_one():
             # D135: deletion is the source acting. Restoring testimony that no
             # live version carries would bring a deleted document back.
@@ -743,12 +743,27 @@ _CLOSE_REVIEW = text(
     """
 ).bindparams(bindparam("history_entry", type_=JSON))
 
-_CLAIM_LIVE = text(
+_CLAIM_DELETED = text(
     f"""
-    SELECT {LIVE_CARRIAGE_SQL} FROM claims cl
+    SELECT EXISTS (
+               SELECT 1 FROM documents dd
+               WHERE dd.doc_id = cl.doc_id AND dd.deleted_at IS NOT NULL
+           )
+        OR (
+            EXISTS (
+                SELECT 1 FROM chunks ac
+                JOIN document_versions av ON av.version_id = ac.version_id
+                WHERE ac.chunk_id = cl.chunk_id
+                   OR ac.chunk_id IN (SELECT acc.chunk_id FROM chunk_claims acc
+                                      WHERE acc.claim_id = cl.claim_id)
+            )
+            AND NOT {LIVE_CARRIAGE_SQL}
+        )
+    FROM claims cl
     WHERE cl.claim_id = :claim_id AND cl.deployment_id = :deployment_id
     """
 )
+"""A claim of a deleted lineage, or one only deleted versions carry (D135)."""
 
 _CLAIM_DOC = text(
     """

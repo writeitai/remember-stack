@@ -437,7 +437,8 @@ the information survive its source's reorganization.)
   deriving a claim from an unchanged file. Once no live version carries that claim, the
   source has acted and the question is moot: the cascade closes the review as
   `auto_resolved`, so the zero-support guard no longer holds the fact open, and a later
-  `restore_support` verdict on a claim no live version carries is refused.
+  `restore_support` verdict is refused for a claim of a deleted document or one only
+  deleted versions carry.
 - **Work still in flight.** Deleting a document never waits for or cancels its pipeline.
   Claim publication refuses a tombstoned lineage and a tombstoned version alike; work past
   that point (fact application over claims extracted just before the tombstone) is
