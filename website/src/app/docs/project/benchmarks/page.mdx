@@ -1,0 +1,256 @@
+export const metadata = {
+  title: "Benchmarks and how we measure",
+  description: "What LoCoMo and BEAM measure, how the RememberStack harness runs them, which numbers exist and for which protocol, and how to reproduce a run.",
+};
+
+# Benchmarks and how we measure
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+A memory benchmark feeds a system a long history, then asks questions whose
+answers are somewhere in it. The score says how often the system's answers
+are right. The number depends on much more than the memory: the model that
+reads the retrieved context, the model that grades the answers, the prompt,
+the retrieval tools the reader may call, and the exact engine build. A score
+means something only next to all of those.
+
+RememberStack's harness therefore fixes all of them in a named **protocol**,
+checks that the running engine matches it, and refuses to run otherwise.
+
+The dependence runs one way that matters when you read any score, ours
+included: a weak answer model or a clumsy harness lowers accuracy even when
+the memory holds every answer. A wrong answer has two possible causes, and
+they need different fixes:
+
+- **Retrieval**: the evidence for the gold answer never reached the answer
+  model.
+- **Answering**: the evidence was in what the model retrieved, and it
+  answered wrong anyway, or chose a tool that could not find it.
+
+Diagnose them separately. The run directory keeps, for every question, the
+gold evidence, each tool call with its result, and the answer, so you can
+check which of the two failed before blaming either the memory or the
+model.
+
+<Callout type="warning">
+
+No score has been recorded for the current protocol,
+`RS-LoCoMo-Full-v38`. The numbers under [Recorded results](#recorded-results)
+belong to earlier protocols and earlier engine builds. Do not compare them
+with other systems' published scores.
+
+</Callout>
+
+## LoCoMo
+
+LoCoMo (Maharana et al., 2024) is a set of 10 long conversations between two
+people, each spread over many sessions, with questions about what was said.
+The pinned copy holds 272 sessions, 5,882 turns and 1,986 questions in five
+categories.
+
+The harness keeps categories 1 to 4 (1,540 questions) and leaves out
+category 5, whose questions are adversarial and have no gold answer:
+
+| Category | Questions | What it tests |
+|---|---:|---|
+| 1 | 282 | Multi-hop: combining several facts. |
+| 2 | 321 | Temporal: when things happened. |
+| 3 | 96 | Open-domain and commonsense inference. |
+| 4 | 841 | Single-hop: one fact. |
+
+Three fixed question sets (tiers) are committed with the harness:
+
+| Tier | Questions | Use |
+|---|---:|---|
+| `smoke` | 8 | Checking that a run works end to end. |
+| `development` | 200 | Comparing changes during development. |
+| `publication` | 1,540 | The full set; the only tier a published score may come from. |
+
+The dataset file is `locomo10.json` from the LoCoMo repository at commit
+`3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376`. The harness checks its SHA-256
+(`79fa87e9…a698ff4`) and refuses any other file.
+
+### How a LoCoMo run works
+
+The harness lives in `benchmarks/locomo/` and runs as
+`python -m benchmarks.locomo`.
+
+1. **Prepare** (local, no calls). Validates the dataset, selects the tier's
+   questions, fixes the protocol and records the repository revision in a
+   run directory.
+2. **Ingest**, per conversation. Checks that the deployment runs the
+   engine build, pipeline component versions and model bindings the
+   protocol requires, then uploads each session as one Markdown document
+   with a stable `source_kind`/`source_ref`.
+3. **Answer**, per conversation, after processing has finished. An answer
+   model gets each question and may call retrieval tools: the four assured
+   operations, eight lower-level lookups (`resolve`, `lookup_relations`,
+   `transcript_relation`, `lookup_observations`, `search_claims`,
+   `search_chunks`, `adjacent_chunks`, `hydrate_relation`), the seven SQL
+   query tools, and three tools over the filesystem view snapshot. It may
+   make at most 8 tool calls and 9 model calls per question.
+4. **Judge**, per conversation. A judge model labels each answer `CORRECT`
+   or not against the gold answer.
+5. **Summarize** (local). Scores the whole tier. A question with no answer
+   or no judgement counts as wrong.
+
+Remote stages run only with `--execute`, a clean git worktree at the
+prepared revision, and a confirmation flag that repeats the conversation id.
+Each stage takes hard ceilings on calls and on evaluator spend.
+
+The summary reports:
+
+- **Judge accuracy**: the share of questions labelled `CORRECT`. This is the
+  headline number.
+- **Official F1**: LoCoMo's token-overlap F1 between answer and gold answer.
+- Both per category, plus model calls, retries, tokens, evaluator cost and
+  failure counts. Ingest cost is not in the summary; it is on the
+  deployment's cost ledger.
+
+### The current protocol
+
+| Setting | `RS-LoCoMo-Full-v38` (key `full-v38`) |
+|---|---|
+| Answer model | `openai/gpt-5.6-luna`, reasoning effort `none`, temperature 0 |
+| Judge model | `openai/gpt-5.6-luna`, reasoning effort `none`, temperature 0, one judgement per answer |
+| Tool calls per question | at most 8 |
+| Model calls per question | at most 9 |
+| Answer length cap | none |
+| Ingest models | `openai/gpt-5.6-luna` for every generative step; `qwen/qwen3-embedding-8b` for embeddings (served through OpenRouter by Nebius) |
+| Query space | pinned by its manifest hash |
+
+Three variants share the v38 ingest and retrieval setup and change one
+thing:
+
+| Key | Change |
+|---|---|
+| `full-v38-gemma-vertex` | The answer model is Gemma 4 26B served on Google Vertex. |
+| `full-v38-codex-subscription` | Answer and judge run through a Codex subscription. |
+| `full-v38-glm` | Ingest uses GLM models instead of Luna. |
+
+Scores from different protocols or variants are not comparable.
+
+## BEAM
+
+BEAM ("Beyond a Million Tokens", Tavakoli et al., ICLR 2026) tests memory
+over very long chat histories. Its probing questions cover abilities such
+as information extraction, contradiction resolution, event ordering and
+abstention, and each question comes with rubric items ("nuggets").
+
+The harness in `benchmarks/rs_harness_beam/` has three commands:
+
+| Command | What it does |
+|---|---|
+| `answer-retrieval` | Answers the probing questions of a prepared run directory against a running engine, using `combined_context` and SQL queries, with an OpenRouter model (default `openai/gpt-5.6-luna`). |
+| `score-official` | The BEAM paper's scorer: an LLM judge scores every nugget 0, 0.5 or 1; event-ordering questions also get Kendall's τ-b. Default rubrics: the committed 100K/1 fixture. |
+| `score` | A simple containment check, kept as a placeholder. |
+
+Limits of the BEAM harness today:
+
+- It has no ingest step. The run directory (`questions.json`, `state.json`)
+  and the ingested conversation must be prepared by other means.
+- The answer agent contains search hints written for the committed 100K/1
+  fixture, so its answers on that fixture are not a fair measurement.
+- `score-official` prints an `overall_mean` that is not a BEAM metric;
+  BEAM reports per-ability scores.
+
+BEAM is used for internal checks only. No BEAM score is published.
+
+## Recorded results
+
+These are all the scores recorded in the repository (`plan/analysis/`,
+`design/benchmarks/`, `decisions.md`). Each belongs to its protocol and
+engine revision.
+
+| Date | Protocol | Engine revision | Tier | Judge accuracy | Official F1 |
+|---|---|---|---|---|---|
+| 2026-07-31 | `RS-LoCoMo-Full-v5-strong` | extractor `07j` | publication | 517 / 1,540 (33.6%) | 0.3054 |
+| before 2026-08-10 | `RS-LoCoMo-Full-v8-strong` | `0ef54549` | publication, assembled from two partial runs | 1,100 / 1,540 (71.43%) | not recorded |
+| 2026-08-10 | `RS-LoCoMo-Full-v11` | `213551c7` | publication | 979 / 1,540 (63.57%) | 0.5417 |
+| 2026-09-01 | `RS-LoCoMo-Full-v18` | not recorded | smoke (conversation 26) | 7 / 8 | not recorded |
+| 2026-08-07 | BEAM smoke, 100K/1 fixture | not recorded | 1 conversation | `overall_mean` ≈ 0.5625 (not a BEAM metric) | n/a |
+
+The v8 and v11 runs used different answer tools and are not directly
+comparable. The analysis of the drop between them points mainly at the
+answer agent choosing a weaker retrieval tool for 393 questions, rather than
+at worse ingestion. It is in
+`plan/analysis/locomo_v11_score_regression_analysis.md`.
+
+No run of `RS-LoCoMo-Full-v38`, or of any protocol after v18, is recorded.
+When one is, it will appear here with its protocol, revision, tier, cost
+and failure counts.
+
+## Reproduce a LoCoMo run
+
+You need a clone of `writeitai/remember-stack` with the development
+dependencies, a self-hosted engine you can wipe, and an OpenRouter key for
+the answer and judge models.
+
+<Callout type="warning">
+
+A benchmark ingest must go to a fresh, empty deployment. The sharding
+script below deletes and recreates the Docker Compose project it runs
+against. Never point it at a deployment that holds real data.
+
+</Callout>
+
+```bash
+git clone https://github.com/writeitai/remember-stack.git
+cd remember-stack
+uv sync
+```
+
+Start the engine with the protocol's model bindings; see
+[Install with Docker Compose](/docs/self-hosting/install) and
+[Models and providers](/docs/self-hosting/models). Point the harness at it:
+
+```bash
+export REMEMBERSTACK_API_URL=http://127.0.0.1:8000
+export REMEMBERSTACK_API_AUTHORIZATION="Bearer <token>"
+export REMEMBERSTACK_OPENROUTER_API_KEY=<openrouter key>
+```
+
+Then, stage by stage, for one conversation (`conv-26`) of the smoke tier:
+
+```bash
+uv run python -m benchmarks.locomo prepare \
+  --dataset /path/to/locomo10.json --tier smoke \
+  --output .benchmark-runs/smoke --protocol full-v38
+
+uv run python -m benchmarks.locomo ingest \
+  --run .benchmark-runs/smoke --sample conv-26 \
+  --max-documents 100 --max-evaluator-cost-usd 5 \
+  --execute --confirm-isolated-deployment conv-26
+
+# Wait until every document is processed. Then build and publish the
+# filesystem view snapshot (see Filesystem views) and pass its directory
+# as --p3-root below.
+
+uv run python -m benchmarks.locomo answer \
+  --run .benchmark-runs/smoke --sample conv-26 \
+  --p3-root /path/to/p3 --max-questions 8 --max-agent-calls 72 \
+  --max-evaluator-cost-usd 5 --execute
+
+uv run python -m benchmarks.locomo judge \
+  --run .benchmark-runs/smoke --sample conv-26 \
+  --max-judge-calls 8 --max-evaluator-cost-usd 5 --execute
+
+uv run python -m benchmarks.locomo summarize --run .benchmark-runs/smoke
+```
+
+Run `ingest`, `answer` and `judge` once per conversation in the tier. For the
+publication tier, `summarize` accepts several `--run` directories and checks
+that they belong to the same protocol and do not overlap.
+
+The maintained path for full runs is the sharding script, which wipes the
+stack, ingests, waits for processing, answers, judges and backs up each
+conversation in turn:
+
+```bash
+LOCOMO_PROTOCOL=full-v38 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
+  bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
+```
+
+It takes a comma-separated list of conversation ids. Its limits (tier,
+questions, calls, cost, drain timeout) are set with `LOCOMO_*` environment
+variables at the top of the script.

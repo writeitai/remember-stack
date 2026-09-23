@@ -45,6 +45,9 @@ jobs:
       - name: Check documentation truth and metadata
         run: python ../scripts/check_docs_truth.py
 
+      - name: Check llms.txt and llms-full.txt are current
+        run: python ../scripts/generate_docs_llms.py --check
+
       # `next build` type-checks the project and generates .next/types, so a
       # separate pre-build `tsc` step is intentionally omitted (it would run
       # before those generated types exist).

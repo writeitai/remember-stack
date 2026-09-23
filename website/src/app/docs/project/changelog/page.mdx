@@ -1,0 +1,186 @@
+export const metadata = {
+  title: "Releases and changelog",
+  description: "What changed for users in each RememberStack release, newest first.",
+};
+
+# Releases and changelog
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Each release publishes the `remember` Python package to PyPI and the engine
+image `ghcr.io/writeitai/remember-stack:<version>` to GitHub's container
+registry. Release tags are `v<major>.<minor>.<patch>` on
+`github.com/writeitai/remember-stack`. Up to 0.16.0 the Python package was
+published as `rememberstack`.
+
+The engine is pre-1.0. A minor version can change the API; changes that
+need action from you are marked **Action needed**.
+
+remember.dev may run an earlier engine than the newest release. Which one it
+runs today, and what that means for you, is on
+[What remember.dev serves](/docs/cloud/compatibility).
+
+## 0.17.0 (22 September 2026)
+
+**Existing deployments must be recreated.** The migrations for mutable fact
+windows and multi-span claim evidence refuse a database that already holds
+claims. Start from an empty deployment and send your sources again; see
+[Upgrades and migrations](/docs/self-hosting/upgrades).
+
+**One package: `remember`.**
+
+- **Action needed.** The Python client, the CLI and the MCP server ship in
+  one PyPI package, `remember`. The old `rememberstack` package is
+  deprecated: its final version, 0.17.0, only forwards to `remember` and
+  warns on import. Run `pip install remember` and change
+  `import rememberstack` to `import remember`.
+- **Action needed.** The engine is no longer installed with pip. Run it from
+  the container image `ghcr.io/writeitai/remember-stack`.
+- The `remember` package depends only on `httpx`, `pydantic` and
+  `pydantic-settings`.
+- New client class `remember.Client` (also `remember.RememberClient`) with an
+  `api_key` argument, `from_env()`, `ingest_file()` and path support in
+  `ingest()`. `remember.CloudClient` reads a remember.dev organisation's
+  deployment, balance, ledger and spend gate.
+
+**Assured operations renamed.**
+
+- **Action needed.** `testimony_context` is now `claims_and_sources_context`,
+  `fact_context` is now `facts_context`, and `answer_context` is now
+  `combined_context`. `resolve_entity` is unchanged. The combined result is
+  now `ContextBundle/v2`, whose evidence part is called
+  `claims_and_sources`. Update names in HTTP calls, SDK calls, CLI commands
+  and agent prompts.
+
+**CLI.**
+
+- New commands: `remember setup` (writes MCP configuration for Cursor,
+  Claude Code, Claude Desktop, Codex and Antigravity), `remember doctor`,
+  `remember whoami`, `remember switch`, `remember projects list`,
+  `remember balance`.
+- `remember login --control` signs in with an organisation control-plane
+  token. The credential file can now hold several projects and a
+  control-plane token.
+- `remember query "<question>"` is short for `remember query text`, which
+  runs `facts_context` (or `combined_context` with `--combined`).
+- `remember query adjacent-chunks`.
+- `remember review` and `remember budget` are retired.
+
+**Retrieval.**
+
+- New `adjacent_chunks`: read the passages immediately before and after a chunk
+  (`GET /chunks/{id}/adjacent`, `POST /chunks/adjacent`, SDK, CLI).
+- Name resolution at query time tries exact aliases, then fuzzy name
+  matches, then profile similarity, and returns no candidate, one, or an
+  explicit ambiguity.
+- Fact labels no longer carry a bracketed date suffix; dates stay in the
+  structured validity fields.
+
+**Processing.**
+
+- Claims can cite several separate spans of their source (multi-span
+  evidence).
+- In conversations, answers such as "Yep, that one" are resolved to what the
+  question referred to, keeping ordinals and specific names.
+- Relative dates ("last Friday") are written into the claim text as resolved
+  dates.
+- Images always get OCR and a visual description.
+- Originals are kept, and documents whose media type has no converter are
+  parked instead of failing; `remember ops resume-no-route` releases them
+  once a route exists.
+- Fact adjudication engine is configurable; OpenRouter requests rotate
+  between providers when one is overloaded.
+
+## 0.16.0 (2026-09-03)
+
+- `remember login` derives the deployment address that remember.dev
+  advertises, so you no longer pass `--api-url` after signing in.
+- A narrow ingest-only token scope for write access without read access.
+- The deployment publishes its OpenAPI schema.
+- **Behaviour change.** Dated events never merge across different dates.
+- Claim validity windows use half-open bounds (`[from, until)`).
+
+## 0.15.0 (2026-09-03)
+
+- `GET /documents` lists what the deployment holds.
+- `POST /search/claims` and `POST /search/chunks` take the query in the
+  request body, so it does not appear in URLs or access logs.
+- A deployment can name the browser origins allowed to call it.
+
+## 0.14.0 (2026-09-02)
+
+- Fixes `remember login`, which failed for a week when remember.dev added
+  fields to its token response.
+- Stored credentials record their expiry; the CLI warns 30 days before a
+  token expires.
+
+## 0.13.0 (2026-09-01)
+
+- Managed deployments report text ingest usage (the `meter-receipts`
+  process).
+
+## 0.12.0 (2026-09-01)
+
+- The API can verify signed tokens, not only compare shared secrets.
+
+## 0.11.0 (2026-09-01)
+
+- Version bump; no user-visible change recorded.
+
+## 0.10.0 (2026-09-01)
+
+- **Behaviour change.** Entity resolution no longer holds back names that
+  look like generic identifiers.
+- Exact matches found earlier in the same document are reused.
+
+## 0.9.0 (2026-08-31)
+
+- Each document version records who ingested it.
+
+## 0.8.1 (2026-08-31)
+
+- Entity matching makes one yes-or-no decision per candidate, biased toward
+  matching.
+
+## 0.8.0 (2026-08-29)
+
+- Conversion routes (media type to converter) are configurable, including a
+  `mistral_ocr` route for scanned documents.
+- An optional ingest body size limit, enforced before the body is buffered.
+
+## 0.7.0 to 0.7.3 (2026-08-28)
+
+- Uncertain entity identities are kept as uncertain and converge later
+  instead of being guessed. The patch releases fix lock contention in that
+  process.
+
+## 0.6.0 (2026-08-27)
+
+- The default facts context is built from the entity's neighbourhood plus
+  fact text.
+
+## 0.5.0 (2026-08-27)
+
+- The graph moves to PostgreSQL 19 SQL/PGQ and is read live instead of from
+  snapshots.
+- Entity profiles backed by evidence.
+
+## 0.4.0 to 0.4.3 (2026-08-13 to 2026-08-26)
+
+- `remember login` and `remember logout` (device sign-in).
+- Cost export for operators.
+- Claim and fact search runs in PostgreSQL (0.4.2).
+- `text/plain` passes through the stock converter routes (0.4.2).
+- The MCP server keeps its write tools when a deployment serves no
+  operation list (0.4.1).
+
+## 0.3.0 (2026-08-11)
+
+- SQL queries over the `memory_v1` query space, with saved queries.
+- The assured context operations.
+- MCP tools `ingest` and `pipeline_readiness`.
+
+## 0.2.0 (2026-07-30) and 0.1.0 (2026-07-23)
+
+- First public releases: the full processing pipeline in Docker Compose,
+  optional error tracking and tracing, and the LoCoMo benchmark harness.

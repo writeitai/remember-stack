@@ -1,0 +1,84 @@
+export const metadata = {
+  title: "Support",
+  description: "How to reach remember.dev support, what to include so a problem can be traced, and what support can and cannot do today.",
+};
+
+# Support
+
+<AppliesTo products={["remember.dev"]} />
+
+There are two ways to reach remember.dev support: email, and support
+records in the console.
+
+## Email
+
+Write to **support@remember.dev**. Use it for anything: a project that
+does not come back after a top-up, a cap you need raised, a refund, a
+second project slot, closing a project or your account.
+
+Other addresses:
+
+- **privacy@remember.dev** for personal-data requests under the GDPR;
+- **security@remember.dev** to report a security problem.
+
+## Support records in the console
+
+Under **Support** in the console, any member of the organisation can open a
+support record with a subject and details, and see the organisation's
+records with their status and correlation reference.
+
+A record is kept with your organisation. Opening one does not send anyone
+a notification yet, so email support@remember.dev as well and mention the
+record's subject.
+
+Through the API a record also takes a `category` and a
+`correlation_ref` of up to 128 characters; see
+[the remember.dev API](/docs/reference/cloud-api#support).
+
+## What to include
+
+Problems are traced by identifiers, not by descriptions. Include:
+
+- your organisation ID and the project or deployment ID;
+- the deployment hostname, if the problem is with memory requests;
+- the time of the failure, with its time zone;
+- the request: method and path, for example `POST /ingest`;
+- the full error response body and status code;
+- for a document, the `version_id` from the ingest response;
+- for a token problem, the token's label or ID, never the secret.
+
+Never send a token secret, a password or a document you would not want
+stored in a support system.
+
+## What support can do
+
+- Raise or remove the organisation's monthly cap.
+- Raise the number of project slots.
+- Cancel a project closure during its cancel window.
+- Refund unused credit.
+- Remove a member from an organisation or change their role.
+- Delete your account.
+- Look at the account records and diagnostics for your organisation.
+
+## What support cannot do
+
+- **Recover deleted or lost data.** There are no backups to restore from.
+- **Export your memory.** remember.dev does not offer an export.
+- **Look inside your deployment on your say-so.** There is no way yet for
+  you to grant support time-limited access to your deployment.
+- **Promise a response time.** There is no service level agreement.
+
+## Before you write
+
+Many problems show up in places you can check yourself:
+
+- **Billing** shows the balance, the cap and auto top-up.
+- **Projects** shows each project's activation and deployment state; a
+  `blocked` deployment usually means it could not be funded for the day.
+  See [Spend caps and auto top-up](/docs/cloud/spend-controls).
+- `remember-status` with a control-plane token prints the deployment,
+  billing and spend-gate state in one go; see
+  [Tokens and sign-in](/docs/cloud/tokens-and-sign-in#use-it-from-python).
+- Your deployment's `POST /readiness` says whether a document is still
+  processing or has failed.
+- [Limits](/docs/cloud/limits) lists the errors remember.dev returns and why.

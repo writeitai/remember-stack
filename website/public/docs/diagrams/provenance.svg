@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="t d">
+  <title id="t">From a fact to its source</title>
+  <desc id="d">Every fact links to the claims that support it. Every claim links to a passage and to its exact character positions in a document version. Follow the chain from the fact Dana leads the billing migration to the retro claim, to the passage in the June retro, to the highlighted sentence in the original file.</desc>
+  <defs>
+    <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="sphereT" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9f0e6"/><stop offset=".35" stop-color="#5cc8b6"/><stop offset="1" stop-color="#2a6f66"/></radialGradient>
+    <radialGradient id="sphereC" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffc2b5"/><stop offset=".35" stop-color="#ff7a62"/><stop offset="1" stop-color="#a8392a"/></radialGradient>
+    <radialGradient id="sphereS" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#f3e6de"/><stop offset=".4" stop-color="#c9b2a6"/><stop offset="1" stop-color="#7d665c"/></radialGradient>
+    <marker id="arrT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5cc8b6"/></marker>
+    <marker id="arrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff7a62"/></marker>
+    <marker id="arrM" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#66739c"/></marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .h { fill: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .h2 { fill: #ffffff; font-size: 17px; font-weight: 700; }
+      .k { fill: #66739c; font-size: 12px; font-weight: 600; letter-spacing: .16em; }
+      .b { fill: #d9def0; font-size: 15px; }
+      .m { fill: #9faaca; font-size: 13px; }
+      .sm { fill: #66739c; font-size: 12px; }
+      .w { fill: #ffffff; }
+      .tc { fill: #5cc8b6; }
+      .cc { fill: #ff7a62; }
+      .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      .card { fill: #101c42; stroke: #25335f; }
+      .cardT { fill: #0f2a3a; stroke: #3e9b8e; stroke-opacity: .7; }
+      .flow { stroke-dasharray: 5 7; animation: flow 1.6s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -24; } }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+      .s1 { animation: s1 14s ease-out infinite both; }
+@keyframes s1 { 0%, 6% { opacity: 0; transform: translateY(8px); } 11%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s2 { animation: s2 14s ease-out infinite both; }
+@keyframes s2 { 0%, 12% { opacity: 0; transform: translateY(8px); } 17%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s3 { animation: s3 14s ease-out infinite both; }
+@keyframes s3 { 0%, 18% { opacity: 0; transform: translateY(8px); } 23%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s4 { animation: s4 14s ease-out infinite both; }
+@keyframes s4 { 0%, 24% { opacity: 0; transform: translateY(8px); } 29%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s5 { animation: s5 14s ease-out infinite both; }
+@keyframes s5 { 0%, 30% { opacity: 0; transform: translateY(8px); } 35%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s6 { animation: s6 14s ease-out infinite both; }
+@keyframes s6 { 0%, 36% { opacity: 0; transform: translateY(8px); } 41%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s7 { animation: s7 14s ease-out infinite both; }
+@keyframes s7 { 0%, 42% { opacity: 0; transform: translateY(8px); } 47%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s8 { animation: s8 14s ease-out infinite both; }
+@keyframes s8 { 0%, 48% { opacity: 0; transform: translateY(8px); } 53%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .rm-hide { display: none; } }
+    </style>
+  </defs>
+  <rect width="1200" height="520" rx="24" fill="#0a1230"/>
+  <rect width="1200" height="520" rx="24" fill="url(#glowC)"/>
+  <rect width="1200" height="520" rx="24" fill="url(#glowT)"/>
+  <text class="k" x="60" y="62">PROVENANCE</text>
+  <text class="h" x="60" y="92">Every answer has a path back to the sentence</text>
+  <g class="s1">
+    <rect class="cardT" x="60" y="150" width="240" height="120" rx="16"/>
+    <circle cx="86" cy="178" r="9" fill="url(#sphereT)"/>
+    <text class="k" x="104" y="183" style="font-size:11px">FACT</text>
+    <text class="b" x="82" y="220">Dana leads the billing</text>
+    <text class="m" x="82" y="244">migration · since 1 Jun</text>
+  </g>
+  <g class="s2"><path class="flow" d="M300 210 L336 210" stroke="#66739c" stroke-width="2" marker-end="url(#arrM)"/></g>
+  <g class="s3">
+    <rect class="card" x="340" y="150" width="240" height="120" rx="16"/>
+    <circle cx="366" cy="178" r="9" fill="url(#sphereC)"/>
+    <text class="k" x="384" y="183" style="font-size:11px">CLAIM</text>
+    <text class="b" x="362" y="220">“Dana now leads the</text>
+    <text class="m" x="362" y="244">billing migration.”</text>
+  </g>
+  <g class="s4"><path class="flow" d="M580 210 L616 210" stroke="#66739c" stroke-width="2" marker-end="url(#arrM)"/></g>
+  <g class="s5">
+    <rect class="card" x="620" y="150" width="240" height="120" rx="16"/>
+    <circle cx="646" cy="178" r="9" fill="url(#sphereS)"/>
+    <text class="k" x="664" y="183" style="font-size:11px">PASSAGE</text>
+    <text class="b" x="642" y="220">Retro notes, section</text>
+    <text class="m" x="642" y="244">“Team changes”</text>
+  </g>
+  <g class="s6"><path class="flow" d="M860 210 L896 210" stroke="#66739c" stroke-width="2" marker-end="url(#arrM)"/></g>
+  <g class="s7">
+    <rect class="card" x="900" y="150" width="240" height="120" rx="16"/>
+    <circle cx="926" cy="178" r="9" fill="url(#sphereS)"/>
+    <text class="k" x="944" y="183" style="font-size:11px">DOCUMENT</text>
+    <text class="b" x="922" y="220">retro-2026-06-12.md</text>
+    <text class="m" x="922" y="244">version 1 · chars 412–455</text>
+  </g>
+  <g class="s7">
+    <rect class="card" x="60" y="320" width="1080" height="96" rx="16"/>
+    <text class="sm mono" x="84" y="354">## Team changes</text>
+    <text class="b mono" x="84" y="386" style="font-size:14px">Ravi moved to the search team on 1 June.</text>
+    <text class="b mono" x="761" y="386" style="font-size:14px">Launch stays in October.</text>
+    <rect x="435" y="368" width="324" height="26" rx="6" fill="#5cc8b6" fill-opacity=".9"/>
+    <text class="b mono" x="441" y="386" style="font-size:14px;fill:#0a1230">Dana now leads the billing migration.</text>
+  </g>
+  <g class="s8">
+    <text class="m" x="60" y="462">An agent can quote the sentence word for word. A person can open the file and find it.</text>
+  </g>
+</svg>

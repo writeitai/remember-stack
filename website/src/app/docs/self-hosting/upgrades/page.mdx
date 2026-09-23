@@ -1,0 +1,227 @@
+export const metadata = {
+  title: "Upgrades and migrations",
+  description: "Move a self-hosted RememberStack to a new release, understand what setup migrates, keep the deployment id stable, and back up the data yourself.",
+};
+
+# Upgrades and migrations
+
+<AppliesTo products={["self-hosted"]} />
+
+A self-hosted deployment is yours to upgrade and to back up. This page
+covers how releases are published, what happens to the database on an
+upgrade, the order to do it in, and how to take a backup you can restore.
+
+## Releases and image tags
+
+Each release has a Git tag (`v0.17.0`) and an image with the same version
+number and no `v`: `ghcr.io/writeitai/remember-stack:0.17.0`. There is no
+`latest` tag. The release on GitHub attaches the `compose.yaml` and
+`.env.example` for that version (the second downloads as
+`default.env.example`) and `openapi.json`.
+
+`compose.yaml` names the image tag, so the version you run is the version
+of the `compose.yaml` you start. The client package on PyPI, `remember`,
+is released from the same tag with the same version number.
+
+## What `setup` does on an upgrade
+
+The `setup` service runs before the API and workers every time you run
+`docker compose up`. It:
+
+1. applies every database migration the new release brings
+   (`alembic upgrade head`);
+2. checks that the deployment id, slug and name still match the database;
+3. installs any assured operations and example saved queries the release adds;
+4. re-publishes the search channels, re-embedding entity profiles if the
+   embedding model changed.
+
+The API and the workers start only after `setup` exits successfully. If a
+migration fails, `setup` exits with an error, nothing else starts, and
+`docker compose logs setup` shows why.
+
+Migrations only go forward. Some refuse to convert data in a way that would
+lose it, and there is no supported downgrade. To go back to an earlier
+release, restore a backup taken before the upgrade.
+
+Upgrading does not reprocess documents already in the memory. They keep
+what the earlier release extracted from them; new documents are processed
+by the new code.
+
+<Callout type="warning" title="Some releases cannot convert existing data">
+
+When a release changes what stored data means in a way that cannot be
+converted, its migrations stop instead of guessing, and `setup` exits
+with an error that ends in "recreate the deployment and ingest its
+sources again". Start from an empty deployment and send your source
+documents again. Keep your source files for this reason. See
+[setup refuses an existing database](/docs/self-hosting/troubleshooting#setup-refuses-an-existing-database).
+
+</Callout>
+
+## Upgrade step by step
+
+1. **Read the release notes** on GitHub for the version you are moving to.
+2. **Back up**, as described [below](#back-up).
+3. **Get the new files:**
+
+    ```bash
+    git fetch --tags
+    git checkout v<new-version>
+    diff .env .env.example
+    ```
+
+    Add any new required variable to your `.env`. Keep your deployment id,
+    slug and name as they are.
+
+4. **Stop the old processes**, so no old worker runs against a database
+   that is being migrated:
+
+    ```bash
+    docker compose down
+    ```
+
+    `down` removes the containers and keeps the volumes, and with them the
+    memory.
+
+5. **Get the new images:**
+
+    ```bash
+    docker compose pull api
+    docker compose build postgres
+    ```
+
+    All app services share the image `pull api` fetches. `build postgres`
+    rebuilds the PostgreSQL image in case `Dockerfile.postgres` changed; it
+    reuses the cache when nothing did. On arm64, build the app image
+    instead of pulling it: `docker compose build api`.
+
+6. **Start:**
+
+    ```bash
+    docker compose up -d --wait
+    docker compose logs setup
+    curl http://localhost:8000/deployment
+    ```
+
+    `build_revision` in `/deployment` names the source commit of the image
+    now serving.
+
+## PostgreSQL prerelease versions
+
+RememberStack runs on a PostgreSQL 19 beta (`19beta3` at v0.17.0). A
+PostgreSQL prerelease does not promise that its data directory opens under
+the next prerelease or the final release. The project has not published a
+procedure for moving a deployment's data across such a change.
+
+If a release changes the PostgreSQL image, its release notes are the place
+to look. Without instructions there, move the data with a logical dump and
+restore (below) into a new PostgreSQL volume, or start a new deployment and
+send your documents again.
+
+## The deployment id is permanent
+
+`REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` names the deployment: its trust
+domain. Every token is bound to it, and every stored row belongs to it.
+Changing it does not rename the deployment; it asks for a different one:
+
+- With the same slug, `setup` refuses to start: the id and slug no longer
+  match what the database records.
+- With a new slug as well, `setup` creates a second deployment in the same
+  database. The API then serves the new, empty one. The memory stored
+  under the old id is still in the database but no longer served, shared
+  secrets bound to the old id and signed tokens with the old id as
+  audience are refused with `403`, and the cost export stops working
+  because it expects exactly one deployment.
+
+The same check covers the slug, the name, the default language and the
+bucket names. Change none of them after the first start.
+
+## Back up
+
+Backups are your responsibility. RememberStack does not schedule them, and
+the project does not test a restore procedure. What follows is grounded in
+how the Compose deployment stores its data.
+
+A deployment's state lives in four Docker volumes:
+
+| Volume | Must be backed up |
+|---|---|
+| `rememberstack_postgres-data` | Yes: the database |
+| `rememberstack_minio-data` | Yes: original files and derived artifacts |
+| `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
+| `rememberstack_app-state` | Optional: working directories and debug captures |
+
+Filesystem-view snapshots in MinIO can be rebuilt; everything else in the
+first three volumes cannot. The database and the object store refer to
+each other, so back them up at the same moment.
+
+### A cold backup of the volumes
+
+The simplest consistent backup stops the stack and copies the volumes:
+
+```bash
+docker compose stop
+mkdir -p backup
+for volume in postgres-data minio-data forget-manifests app-state; do
+  docker run --rm \
+    -v "rememberstack_${volume}:/source:ro" \
+    -v "$PWD/backup:/backup" \
+    alpine tar -czf "/backup/${volume}.tar.gz" -C /source .
+done
+docker compose start
+```
+
+Keep the `backup/` directory and your `.env` together: a restore needs the
+same deployment id and the same database and MinIO credentials.
+
+To restore it into an empty stack on the same or another machine, with the
+same `.env`:
+
+```bash
+docker compose down -v          # deletes the current volumes
+docker compose create           # creates empty volumes and containers
+for volume in postgres-data minio-data forget-manifests app-state; do
+  docker run --rm \
+    -v "rememberstack_${volume}:/target" \
+    -v "$PWD/backup:/backup:ro" \
+    alpine tar -xzf "/backup/${volume}.tar.gz" -C /target
+done
+docker compose up -d --wait
+docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api remember ops graph-catalog ensure
+```
+
+The last command checks that the graph definitions in the restored database
+match this release ([Operating the pipeline](/docs/self-hosting/operating#the-graph-catalog)).
+
+### A logical backup
+
+`pg_dump` backs up the database while it runs:
+
+```bash
+docker compose exec -T postgres \
+  pg_dump -U rememberstack -d rememberstack --format=custom > rememberstack.dump
+docker compose exec -T postgres \
+  pg_dumpall -U rememberstack --roles-only > roles.sql
+```
+
+Use your own user and database names from `.env`. The second file matters:
+the migrations create a separate, restricted PostgreSQL role for SQL
+queries, and roles are not part of `pg_dump`. Copy the MinIO buckets
+(`remember-raw`, `remember-artifacts`, `remember-corpusfs`) at the same
+time with an S3 tool such as `mc mirror`. Restoring a logical backup means
+creating the roles, restoring the dump into an empty database with
+`pg_restore`, copying the buckets back, and running `setup`; the project
+has not tested this path.
+
+### Hard-forget manifests
+
+The `forget-manifests` volume holds the list of documents that were
+permanently removed, so a restore can remove them again from an older
+backup. A deployment started from `compose.yaml` has no command that
+creates such manifests. If the volume does hold manifests for your
+deployment, the API refuses to start: honouring them needs a recovery
+procedure the Compose deployment does not include.
+
+remember.dev upgrades the engine on each project's deployment for you;
+[What remember.dev serves](/docs/cloud/compatibility) says which version it
+runs.

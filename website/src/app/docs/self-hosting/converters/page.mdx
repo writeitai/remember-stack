@@ -1,0 +1,150 @@
+export const metadata = {
+  title: "File formats and converters",
+  description: "Which file types a self-hosted RememberStack accepts, how to route more types to converters, and what happens to a file no converter accepts.",
+};
+
+# File formats and converters
+
+<AppliesTo products={["self-hosted"]} />
+
+Before RememberStack can read a file, the `convert` worker turns it into
+Markdown. Which converter handles which file is a table you configure: a
+map from MIME type to converter name. A stock deployment accepts only
+Markdown and plain text. Everything else is stored and waits until you add
+a route for it.
+
+## The default table
+
+With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
+
+| MIME type | Converter |
+|---|---|
+| `text/markdown` | `passthrough` |
+| `text/plain` | `passthrough` |
+
+`passthrough` keeps the text as it is. It requires valid UTF-8; a file in
+another encoding fails conversion.
+
+The MIME type is the one sent with the upload. The `remember` CLI and
+Python client guess it from the file extension and fall back to
+`application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
+the extension does not say what the file is. The match is exact:
+`text/markdown` and `text/x-markdown` are different keys.
+
+## Add routes
+
+Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. It
+**replaces** the default table, so include the text types again:
+
+```bash
+# .env
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+```
+
+Then apply it with `docker compose up -d`. The API and the `convert` worker
+both read this variable. A route that names an unknown converter stops the
+`convert` worker at start with an error listing the four known names.
+
+| Converter | Runs | Accepts | Needs |
+|---|---|---|---|
+| `passthrough` | In the worker | Markdown and plain text | Nothing |
+| `markitdown` | In the worker | HTML, and other formats the markitdown library reads without extra packages | Nothing |
+| `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
+| `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
+
+## markitdown
+
+`markitdown` converts in the worker process, with no network call and no
+cost. The image installs the markitdown library **without its optional
+format packages**. HTML converts. Word (`.docx`), PowerPoint (`.pptx`),
+Excel (`.xlsx`) and PDF need packages the image does not contain, so a file
+of those types routed to `markitdown` fails conversion. Route PDFs to
+`mistral_ocr` instead. RememberStack does not convert Office files in the
+shipped image yet.
+
+## mistral_ocr
+
+`mistral_ocr` sends the whole file, base64-encoded, in one request to
+Mistral's `/v1/ocr` endpoint and turns the per-page result into Markdown.
+It keeps page structure, tables, headers and footers, embedded images and
+the provider's confidence scores as artifacts beside the Markdown. You
+bring the key; the call is billed to your Mistral account and recorded in
+the cost ledger.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | none | Your Mistral API key. Required when any route names `mistral_ocr` or `image_ocr_description`. |
+| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | API address. |
+| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | OCR model. |
+| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | Request timeout in seconds. |
+| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | Larger files fail without a call. |
+| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | Keep images embedded in the pages. |
+| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` for tables. |
+| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | Extract page headers and footers separately. |
+| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` confidence scores. |
+| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | Keep the provider's response (without image data) as an artifact. |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | The price used to record OCR cost in the cost ledger. Set it to your actual price. |
+
+Mistral rejecting a file (HTTP 400, 413 or 422) fails conversion at once.
+Other provider errors are retried.
+
+## image_ocr_description
+
+`image_ocr_description` runs two calls on every PNG or JPEG: Mistral OCR
+reads the visible text, and a vision model on OpenRouter describes what
+the image shows. The Markdown has two sections, `## Visible text (OCR)` and
+`## Visual description`. Both calls must succeed. A finished call is saved,
+so a retry does not repeat it.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | none | OpenRouter key for the description call. Required when any route names this converter. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | Must accept image input; a text-only model fails. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | API address. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | Pixel height ceiling. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | Ceiling on the description text. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | Output allowance of the description call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | Run the two calls in parallel (`2`) or one after the other (`1`). |
+
+<Callout type="warning">
+
+`compose.yaml` does not pass any `REMEMBERSTACK_IMAGE_DESCRIPTION_*`
+variable into the containers, although `.env.example` lists them.
+Putting them in `.env` has no effect. Put them in `engine.env` with the
+override file described in [Configuration](/docs/self-hosting/configuration#what-compose-passes-through);
+the `api` and `worker-convert` services need them. Without the key, the
+`convert` worker refuses to start once a route names this converter.
+
+</Callout>
+
+## Files no route accepts
+
+An upload whose MIME type has no route is still accepted. The API stores
+the original bytes and creates the version, and its `convert` work is
+parked with the reason `no_route`. It uses no attempts and makes no model
+calls. [Readiness](/docs/guides/wait-for-readiness) shows the version's
+`convert` stage as `pending`.
+
+After you add a route for that type and restart with `docker compose up -d`,
+release the parked work:
+
+```bash
+docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+  sh -c 'remember ops resume-no-route --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"'
+```
+
+The command prints `{"released": [...]}` with the processing ids it
+released. It releases only work whose stored MIME type the current table
+covers; the rest stays parked. See [Operating the pipeline](/docs/self-hosting/operating).
+
+## Not supported yet
+
+RememberStack does not ingest audio, video or web addresses yet. To add a
+web page, download it and send the HTML with a `markitdown` route.
+
+remember.dev accepts UTF-8 Markdown and plain text only; see
+[Limits](/docs/cloud/limits) for the formats and sizes it accepts.

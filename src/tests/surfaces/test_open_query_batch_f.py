@@ -1379,16 +1379,12 @@ def _normalize_headline_whitespace(text: str) -> str:
 
 
 _OSS_HEADLINE_DOC_PATHS: tuple[Path, ...] = (
-    _ROOT / "website/src/app/docs/concepts/page.mdx",
-    _ROOT / "website/src/app/docs/mounts/page.mdx",
-    _ROOT / "website/src/app/docs/reference/api/page.mdx",
-    _ROOT / "website/src/app/docs/reference/cli/page.mdx",
-    _ROOT / "website/src/app/docs/reference/mcp/page.mdx",
+    _ROOT / "website/src/app/docs/reference/query-space/page.mdx",
 )
 
 
 def test_bound_headline_matches_design_and_documentation_copies() -> None:
-    """Design blockquote, discovery, and five OSS docs share the full headline."""
+    """Design blockquote, discovery, and the query-space reference share the full headline."""
     from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 
     design_headline = _bound_headline_from_design_blockquote()
@@ -1404,7 +1400,7 @@ def test_bound_headline_matches_design_and_documentation_copies() -> None:
     )
 
     design_norm = _normalize_headline_whitespace(design_headline)
-    assert len(_OSS_HEADLINE_DOC_PATHS) == 5
+    assert len(_OSS_HEADLINE_DOC_PATHS) == 1
     for path in _OSS_HEADLINE_DOC_PATHS:
         page = path.read_text(encoding="utf-8")
         assert "`fact_claim_evidence`" in page

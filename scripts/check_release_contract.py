@@ -95,21 +95,17 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
         Path("README.md"): (
             f"[v{version}](https://github.com/writeitai/remember-stack/releases/tag/v{version})",
         ),
-        Path("website/src/app/docs/getting-started/page.mdx"): (image,),
-        Path("website/src/app/docs/deployment/page.mdx"): (
-            f"`v{version}` release",
-            image,
+        Path("website/src/app/docs/start/quickstart/page.mdx"): (
+            f"releases/tag/v{version}",
+            f"remember/{version}/",
         ),
+        Path("website/src/app/docs/self-hosting/install/page.mdx"): (image,),
+        Path("website/src/app/docs/self-hosting/requirements/page.mdx"): (image,),
         Path("website/src/app/docs/reference/cli/page.mdx"): (
             f"`remember` CLI (v{version}",
         ),
-        Path("website/src/app/docs/reference/api/page.mdx"): (
-            f"Release v{version} and later",
+        Path("website/src/app/docs/reference/http-api/page.mdx"): (
             f"releases/download/v{version}/openapi.json",
-        ),
-        Path("website/src/app/docs/project-status/page.mdx"): (
-            f"releases/tag/v{version}",
-            f"remember/{version}/",
         ),
     }
     for relative_path, expected_markers in markers.items():
