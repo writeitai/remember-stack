@@ -132,7 +132,7 @@ team_harness_system_prompt_extension: |
     delivers.
   - Documentation ships with behavior (D66): a change that affects user-facing
     behavior updates its page under website/src/app/docs/**/page.mdx and keeps
-    /docs/project-status truthful IN THE SAME PR. The repo has no docs/ tree;
+    /docs/project/not-built-yet truthful IN THE SAME PR. The repo has no docs/ tree;
     website/ is the product documentation.
   - Before touching P1 or P2 code, read the binding engine designs:
     plan/designs/postgres_p1_search_projection_design.md and

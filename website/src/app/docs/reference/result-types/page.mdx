@@ -1,0 +1,713 @@
+export const metadata = {
+  title: "Result types",
+  description: "Every response model of the RememberStack HTTP API, field by field, with every enum value.",
+};
+
+# Result types
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+This page lists every shape the HTTP API returns, and the request bodies that
+have a name. Field names are exactly as they appear on the wire. The same
+models exist in Python as `remember.models.<Name>` (the most used are also
+exported from `remember`); the `remember` client validates every response
+against them.
+
+The shapes group into five families:
+
+| Family | Types | Returned by |
+|---|---|---|
+| Envelope | [`Envelope`](#envelope) and its parts | Every read route except SQL queries, readiness, documents and deployment info; three of the four assured operations. |
+| Context bundle | [`ContextBundle/v2`](#contextbundlev2) | `combined_context`. |
+| Query result | [`QueryResult/v1`](#queryresultv1) | `POST /query/sql`, `POST /query/sql/explain`, `POST /query/saved/{namespace}/{name}/run`. |
+| Write and readiness | [`IngestedVersion`](#ingestedversion), [`PipelineReadinessReport`](#pipelinereadinessreport), [`DocumentPage`](#documentpage) | `POST /ingest`, `POST /readiness`, `GET /documents`. |
+| Deployment | [`ToolDescriptor`](#tooldescriptor), [`DeploymentBuildInfo`](#deploymentbuildinfo) | `GET /operations`, `GET /deployment`. |
+
+## Conventions
+
+- **Required and nullable.** "Nullable" means the field is present and may be
+  `null`. Fields with a default are always present in responses.
+- **Arrays.** Array fields are always present; an empty result is `[]`.
+- **Unknown fields.** Every model forbids fields it does not declare, so the
+  `remember` client rejects a response with an unexpected key.
+
+### Timestamps
+
+Timestamps in results are ISO 8601 strings in UTC. Fields typed
+"UTC date-time" below are checked to have an offset of exactly zero.
+
+<Callout type="warning">
+
+Send timestamps to `GET /lookup/relations` (`valid_at`) and to the graph
+routes (`valid_at`, `believed_at`) in UTC, with `Z` or `+00:00`. The
+engine echoes them into the result's `temporal_scope`, which accepts only
+UTC; a timestamp with another offset currently fails with `500` instead of
+being converted. The assured operations' `time` object converts any
+offset to UTC for you.
+
+</Callout>
+
+## Envelope
+
+The result of every read that is not a SQL query: the answer plus its own
+account of what kind of answer it is, when it was true, how fresh it is,
+whether it was capped, and, when the answer is "no", which kind of no.
+
+Which fields a route fills depends on the route; the rest stay empty. No HTTP
+route in this release fills `ranking`, `changes`, `aggregate` or `pages`.
+
+| Field | Type | Contents |
+|---|---|---|
+| `grain` | [`Grain`](#grain) | What kind of truth the result is. |
+| `temporal_scope` | [`TemporalScope`](#temporalscope) | The time the answer applies to. |
+| `entities` | array of [`EntityCandidate`](#entitycandidate) | Resolve candidates. |
+| `facts` | array of [`FactResult`](#factresult) | Relations and observations. |
+| `evidence` | array of [`EvidenceResult`](#evidenceresult) | Claims. |
+| `fact_evidence` | array of [`FactEvidence`](#factevidence) | Which claim supports or contradicts which fact. |
+| `evidence_totals` | array of [`EvidenceTotal`](#evidencetotal) | Exact evidence counts per fact and stance. |
+| `chunks` | array of [`ChunkEvidenceResult`](#chunkevidenceresult) | Source passages. |
+| `sources` | array of [`SourceRecord`](#sourcerecord) | Documents. |
+| `transcript` | array of [`TranscriptEntry`](#transcriptentry) | Decision history. |
+| `nodes` | array of [`GraphNode`](#graphnode) | Entities (or documents) a traversal reached. |
+| `paths` | array of [`GraphPath`](#graphpath) | Whole paths. |
+| `edges` | array of [`GraphEdge`](#graphedge) | Relations (or citations) traversed. |
+| `ranking` | array of [`RankedItem`](#rankeditem) | A fused or reranked order. |
+| `changes` | array of [`ChangeRecord`](#changerecord) | A change feed. |
+| `aggregate` | [`AggregateReport`](#aggregatereport), nullable | An enumerated aggregate. |
+| `pages` | array of [`PageRef`](#pageref) | Compiled pages. |
+| `freshness` | [`Freshness`](#freshness) | How current the answer's sources are. |
+| `truncation` | [`Truncation`](#truncation), nullable | Present when a cap applied or the route always discloses one. |
+| `dropped_by_hydration` | integer | Candidates that were nominated but no longer held when re-read. Default `0`. |
+| `excluded_unstamped` | integer ≥ 0 | Items left out because they carry no usable time. Default `0`. |
+| `negative` | [`Negative`](#negative), nullable | Set when the answer is a typed "no". |
+
+Which fields each route fills:
+
+| Route or operation | Grain | Fields |
+|---|---|---|
+| `GET /resolve`, `resolve_entity` | `fact` | `entities`, `truncation`, `negative` |
+| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `dropped_by_hydration`, `negative` |
+| `GET /hydrate/relation/{relation_id}` | `composite` | `facts`, `evidence`, `sources`, `negative` |
+| `GET /transcript/relation/{relation_id}` | `composite` | `transcript`, `truncation`, `negative` |
+| Search routes | `evidence` | `evidence` or `chunks`, `dropped_by_hydration`, `negative` |
+| Adjacent chunks | `evidence` | `chunks`, `dropped_by_hydration`, `negative` |
+| Graph routes | `fact` | `nodes`, `paths`, `edges`, `truncation`, `negative` |
+| `claims_and_sources_context` | `evidence` | `evidence`, `chunks`, `truncation`, `dropped_by_hydration`, `negative` |
+| `facts_context` | `fact` | `facts`, `evidence`, `fact_evidence`, `evidence_totals`, `nodes`, `truncation`, `dropped_by_hydration`, `negative` |
+
+### Grain
+
+| Value | Meaning |
+|---|---|
+| `fact` | What the memory holds true (relations, observations, entities, the graph). |
+| `evidence` | What sources said (claims, chunks). Not a statement of truth. |
+| `compiled` | A compiled page. Not returned by any HTTP route in this release. |
+| `composite` | A fact together with the evidence and sources behind it, or a decision history. |
+
+### TemporalScope
+
+One of five shapes, told apart by `mode`. Every shape carries
+`evaluated_at` (when the read ran), `believed_at` (the memory's knowledge it
+read from) and `identity_regime`.
+
+| `mode` | Extra fields | Used by |
+|---|---|---|
+| `current` | none | Most reads; `time: {"mode": "current"}`. |
+| `at` | `at` (UTC date-time) | `time: {"mode": "at"}`; lookups with `valid_at`. |
+| `overlap` | `from`, `to` (UTC date-times, `to` ≥ `from`) | `time: {"mode": "overlap"}`. |
+| `history` | none | `time: {"mode": "history"}`. |
+| `as_of` | `valid_at` (UTC date-time) | Graph routes; names both clocks. |
+
+| Field | Type |
+|---|---|
+| `mode` | string, as above |
+| `evaluated_at` | UTC date-time |
+| `believed_at` | UTC date-time |
+| `identity_regime` | [`IdentityRegime`](#identityregime), default `current` |
+
+### IdentityRegime
+
+| Value | Meaning |
+|---|---|
+| `current` | Entities are identified as they are today (today's aliases and merges), even for a past instant. Every HTTP route uses this. |
+| `as_of` | Entities are identified as they stood at the queried instant. |
+
+### EntityCandidate
+
+| Field | Type | Contents |
+|---|---|---|
+| `entity_id` | UUID | |
+| `canonical_name` | string | |
+| `tier` | string | `T0` exact alias, `T1` trigram, `T2` phonetic, `T3` embedding. |
+| `context_hits` | integer | Current relations linking this candidate to the `context_entity_ids` you sent. Default `0`. |
+
+### FactResult
+
+One relation or observation.
+
+| Field | Type | Contents |
+|---|---|---|
+| `fact_id` | UUID | The relation or observation id. |
+| `kind` | string | `relation` or `observation`. |
+| `label` | string | Human-readable statement of the fact. |
+| `evidence_count` | integer | Claims supporting it. |
+| `validity` | [`Validity`](#validity) | |
+| `temporal_match` | [`TemporalMatch`](#temporalmatch) | Default `possible`. |
+| `contradiction_group` | UUID, nullable | The contradiction group it belongs to. |
+| `contradiction` | [`Contradiction`](#contradiction), nullable | The other sides, when the group is live. |
+| `support` | [`FactSupport`](#factsupport) | Default `current`. |
+
+### Validity
+
+| Field | Type | Contents |
+|---|---|---|
+| `valid_from` | UTC date-time, nullable | When it became true; `null` when unknown. |
+| `valid_until` | UTC date-time, nullable | When it stopped being true; `null` when open or unknown. |
+| `valid_precision` | [`ClaimValidPrecision`](#claimvalidprecision) | Default `unknown`. |
+| `ingested_at` | UTC date-time | When the memory learned it. |
+| `invalidated_at` | UTC date-time, nullable | When the memory stopped believing it. |
+
+### ClaimValidPrecision
+
+How exact a validity window is: `unknown`, `instant`, `day`, `month`,
+`quarter`, `year`, `open` (known start, still ongoing).
+
+### TemporalMatch
+
+| Value | Meaning |
+|---|---|
+| `confirmed` | The fact's validity certainly matches the requested time. |
+| `possible` | It may match; for example, a bound is unknown. |
+
+### FactSupport
+
+| Value | Meaning |
+|---|---|
+| `current` | At least one source still asserts it. |
+| `withdrawn` | Every source that asserted it has stopped. The fact is still returned, flagged. |
+
+### Contradiction
+
+A fact's live contradiction, returned with all its sides up to a cap.
+
+| Field | Type | Contents |
+|---|---|---|
+| `group_id` | UUID | |
+| `co_members` | array of [`CoMember`](#comember) | The other sides, up to 25 inline. |
+| `returned` | integer ≥ 0 | Sides returned. |
+| `total` | integer ≥ 0 | Sides that exist. |
+| `continuation` | string, nullable | Set when more sides exist than were returned. |
+
+### CoMember
+
+| Field | Type |
+|---|---|
+| `fact_id` | UUID |
+| `label` | string |
+| `evidence_count` | integer |
+| `validity` | [`Validity`](#validity) |
+
+### EvidenceResult
+
+One claim with its provenance.
+
+| Field | Type | Contents |
+|---|---|---|
+| `claim_id` | UUID | |
+| `doc_id` | UUID | The document it came from. |
+| `chunk_id` | UUID | The chunk it was extracted from. |
+| `claim_text` | string | The claim, rewritten to stand alone. |
+| `source_span` | string | The source text it came from. |
+| `char_start` | integer | Start offset of the span in the converted Markdown of its representation. |
+| `char_end` | integer | End offset. |
+| `evidence_spans` | array of [`EvidenceSpan`](#evidencespan) | Every range of that chunk's representation that supports the claim. |
+| `is_attributed` | boolean | The source reports someone else's statement ("Dana said …"). |
+| `is_current_testimony` | boolean | The claim still comes from a current version of its source. |
+| `asserted_at` | UTC date-time, nullable | When the source made the statement. Relative phrases in `claim_text` are relative to this. |
+| `claim_valid_from` | UTC date-time, nullable | Start of when the claim says it was true, as the source put it. `null` when precision is `unknown`. |
+| `claim_valid_until` | UTC date-time, nullable | End of that window; `null` when open or unknown. |
+| `claim_valid_precision` | string | `instant`, `day`, `month`, `quarter`, `year`, `open` or `unknown`. Default `unknown`. |
+| `claim_valid_kind` | string, nullable | What the window describes: `event_time` (when an event happened), `effective_period` or `proposition_validity` (when a state was true), `measurement_period` (the period a figure covers). |
+| `document_title` | string, nullable | |
+| `source_kind` | string, nullable | |
+| `corroboration_count` | integer ≥ 1, nullable | Claims with identical text grouped under this one (`claims_and_sources_context`). |
+| `grouped_claim_ids` | array of UUID | The ids of the grouped claims. |
+
+### EvidenceSpan
+
+| Field | Type | Contents |
+|---|---|---|
+| `char_start` | integer ≥ 0 | Start of a half-open range. |
+| `char_end` | integer ≥ 0 | End; always greater than `char_start`. |
+
+### FactEvidence
+
+| Field | Type |
+|---|---|
+| `fact_kind` | `relation` \| `observation` |
+| `fact_id` | UUID |
+| `claim_id` | UUID |
+| `stance` | `supports` \| `contradicts` |
+
+### EvidenceTotal
+
+| Field | Type | Contents |
+|---|---|---|
+| `fact_kind` | `relation` \| `observation` | |
+| `fact_id` | UUID | |
+| `stance` | `supports` \| `contradicts` | |
+| `returned` | integer ≥ 0 | Claims of this stance in the result. |
+| `total` | integer ≥ 0 | Claims of this stance that exist. Never less than `returned`. |
+
+### ChunkEvidenceResult
+
+One source passage.
+
+| Field | Type | Contents |
+|---|---|---|
+| `chunk_id` | UUID | |
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `representation_id` | UUID | The converted reading of the version the offsets refer to. |
+| `chunk_text` | string | |
+| `context_prefix` | string, nullable | Generated orientation text for the chunk, when one exists. Not evidence. |
+| `char_start` | integer | Offsets in the representation's Markdown. |
+| `char_end` | integer | |
+| `section_role` | string, nullable | The role of the section it sits in (`body`, `abstract`, `references`, …). |
+| `document_title` | string, nullable | |
+| `source_kind` | string | |
+| `source_modified_at` | UTC date-time, nullable | |
+| `published_at` | UTC date-time, nullable | |
+
+### SourceRecord
+
+One document.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `title` | string, nullable | |
+| `source_kind` | string | |
+| `markdown_uri` | string, nullable | Where the converted Markdown is stored. |
+| `mention_count` | integer ≥ 0, nullable | |
+| `first_mentioned_at` | UTC date-time, nullable | |
+| `last_mentioned_at` | UTC date-time, nullable | |
+
+### TranscriptEntry
+
+One recorded decision.
+
+| Field | Type | Contents |
+|---|---|---|
+| `subject_kind` | string | `relation`, `observation`, `entity` or `k_page`. |
+| `outcome` | string | What was decided. |
+| `method` | string | How it was decided. |
+| `confidence` | number, nullable | |
+| `related_id` | UUID, nullable | The counterpart: the other fact in a supersession, the entity absorbed in a merge. |
+| `decided_by` | string | |
+| `decided_at` | UTC date-time | |
+| `features` | object, nullable | The inputs the decision recorded. |
+
+### GraphNode
+
+| Field | Type | Contents |
+|---|---|---|
+| `entity_id` | UUID | The entity, or on citation paths the document. |
+| `name` | string | Canonical name, or document title. |
+| `hops` | integer ≥ 0 | Distance from the start. |
+
+### GraphEdge
+
+| Field | Type | Contents |
+|---|---|---|
+| `relation_id` | UUID | The relation, or on citation paths the cross-reference. |
+| `subject_id` | UUID | |
+| `object_id` | UUID | |
+| `predicate` | string | On citation paths, the kind of reference. |
+| `fact` | string, nullable | The relation's label, or the citation's context. |
+| `evidence_count` | integer | `0` on citation paths. |
+| `valid_from` | UTC date-time, nullable | |
+| `valid_until` | UTC date-time, nullable | |
+| `valid_precision` | [`ClaimValidPrecision`](#claimvalidprecision) | Default `unknown`. |
+| `ingested_at` | UTC date-time, nullable | |
+| `invalidated_at` | UTC date-time, nullable | |
+| `support` | [`FactSupport`](#factsupport) | Default `current`. |
+
+### GraphPath
+
+A path is returned whole or not at all.
+
+| Field | Type | Contents |
+|---|---|---|
+| `length` | integer ≥ 1 | Number of edges. |
+| `nodes` | array of [`GraphNode`](#graphnode), at least 2 | In order. |
+| `edges` | array of [`GraphEdge`](#graphedge), at least 1 | In order. |
+
+### RankedItem
+
+| Field | Type |
+|---|---|
+| `item_id` | UUID |
+| `score` | number |
+| `signals` | object of string to number |
+
+### ChangeRecord
+
+| Field | Type | Contents |
+|---|---|---|
+| `kind` | string | `relation`, `observation`, `claim` or `page`. |
+| `change` | string | `new`, `invalidated`, `capped` or `recompiled`. |
+| `id` | UUID | |
+| `label` | string, nullable | |
+| `at` | UTC date-time | |
+
+### AggregateReport
+
+| Field | Type |
+|---|---|
+| `form` | string |
+| `buckets` | array of [`AggregateBucket`](#aggregatebucket) |
+| `total` | integer ≥ 0 |
+| `possible_total` | integer ≥ 0, default `0` |
+| `bounded_by` | string, nullable |
+
+### AggregateBucket
+
+| Field | Type |
+|---|---|
+| `key` | string, nullable |
+| `count` | integer ≥ 0 |
+| `possible_count` | integer ≥ 0, default `0` |
+| `entity_id` | UUID, nullable |
+
+### PageRef
+
+| Field | Type |
+|---|---|
+| `artifact_id` | UUID |
+| `page_kind` | string |
+| `git_path` | string, nullable |
+| `page_summary` | string, nullable |
+| `last_compiled_at` | UTC date-time, nullable |
+| `status` | string |
+| `stale` | boolean, default `false` |
+| `open_review_flags` | integer ≥ 0, default `0` |
+| `redaction_required` | boolean, default `false` |
+
+### Freshness
+
+| Field | Type | Contents |
+|---|---|---|
+| `pg_live_ts` | UTC date-time | The database time the answer was read at. |
+| `p1_written_inline` | boolean | The search index is written in the same step as the database. Default `true`. |
+| `p1_believed_at_horizon` | UTC date-time, nullable | The oldest `believed_at` the search index can answer; `null` means unbounded. |
+| `k` | [`KFreshness`](#kfreshness), nullable | Present only when the answer used a compiled page. |
+
+### KFreshness
+
+| Field | Type |
+|---|---|
+| `compiled_at` | UTC date-time, nullable |
+| `stale` | boolean, default `false` |
+| `open_flags` | integer ≥ 0, default `0` |
+
+### Truncation
+
+A cap is never silent: when one applies, this block says so.
+
+| Field | Type | Contents |
+|---|---|---|
+| `truncated` | boolean | More existed than was returned. |
+| `returned` | integer ≥ 0 | Items returned. |
+| `estimated_total` | integer ≥ 0 | Items seen before the cap. |
+| `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
+| `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`. |
+
+### Negative
+
+A typed "no". Each kind asks for a different reaction.
+
+| Field | Type |
+|---|---|
+| `kind` | [`NegativeKind`](#negativekind) |
+| `explanation` | string, at least 1 character |
+| `workaround` | string, nullable |
+
+### NegativeKind
+
+| Value | Meaning | What to do |
+|---|---|---|
+| `unknown_entity` | The name or id is not known (or no longer exists). | Resolve the name again, check spelling, or search claims and chunks. |
+| `known_empty` | The thing exists, and nothing matches. | Treat it as a real "none"; broaden the query if you expected results. |
+| `boundary` | The memory could not answer within a limit: an index not published, a graph not ready, a time budget spent. | Do not treat it as "none". Retry, or use a direct route. |
+
+Forgotten content is indistinguishable from content that never existed: it
+shows up as `unknown_entity` or `known_empty`.
+
+## ContextBundle/v2
+
+The result of `combined_context`: two complete envelopes side by side.
+
+| Field | Type | Contents |
+|---|---|---|
+| `contract` | string | Always `ContextBundle/v2`. |
+| `claims_and_sources` | [`Envelope`](#envelope) | Always grain `evidence`. |
+| `facts` | [`Envelope`](#envelope) | Always grain `fact`. |
+
+## QueryResult/v1
+
+The result of every SQL statement route, whatever the outcome. It describes
+where the rows came from before giving them.
+
+| Field | Type | Contents |
+|---|---|---|
+| `contract` | string | Always `QueryResult/v1`. |
+| `grade` | string | Always `exploratory_tabular`: no grain, negatives, contradiction completeness, exact totals or order are guaranteed beyond what the fields below state. |
+| `request_id` | UUID | |
+| `deployment_id` | UUID | |
+| `surface_manifest_hash` | string | The query space version the statement ran against. |
+| `query_space_schema` | string | Always `memory_v1`. |
+| `query_hash` | string | Hash of the normalized statement and the types (never the values) of its parameters. Empty when the statement did not parse. |
+| `query_language` | string | Always `sql`. |
+| `saved_query` | object of string, nullable | For a saved query: `query_id`, `namespace`, `name`, `version`, `query_hash`. |
+| `referenced_views` | array of string | Views the statement reads. |
+| `referenced_functions` | array of string | Functions it calls. |
+| `source_grain_tags` | array of string | The grain tags of the referenced views. |
+| `columns` | array of [`ResultColumn`](#resultcolumn) | |
+| `rows` | array of arrays | One array per row, values in column order. |
+| `returned_row_count` | integer ≥ 0 | |
+| `returned_byte_count` | integer ≥ 0 | JSON-encoded size of the returned rows. |
+| `limits` | [`ResultLimits`](#resultlimits) | The caps this statement ran under. |
+| `truncated` | boolean | |
+| `truncation_reason` | string, nullable | `row_cap`, `byte_cap`, or a graph budget (`depth_budget`, `expansion_budget`, `frontier_budget`, `result_budget`, `time_budget`). |
+| `exact_total_known` | boolean | Always `false` in this release. |
+| `exact_total` | integer, nullable | Always `null` in this release. |
+| `ordered_result` | boolean | The statement has a top-level `ORDER BY`. |
+| `empty_result` | boolean | No rows were returned (also `true` on every rejection or failure). |
+| `negative_kind` | null | Always `null`: SQL results never carry a typed negative. |
+| `execution_started_at` | date-time | |
+| `evaluated_at` | date-time, nullable | Set only when every referenced view and function answers at one instant (`facts_current`, `graph_edges_current`, `contradiction_members_current`, `facts_as_of`). |
+| `pg_snapshot_at` | date-time, nullable | The database snapshot time. |
+| `elapsed_ms` | number ≥ 0 | |
+| `termination_reason` | string | `completed`, `rejected` or `failed`. |
+| `error_code` | string, nullable | One of the [SQL query codes](/docs/reference/errors#sql-query-codes). |
+| `error_message` | string, nullable | Safe to show; never raw database detail. |
+| `warnings` | array of string | For example one entry per graph function that hit a budget. |
+| `semantic_invocations` | array of [`SemanticInvocation`](#semanticinvocation) | One per search function call. |
+| `graph_invocations` | array of [`GraphInvocation`](#graphinvocation) | One per graph function call. |
+
+### ResultColumn
+
+| Field | Type | Contents |
+|---|---|---|
+| `name` | string | |
+| `type` | string | The PostgreSQL type name (`text`, `uuid`, `bigint`, `timestamp with time zone`, …). |
+| `nullable` | boolean | Always `true`: PostgreSQL does not report nullability for computed columns. |
+
+### ResultLimits
+
+| Field | Type |
+|---|---|
+| `row_cap` | integer |
+| `byte_cap` | integer |
+| `statement_timeout_ms` | integer |
+| `analytical_tier` | boolean (always `false` over HTTP) |
+
+### SemanticInvocation
+
+What one search function (`semantic_*`, `lexical_*`, `fetch_chunk_bodies`)
+did.
+
+| Field | Type | Contents |
+|---|---|---|
+| `function` | string | |
+| `nominated` | integer | Candidates the index returned. |
+| `confirmed` | integer | Candidates that held when re-read. |
+| `dropped_stale` | integer | |
+| `dropped_filtered` | integer, default `0` | |
+| `dropped_ambiguous` | integer, default `0` | |
+| `dropped_absent` | integer, default `0` | |
+| `dropped_body_mismatch` | integer, default `0` | |
+| `dropped_absent_current` | integer, default `0` | |
+| `dropped_absent_projection` | integer, default `0` | |
+| `dropped_hash_mismatch` | integer, default `0` | |
+| `policy_generation` | string, nullable | |
+| `embedder_generation` | string, nullable | |
+| `generation` | string, nullable | |
+| `pg_confirmed_at` | date-time, nullable | |
+| `termination_reason` | string, nullable | |
+
+### GraphInvocation
+
+What one graph function did.
+
+| Field | Type |
+|---|---|
+| `ordinal` | integer ≥ 0 |
+| `function` | `graph_neighborhood` \| `graph_path` \| `graph_citation_path` |
+| `truncated` | boolean |
+| `truncation_reason` | `depth_budget` \| `expansion_budget` \| `frontier_budget` \| `result_budget` \| `time_budget`, nullable |
+| `examined_edges` | integer ≥ 0 |
+| `returned_paths` | integer ≥ 0 |
+| `effective_depth` | integer ≥ 1 |
+| `effective_expansion_budget` | integer ≥ 1 |
+| `effective_frontier_budget` | integer ≥ 1 |
+| `effective_result_budget` | integer ≥ 1 |
+| `effective_time_budget_ms` | integer ≥ 1 |
+| `applied_valid_at` | date-time, nullable |
+| `applied_believed_at` | date-time, nullable |
+| `evaluated_at` | date-time, nullable |
+
+## IngestedVersion
+
+Returned by `POST /ingest`.
+
+| Field | Type | Contents |
+|---|---|---|
+| `deployment_id` | UUID | |
+| `doc_id` | UUID | The document. |
+| `version_id` | UUID | The version; pass it to `POST /readiness`. |
+| `content_hash` | string | SHA-256 of the bytes, hex. |
+| `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
+
+## Readiness
+
+### ReadinessRequirements
+
+The `require` object of `POST /readiness`. All four fields are required.
+
+| Field | Type |
+|---|---|
+| `pipeline` | boolean |
+| `p1` | boolean |
+| `live_graph` | boolean |
+| `p3` | boolean |
+
+### PipelineReadinessReport
+
+| Field | Type | Contents |
+|---|---|---|
+| `ready` | boolean | Every required capability is ready. |
+| `versions` | array of [`VersionPipelineReadiness`](#versionpipelinereadiness) | One per requested version. |
+| `capabilities` | object: `pipeline`, `p1`, `live_graph`, `p3` → [`CapabilityReadiness`](#capabilityreadiness) | All four, required or not. |
+| `document_binding_generation` | string, nullable | As in [`DeploymentBuildInfo`](#deploymentbuildinfo). |
+| `model_bindings` | object of string to string | As in `DeploymentBuildInfo`. |
+| `build_revision` | string | As in `DeploymentBuildInfo`. |
+
+### VersionPipelineReadiness
+
+| Field | Type | Contents |
+|---|---|---|
+| `version_id` | UUID | |
+| `ready` | boolean | Every stage is `succeeded` or `skipped` and finished. |
+| `stages` | array of [`PipelineStageReadiness`](#pipelinestagereadiness) | One per expected stage. |
+
+### PipelineStageReadiness
+
+| Field | Type | Contents |
+|---|---|---|
+| `stage` | string | The pipeline stage. |
+| `component_version` | string | The version of that stage's component the deployment expects. |
+| `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
+| `finished_at` | date-time, nullable | |
+
+`missing` means no work for that stage and component version exists yet.
+`failed` may be retried by the pipeline; `dead_letter` will not be.
+
+### CapabilityReadiness
+
+| Field | Type | Contents |
+|---|---|---|
+| `required` | boolean | You asked for it. |
+| `ready` | boolean | |
+| `checked_at` | date-time | |
+| `reason` | string | `ready`, or why not (see [Ingest](/docs/reference/http-api/ingest#post-readiness)). |
+| `version` | string, nullable | `p3` only: the snapshot version. |
+| `built_at` | date-time, nullable | `p3` only. |
+| `published_at` | date-time, nullable | `p3` only. |
+
+## Documents
+
+### DocumentPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `documents` | array of [`DocumentSummary`](#documentsummary) | |
+| `cursor` | string, nullable | Pass to the next request; `null` on the last page. |
+
+### DocumentSummary
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `title` | string, nullable | |
+| `source_kind` | string | `upload` for a file sent without a source identity. |
+| `source_uri` | string, nullable | The `source_ref`, for documents sent with one. |
+| `first_seen_at` | date-time | Never changes. |
+| `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been deleted. |
+| `serving` | boolean | Some version of this document is `ready` and not deleted. |
+
+### DocumentVersionSummary
+
+| Field | Type | Contents |
+|---|---|---|
+| `version_id` | UUID | |
+| `version_no` | integer | |
+| `status` | string | `ingesting`, `converting`, `structuring`, `ready`, `failed`, `deleted`. |
+| `ingested_at` | date-time | |
+| `error` | string, nullable | Why it failed. |
+
+A version `status` of `ready` means conversion and structuring are done. It
+does not mean claims and facts have been extracted; check
+[readiness](#pipelinereadinessreport) for that.
+
+## ToolDescriptor
+
+One assured operation, as `GET /operations` returns it.
+
+| Field | Type | Contents |
+|---|---|---|
+| `name` | string | |
+| `description` | string | |
+| `input_schema` | object | JSON Schema of the arguments. Closed (`additionalProperties: false`). |
+| `result_schema` | object | JSON Schema of the result. |
+| `result_contract` | string | `envelope` or `context_bundle_v2`. |
+| `output_grain` | string, nullable | `fact`, `evidence`, or `null` for `combined_context`. |
+| `answer_intent` | string | `identity`, `claims_and_sources`, `facts` or `combined_context`. |
+| `mutates` | boolean, nullable | Whether the operation changes memory. `null` on all four today. |
+| `version` | integer ≥ 1, nullable | |
+| `implementation_plan_hash` | string of 64 hex characters, nullable | Identifies the exact plan. |
+
+## DeploymentBuildInfo
+
+| Field | Type | Contents |
+|---|---|---|
+| `build_revision` | string | Source revision the image was built from; empty when unknown. Default `""`. |
+| `model_bindings` | object of string to string | Model per pipeline role. Default `{}`. |
+| `document_binding_generation` | string, nullable | |
+
+## Request bodies
+
+### SearchRequest
+
+Body of `POST /search/claims` and `POST /search/chunks`.
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string | yes | | 1 to 4,096 characters. |
+| `k` | integer | no | `10` | 1 to 400. |
+| `channel` | `semantic` \| `bm25` | no | `semantic` | |
+
+### AdjacentChunksRequest
+
+Body of `POST /chunks/adjacent`.
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `chunk_id` | UUID | yes | | |
+| `window` | integer | no | `1` | 1 or 2. |
+
+The graph, readiness, SQL and saved-query bodies are described with their
+routes: [Graph](/docs/reference/http-api/graph), [Ingest](/docs/reference/http-api/ingest#post-readiness),
+[SQL queries](/docs/reference/http-api/query).

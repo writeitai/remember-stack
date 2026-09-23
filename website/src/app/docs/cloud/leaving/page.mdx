@@ -1,0 +1,132 @@
+export const metadata = {
+  title: "Closing a project, deleting your account",
+  description: "How to close a remember.dev project and have its data deleted, how the 30-day cancel window works, how to delete your account, and what happens to unused credit.",
+};
+
+# Closing a project, deleting your account
+
+<AppliesTo products={["remember.dev"]} />
+
+Closing a project deletes its memory. remember.dev does not offer an export
+of any kind, so before you start, make sure you still have the source files
+you sent. They are the only copy you can take with you, and re-ingesting
+them is how you rebuild the memory elsewhere, for example in a
+[self-hosted](/docs/self-hosting/install) deployment.
+
+## Close a project
+
+Closing a project is called **offboarding**. It stops the project, revokes
+its credentials, deletes its stored data, and finally archives the project.
+Only an owner can request it.
+
+The console has no button for it yet. Request it through the
+[remember.dev API](/docs/reference/cloud-api#offboarding) while signed in,
+or ask [support](/docs/cloud/support):
+
+```bash
+curl -s -X POST \
+  "https://remember.dev/app/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/offboarding/request" \
+  -H "Content-Type: application/json" \
+  --cookie "__session=..." \
+  -d '{"reason": "customer_choice"}'
+```
+
+The response is the offboarding record. Check it later with:
+
+```bash
+curl -s \
+  "https://remember.dev/app/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/offboarding/status" \
+  --cookie "__session=..."
+```
+
+### What happens, in order
+
+| Step | `state` after it | What it means for you |
+|---|---|---|
+| Request | `requested` | The cancel window starts; `read_export_window_ends_at` says when it ends |
+| Stop work | `ingest_stopped` | The project's hostname stops answering. No new processing |
+| Stop compute | `compute_stopped` | The deployment is disabled and the active-project charge stops |
+| Revoke access | `access_revoked` | Every token for the deployment is revoked, pending logins expire, and project memberships end |
+| Delete storage | `storage_deleted` | The project's stored files and artifacts are deleted, with a deletion proof recorded as `deletion_evidence_ref` |
+| Complete | `completed` | Offboarding is finished. The project is then archived (`project_archived`) and its slot is free |
+
+remember.dev carries out these steps; they are not instant. The record
+shows a timestamp for each step as it happens, and `holds_summary` shows
+how open billing holds were settled.
+
+### The cancel window
+
+The window gives you time to change your mind, or to catch a request made
+by mistake or by someone who should not have made it. It is 30 days unless
+the request set another length (`read_export_window_days`, 0 to 180). The
+field names are historical: the window is for cancelling, not for
+downloading anything.
+
+During the window:
+
+- your data is kept;
+- tokens are not revoked and storage is not deleted;
+- the project may already be stopped, so it may not answer requests.
+
+To cancel, write to [support](/docs/cloud/support) from an owner's account before
+storage is deleted. There is no self-service cancel yet.
+
+### Close early
+
+If you do not want to wait, an owner can end the window early. You must
+confirm that you understand the stored memory will be deleted with no
+export:
+
+```bash
+curl -s -X POST \
+  "https://remember.dev/app/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/offboarding/early-closure" \
+  -H "Content-Type: application/json" \
+  --cookie "__session=..." \
+  -d '{"confirm_permanent_loss_of_unexported_data": true}'
+```
+
+Anything but `true` is refused with `400`. After early closure,
+remember.dev can revoke access and delete storage without waiting for the
+window to end.
+
+### What is kept
+
+Deleting the project's storage does not delete:
+
+- the organisation's credit ledger, statements and payment records, which
+  the law requires remember.dev to keep;
+- the account records described in
+  [Data handling and security](/docs/cloud/data-and-security#records-of-what-happened);
+- diagnostics already collected, which age out after 30 days (with content)
+  or 90 days (logs and error reports).
+
+## Delete your account
+
+Self-service account deletion is not in the console yet. To delete your
+account, email support@remember.dev from the address you sign in with.
+
+Deletion follows these rules:
+
+- An organisation you own alone is closed through the offboarding above,
+  including its 30-day cancel window when it has a deployment or stored
+  data. Its other members lose access.
+- In an organisation with another owner, only your membership ends.
+- Your profile, password, Google link and sessions are erased.
+- Invoices, payments, the credit ledger and account records are kept for
+  the periods the law requires, under a placeholder instead of your email
+  address.
+- There is no export before deletion.
+
+You can sign up again later with the same email address; the new account
+starts empty.
+
+## Unused credit
+
+Unused credit is not forfeited when you close a project or your account.
+remember.dev refunds it when you ask. Write to support@remember.dev.
+
+## Your data rights
+
+For requests about your personal data under the GDPR, such as access or
+erasure, write to privacy@remember.dev. remember.dev answers these requests
+individually. That answer is not a product export of your memory.

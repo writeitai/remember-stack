@@ -1,0 +1,248 @@
+export const metadata = {
+  title: "Authentication and scopes",
+  description: "Protect a self-hosted RememberStack API with a shared secret or signed tokens, understand read, ingest and write scopes, and allow browser origins.",
+};
+
+# Authentication and scopes
+
+<AppliesTo products={["self-hosted"]} />
+
+A fresh self-hosted deployment accepts every request without a token.
+That is convenient on your own laptop and unsafe anywhere else. This page
+shows how to require a token, what each kind of token may do, and how to
+let a browser app call the API.
+
+## Open by default
+
+With no authentication variable set, the API has no perimeter: any caller
+that reaches port 8000 can read the whole memory, send documents, and run
+every operation. Nothing is logged about who they were.
+
+That is acceptable only when nobody else can reach the port. Note that
+`compose.yaml` publishes the API (`${REMEMBERSTACK_SELFHOST_API_PORT}:8000`)
+and the MinIO console (`9001:9001`) on **all** network interfaces of the
+host. On a laptop on a shared Wi-Fi network, a colleague can reach both.
+
+To publish them on the loopback interface only, add to
+`compose.override.yaml` (Compose 2.24.4 or later, for the `!override` tag):
+
+```yaml
+services:
+  api:
+    ports: !override
+      - "127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
+  minio:
+    ports: !override
+      - "127.0.0.1:9001:9001"
+```
+
+Do this and set a token before the machine is reachable by anyone else.
+
+## A shared secret
+
+The simplest perimeter is one secret that every client presents.
+
+1. Generate a secret:
+
+    ```bash
+    openssl rand -hex 32
+    ```
+
+2. Put it in `.env` and apply it:
+
+    ```bash
+    # .env
+    REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN=<the secret>
+    ```
+
+    ```bash
+    docker compose up -d
+    ```
+
+3. Give it to the client:
+
+    ```bash
+    export REMEMBER_API_URL=http://localhost:8000
+    export REMEMBER_API_KEY=<the secret>   # the Python client and the CLI
+    ```
+
+The client sends it as `Authorization: Bearer <secret>`. The API compares a
+SHA-256 digest of what it receives with the digest of the configured
+secret, bound to this deployment's id. The shared secret has full `write`
+scope. A request without it gets `401`.
+
+### Keep only the digest on the server
+
+`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` configures the same check without
+the secret itself in the container's environment. Its value is the
+deployment id and the hex SHA-256 of the secret, joined by a colon:
+
+```bash
+SECRET=<the secret>
+DEPLOYMENT_ID=<your REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID>
+DIGEST=$(printf '%s' "$SECRET" | shasum -a 256 | cut -d' ' -f1)   # sha256sum on Linux
+echo "REMEMBERSTACK_SELFHOST_API_BEARER_BIND=$DEPLOYMENT_ID:$DIGEST"
+```
+
+Use `printf '%s'`, not `echo`: a trailing newline changes the digest.
+
+The id in the bind must be this deployment's id; a bind made for another
+deployment rejects every request with `403` ("credential is for another
+deployment"). If you set both the token and the bind, they must describe
+the same secret, or the API refuses to start.
+
+## Signed tokens
+
+For more than one credential, or for credentials that expire and carry a
+narrower scope, the API verifies signed tokens (JWTs) against public keys
+you give it. The deployment holds only public keys, so it can check tokens
+but never mint them. Signed tokens and the shared secret can be configured
+together.
+
+| Variable | Meaning |
+|---|---|
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | A JWKS document (`{"keys": [...]}`) of Ed25519 public keys. |
+| `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | Comma-separated `jti` values to refuse even with a valid signature. |
+
+Neither is passed by `compose.yaml`. Set them in `engine.env` for the `api`
+service ([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)).
+
+What the API accepts:
+
+- **Algorithm:** EdDSA over Ed25519 only. Every key must have `"kty": "OKP"`,
+  `"crv": "Ed25519"`, a string `kid`, no private part (`d`), and, if present,
+  `"use": "sig"` and a `key_ops` list containing `verify`. A key set with
+  one bad key refuses to load, and the API does not start.
+- **Header:** `kid` naming one of the configured keys.
+- **Claims, all required:** `aud` (this deployment's id, as a single string),
+  `exp`, `iat`, `nbf`, `jti` (non-empty), `sub`, and `scope` (`read`,
+  `ingest` or `write`). A `sub` starting with `dpcred:` must be exactly
+  `dpcred:<jti>` and marks a machine credential; any other `sub` marks a
+  credential held by a person, named by that value.
+- **Clock skew:** 30 seconds of leeway on `exp` and `nbf`.
+- An optional `umc_dp_` prefix in front of the token is removed before
+  checking.
+
+A signature cannot be withdrawn: a token is valid until it expires unless
+its `jti` is on the revocation list. Keep lifetimes short. An empty key set,
+`{"keys": []}`, is valid and refuses every signed token.
+
+This example creates a key pair, prints the JWKS for the deployment, and
+mints a one-hour read token. It needs `pip install "pyjwt[crypto]"`:
+
+```python
+import json
+import time
+import uuid
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from jwt.algorithms import OKPAlgorithm
+
+DEPLOYMENT_ID = "<your REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID>"
+
+private_key = Ed25519PrivateKey.generate()
+public_jwk = json.loads(OKPAlgorithm.to_jwk(private_key.public_key()))
+public_jwk.update({"kid": "k1", "use": "sig"})
+print("REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS=" + json.dumps({"keys": [public_jwk]}))
+
+credential_id = str(uuid.uuid4())
+now = int(time.time())
+token = jwt.encode(
+    {
+        "aud": DEPLOYMENT_ID,
+        "iat": now,
+        "nbf": now,
+        "exp": now + 3600,
+        "jti": credential_id,
+        "sub": f"dpcred:{credential_id}",
+        "scope": "read",
+    },
+    private_key,
+    algorithm="EdDSA",
+    headers={"kid": "k1"},
+)
+print(token)
+```
+
+In real use, store the private key somewhere safe and mint tokens from it;
+this script discards it when it exits.
+
+## Scopes
+
+Every request that passes the perimeter is checked against the scope of its
+credential. The route decides the scope it needs, not the HTTP method:
+several reads use `POST` because their arguments do not fit in a URL.
+
+| Scope | May call |
+|---|---|
+| `read` | `GET /resolve`, `/lookup/relations`, `/lookup/observations`, `/transcript/relation/{id}`, `/hydrate/relation/{id}`, `/search/claims`, `/search/chunks`, `/chunks/{id}/adjacent`, `/query/space`, `/query/space/search`, `/query/saved`, `/query/saved/{namespace}/{name}`, `/operations`, `/connectors`, `/connectors/{id}`, `/documents`; `POST /search/claims`, `/search/chunks`, `/chunks/adjacent`, `/graph/neighborhood`, `/graph/path`, `/graph/citation-path`, `/query/sql`, `/query/sql/explain`, `/query/saved/{namespace}/{name}/run`, `/readiness` |
+| `ingest` | `POST /ingest` only. An ingest credential cannot read. |
+| `write` | Everything, including every route not listed above |
+
+Routes that are not in the `read` or `ingest` list need `write`. Today that
+includes `POST /connectors`, `POST /connectors/{id}/pause` and
+`GET /deployment`.
+
+`POST /operations/{name}` (the [assured operations](/docs/reference/assured-operations))
+decides per operation: an operation that declares itself read-only needs
+`read`, any other needs `write`. No shipped operation declares itself
+read-only yet, so **every assured operation currently needs `write`**,
+although they only read. A `read` token can list operations but not run
+them; use `search`, `graph` or `query` routes with it, or give the caller a
+`write` token.
+
+`GET /healthz` never needs a credential.
+
+| Status | Meaning |
+|---|---|
+| `401` | No `Authorization` header, or the credential did not verify |
+| `403` | The credential is for another deployment, or its scope does not cover the route |
+
+## `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH`
+
+Leave this `false` on a self-hosted deployment. The perimeter is enforced
+as soon as a token, a bind or signing keys are configured; this flag adds
+nothing to that. It exists for remember.dev: with it set, the API refuses
+to start unless a bind or signing keys are configured **and**
+`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` points at a billing service. A
+shared token alone (`API_BEARER_TOKEN` without `API_BEARER_BIND`) does not
+satisfy it either.
+
+## Browser origins (CORS)
+
+A web app served from another origin cannot call the API unless the API
+names that origin. `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is a
+comma-separated list of exact origins:
+
+```bash
+REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+- Each entry must be an `https` origin exactly as a browser sends it:
+  lowercase scheme and host, an optional port, nothing else. A malformed
+  entry, an empty entry or a trailing comma stops the API at start.
+- Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
+  are allowed. Cookies are not; the browser must send a token.
+- Browsers may cache the permission for up to 600 seconds after you remove
+  an origin. Revoking the token is what stops access immediately.
+
+Empty, the default, advertises nothing: no browser origin can call the API.
+
+## Trusted uploader headers
+
+`POST /ingest` accepts two headers that name who uploaded a document:
+`X-Ingest-Principal-Kind` (`user`, `api_credential` or `service`) and
+`X-Ingest-Principal-Ref` (1 to 255 printable ASCII characters). By default
+the API ignores them, because any client can send any value.
+
+`REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE=true` makes the API record
+them. Enable it only when every request reaches the API through a proxy or
+gateway that authenticates the actor, sets these headers itself and strips
+any a client sent. Even then, when authentication is configured, the
+headers count only on requests with a `write` credential; with a narrower
+credential they are ignored and the upload still succeeds. A malformed
+pair on a trusted request is rejected with `422`.
+
+remember.dev issues deployment tokens from its console instead; see
+[Tokens and sign-in](/docs/cloud/tokens-and-sign-in).

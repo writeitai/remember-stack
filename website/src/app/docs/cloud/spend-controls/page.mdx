@@ -1,0 +1,165 @@
+export const metadata = {
+  title: "Spend caps and auto top-up",
+  description: "Set a monthly cap for the organisation and a sub-cap per project, understand exactly what stops when money or a cap runs out, and refill the balance automatically within a ceiling.",
+};
+
+# Spend caps and auto top-up
+
+<AppliesTo products={["remember.dev"]} />
+
+remember.dev cannot spend more than you have paid for. On top of that you
+can set how much it may spend in a month, for the whole organisation and
+for each project. When a limit is reached, chargeable work stops before it
+starts; nothing is billed after the fact.
+
+## The organisation's monthly cap
+
+An owner sets the cap under **Billing → Monthly hard cap**, in credits.
+
+- The month is the UTC calendar month.
+- Before any chargeable work, remember.dev checks that this month's
+  charges, plus the holds still open, plus the new work's hold stay within
+  the cap. If they would not, the work does not start.
+- Without a cap, spending is limited only by the balance.
+
+You can set a first cap and lower it at any time. **Raising or removing a
+cap needs remember.dev's approval**: the request is refused with `403`, and
+you ask [support](/docs/cloud/support) to make the change.
+
+If you set a cap below what your active projects need for the rest of the
+day, they stop at the next daily funding point.
+
+## Project sub-caps
+
+An owner can give each project its own monthly limit (a sub-cap), through
+the API:
+
+```bash
+curl -s -X PUT \
+  "https://remember.dev/app/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/spend-cap" \
+  -H "Content-Type: application/json" \
+  --cookie "__session=..." \
+  -d '{"monthly_subcap_credits": "50"}'
+```
+
+Send `null` to remove it. Owners can raise, lower or remove a sub-cap
+without approval.
+
+A sub-cap works like the organisation cap, counted for that project only.
+When a project reaches its sub-cap, only that project stops; the others
+carry on while the organisation has balance and headroom under its own
+cap.
+
+## What stops when money or a cap runs out
+
+Three different things can be refused, and they behave differently.
+
+**Processing new documents.** Each new document version needs a hold for
+its processing before the expensive work starts. If the hold is refused,
+the document waits unprocessed; it has not failed. When you add credit or
+raise the limit, processing continues.
+
+**The project itself.** An active project needs a hold for the rest of the
+current UTC day, placed at the start of each day. If the balance or a cap
+cannot cover it, the project is parked:
+
+- no new work starts: new documents wait unprocessed, and nothing fails;
+- the active-project charge stops at the same moment;
+- your memory stays readable: search, the assured operations and SQL
+  queries keep answering;
+- your data, tokens and hostname are kept.
+
+When a purchase or a higher limit makes the next hold possible, the parked
+work resumes on the same hostname with the same memory and the same tokens.
+
+<Callout type="warning">
+
+Today a parked project goes further than this: its deployment is
+**blocked** and the endpoint stops answering all requests, reads
+included, until the project is funded again. This will change so that
+reads continue. Until then, keep enough balance for at least a day of
+every active project, or turn on auto top-up.
+
+</Callout>
+
+**Storage growth.** Each new document version also places a small hold for
+the storage it will add. If a project's daily storage measurement is
+missing for 48 hours, the project stops accepting data that would grow its
+storage until measurement resumes; reads continue. You are not charged
+for that period.
+
+### Provider-cost safeguard
+
+Separately from your credits, every deployment has a ceiling on what its
+model provider calls may cost, set by remember.dev. It protects both you
+and remember.dev from a runaway pipeline. If it is reached, the deployment
+refuses ingest, search, operations and SQL queries with `423` and a
+`detail` starting `dispatch_parked:`, or with `403` and `dispatch_refused:`.
+Contact [support](/docs/cloud/support) if you see either.
+
+The spend gate's current decision is readable at
+`GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate`, and
+`remember-status` includes it.
+
+## Warnings
+
+remember.dev does not yet send a warning as you approach a cap or run low
+on balance. Watch **Billing** and **Usage**, use `remember-status` in a
+scheduled job, or turn on auto top-up.
+
+## Auto top-up
+
+Auto top-up buys credits for you when the balance runs low, within a
+monthly ceiling you set. It is off by default, and only an owner can turn
+it on.
+
+### Turn it on
+
+1. Buy credits once with **Save card for auto top-up** ticked. That saves
+   the card with Stripe for later charges.
+2. Under **Billing → Auto top-up**, set:
+    - **Threshold:** the balance, in whole credits, below which a top-up is
+      bought (default 5);
+    - **Amount:** how many credits each top-up buys, within the same minimum
+      and maximum as a manual purchase (default 25);
+    - **Monthly ceiling:** the most auto top-up may charge in a calendar
+      month, in euros (default 200). It must be at least the amount.
+3. Enable it.
+
+If the card cannot be saved or billing is not active yet, the card says so
+and cannot be enabled. If it says auto top-up is unavailable, it cannot be
+turned on for your organisation yet.
+
+### What it does
+
+When the balance is below the threshold, remember.dev charges the saved card
+for the amount, without you present. The credits are added when Stripe
+confirms the payment, exactly as for a manual purchase.
+
+It does not charge when:
+
+- the charge would take the month's auto top-ups over the ceiling;
+- another top-up for the organisation is already in progress;
+- the last attempt was less than 60 seconds ago;
+- billing is not active, or no card is saved.
+
+### When a charge fails
+
+- If the bank asks for you to confirm the payment (strong customer
+  authentication), auto top-up turns itself off at once. Buy credits
+  manually, which saves the card again, and turn it back on.
+- After three failed charges in a row it turns itself off.
+- A successful charge resets the count.
+
+A charge whose outcome Stripe has not reported is not retried
+automatically; remember.dev reconciles it first so you are never charged
+twice.
+
+Auto top-up only adds credits. It does not raise your monthly cap, so a
+project can still stop at the cap with a healthy balance.
+
+## Related
+
+- [Pricing and credits](/docs/cloud/pricing)
+- [Organisations, projects and members](/docs/cloud/organisations-and-projects)
+- [remember.dev API: billing](/docs/reference/cloud-api#billing)

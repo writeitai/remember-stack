@@ -26,7 +26,7 @@ instructions: |
      endpoints, config keys). Documentation that describes behavior that does not exist on
      main is a failure.
   4. No empty placeholder pages exist (a page.mdx whose body is a stub/"coming soon"), and
-     /docs/project-status states what exists versus what is designed without overclaiming.
+     /docs/project/not-built-yet states what exists versus what is designed without overclaiming.
   5. The same-PR docs rule is bound where implementing agents read: CLAUDE.md carries the
      docs-ship-with-the-code section and plan/plans/roadmap.md §6 carries the WP rule.
 

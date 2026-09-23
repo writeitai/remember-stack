@@ -909,7 +909,7 @@ def _run_review(args: argparse.Namespace) -> int:
     except Exception:
         print(
             "error: 'remember review' is retired. The engine adjudicates contradictions "
-            "autonomously without human review queues. See https://remember.dev/docs/architecture",
+            "autonomously without human review queues. See https://remember.dev/docs/concepts/contradictions",
             file=sys.stderr,
         )
         return 1

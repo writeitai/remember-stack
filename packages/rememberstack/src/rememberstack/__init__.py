@@ -6,7 +6,7 @@ warnings.warn(
     "The 'rememberstack' PyPI distribution is deprecated as of v0.17.0. "
     "Please migrate to 'remember' (pip install remember) for the Python SDK and platform CLI, "
     "or use the official Docker image 'ghcr.io/writeitai/remember-stack' for self-hosted engine deployments. "
-    "See https://remember.dev/docs/project-status/ for details.",
+    "See https://remember.dev/docs/project/changelog/ for details.",
     FutureWarning,
     stacklevel=2,
 )

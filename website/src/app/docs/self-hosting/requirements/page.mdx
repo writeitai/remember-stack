@@ -1,0 +1,162 @@
+export const metadata = {
+  title: "Requirements",
+  description: "What you need to run RememberStack yourself \u2014 PostgreSQL 19, S3-compatible storage, Docker, a model key \u2014 and what is not measured yet.",
+};
+
+# Requirements
+
+<AppliesTo products={["self-hosted"]} />
+
+A self-hosted RememberStack is a set of containers from one Compose file:
+PostgreSQL, MinIO object storage, an API process and twelve pipeline
+workers. The Compose file builds or pulls everything it needs. This page
+lists what has to be true of the machine and the accounts around it.
+
+## Docker and Compose
+
+You need Docker Engine with the Compose v2 plugin: the `docker compose`
+command, not the older `docker-compose` script. `compose.yaml` uses a
+top-level `name`, `depends_on` conditions such as
+`service_completed_successfully`, and profiles, which the v2 plugin
+supports.
+
+The project does not state a minimum Docker or Compose version. Its own
+continuous-integration check runs `docker compose up --build --detach --wait`
+on a current GitHub Actions Ubuntu runner.
+
+## Image architectures
+
+Two images make up the stack:
+
+| Image | Where it comes from | Architectures |
+|---|---|---|
+| `ghcr.io/writeitai/remember-stack:0.17.0` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
+| `rememberstack-postgres:19beta3` | Built locally by Compose from `Dockerfile.postgres` on first start | Whatever your machine builds |
+
+The release workflow publishes the API/worker image for `linux/amd64`
+only. On an arm64 machine (Apple Silicon, Graviton, Ampere) you have two
+choices:
+
+- Build the image from source for your own architecture:
+  `docker compose build api`. All the app services share that image. The
+  release workflow does not build or test this image on arm64.
+- Run the published amd64 image under emulation, for example by exporting
+  `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `docker compose up`. Docker
+  Desktop on Apple Silicon emulates amd64. It works more slowly than a
+  native image.
+
+The release workflow also publishes a multi-architecture PostgreSQL image,
+`ghcr.io/writeitai/remember-stack-postgres:19beta3-<version>`, for
+`linux/amd64` and `linux/arm64`. The shipped `compose.yaml` does not use it:
+it builds `rememberstack-postgres:19beta3` locally from `Dockerfile.postgres`.
+That first build compiles one extension from source and takes a few minutes.
+
+## PostgreSQL 19 (beta)
+
+RememberStack requires **PostgreSQL 19, which is a beta release**. The
+Compose file pins `postgres:19beta3`.
+
+It needs 19 because the memory's graph is a SQL/PGQ property graph
+(`CREATE PROPERTY GRAPH`, queried with `GRAPH_TABLE`). PostgreSQL 19 is the
+first release with SQL/PGQ, so entity neighbourhoods and paths run live
+inside the same database that holds the facts, with no separate graph store
+to build or keep in sync.
+
+Running a beta has a consequence you should plan for: there is no promise
+that a data directory created by one PostgreSQL 19 prerelease opens under a
+later one. See [Upgrades and migrations](/docs/self-hosting/upgrades).
+
+### Extensions
+
+The migrations create these extensions:
+
+| Extension | Version | Used for |
+|---|---|---|
+| `vector` (pgvector) | 0.8.6 | Semantic search vectors and HNSW indexes |
+| `pg_textsearch` | 1.3.1 | BM25 keyword search |
+| `pg_partman` | 5.5.0 | Monthly partitioning of large tables |
+| `pgcrypto` | contrib | UUID generation and digests |
+| `pg_trgm` | contrib | Fuzzy name matching during entity resolution |
+| `fuzzystrmatch` | contrib | Phonetic name matching (`daitch_mokotoff`) |
+| `unaccent` | contrib | Accent folding of names |
+| `btree_gist` | contrib | The time-range exclusion constraint on relations |
+
+`pg_textsearch` has no PostgreSQL 19 package yet. `Dockerfile.postgres`
+downloads a pinned source revision from `timescale/pg_textsearch`, applies
+a small compatibility patch (`docker/pg_textsearch-pg19.patch`) and
+compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
+archive at the exact versions above. `remember ops graph-catalog ensure`
+checks these three versions (see [Operating the pipeline](/docs/self-hosting/operating)).
+
+### Server settings
+
+Compose starts PostgreSQL with:
+
+```text
+shared_preload_libraries=pg_textsearch,pg_partman_bgw
+pg_partman_bgw.dbname=<REMEMBERSTACK_POSTGRES_DB>
+pg_partman_bgw.role=<REMEMBERSTACK_POSTGRES_USER>
+```
+
+Everything else stays at the image defaults, including
+`max_connections = 100`.
+
+Running the engine against a PostgreSQL server you manage yourself is not a
+documented path. If you try it, the server must match everything on this
+page: version 19, the extensions at those versions, and the preload
+settings.
+
+## S3-compatible object storage
+
+Original files, converted Markdown and other artifacts, and filesystem
+snapshots live in object storage, in three buckets (`remember-raw`,
+`remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
+
+Compose runs MinIO for this (image pinned to
+`RELEASE.2025-09-07T16-13-09Z`). The engine talks to it through the S3 API
+with path-style addressing and SigV4 signing. It writes every object with a
+conditional create (`If-None-Match: *`), so an object is never silently
+replaced. Only MinIO is exercised by the project's checks. Another
+S3-compatible store has to support path-style requests and conditional
+writes.
+
+## Model provider keys
+
+| Key | Required | Used for |
+|---|---|---|
+| OpenRouter API key (`REMEMBERSTACK_OPENROUTER_API_KEY`) | Yes | Every model call: structure, claim extraction, entity resolution, fact adjudication, and all embeddings, including query embeddings for search |
+| Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Only if you route PDFs or images to OCR | The `mistral_ocr` and `image_ocr_description` converters |
+| A second OpenRouter key (`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) | Only if you route images to `image_ocr_description` | The vision-model description of an image |
+| TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` | The alternative fact adjudicator |
+
+The engine starts with the placeholder OpenRouter key from `.env.example`,
+but the first document or search fails at the first model call. The model
+calls cost money on your OpenRouter account; see
+[Models and providers](/docs/self-hosting/models).
+
+## Sizing
+
+Nothing about hardware sizing has been measured yet: no CPU, memory, disk
+or throughput figures exist for a self-hosted deployment. The only timing
+the project checks is that a cold start on a CI runner (building images,
+migrating, and answering a first query on an empty memory) finishes within
+600 seconds.
+
+What is configured, and therefore known, are the bounds each process
+works within:
+
+| Bound | Default |
+|---|---|
+| Containers started by `docker compose up` | 15: `postgres`, `minio`, `setup` (exits), `api`, 12 workers |
+| Items one worker process runs at once | 1 |
+| Claims per second per worker process | 20, burst 20 |
+| Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
+| Graph query `work_mem` | 16,384 KiB |
+| Retrieval connection pool in the API | 4 connections, at most 4 retrievals at once |
+| SQL query sandbox | 5 s default and 15 s maximum statement time, 16 MiB `work_mem`, 8 statements at once per deployment |
+| PostgreSQL `max_connections` | 100 (image default) |
+
+[Scaling](/docs/self-hosting/scaling) explains each bound and how to change it.
+
+remember.dev runs the engine, PostgreSQL and storage for you instead; see
+[What remember.dev runs for you](/docs/cloud/overview).

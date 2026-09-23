@@ -1,0 +1,75 @@
+export const metadata = {
+  title: "Supported file types",
+  description: "Which file types RememberStack reads on remember.dev and on a self-hosted deployment, and what to do with everything else.",
+};
+
+# Supported file types
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+RememberStack reads text. Every document is turned into Markdown before
+anything else happens, so what a deployment accepts depends on which
+formats it can turn into Markdown. That differs between remember.dev and a
+self-hosted deployment.
+
+## At a glance
+
+| Format | remember.dev | Self-hosted, as installed | Self-hosted, with converters configured |
+|---|---|---|---|
+| Markdown (`.md`) | Yes | Yes | Yes |
+| Plain text (`.txt`) | Yes | Yes | Yes |
+| Chat logs and transcripts, as Markdown or text | Yes | Yes | Yes |
+| HTML | No | No | Yes, with `markitdown` |
+| PDF, including scanned PDFs | No | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
+| PNG and JPEG images | No | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
+| Word, PowerPoint, Excel | No | No | No: the bundled converter lacks the packages these need |
+| Audio and video | No | No | No |
+| Web addresses (URLs) | No | No | No: download the page and send the HTML |
+
+## remember.dev
+
+remember.dev accepts UTF-8 Markdown and plain text, up to 10,000,000 bytes
+of text per document. Send it with the type `text/markdown`,
+`text/x-markdown` or `text/plain`. A binary file, such as a PDF, an image or
+a Word document, is refused with `409`. Text that is not valid UTF-8, or
+that starts with HTML or XML markup, is refused with `422`. The full list of
+limits and error codes is on [Limits](/docs/cloud/limits).
+
+To store a PDF, a Word document or a web page on remember.dev, convert it
+to Markdown first and send the Markdown.
+
+## Self-hosted
+
+A new self-hosted deployment converts Markdown and plain text only. Other
+formats are accepted and stored, but they wait unprocessed until you add a
+converter for their type. Nothing tells you at upload time, so check
+[readiness](/docs/guides/wait-for-readiness) after your first upload of a
+new format.
+
+To read HTML, PDFs and images, map each file type to a converter in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
+converters](/docs/self-hosting/converters) shows the setting, what each
+converter does and costs, and how to release files that were stored before
+you added a route.
+
+## Send the right type
+
+The type sent with the upload decides which converter reads the file. The
+Python client guesses it from the file name, and on some Python
+installations it does not recognise `.md` as Markdown, so the file is sent
+as `application/octet-stream` and is not processed. Always pass the type:
+
+```python
+client.ingest("notes/standup.md", mime="text/markdown")
+```
+
+```bash
+remember ingest notes/standup.md --mime text/markdown
+```
+
+## Conversations
+
+There is no separate conversation format. Write each conversation as one
+Markdown document with one line per turn, and send it like any other file.
+[Ingest conversations and transcripts](/docs/guides/ingest-conversations)
+shows the layout.

@@ -1,0 +1,129 @@
+export const metadata = {
+  title: "Limits",
+  description: "Every limit remember.dev enforces on ingest, storage, tokens, sign-in, projects and billing, with the error you get when you reach it.",
+};
+
+# Limits
+
+<AppliesTo products={["remember.dev"]} />
+
+These are the limits remember.dev applies on top of the engine's own
+request limits, which are listed in the
+[HTTP API conventions](/docs/reference/http-api). Money limits (your
+balance and caps) are in [Spend caps and auto top-up](/docs/cloud/spend-controls).
+
+## Ingest
+
+remember.dev accepts text only. Every document you send to
+`POST /ingest` is checked before anything is stored, processed or charged.
+
+| Check | Limit | Refusal |
+|---|---|---|
+| Request body | 100,000,000 bytes | `413`, `body_too_large` |
+| Document text | 10,000,000 bytes | `413`, `source_bytes_limit_exceeded` |
+| Empty or whitespace-only document | not accepted | `422`, `empty_text` |
+| Binary file (PDF, PNG, JPEG, GIF, ZIP-based formats such as DOCX, gzip, audio or video containers) | not accepted | `409`, `rate_class_unavailable` |
+| Declared type other than `text/markdown`, `text/x-markdown`, `text/plain` or `application/octet-stream` | not accepted | `422`, `rate_class_ambiguous` |
+| Not valid UTF-8, or contains control characters other than tab, line feed and carriage return | not accepted | `422`, `rate_class_ambiguous` |
+| Starts with markup: HTML, XML, SVG, RTF, or any tag such as `<details>` as the first non-blank content | not accepted | `422`, `rate_class_ambiguous` |
+
+In practice the text limit is the one that matters: a document can be at
+most 10,000,000 bytes of UTF-8 text. A Markdown document is stored as
+`text/markdown`; anything else that passes is stored as `text/plain`.
+
+To ingest a PDF, a Word document or a web page, convert it to Markdown or
+plain text yourself first and send the text. Keep the original; see
+[Data handling and security](/docs/cloud/data-and-security).
+
+## Storage
+
+| Limit | Value |
+|---|---|
+| Object storage per project (source files and derived artifacts) | 2 GiB |
+| Objects per project | 100,000 |
+| Largest single stored object | 100,000,000 bytes |
+
+## Reading
+
+A deployment runs at most 2 live-graph queries and 4 retrieval queries at a
+time. A graph request that cannot start within about a second is refused
+with `503` and `live graph is busy`; retry it with backoff.
+
+remember.dev does not apply a per-token request rate on the deployment.
+Reading is also subject to the provider-cost safeguard described in
+[Spend caps and auto top-up](/docs/cloud/spend-controls#provider-cost-safeguard).
+
+## Tokens
+
+| Limit | Value | Refusal |
+|---|---|---|
+| Deployment API token lifetime | 365 days | expired tokens get `401` |
+| Live deployment API tokens per deployment | 20 | `409` |
+| Deployment API token mints | 60 per hour, per member per organisation | `429` |
+| Control-plane token lifetime | 90 days by default, 180 at most | request refused with `422` above 180 |
+| Control-plane token mints | 20 per hour, per member per organisation | `429`, `control_token.rate_limited`, with `Retry-After` |
+| Control-plane token self-revocation | 30 per 5 minutes per credential | `429` |
+| Browser read credentials | 60 per hour per member per deployment; 240 attempts per hour per member | `429` |
+| Browser upload credentials | same numbers, counted separately | `429` |
+| Token labels | 1 to 100 characters | `422` |
+
+## `remember login`
+
+| Limit | Value |
+|---|---|
+| Time to approve a code | 15 minutes |
+| Poll interval | 5 seconds, raised by 5 on `slow_down`, at most 30 |
+| New login requests | 20 per 15 minutes per source, at most 10 waiting at once |
+| Polls | 120 per 15 minutes per source |
+| Code lookups on the approval page | 10 per 15 minutes per person and address |
+
+A rate-limited poll gets the device-flow error `temporarily_unavailable`.
+
+## Hosted MCP
+
+| Limit | Value |
+|---|---|
+| Access token | 1 hour |
+| Refresh token | 30 days, single use |
+| Connect page | 15 minutes |
+| Authorization code | 5 minutes, single use |
+| Redirect addresses | `https`, or `http` on `localhost` / `127.0.0.1` |
+
+## Account and team
+
+| Limit | Value |
+|---|---|
+| Password | at least 8 characters, with an upper-case letter, a lower-case letter and a digit |
+| Email verification link | 48 hours |
+| Password reset link | 2 hours |
+| Console session | renewed every 15 minutes; ends after 60 days without use |
+| Invitation | expires after 7 days; resend at most once a minute |
+| Organisation name | 1 to 100 characters |
+| Organisation slug | up to 63 characters |
+
+## Projects
+
+| Limit | Value |
+|---|---|
+| Projects per organisation | 1 slot by default; [support](/docs/cloud/support) can raise it |
+| Project name | up to 100 characters |
+| Offboarding cancel window | 30 days by default, 0 to 180 when requested through the API |
+
+## Billing
+
+| Limit | Value |
+|---|---|
+| Credit purchase | whole credits, between the minimum and maximum the console shows |
+| Auto top-up threshold | whole credits, at least 1 |
+| Auto top-up attempts | at most one per 60 seconds; off after 3 failures in a row |
+| Ledger page | up to 200 entries per request (default 50) |
+| Intake history | 14 days by default, up to 90 |
+
+## Support records
+
+| Field | Limit |
+|---|---|
+| Category | 1 to 64 characters |
+| Subject | 1 to 255 characters |
+| Details | 1 to 8,000 characters |
+| Correlation reference | up to 128 characters |

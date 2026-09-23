@@ -1,0 +1,35 @@
+export const metadata = {
+  title: "Files and mounts",
+  description: "Whether you can browse a remember.dev project's memory as files, and what to use instead.",
+};
+
+# Files and mounts
+
+<AppliesTo products={["remember.dev"]} />
+
+A self-hosted deployment can publish its memory as a read-only folder tree:
+one folder per entity and per document, with an index file at every level,
+so an agent can explore it with `ls`, `cat` and `grep`. See
+[Filesystem views](/docs/self-hosting/filesystem-views).
+
+remember.dev does not offer this yet. You cannot mount a remember.dev
+project on macOS, Linux or Windows, or inside a sandbox such as E2B or
+Daytona, and there is no download of the tree.
+
+## What to use instead
+
+Everything the folder tree shows is available through the same client,
+CLI and MCP tools you use for questions:
+
+- **Your coding agent** reads the memory through [hosted MCP](/docs/cloud/hosted-mcp)
+  or `remember mcp`: entities with `resolve_entity`, what is true with
+  `facts_context`, and what sources said with `claims_and_sources_context`.
+- **Documents** are listed by `GET /documents`, and their passages are found
+  with [search](/docs/reference/http-api/search).
+- **Anything tabular**, such as every fact about one entity or every
+  document from one source, is one [SQL query](/docs/guides/sql) over the
+  query space.
+
+If your agent runs in a sandbox, install the `remember` package there and
+give it an API token, or connect it to hosted MCP. See
+[Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
