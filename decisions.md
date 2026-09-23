@@ -6150,33 +6150,35 @@ chose between deployment and control tokens against a hard-coded
    names, descriptions, input schemas, validation, error envelopes, required
    permission, and a per-tool version. Every MCP host imports it; the engine
    registry generates `GET /operations`' agent-facing fields from it; each
-   deployment advertises the tool versions it serves in `GET /deployment` so
-   hosts hide incompatible tools.
+   deployment advertises the tool versions it serves in `GET /deployment`, and
+   hosts render a tool only at an equal version.
 2. **`project` is host-resolved routing.** The catalogue defines one optional
-   `project` argument that multi-target hosts add and strip before calling a
-   deployment. The engine API never accepts it; a single-target `remember mcp`
-   refuses it.
+   `project` argument that hosts serving several deployments add and strip
+   before calling one. The engine API and `remember mcp` (which serves one
+   engine) refuse it.
 3. **`remember mcp`** has an engine mode (stdio, and Streamable HTTP that
    forwards each caller's bearer to the engine) and a bridge mode that relays
-   stdio to any remote MCP URL with a bearer key, restoring local `path`
-   ingest under the configured roots. A stored key is attached only to the
+   stdio to any remote MCP URL with a bearer key. A stored key is attached only to the
    issuer-advertised `remember_mcp_endpoint` origin; `--read-only` passes only
    tools annotated `readOnlyHint: true`. `remember setup` writes a remote entry
    (OAuth, or a key header by variable reference) where the harness supports
    it, a stdio bridge otherwise, and a self-hosted entry for local engines.
 4. **Perimeter contract.** The signed-credential adapter requires a
-   configured issuer; accepts a key whose `projects` claim lists this
-   deployment's configured project id, or is the organisation-wide marker
-   `"org:*"` with an `org` claim equal to the deployment's configured
-   issuer-tenant id; maps `memory:read` → read,
+   configured issuer and complete claim sets per `kind`. A `key` must carry
+   `aud = org:<tenant>` and `org = <tenant>` (the deployment's configured
+   issuer-tenant id) and `projects` of `"org:*"` or at most 20 project ids
+   including this one; a derived `session` credential must carry `aud` = this
+   deployment's id and `projects` = exactly this project; any other `aud`
+   (such as a hosted-MCP OAuth token's) is refused. It maps `memory:read` → read,
    `memory:write` → write (ingest included), `memory:ingest` → ingest only,
    ignores non-memory permissions, refuses unknown memory permissions,
    records a credential `kind` for audit, and takes revocation only as a
    signed document whose `aud` is this deployment, with a sequence that
-   advances on every issued document including heartbeats (lower sequences
-   rejected, last sequence persisted, the first validly signed document
-   accepted), whose `active_kids` list retires signing-key generations; a
-   revoked key stops working within the staleness bound plus clock leeway.
+   advances on every issued document including the heartbeat every R (lower
+   sequences rejected, last sequence persisted, the first validly signed
+   document accepted, later ones signed by a key active in the previous one),
+   with `exp = iat + S`, and whose `active_kids` list retires signing-key
+   generations; a revoked key stops working within S plus clock leeway.
    The `service` credential kind (`dpcred:` subject) remains part of the
    generic contract. The perimeter enforces per-key and per-deployment rate
    and in-flight limits on the direct path (`429` with `Retry-After`),
@@ -6188,10 +6190,11 @@ chose between deployment and control tokens against a hard-coded
    a stored key is only ever sent to its issuer, its advertised MCP endpoint,
    its recorded URL or an issuer-resolved deployment. `CloudClient` is
    removed; account calls are a namespace of `remember.Client` calling the
-   issuer's account API. A signed key resolves its data-plane host from a
-   claim or the issuer's project endpoint, cached with a bounded lifetime and
+   issuer's account API. A signed key resolves its data-plane host from the
+   issuer's project endpoint (`{project, name, api_url}`), cached with a bounded lifetime and
    re-resolved when a deployment moves. Re-login journals the old key durably,
-   then persists the new key, then revokes the old one. Issuer metadata also
+   then mints and persists the new key, then revokes the old one from the
+   journal. Issuer metadata also
    names the account API (`remember_account_endpoint`).
    `remember login` runs the standard device grant discovered from the
    issuer's OAuth metadata and stores one key (`credentials.json` version 2).
@@ -6208,6 +6211,11 @@ until revoked, which the old strict single audience prevented; revocation is
 therefore signed, sequenced, audience-bound and bounded in age. A host may carry
 memory traffic to the engine (the hosted MCP path); the engine treats it like any
 other caller holding a credential. Public docs change when the behaviour ships.
+
+**Simplicity.** Left out as unnecessary machinery: local multi-target
+routing, per-tool compatibility ranges, key prefixes, inline key-set or
+revocation configuration, bridge path-ingest rewriting, and routing hints
+inside keys.
 
 **Rejected.** Per-host copies with contract tests; hosts rendering from
 `GET /operations`; the engine accepting `project`; one MCP connection per

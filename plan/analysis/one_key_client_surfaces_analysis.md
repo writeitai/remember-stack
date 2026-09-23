@@ -182,11 +182,11 @@ equality. `GET /operations` stays (the SDK and `remember operations` use its
 result contracts), but no host renders tools from it.
 
 Version skew is real because the `remember` client is installed separately
-from the engine. Two options were considered: hide on any mismatch (safe,
-but every additive change hides tools from older clients), or advertise a
-compatible range per tool. The design takes the second: each served tool
-reports its current version and the oldest catalogue version it still
-accepts, so additive changes do not hide tools and breaking ones do.
+from the engine. Two options were considered: render a tool only when host
+and deployment report the same per-tool version, or advertise a compatible
+range per tool. The first is enough, because the per-tool version rises only
+on an incompatible change: additive changes keep the number and therefore
+hide nothing. A range would add machinery with no case that needs it.
 
 ### 3.3 The `project` argument without a control plane in the engine
 
@@ -202,8 +202,8 @@ Rule 3 forbids assuming a multi-tenant control plane. The options:
   words it identically; the engine's own API never sees it and keeps refusing
   unknown arguments. A local `remember mcp` that serves one engine refuses a
   call that names a project (silently ignoring it could answer from the wrong
-  memory); one configured with several self-hosted engines resolves it
-  itself.
+  memory). A multi-engine mode for `remember mcp` was considered and left
+  out: no stated need, and the hosted server already routes by project.
 
 ### 3.4 How agents that cannot use a remote MCP server get the one key
 
@@ -218,9 +218,9 @@ configurations cannot carry a header from an environment variable.
   available: setting an explicit engine URL selects exactly this mode.
 - **A stdio→remote bridge.** Chosen as the default for hosted keys: `remember
   mcp` relays JSON-RPC between stdio and the remote endpoint, adding the key as
-  a bearer header. The agent sees exactly the hosted tool set. The bridge also
-  restores `path` ingest (the remote server cannot read the user's disk) by
-  reading allowlisted files locally and sending them as `content_base64`.
+  a bearer header. The agent sees exactly the hosted tool set. (Rewriting the
+  remote `ingest` tool to accept local paths was considered and left out:
+  agents already send bodies as `text` or `content_base64`.)
 
 The bridge is generic: any remote MCP URL plus any bearer key, not a
 remember.dev special case.
@@ -234,14 +234,18 @@ remember.dev special case.
   server may still derive per-call credentials internally; that is the cloud's
   implementation detail and uses the same port.)
 - **The engine verifies the key itself.** Chosen. The existing signed-token
-  port changes its claim contract: an issuer check, a `projects` coverage
-  claim (an explicit list, or the organisation-wide marker `"org:*"` with an
-  `org` claim), a `permissions` array, and a credential kind. The engine
-  learns no organisation or member model: it compares the key's `org` with one
-  opaque "issuer tenant" id the operator configures on the deployment, so a
-  key can cover projects created after it was minted. (An earlier draft used
-  operator-configured group audiences; the explicit marker was agreed with the
-  cloud design because it states the key's intent in the key itself.)
+  port changes its claim contract: an issuer check, complete claim sets per
+  credential `kind`, an `aud` that says what kind of place the credential is
+  for (`org:<tenant>` for keys, this deployment's id for derived session
+  credentials — so an OAuth token minted for the hosted MCP server, whose
+  `aud` is that server, can never be replayed at a deployment), a `projects`
+  coverage claim (an explicit list of at most 20, or `"org:*"`), and a
+  `permissions` array. The engine learns no organisation or member model: it
+  compares the key's `org` and `aud` with one opaque "issuer tenant" id the
+  operator configures on the deployment, so a key can cover projects created
+  after it was minted. (Earlier drafts used operator-configured group
+  audiences, then coverage without `aud`; both were replaced by this shape,
+  agreed with the cloud design.)
 
 The cost is honest: a leaked multi-project key is valid at several
 deployments until revoked, which the old strict single audience prevented.
