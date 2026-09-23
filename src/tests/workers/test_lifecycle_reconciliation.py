@@ -1704,3 +1704,192 @@ def test_a_forget_cannot_start_while_a_delete_is_running(rig: _LifecycleRig) -> 
     assert "forget_prepared_at" in outcomes
     assert _current_claims(rig, added.doc_id) == 0
     assert rig.relation()["invalidated_at"] is not None
+
+
+def _cycle(rig: _LifecycleRig) -> UUID:
+    """Open one watched-directory sync cycle."""
+    return rig.sync.open_cycle(
+        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
+    )
+
+
+def _complete(rig: _LifecycleRig, cycle: UUID) -> None:
+    rig.sync.complete_cycle(cycle_id=cycle, observed=1, failed=0)
+
+
+def _finalize(rig: _LifecycleRig) -> None:
+    rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
+
+
+def _version_current_claims(rig: _LifecycleRig, version_id: UUID) -> object:
+    """Current claims whose origin chunk belongs to this version."""
+    return rig.scalar(
+        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.is_current_testimony",
+        v=version_id,
+    )
+
+
+def _watched_file_deleted_then_recreated(
+    rig: _LifecycleRig,
+) -> tuple[IngestedVersion, IngestedVersion]:
+    """A watched file is ingested, deleted at its source, then recreated with
+    the same bytes in a later cycle — all before finalization runs."""
+    first_cycle = _cycle(rig)
+    first = rig.observe(
+        source_ref="watched.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+        sync_cycle_id=first_cycle,
+    )
+    _complete(rig, first_cycle)
+    rig.drain()
+    _finalize(rig)
+    assert _open_works_for(rig) == 1
+    deleting = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="watched.md",
+        cycle_id=deleting,
+    )
+    _complete(rig, deleting)
+    recreating = _cycle(rig)
+    again = rig.observe(
+        source_ref="watched.md",
+        content=f"{_FACT_SENTENCE}\n",
+        versioning_mode="snapshot",
+        sync_cycle_id=recreating,
+    )
+    _complete(rig, recreating)
+    assert again.created is True
+    assert again.version_id != first.version_id
+    assert (
+        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=first.doc_id)
+        is None
+    )  # the recreate revived the lineage before finalization
+    return first, again
+
+
+def test_recreating_a_watched_file_never_strands_its_deleted_testimony(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 2 blocker: the source deletion is finalized against its deleted
+    versions even after the recreate cleared the lineage tombstone — here the
+    new version has not reached reconcile (it never might)."""
+    first, again = _watched_file_deleted_then_recreated(rig)
+
+    _finalize(rig)  # the new version is still unprocessed
+
+    assert _version_current_claims(rig, first.version_id) == 0
+    assert _open_works_for(rig) == 0
+    rig.drain()
+    _finalize(rig)
+    assert _version_current_claims(rig, again.version_id) == 1
+    assert _current_claims(rig, first.doc_id) == 1
+    assert _open_works_for(rig) == 1
+
+
+def test_finalizing_a_source_deletion_spares_the_recreated_version(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 2 blocker: when the recreated version is processed before
+    finalization, the deletion episode retires only the deleted version."""
+    first, again = _watched_file_deleted_then_recreated(rig)
+    rig.drain()
+    assert _current_claims(rig, first.doc_id) == 2  # snapshot: both current
+
+    _finalize(rig)
+
+    assert _version_current_claims(rig, first.version_id) == 0
+    assert _version_current_claims(rig, again.version_id) == 1
+    assert _open_works_for(rig) == 1
+
+
+def test_each_source_deletion_episode_emits_its_own_evidence_change(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 2 major: delete -> recreate -> delete at the source. The second
+    finalization has its own run id, so its evidence_changed is kept."""
+    first, _again = _watched_file_deleted_then_recreated(rig)
+    rig.drain()
+    _finalize(rig)
+    assert _open_works_for(rig) == 1
+    before = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+    deleting_again = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref="watched.md",
+        cycle_id=deleting_again,
+    )
+    _complete(rig, deleting_again)
+
+    _finalize(rig)
+
+    after = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+    assert _current_claims(rig, first.doc_id) == 0
+    assert _open_works_for(rig) == 0
+    assert isinstance(before, int) and isinstance(after, int)
+    assert after == before + 1
+
+
+def test_a_restore_verdict_racing_a_delete_cannot_revive_deleted_testimony(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 2 blocker: restoration is paused AFTER its deletion check (on the
+    canary it plants after writing currency). The delete must wait for it and
+    then retire what it restored, never commit alongside it."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    review_id, claim_id = _withdraw_support(rig, added.doc_id)
+
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(text("LOCK TABLE canary_cases IN SHARE ROW EXCLUSIVE MODE"))
+    outcomes: dict[str, object] = {}
+
+    def restore() -> None:
+        try:
+            rig.review.decide_support_withdrawn(
+                deployment_id=_DEPLOYMENT_ID,
+                review_id=review_id,
+                verdict="restore_support",
+                reviewer="ravi",
+            )
+            outcomes["restored"] = True
+        except Exception as error:  # noqa: BLE001 — asserted below
+            outcomes["restore_error"] = error
+
+    def delete() -> None:
+        try:
+            outcomes["deleted"] = _deleter(rig).delete_document(
+                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+            )
+        except Exception as error:  # noqa: BLE001 — asserted below
+            outcomes["delete_error"] = error
+
+    restoring = threading.Thread(target=restore)
+    restoring.start()
+    _wait_for_blocked(rig, count=1)  # past its deletion check, on the canary
+    deleting = threading.Thread(target=delete)
+    deleting.start()
+    _wait_for_blocked(rig, count=2)  # the delete waits for the verdict
+    blocker.rollback()
+    blocker.close()
+    restoring.join(timeout=60)
+    deleting.join(timeout=60)
+
+    assert outcomes.get("restored") is True, outcomes.get("restore_error")
+    assert "delete_error" not in outcomes, outcomes.get("delete_error")
+    assert (
+        rig.scalar(
+            "SELECT is_current_testimony FROM claims WHERE claim_id = :c", c=claim_id
+        )
+        is False
+    )
+    assert rig.relation()["invalidated_at"] is not None
