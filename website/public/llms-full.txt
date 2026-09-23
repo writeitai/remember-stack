@@ -6964,10 +6964,16 @@ into the same balance.
 
 ## The three charges
 
+**Provisional rates:**
+
+The rates below are development rates (rate version `dev-eur-2026-09-v4`,
+in force since 23 September 2026). They are provisional: they will be
+replaced when prices are published, and a new rate never changes a charge
+already made.
+
 ### Active project
 
-A fixed number of credits per active project per month. The rate is not
-published yet.
+**20 credits per active project per month** (provisional).
 
 A project is charged only while its deployment is ready to serve you. The
 charge is prorated to the second across the UTC calendar month: a project
@@ -6985,8 +6991,7 @@ until it can; see [Spend caps and auto top-up](https://remember.dev/docs/cloud/s
 
 ### Processed text
 
-A fixed number of credits per million characters. The rate is not
-published yet.
+**20 credits per million characters** of processed text (provisional).
 
 This is charged once for each new document version that finishes
 processing successfully. The quantity is the number of characters in the
@@ -7005,8 +7010,7 @@ refused before anything is stored or charged; see
 
 ### Stored data
 
-A fixed number of credits per GiB per month. The rate is not published
-yet.
+**3 credits per GiB per month** (provisional).
 
 Once a day each deployment measures what it holds, and remember.dev charges
 for that day: gibibytes held multiplied by the part of the day the project
@@ -7083,8 +7087,9 @@ curl -s https://remember.dev/app/api/v1/pricing/rates
 ```
 
 The response lists each charge with its unit and rate in credits, and
-states that ordinary retrieval is included. While no rate is published it
-answers `404` with `pricing_not_published`. A new rate applies from the
+states that ordinary retrieval is included. Until prices are published it
+answers `404` with `pricing_not_published`; the provisional rates are the
+ones on this page. A new rate applies from the
 time it takes effect; it never changes a charge already made.
 
 ## Related
