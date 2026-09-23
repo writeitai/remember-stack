@@ -41,3 +41,8 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 For conversational anaphora and question-affirmation resolution across dialogue turns,
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
+
+For deleting a document through the API, SDK, CLI or MCP, see D135 in the
+[evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
+and the [analysis](analysis/public_document_deletion.md). Erasure remains
+[D74 hard-forget](designs/hard_forget_design.md).

@@ -1760,6 +1760,13 @@ coordinate is persisted on occurrence records and currency transitions.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
 
+> **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
+> (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
+> with the lineage. The identical-byte no-op below therefore never matches a deleted version:
+> bytes that return after a deletion become a new version and are processed afresh, and D56
+> reuse never draws on a deleted version. "Resurrecting" a tombstoned lineage still revives the
+> lineage identity, not its retired testimony. Everything else here remains binding.
+
 > **Clarified 2026-07-30 (metadata no-op):** an identical-byte observation may
 > advance `source_version_ref` so a connector does not refetch forever, but it
 > never mutates the existing version's `source_modified_at`. That timestamp is
@@ -6090,4 +6097,51 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
+
+## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** D55 and the evidence-lifecycle design §8 always defined deleting a document —
+its claims stop being current testimony, support is recounted, and facts only it supported
+close with a recorded `retracted_source_removal` — and the engine implemented it
+(`LifecycleCatalog`, `DeletionService`), but no public surface could call it. Exposing it
+raised questions the internal service never answered: a repeated or interrupted delete,
+pipeline work still running for the document, the same file ingested again afterwards
+(which returned a live document that contributed nothing), who may delete, and whether it
+is charged. Analysis: `plan/analysis/public_document_deletion.md`.
+
+**Decision.**
+1. Lineage deletion is a public write: `DELETE /documents/{doc_id}` returning
+   `DocumentDeletion` (`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
+   `observations_closed`), `MemoryClient.delete_document`, `remember documents delete`, and a
+   `delete_document` MCP tool omitted by `--read-only`. `MemoryClient.list_documents` and
+   `remember documents list` read the existing `GET /documents`.
+2. It requires full write scope, runs behind the D74 admission barrier, and is not
+   spend-gated. Its only provider call — re-embedding entity profiles whose facts changed —
+   is metered on the surface cost ledger (`profile_delete`) and is best effort.
+3. **Finish or refuse.** An unknown id is `document_not_found` (404). For a tombstoned
+   lineage the cascade reruns under its stable run id; if nothing changes the answer is
+   `document_not_found`, and if something changes the call finishes the interrupted
+   deletion and answers 200.
+4. Lineage deletion (operator or source-observed) tombstones every version with the
+   lineage. Returning bytes are a new version processed afresh; D56 reuse never draws on a
+   deleted version (refines D55).
+5. Pipeline work that lands after a delete is retired at the reconcile stage through the
+   same cascade, with T4 anchors cleared again (D102); the chain ends there.
+6. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
+   operations.
+
+**Alternatives and consequences.** Idempotent 200 for every repeat hides a wrong id;
+plain 404 strands an interrupted cascade. Refusing deletion while work is pending leaves
+stuck documents undeletable; cancelling work needs a ledger state no stage has. Refusing
+re-ingest breaks delete-then-re-add; undelete would need a fact-reopening outcome and
+revives testimony the person removed. Deletion stays auditable, and adding the document
+again restores its contribution as new testimony; it is not erasure — stored originals
+and retired claims remain, and D74 is the only erasure. Queued extraction for a deleted
+document still runs once. The library boundary (D60/D61) is unchanged: deletion is fully
+in the engine.
+
+**Authority:** [design §8](plan/designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly),
+[analysis](plan/analysis/public_document_deletion.md).
 

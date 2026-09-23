@@ -389,7 +389,9 @@ the information survive its source's reorganization.)
 
 - **Delete a version**: that version's testimony ends (`version_deleted`); the lineage
   continues; bytes purge if no other version references the content object.
-- **Delete a lineage** (operator): the §13 document cascade at lineage grain.
+- **Delete a lineage** (operator): the §13 document cascade at lineage grain. The lineage
+  and **every one of its versions** are tombstoned together, so the deletion outlives a
+  later re-observation of the same identity (below).
 - **Source-observed deletion**: the connector finds the file deleted at its source (a trashed
   Drive file) — treated as a lineage deletion through the same cascade, stamped with the
   observing sync cycle (the cycle barrier still applies, so a delete-and-recreate or a
@@ -399,6 +401,44 @@ the information survive its source's reorganization.)
   It first reuses this normal currency/counting transition, then scrubs source-bearing history,
   purges active P1/live-graph/P3/K surfaces, and records the portable restore barrier defined in
   `hard_forget_design.md`; a soft tombstone alone is explicitly insufficient for S55.
+
+**The caller-facing delete (D135).** Lineage deletion is a public write: `DELETE
+/documents/{doc_id}` on the HTTP API, with the SDK, CLI (`remember documents delete`) and a
+`delete_document` MCP tool over it. Its contract, in the order a caller meets it
+(analysis: `plan/analysis/public_document_deletion.md`):
+
+- **Authority and admission.** It requires full write scope (a read or ingest credential is
+  refused) and sits behind the D74 admission barrier like every route. It is not
+  spend-gated: it starts no pipeline work. The only provider call it can make is
+  re-embedding the entity profiles whose facts changed; that call is metered on the surface
+  cost ledger (call site `profile_delete`) and is best effort — profiles are disposable
+  orientation text, so a provider failure is logged and never fails a deletion that has
+  committed.
+- **Finish or refuse.** An unknown `doc_id` is `document_not_found` (404). A tombstoned
+  lineage is not refused outright: the cascade reruns under its stable reconciliation id
+  (`delete-lineage:<doc_id>`). If the rerun changes nothing — no new currency event, no
+  count moved, no fact newly closed — the document was already gone and the answer is
+  `document_not_found`. If it changes something, an earlier attempt stopped part-way (the
+  tombstone committed, the cascade did not) and the call finishes it and answers with what
+  it did. Example: the process dies after tombstoning Dana's draft; the draft is already
+  hidden from every read, and Dana's retry closes the fact it alone supported.
+- **Work still in flight.** Deleting a document never waits for or cancels its pipeline.
+  Work that lands after the tombstone is invisible to reads (they filter tombstones) and
+  is retired where every version's chain converges: when the reconcile stage finds its
+  version's lineage or the version itself tombstoned, it clears T4 anchors that late work
+  re-created (D102), runs this section's cascade over whatever the deleted input still
+  holds current, and ends the chain.
+- **Coming back.** Re-observing a deleted lineage's identity (the same upload bytes, or the
+  same connector `source_ref`) is a new observation, not an undo. Because the old versions
+  are tombstoned, D55's content-hash no-op never matches them: the bytes become a new
+  version and run the whole pipeline. D56 reuse never draws on a deleted version, so the new
+  version extracts fresh claims rather than re-attaching retired ones. The closed facts stay
+  closed; the new claims support live facts through ordinary E3 application.
+- **Grain.** The public surface deletes lineages only. The version grain above and D74
+  hard-forget remain operator operations: a caller-facing version delete would need its own
+  contract for removing the last live version, and hard-forget closes the whole deployment's
+  admission while it erases bytes, which must never sit one flag away from an ordinary
+  delete.
 
 ## 9. The rejected alternative — reified evidence bases (a documented alternative)
 

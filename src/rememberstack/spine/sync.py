@@ -72,10 +72,13 @@ class SyncCatalog:
         The tombstone is stamped with the observing cycle so reconciliation
         can place the deletion inside its cycle barrier. The downstream
         cascade (claims currency, fact closure per mode, artifact removal)
-        is the delete worker's job.
+        is the delete worker's job. Every version is tombstoned with the
+        lineage, as for an operator delete, so a file recreated in a later
+        cycle is processed as a new version instead of matching a deleted
+        one (D135).
         """
         with self._engine.begin() as connection:
-            return connection.execute(
+            doc_id = connection.execute(
                 _TOMBSTONE_LINEAGE,
                 {
                     "deployment_id": deployment_id,
@@ -84,6 +87,9 @@ class SyncCatalog:
                     "cycle_id": cycle_id,
                 },
             ).scalar_one_or_none()
+            if doc_id is not None:
+                connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
+            return doc_id
 
 
 _OPEN_CYCLE = text(
@@ -124,5 +130,12 @@ _TOMBSTONE_LINEAGE = text(
       AND source_ref = :source_ref
       AND deleted_at IS NULL
     RETURNING doc_id
+    """
+)
+
+_TOMBSTONE_LINEAGE_VERSIONS = text(
+    """
+    UPDATE document_versions SET deleted_at = now()
+    WHERE doc_id = :doc_id AND deleted_at IS NULL
     """
 )
