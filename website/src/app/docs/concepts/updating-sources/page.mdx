@@ -138,10 +138,13 @@ again. The version's `source_modified_at` does not change.
 
 ## Deleting a document
 
-Deleting a document or a version ends the currency of its claims (reason
+Deleting a document ends the currency of its claims (reason
 `version_deleted`) and retracts facts that only it supported, the same way
-as a living removal. Deletion is not exposed through the HTTP API, the
-`remember` package or the CLI yet.
+as a living removal. You delete a whole document, every version at once,
+with `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
+`remember documents delete` or the `delete_document` MCP tool. Deleting a
+single version is not offered. See
+[Deleting a document](/docs/concepts/documents-and-sources#deleting-a-document).
 
 ## Where to go next
 

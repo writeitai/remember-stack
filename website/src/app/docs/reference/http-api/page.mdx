@@ -13,11 +13,11 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 27 documented operations:
+The API has 28 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents` |
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
 | Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
@@ -158,6 +158,7 @@ their arguments do not fit in a query string.
 | `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
+| `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `write` (see below) |
 | `POST` | `/ingest` | `ingest` (or `write`) |

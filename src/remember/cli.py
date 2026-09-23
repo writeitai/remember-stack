@@ -2469,7 +2469,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse ingest and pipeline-readiness tools",
+        help="omit and refuse the ingest, pipeline-readiness and delete tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
     login.add_argument("--token-host", default=None)

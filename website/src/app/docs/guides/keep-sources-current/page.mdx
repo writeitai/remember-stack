@@ -173,10 +173,38 @@ versions; the loop waits only for what changed.
 ## Removing a file
 
 Not sending a file does not remove its document: RememberStack has no
-signal that the file is gone, and its claims keep counting. The HTTP API,
-the client and the CLI have no delete call yet. To stop a living document
-from supporting anything, send a version with the passages removed. See
-[What is not built yet](/docs/project/not-built-yet).
+signal that the file is gone, and its claims keep counting. When a file
+leaves the folder, delete its document too. Each document the loop above
+sent lists its `source_ref` as `source_uri`, so one pass over
+`list_documents` finds the ones whose file is gone:
+
+```python
+from pathlib import Path
+
+import remember
+
+client = remember.Client.from_env()
+root = Path("specs")
+present = {f"specs/{path.name}" for path in root.glob("*.md")}
+
+cursor = None
+while True:
+    page = client.list_documents(cursor=cursor)
+    for document in page.documents:
+        if document.source_kind == "file" and document.source_uri not in present:
+            client.delete_document(doc_id=document.doc_id)
+    if page.cursor is None:
+        break
+    cursor = page.cursor
+```
+
+Deleting removes the document's claims from the evidence and closes the
+facts only it supported; the claims stay as history. If the file comes back
+later, the sync loop adds it back as a new version. See
+[Deleting a document](/docs/concepts/documents-and-sources#deleting-a-document).
+
+To remove only some passages of a living document, send a version without
+them instead.
 
 ## Next
 
