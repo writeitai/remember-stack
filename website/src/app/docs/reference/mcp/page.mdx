@@ -96,11 +96,11 @@ Give exactly one body: `text`, `content_base64` or `path`.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
-| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: `text/plain`. |
-| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: `application/octet-stream`. |
-| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: guessed from the file's real name. |
+| `text` | string | one body is required | Non-empty UTF-8 text. Needs `filename`. Default `mime`: the text type of the filename's extension (`.md` is `text/markdown`), else `text/plain`. |
+| `content_base64` | string | | Standard base64, no `data:` prefix. Needs `filename`. Default `mime`: from the filename's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream`. |
+| `path` | string | | A file on the machine running the server. Refused unless path ingest is enabled; see [Ingest from a path](#ingest-from-a-path). Default `filename`: the file's name. Default `mime`: from the extension of the file's real name, as for `content_base64`. |
 | `filename` | string | with `text` or `content_base64` | 1–512 characters. |
-| `mime` | string | no | 1–255 characters. The engine processes only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `mime` | string | no | 1–255 characters. An explicit value always wins over the defaults above. The engine processes only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | string | no | At most 512 characters. |
 | `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
 | `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
@@ -182,9 +182,12 @@ and their `status`), `capabilities`, `model_bindings`, `build_revision`,
 [Result types](/docs/reference/result-types).
 
 The tool description tells the agent how to poll: wait about 30 seconds after
-ingest, then every 30–60 seconds; stop at once when a stage is `failed` or
-`dead_letter`; stop and report after 20–30 minutes without `ready`. See
-[The pipeline and readiness](/docs/concepts/pipeline).
+ingest, then every 30–60 seconds; treat a `failed` stage as retrying and
+keep polling; stop at once and report the version and stage when a stage is
+`dead_letter`; stop and report after 20–30 minutes without `ready`. An
+ingest that returned `created: false` is polled the same way, because an
+earlier run of the same bytes may still be processing. See
+[Wait until a document is queryable](/docs/guides/wait-for-readiness#over-mcp).
 
 ### Assured operations
 

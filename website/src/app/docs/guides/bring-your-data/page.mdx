@@ -78,7 +78,7 @@ from remember import MemoryApiError
 client = remember.Client.from_env()
 converter = MarkItDown()
 root = Path("shared-drive-export")
-TEXT_SUFFIXES = {".md": "text/markdown", ".txt": "text/plain"}
+TEXT_SUFFIXES = {".md", ".txt"}
 CONVERTED = {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".htm"}
 pending = []
 
@@ -88,17 +88,16 @@ for path in sorted(root.rglob("*")):
         continue
     ref = path.relative_to(root).as_posix()
     if suffix in TEXT_SUFFIXES:
-        body, mime = path.read_bytes(), TEXT_SUFFIXES[suffix]
+        body, filename = path.read_bytes(), path.name
     else:
-        body, mime = converter.convert(str(path)).text_content.encode("utf-8"), "text/markdown"
+        body, filename = converter.convert(str(path)).text_content.encode("utf-8"), f"{path.stem}.md"
     if not body.strip():
         print(f"skipped {ref}: no text")
         continue
     try:
         version = client.ingest(
             content=body,
-            filename=f"{path.stem}.md" if mime == "text/markdown" else path.name,
-            mime=mime,
+            filename=filename,
             title=path.stem,
             source_kind="file",
             source_ref=ref,
@@ -112,6 +111,9 @@ for path in sorted(root.rglob("*")):
 
 print(f"{len(pending)} new versions")
 ```
+
+The client takes the MIME type from `filename`, so naming converted text
+`….md` sends it as `text/markdown`.
 
 File modification times are often reset by copying and exporting. If your
 source system knows the real date (a document's last edit, a meeting's
@@ -181,7 +183,6 @@ for source, (text, date) in rebuild_documents(chunks).items():
     version = client.ingest(
         content=text.encode("utf-8"),
         filename="document.md",
-        mime="text/markdown",
         title=source,
         source_kind="vector-import",
         source_ref=source,

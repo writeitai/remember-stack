@@ -25,9 +25,11 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
 `passthrough` keeps the text as it is. It requires valid UTF-8; a file in
 another encoding fails conversion.
 
-The MIME type is the one sent with the upload. The `remember` CLI and
-Python client guess it from the file extension and fall back to
-`application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
+The MIME type is the one sent with the upload. The `remember` CLI, Python
+client and MCP `ingest` tool take it from the file extension, the same way
+on every Python installation for the formats a route can name (the table is
+in [Ingest files](/docs/guides/ingest-files#the-mime-type)), and fall back
+to `application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
 the extension does not say what the file is. The match is exact:
 `text/markdown` and `text/x-markdown` are different keys.
 

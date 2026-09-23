@@ -95,7 +95,6 @@ body = render_session("Billing migration stand-up — 2026-09-17", ["Dana", "Rav
 version = client.ingest(
     body.encode("utf-8"),
     filename="standup-2026-09-17.md",
-    mime="text/markdown",
     title="Billing migration stand-up — 2026-09-17",
     source_kind="meeting",
     source_ref="standup/2026-09-17",
@@ -113,13 +112,13 @@ Three choices in that call matter:
   time (or its end time, consistently). Every claim extracted from the
   document gets it as `asserted_at`, the time the source made the
   statement. Never leave it as the moment you happened to upload.
-- **`mime="text/markdown"`.** Bytes carry no file extension to guess from.
+- **A `.md` `filename`.** Bytes have no path, so the client takes the MIME
+  type from `filename`: `standup-2026-09-17.md` is sent as `text/markdown`.
 
 The same file from the CLI:
 
 ```bash
 remember ingest standup-2026-09-17.md \
-  --mime text/markdown \
   --source-kind meeting --source-ref standup/2026-09-17 \
   --source-modified-at 2026-09-17T09:30:00+00:00
 ```
@@ -132,7 +131,6 @@ From an agent over MCP, pass the rendered text:
   "arguments": {
     "text": "# Billing migration stand-up — 2026-09-17\n\nParticipants: Dana, Ravi\n\n[t1 | 2026-09-17T09:30:00Z] Dana: Where are we on the invoice exporter?\n",
     "filename": "standup-2026-09-17.md",
-    "mime": "text/markdown",
     "source_kind": "meeting",
     "source_ref": "standup/2026-09-17",
     "source_modified_at": "2026-09-17T09:30:00+00:00"
@@ -160,7 +158,6 @@ grows, with the same source pair and `versioning_mode="living"`:
 version = client.ingest(
     body.encode("utf-8"),
     filename="support-4411.md",
-    mime="text/markdown",
     source_kind="chat",
     source_ref="support/4411",
     source_modified_at=last_turn_at,

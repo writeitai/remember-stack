@@ -28,6 +28,7 @@ from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.credentials import CredentialError
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from remember.models import ConnectorCreate
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
@@ -552,9 +553,7 @@ def _run_whoami(args: argparse.Namespace) -> int:
         str(stored.deployment_id) if stored.deployment_id else "default"
     )
     print(f"Active Project: {active_proj}")
-    endpoint = (
-        stored.active_data_plane_url or stored.api_url or "https://api.remember.dev"
-    )
+    endpoint = stored.active_data_plane_url or stored.api_url
     print(f"Data Plane: {endpoint}")
     return 0
 
@@ -583,7 +582,7 @@ def _run_balance(args: argparse.Namespace) -> int:
         )
         return 1
 
-    control_plane_url = stored.control_plane.url or "https://api.remember.dev"
+    control_plane_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
     token = stored.control_plane.access_token.get_secret_value()
     org_id = (
         stored.control_plane.org_id
@@ -657,7 +656,7 @@ def _run_projects(args: argparse.Namespace) -> int:
         # D108 / D56: If control plane credentials exist, query live deployments from control plane
         if stored.control_plane and stored.control_plane.access_token:
             cp_attempted = True
-            cp_url = stored.control_plane.url or "https://api.remember.dev"
+            cp_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
             token = stored.control_plane.access_token.get_secret_value()
             org_id = stored.control_plane.org_id or stored.org_id
             endpoint = f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments"
@@ -1469,12 +1468,15 @@ def _warn_if_revocation_outstanding() -> None:
 def _resolved_token_host(
     *, explicit: str | None, stored_host: str | None = None
 ) -> str:
-    """Require an explicit token host; never derive one from the query API URL."""
+    """Resolve flag, env, stored host, then the remember.dev control plane.
+
+    The token host is never derived from the query API URL.
+    """
     from remember.credentials import TokenHostSettings
     from remember.device_login import normalize_token_host
 
     settings = TokenHostSettings.model_validate({})
-    host = explicit or settings.token_host or stored_host or "https://api.remember.dev"
+    host = explicit or settings.token_host or stored_host or DEFAULT_CONTROL_PLANE_URL
     return normalize_token_host(token_host=host)
 
 
@@ -2424,7 +2426,11 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="omit and refuse ingest and pipeline-readiness tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
-    login.add_argument("--token-host", default=None)
+    login.add_argument(
+        "--token-host",
+        default=None,
+        help=f"control-plane base URL (default {DEFAULT_CONTROL_PLANE_URL})",
+    )
     login.add_argument("--api-url", default=None)
     login.add_argument(
         "--audience",
@@ -2441,7 +2447,14 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="shorthand for --audience control",
     )
     logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
-    logout.add_argument("--token-host", default=None)
+    logout.add_argument(
+        "--token-host",
+        default=None,
+        help=(
+            "control-plane base URL (default: the stored host, else"
+            f" {DEFAULT_CONTROL_PLANE_URL})"
+        ),
+    )
 
     setup = commands.add_parser(
         "setup", help="bootstrap AI coding harnesses for Remember"
