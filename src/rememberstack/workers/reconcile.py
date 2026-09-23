@@ -300,6 +300,13 @@ class ReconcileHandler:
             late = self._catalog.stale_for_version_deletion(
                 deployment_id=deployment_id, version_id=version_id
             )
+            # Fact work for this deleted version may have attached claims
+            # that a finalization already retired; with the lineage live
+            # again there is no currency transition left to find them, so
+            # the version's own claims are the recount/closure scope.
+            scope = self._catalog.version_claim_ids(
+                deployment_id=deployment_id, version_id=version_id
+            )
         delta, _changed = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,
@@ -442,6 +449,17 @@ class CycleFinalizer:
             # version carries — never the recreated version's (D135).
             with self._catalog.transaction() as catalog:
                 catalog.lock_lineage(doc_id=doc_id)
+                # D102: deleted evidence never anchors identity. A lineage
+                # still deleted loses its anchors; one recreated since keeps
+                # only those its live testimony earned.
+                if catalog.lineage_is_deleted(doc_id=doc_id):
+                    catalog.clear_document_bindings(
+                        deployment_id=deployment_id, doc_id=doc_id
+                    )
+                else:
+                    catalog.rebuild_live_document_bindings(
+                        deployment_id=deployment_id, doc_id=doc_id
+                    )
                 cascade_lineage_removal(
                     catalog=catalog,
                     deployment_id=deployment_id,
@@ -661,6 +679,10 @@ class DocumentDeleter:
                 f"deployment {deployment_id} is honoring a hard forget"
             )
         catalog = LifecycleCatalog.on_connection(connection=connection)
+        # Lock the lineage BEFORE reading its state: a concurrent delete of
+        # the same document waits here, then reads the committed tombstone
+        # and is refused as already deleted rather than answering 200.
+        catalog.lock_lineage(doc_id=doc_id)
         state = catalog.lineage_deletion_state(
             deployment_id=deployment_id, doc_id=doc_id
         )

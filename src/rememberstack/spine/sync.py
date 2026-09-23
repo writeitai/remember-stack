@@ -89,6 +89,12 @@ class SyncCatalog:
             ).scalar_one_or_none()
             if doc_id is not None:
                 connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
+                # D102/D135: deleted evidence never anchors identity; a
+                # recreated file earns fresh anchors from its new version.
+                connection.execute(
+                    _CLEAR_DOCUMENT_BINDINGS,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
             return doc_id
 
 
@@ -130,6 +136,13 @@ _TOMBSTONE_LINEAGE = text(
       AND source_ref = :source_ref
       AND deleted_at IS NULL
     RETURNING doc_id
+    """
+)
+
+_CLEAR_DOCUMENT_BINDINGS = text(
+    """
+    DELETE FROM document_entity_bindings
+    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
     """
 )
 

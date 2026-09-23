@@ -750,6 +750,31 @@ class LifecycleCatalog:
                 {"doc_id": doc_id},
             )
 
+    def lineage_is_deleted(self, *, doc_id: UUID) -> bool:
+        """Whether the lineage row is currently tombstoned."""
+        with self._engine.connect() as connection:
+            return bool(
+                connection.execute(
+                    text(
+                        "SELECT deleted_at IS NOT NULL FROM documents"
+                        " WHERE doc_id = :doc_id"
+                    ),
+                    {"doc_id": doc_id},
+                ).scalar_one_or_none()
+            )
+
+    def version_claim_ids(
+        self, *, deployment_id: UUID, version_id: UUID
+    ) -> tuple[UUID, ...]:
+        """Every claim a version carries, by origin or by a reuse link."""
+        with self._engine.connect() as connection:
+            return tuple(
+                connection.execute(
+                    _SELECT_VERSION_CLAIMS,
+                    {"deployment_id": deployment_id, "version_id": version_id},
+                ).scalars()
+            )
+
     def stranded_deletion_episodes(
         self, *, deployment_id: UUID
     ) -> tuple[tuple[UUID, datetime], ...]:
@@ -758,6 +783,11 @@ class LifecycleCatalog:
         Keyed on deleted VERSIONS, not on the lineage tombstone: a watched
         file recreated before finalization clears the lineage tombstone, but
         the deleted versions stay deleted and their claims must still end.
+        An episode is pending while any deleted claim still has work left,
+        not only while one is current: a claim a support review already made
+        non-current can hold an open zero-support fact and an open review,
+        and a claim fact application attached after it was retired can hold
+        an open zero-support fact.
         Each row is ``(doc_id, episode_at)`` — the newest deletion instant of
         the versions (or lineage) carrying the stranded claims, which names
         the episode stably across retries and anew for a later deletion.
@@ -1440,12 +1470,66 @@ _SELECT_STRANDED_EPISODES = text(
     FROM document_versions v
     JOIN documents d ON d.doc_id = v.doc_id
     JOIN chunks c ON c.version_id = v.version_id
-    JOIN claims cl ON cl.chunk_id = c.chunk_id AND cl.is_current_testimony
+    JOIN claims cl ON cl.chunk_id = c.chunk_id
     WHERE v.deployment_id = :deployment_id
       AND (v.deleted_at IS NOT NULL OR d.deleted_at IS NOT NULL)
       AND NOT {LIVE_CARRIAGE_SQL}
+      AND (
+          cl.is_current_testimony
+          OR EXISTS (
+              SELECT 1 FROM review_queue q
+              WHERE q.deployment_id = cl.deployment_id
+                AND q.item_kind = 'support_withdrawn'
+                AND q.status IN ('pending', 'deferred')
+                AND q.candidate ->> 'claim_id' = cl.claim_id::text
+          )
+          OR EXISTS (
+              SELECT 1 FROM relation_evidence e
+              JOIN relations r ON r.relation_id = e.relation_id
+              WHERE e.claim_id = cl.claim_id
+                AND r.invalidated_at IS NULL AND r.evidence_count = 0
+                -- a fact under a live document's open review is that
+                -- review's to decide; selecting it would repeat every pass
+                AND NOT EXISTS (
+                    SELECT 1 FROM review_queue fq
+                    WHERE fq.deployment_id = r.deployment_id
+                      AND fq.item_kind = 'support_withdrawn'
+                      AND fq.status IN ('pending', 'deferred')
+                      AND fq.candidate ->> 'fact_kind' = 'relation'
+                      AND fq.candidate ->> 'fact_id' = r.relation_id::text
+                )
+          )
+          OR EXISTS (
+              SELECT 1 FROM observation_evidence e
+              JOIN observations o ON o.observation_id = e.observation_id
+              WHERE e.claim_id = cl.claim_id
+                AND o.invalidated_at IS NULL AND o.evidence_count = 0
+                -- a fact under a live document's open review is that
+                -- review's to decide; selecting it would repeat every pass
+                AND NOT EXISTS (
+                    SELECT 1 FROM review_queue fq
+                    WHERE fq.deployment_id = o.deployment_id
+                      AND fq.item_kind = 'support_withdrawn'
+                      AND fq.status IN ('pending', 'deferred')
+                      AND fq.candidate ->> 'fact_kind' = 'observation'
+                      AND fq.candidate ->> 'fact_id' = o.observation_id::text
+                )
+          )
+      )
     GROUP BY v.doc_id
     ORDER BY v.doc_id
+    """
+)
+
+_SELECT_VERSION_CLAIMS = text(
+    """
+    SELECT cl.claim_id FROM claims cl
+    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    WHERE cl.deployment_id = :deployment_id AND c.version_id = :version_id
+    UNION
+    SELECT cc.claim_id FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    WHERE c.deployment_id = :deployment_id AND c.version_id = :version_id
     """
 )
 

@@ -16,6 +16,7 @@ import json
 from typing import Literal
 from uuid import UUID
 
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
@@ -114,6 +115,9 @@ class _LocalDocumentDeleteBackend:
             )
         except DocumentNotFoundError as error:
             raise _DocumentNotFound() from error
+        except ForgetInProgressError as error:
+            # the same stable, retryable negative the HTTP route answers
+            raise _ForgetInProgress() from error
 
 
 class _DocumentNotFound(Exception):
@@ -121,6 +125,13 @@ class _DocumentNotFound(Exception):
 
     status_code = 404
     detail = "document_not_found"
+
+
+class _ForgetInProgress(Exception):
+    """The HTTP-shaped D74 barrier the shared tool maps to ``forget_in_progress``."""
+
+    status_code = 503
+    detail = "forget_in_progress"
 
 
 class OperationMcpServer:
