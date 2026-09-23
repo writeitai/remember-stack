@@ -394,9 +394,12 @@ the information survive its source's reorganization.)
   later re-observation of the same identity (below).
 - **Source-observed deletion**: the connector finds the file deleted at its source (a trashed
   Drive file) — treated as a lineage deletion through the same cascade (lineage and versions
-  tombstoned), stamped with the observing sync cycle. Finalization settles each deletion
-  **episode** against its deleted versions, not against the lineage tombstone: it retires
-  current claims that no live version carries, one transaction per episode that first
+  tombstoned, T4 anchors cleared in the same transaction), stamped with the observing sync
+  cycle. Finalization settles each deletion **episode** against its deleted versions, not
+  against the lineage tombstone. An episode is pending while any claim no live version
+  carries still has work left — it is current, has an open `support_withdrawn` review, or
+  evidences an open zero-support fact — and settling it retires those claims, resolves the
+  reviews, closes the facts and clears (or, for a recreated lineage, rebuilds) anchors, one transaction per episode that first
   locks the lineage row (the row E0 locks to re-ingest), under a run id derived from the
   lineage and the episode's deletion instant. A file recreated before finalization revives
   the lineage but never strands the deleted version's testimony, and the recreated
@@ -422,7 +425,9 @@ the information survive its source's reorganization.)
   committed.
 - **One fenced, atomic episode.** The tombstone and the whole cascade run in one database
   transaction that takes the D74 hard-forget fence (the shared advisory lock ordinary fact
-  work takes) first and holds it to the commit. So a deletion happens completely or not at
+  work takes) first and holds it to the commit, then locks the lineage row before reading
+  its deletion state (so of two racing deletes, the second reads the committed tombstone and
+  is refused). So a deletion happens completely or not at
   all; a forget already `preparing` refuses it before any change (`forget_in_progress`); a
   forget requested mid-delete waits for the commit; and a re-ingest of the same lineage
   waits on the lineage row and then arrives as a new version (below). The cascade retires
@@ -454,7 +459,9 @@ the information survive its source's reorganization.)
   that point (fact application over claims extracted just before the tombstone) is
   invisible to reads, which filter tombstones, and is retired where every version's chain
   converges: when the reconcile stage finds its version's lineage or the version itself
-  tombstoned, it repairs T4 anchors (D102) — cleared for a deleted lineage, rebuilt from
+  tombstoned — scoping that version's own claims for recount and closure even when the
+  lineage is live again, since fact work may have attached a claim a finalization had
+  already retired — it repairs T4 anchors (D102) — cleared for a deleted lineage, rebuilt from
   live testimony for a lineage that is live again, so a re-added document keeps the
   anchors its live version earned — runs this section's cascade over whatever the deleted
   input still holds current, recounting and closing every fact any of the lineage's claims

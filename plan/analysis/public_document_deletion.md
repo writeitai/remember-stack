@@ -223,3 +223,31 @@ finalization, a crashed operator run).
    suppressed the second `evidence_changed`. Fix: the id includes the
    episode instant (the newest deletion time of the versions it retires),
    which is stable across retries and new for each episode.
+
+## 7. Review round 3 (2026-09-23) and what changed
+
+1. **An episode could be pending with no current claim.** A support review
+   can make a deleted claim non-current while holding its zero-support fact
+   open; the finalizer only looked for current claims, so the episode never
+   ran. Fix: an episode is pending while any deleted claim has residual work
+   — it is current, it has an open `support_withdrawn` review, or it
+   evidences an open zero-support fact (unless a live document's open review
+   holds that fact). The cascade then resolves the review and closes the
+   fact.
+2. **Fact work could outlive a finalized deletion.** Finalization retired a
+   claim before in-flight fact application attached it; the file was
+   recreated; the old version's reconcile found the lineage live and no
+   currency transition, so the zero-support fact stayed open. Fix: the
+   reconcile backstop for a deleted version always scopes that version's own
+   claims for recount and closure, whether or not the lineage is live.
+3. **Two racing deletes could both answer 200.** Both read a live lineage
+   before either tombstone committed. Fix: the delete locks the lineage row
+   before reading its deletion state, so the second reads the committed
+   tombstone and answers `document_not_found`.
+4. **Source deletion kept D102 anchors.** Fix: the source tombstone clears the
+   lineage's anchors in the same transaction, and each finalized episode
+   clears them (lineage still deleted) or rebuilds them from live testimony
+   (lineage recreated).
+5. **The in-process MCP server mapped a hard forget to `internal_error`.**
+   Fix: `delete_document` maps it, on both MCP servers, to a retryable
+   `forget_in_progress` error, matching the route's 503.

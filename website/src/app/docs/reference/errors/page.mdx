@@ -171,6 +171,7 @@ structured error:
 |---|---|---|---|
 | `invalid_arguments` | 422 | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
 | `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `source_lineage_pair` | 422 | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
 | `empty_body` | 422 | no | Provide non-empty path / text / content_base64 content. |
 | `encoding_error` | 422 | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
