@@ -675,7 +675,7 @@ One assured operation, as `GET /operations` returns it.
 | `result_contract` | string | `envelope` or `context_bundle_v2`. |
 | `output_grain` | string, nullable | `fact`, `evidence`, or `null` for `combined_context`. |
 | `answer_intent` | string | `identity`, `claims_and_sources`, `facts` or `combined_context`. |
-| `mutates` | boolean, nullable | Whether the operation changes memory. `null` on all four today. |
+| `mutates` | boolean, nullable | Whether the operation changes memory. `false` on all four shipped operations. |
 | `version` | integer ≥ 1, nullable | |
 | `implementation_plan_hash` | string of 64 hex characters, nullable | Identifies the exact plan. |
 

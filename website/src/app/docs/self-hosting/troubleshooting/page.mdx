@@ -140,12 +140,10 @@ The API sends one of four `detail` strings:
 | `403` `credential is for another deployment` | The shared-secret bind or the token's `aud` names a different deployment id. | Bind the secret, or mint the token, for the id in your `.env`. |
 | `403` `credential may not perform this operation` | The token's scope does not cover the route. | See below. |
 
-The scope surprise that catches most people: **every assured operation
-needs `write`**, although they only read. A `read` token gets `403` on
-`POST /operations/facts_context` and on the other three. `GET /deployment`
-needs `write` too. Give an agent that calls operations a `write` token, or
-limit it to the search, graph and SQL routes a `read` token may call. The
-full table is in [Authentication and scopes](/docs/self-hosting/authentication#scopes).
+A `read` token can call every route that only reads, including the four
+assured operations and `GET /deployment`. It cannot ingest or change
+anything; that needs `ingest` or `write`. The full table is in
+[Authentication and scopes](/docs/self-hosting/authentication#scopes).
 
 ## A browser app cannot reach the API
 
