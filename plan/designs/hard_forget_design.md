@@ -79,6 +79,27 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 - pre-forget P3 snapshot prefixes; and
 - K artifact IDs whose body, curation sidecar, or history ever cited the lineage's evidence.
 
+**Manifest v2 (D133, D134).** The schema version becomes 2 and adds, still content-free:
+
+- `lineages[]`: one entry per lineage in the forgotten **descendant closure** — the requested
+  `doc_id` first (`role = root`), then every lineage reachable from it through
+  `document_members` (`role = member`, with `parent_doc_id` and `member_key`). Each entry carries
+  that lineage's own source fingerprint, raw `content_hash`es, and the row IDs and object
+  keys/prefixes listed above, including private-store prefixes. Every field above that v1 scopes
+  to "the lineage" is scoped per entry. The top-level `doc_id` remains the requested lineage.
+- `member_suppressions[]`: `(parent_doc_id, member_key)` pairs. A request to forget one member
+  lineage records its own pair here, so that the parent is never re-expanded into it.
+- `alias_contributions[]`: `(entity_id, normalized_lemma, provenance)` keys of the
+  `document_metadata` alias contributions removed, so replay can remove them from a restored
+  database even after PostgreSQL has scrubbed its copy.
+
+**Restore guards for v2.** Replay treats every `lineages[]` entry exactly as v1 treats its one
+lineage: its source fingerprint and content hashes refuse re-admission of the same source, and
+its IDs and prefixes are purged from each restored store. Replay re-creates every
+`member_suppressions[]` row before any `expand` work is admitted, so a restored parent cannot
+resurrect a forgotten member. Verification (the S55 canary) runs per entry. A v1 manifest remains
+valid and is read as a v2 manifest with one root entry and empty new lists.
+
 IDs and hashes are retained because replay must still work when PostgreSQL has already scrubbed the
 payload columns or when only one external store was restored. The manifest is immutable and
 idempotent by `forget_id`: appending the same bytes succeeds; reusing the ID for different bytes is

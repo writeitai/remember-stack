@@ -326,3 +326,23 @@ substantive corrections:
 | Binding, mint race, alias enum undefined | Reuse `documents.document_entity_id` as a unique binding, row-locked mint, `document_metadata` provenance, merge guard (D134 §1–§2) |
 | Rename and forget left names behind | Metadata observation for renames; forget removes sourced aliases and renames or retires the entity (D134 §2, §8) |
 | Old contract still in binding text and evals | Retrieval, schema, E1, E0, lifecycle, hard-forget designs and eval checks updated |
+
+### Round 2
+
+A second Codex pass checked the revision: 4 findings resolved, 10 partially
+resolved and 1 not resolved, plus 6 new must-fix problems (8 new findings in
+all) in the added mechanisms. All were accepted:
+
+| Finding | Resolution |
+|---|---|
+| Registry used placeholder MIME lists; aliases and storage class missing | Concrete canonical MIME types per family, an alias list, named message-export shapes; storage class stated once as D132's rule |
+| A `query/` prefix inside the mounted artifacts bucket is still mounted | Third object-store root, the **private store**, with separate IAM, never mounted (E0 §2) |
+| Eligibility cuts at character ranges conflict with whole-block chunks | Converters must change eligibility only at block starts; conversion validates it; E1 cuts at those blocks |
+| Network isolation was conditional; temp files in a read-only directory | No-network OS sandbox required, otherwise `data_query` is a typed `boundary`; separate input and scratch directories |
+| `QueryResult/v1` is PostgreSQL-bound and forbids a generic envelope adapter | Distinct `DataQueryResult/v1` with its own fields and errors |
+| Expansion would edit the parent's immutable representation | Conversion-time gaps only in the parent; per-member outcomes in mutable member records; stable `member:<key>` handles resolved at render time |
+| Ordinal suffixes shift on insertion | Keys use paths, identifiers or content hashes only, never positions |
+| An open-query projection still counted distinct `doc_id` | `evidence_lineage` and count comments use `counting_lineage_id` |
+| The D74 manifest still described one lineage | Manifest v2: per-descendant entries, member suppressions, alias-contribution keys, restore guards |
+| A `DOCUMENT` citation could bind an object | Claimify's `document_is_subject` field validated at the gate; E3 binds only the subject position |
+| One `source_doc_id` per alias row cannot keep two sources apart | `alias_contributions` table; an alias survives while any contribution does |

@@ -785,7 +785,6 @@ CREATE TABLE aliases (
   confidence      real,                        -- confidence this surface really names this entity
   first_seen      timestamptz NOT NULL DEFAULT now(),
   last_seen       timestamptz NOT NULL DEFAULT now(),
-  source_doc_id   uuid,                        -- D134: the lineage a document_metadata alias came from (NULL for other provenances); hard forget deletes by it
   UNIQUE (deployment_id, entity_id, normalized_lemma, provenance),
   FOREIGN KEY (deployment_id, entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE
 );
@@ -798,6 +797,21 @@ CREATE INDEX ix_aliases_lemma_trgm  ON aliases USING gin (normalized_lemma gin_t
 CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normalized_lemma));
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
+
+-- D134: which document contributed each document_metadata alias. The aliases row exists while
+-- at least one contribution survives, so forgetting one document removes only its contribution
+-- even when two documents gave a merged entity the same name.
+CREATE TABLE alias_contributions (
+  deployment_id    uuid NOT NULL,
+  entity_id        uuid NOT NULL,
+  normalized_lemma text NOT NULL,
+  provenance       alias_provenance NOT NULL,
+  source_doc_id    uuid NOT NULL,              -- the contributing lineage
+  first_seen       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (deployment_id, entity_id, normalized_lemma, provenance, source_doc_id),
+  FOREIGN KEY (deployment_id, entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_alias_contributions_doc ON alias_contributions (deployment_id, source_doc_id);
 
 -- generic_identifier_guard was REMOVED by D103 (migration p9_22_0043). It flagged any lemma
 -- linking >= 2 entities and that flag outranked match score in T1/T2 blocking, so a near-exact
@@ -1530,7 +1544,7 @@ CREATE TABLE claims (
   added_context   jsonb NOT NULL DEFAULT '[]', -- [{text, source_kind: header|neighbour|prefix|hint, source_ref}] — each substring decontextualization ADDED (D32 layer 2)
   temporal_class  claim_temporal_class,        -- static | dynamic | atemporal — the "temporally classified" requirement (see reconciliation note)
   is_attributed   boolean NOT NULL DEFAULT false, -- preserves a "X said Y" attribution (entailment rule: entails "X said Y", not "Y" — D32)
-  subject_is_document boolean NOT NULL DEFAULT false, -- D134: the claim cites the engine-supplied DOCUMENT passage; its matching subject binds to the document entity
+  subject_is_document boolean NOT NULL DEFAULT false, -- D134: validated document_is_subject — the claim's subject is this document; only its matching SUBJECT reference binds to the document entity
   -- grounding verdicts (D32). Deterministic layers 1-2 are an ACCEPTANCE GATE (must be true here);
   -- the LLM layers 3-4 are advisory/sampled and may be false on a kept-but-borderline claim:
   anchor_ok       boolean NOT NULL,            -- layer 1: source_span is a real in-bounds slice of the chunk (deterministic)
@@ -1721,7 +1735,7 @@ CREATE TABLE relations (
   valid_until     timestamptz,                 -- VALID-time end: closed by supersession when the fact stops holding ("Alice left Acme")
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed this fact
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when the system learned it was superseded (NULL = still believed)
-  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT DOCUMENT LINEAGES with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
+  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT COUNTING LINEAGES (counting_lineage_id — a container and its members are one, D133) with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
   contradict_count integer NOT NULL DEFAULT 0, -- cached count of distinct current-testimony lineages contradicting (same D54 rule, stance=contradicts)
   confidence      real,                        -- aggregate confidence over evidence (not an extraction-time guess — concepts §3)
   contradiction_group uuid,                    -- shared id when two live relations contradict and can't be adjudicated — retrieval shows both sides (concepts §4)
@@ -1897,7 +1911,7 @@ CREATE TABLE observations (
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed it
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when learned wrong (NULL = still believed). NOT used to "end" a fact — that's valid_until.
-  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT current-testimony LINEAGES supporting (D54 — mirrors relations)
+  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT current-testimony COUNTING LINEAGES supporting (D54/D133 — mirrors relations)
   contradict_count integer NOT NULL DEFAULT 0, -- cached count of distinct current-testimony lineages contradicting (D54). NB: conflicting OBSERVATIONS are tracked via contradiction_group, a different concept.
   confidence      real,                        -- aggregate confidence over evidence
   contradiction_group uuid,                    -- shared id when two live observations conflict and both must stand (concepts §4)
@@ -2596,9 +2610,10 @@ test fails when a new source-bearing field is not classified. At minimum it cove
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
-  `documents.document_entity_id` binding, every `aliases` row whose `source_doc_id` is the lineage
-  (D134 — a surviving document entity is renamed from its remaining aliases, or retired when none
-  remain), the lineage's `document_members` rows and private query assets (D133), and
+  `documents.document_entity_id` binding, every `alias_contributions` row whose `source_doc_id` is
+  the lineage and each `aliases` row left with none (D134 — a surviving document entity is renamed
+  from its remaining aliases, or retired when none remain), the lineage's `document_members` rows
+  and private-store objects (D133), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
@@ -2744,7 +2759,7 @@ Labs."*
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D133 format registry, profiles, expansion | `document_members`, `document_member_suppressions`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
-| D134 documents as subjects | `documents.document_entity_id` (unique binding); `aliases.source_doc_id` + `document_metadata` provenance; `resolution_tier` `document_self`; `claims.subject_is_document` |
+| D134 documents as subjects | `documents.document_entity_id` (unique binding); `alias_contributions` + `document_metadata` provenance; `resolution_tier` `document_self`; `claims.subject_is_document` |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---

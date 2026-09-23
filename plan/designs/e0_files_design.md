@@ -42,7 +42,8 @@ complexity is handled by *decomposition into sub-workers*, each separately idemp
 
 ## 2. Storage layout — GCS holds bodies, Postgres holds the index
 
-Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
+Three buckets per deployment (storage is per-deployment, like entity spaces, D16) — raw,
+artifacts, and the private store:
 
 - **raw** — `gs://rememberstack-<dep>-raw/<doc_id>/<content_hash>/original.<ext>` — immutable source-of-truth
   bytes (D1). Strict per-deployment IAM. **Mounted read-only, but off the navigation path**
@@ -82,10 +83,14 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   sidecar. `media/` may additionally hold a `.vtt`/JSON **interchange** copy of a transcript
   (timing-preserving, provenance-linked, for players and external tools), but text that
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
-  does not exist as testimony. A profiled data file's representation also holds a private
-  **`query/`** prefix of normalized Parquet tables (D133): never mounted, never in P3, read only
-  by `data_query`, purged and forgotten with the representation
-  (`format_conversion_design.md` §4.6).
+  does not exist as testimony.
+- **private** — `gs://rememberstack-<dep>-private/<doc_id>/<content_hash>/<representation_id>/…`
+  — engine-internal objects no agent surface reads (D133): a profiled data file's normalized
+  Parquet tables, read only by the `data_query` worker's staging step, and container members
+  staged between `convert` and `expand`. **Never mounted**, never projected into P3, never
+  returned by `hydrate`; separate IAM from the artifacts bucket so a mount of artifacts cannot
+  reach it. Purged with its representation and inventoried by hard forget
+  (`format_conversion_design.md` §4.6, §5.4).
 
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's

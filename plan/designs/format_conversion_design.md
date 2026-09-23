@@ -39,9 +39,10 @@ with embedded figures is **full** for its text and **expand** for its figures.
 
 One engine-shipped registry replaces the operator-built route table. Each
 entry states, for one family: detection (§2.2), canonical MIME types and
-aliases, posture, converter, provider requirements, `max_bytes`, an opaque
-`cost_class` label, and the original's storage class. The complete shipped
-entries are §3.
+aliases, posture, converter, provider requirements, `max_bytes`, and an opaque
+`cost_class` label. The complete shipped entries are §3. The original's
+storage class is not per entry: D132's rule applies to every family (image,
+audio and video originals hot; all other originals cold).
 
 ### 2.1 Configuration is an overlay
 
@@ -75,8 +76,9 @@ where a step says so.
    (then a TAR test on the decompressed head); TAR (`ustar` at offset 257).
 2. **ZIP packages by member names**, most specific first: EPUB and ODF
    (a stored `mimetype` member naming the type); OOXML (`[Content_Types].xml`
-   plus `word/`, `ppt/` or `xl/` members, D132); notebook bundles are not ZIP
-   and are handled at step 4. A ZIP matching none of these is an **archive**.
+   plus `word/`, `ppt/` or `xl/` members, D132); message-export ZIP shapes
+   (for example a Slack export's `channels.json` and `users.json`). A ZIP
+   matching none of these is an **archive**.
 3. **OLE containers by stream names:** legacy Word, Excel and PowerPoint
    (D132, with the declared legacy office MIME selecting the subtype), MSG
    (`__properties_version1.0` stream), PST (`!BDN` header). An OLE container
@@ -129,33 +131,47 @@ detected again from their own bytes; a member's name is only a hint.
 "Local" means a library installed with the engine, no provider call. `max_bytes`
 values are starting points.
 
-| Family | Canonical MIME | Posture | Converter (requires) | `max_bytes` | `cost_class` | Primary locator |
+| Family | Canonical MIME types | Posture | Converter (requires) | `max_bytes` | `cost_class` | Primary locator |
 |---|---|---|---|---:|---|---|
 | Plain text | `text/plain` | full | passthrough (local) | 100 MB | text | `line_range` |
 | Markdown | `text/markdown` | full | passthrough (local) | 100 MB | text | `source_range` |
 | HTML | `text/html` | full | web document (local) | 50 MB | text | `source_range` |
-| Word processing | DOCX, ODT, RTF, DOC types | full + expand (images) | office document (local) | 100 MB | text | `source_range`, `page` where paginated |
-| Presentation | PPTX, ODP, PPT types | full + expand (images) | office document (local) | 200 MB | text | `page` (slide) |
+| Word processing | `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.oasis.opendocument.text`, `application/rtf`, `application/msword` | full + expand (images) | office document (local) | 100 MB | text | `source_range`; `page` where paginated |
+| Presentation | `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `application/vnd.oasis.opendocument.presentation`, `application/vnd.ms-powerpoint` | full + expand (images) | office document (local) | 200 MB | text | `page` (slide) |
 | E-book | `application/epub+zip` | full + expand (images) | e-book (local) | 100 MB | text | `source_range` |
-| PDF | `application/pdf` | full + expand (images) | PDF: text layer (local) per page, OCR (OCR provider) for pages without one | 200 MB | text; `scan_page` per OCR'd page | `page` with region |
-| Image | PNG, JPEG, WebP, HEIC, TIFF, GIF types | full | image OCR + description (OCR and vision providers; D115) | 50 MB | image | `image_region` |
-| Audio | MP3, WAV, M4A, OGG, FLAC types | full | diarized ASR (ASR provider; D65) | 2 GB | audio_minute | `time` |
-| Video | MP4, MOV, WebM, MKV types | full | ASR + keyframes (ASR and vision providers; D65) | 10 GB | video_minute | `time`, `video_region` |
+| PDF | `application/pdf` | full + expand (images) | PDF: text layer (local) per page; OCR (OCR provider) for pages without one | 200 MB | text; `scan_page` per OCR'd page | `page` with region |
+| Image | `image/png`, `image/jpeg`, `image/webp`, `image/heic`, `image/tiff`, `image/gif` | full | image OCR + description (OCR and vision providers; D115) | 50 MB | image | `image_region` |
+| Audio | `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/ogg`, `audio/flac` | full | diarized ASR (ASR provider; D65) | 2 GB | audio_minute | `time` |
+| Video | `video/mp4`, `video/quicktime`, `video/webm`, `video/x-matroska` | full | ASR + keyframes (ASR and vision providers; D65) | 10 GB | video_minute | `time`, `video_region` |
 | Captions | `text/vtt`, `application/x-subrip` | full | caption (local) | 10 MB | text | `time` |
 | Email message | `message/rfc822`, `application/vnd.ms-outlook` | full + expand (attachments) | email (local) | 100 MB | text | `source_range` |
-| Mailbox | `application/mbox`, PST type | expand (messages) | mailbox (local) | 20 GB | archive | member record |
-| Message export | per export shape | expand (conversations); each child full | message export → dialogue transcript (local) | 5 GB | archive; children text | `json_pointer` |
-| Spreadsheet | XLSX, XLSM, XLS, ODS types | profile, or full when small | spreadsheet profiler (local + one model call) | 200 MB | data_profile | `sheet_range` |
+| Mailbox | `application/mbox`, `application/vnd.ms-outlook-pst` | expand (messages) | mailbox (local) | 20 GB | archive | member record |
+| Message export | `application/vnd.remember.chat-export+json` (ChatGPT `conversations.json` shape), `application/vnd.remember.slack-export+zip` (ZIP with `channels.json` and `users.json`), `text/vnd.remember.whatsapp-chat` (WhatsApp `[date, time] Name: text` lines) | expand (conversations); each child full | message export → dialogue transcript (local) | 5 GB | archive; children text | `json_pointer` / `line_range` |
+| Spreadsheet | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `application/vnd.ms-excel.sheet.macroEnabled.12`, `application/vnd.ms-excel`, `application/vnd.oasis.opendocument.spreadsheet` | profile, or full when small | spreadsheet profiler (local + one model call) | 200 MB | data_profile | `sheet_range` |
 | Delimited | `text/csv`, `text/tab-separated-values` | profile, or full when small | table profiler (local + one model call) | 5 GB | data_profile | `table_region` |
 | JSON | `application/json`, `application/x-ndjson` | profile, or full when small | JSON profiler (local + one model call) | 5 GB | data_profile | `json_pointer` |
-| Columnar / database | Parquet, Arrow, SQLite types | profile | table profiler (local + one model call) | 20 GB | data_profile | `table_region` |
+| Columnar / database | `application/vnd.apache.parquet`, `application/vnd.apache.arrow.file`, `application/vnd.sqlite3` | profile | table profiler (local + one model call) | 20 GB | data_profile | `table_region` |
 | Log | `text/x-log` | profile | log profiler (local + one model call) | 20 GB | data_profile | `line_range` |
 | Notebook | `application/x-ipynb+json` | full + expand (image outputs) | notebook (local) | 100 MB | text | `json_pointer` |
-| Markup | XML, YAML, TOML types | profile, or full when small | markup (local + one model call when profiled) | 1 GB | text / data_profile | `json_pointer`-style path |
-| Geo | GeoJSON, KML, GPX types | profile | geo profiler (local + one model call) | 5 GB | data_profile | `json_pointer` |
+| Markup | `application/xml`, `application/yaml`, `application/toml` | profile, or full when small | markup (local + one model call when profiled) | 1 GB | text when full; data_profile when profiled | `json_pointer`-style path |
+| Geo | `application/geo+json`, `application/vnd.google-earth.kml+xml`, `application/gpx+xml` | profile | geo profiler (local + one model call) | 5 GB | data_profile | `json_pointer` |
 | Calendar / contacts | `text/calendar`, `text/vcard` | full | calendar/contact (local) | 50 MB | text | `source_range` |
-| Archive | ZIP, TAR, gzip, 7z types | expand | archive (local) | 20 GB | archive | member record |
-| Opaque, recognized | CAD, font, disk-image, executable types | card | file card (local) | 20 GB | card | none |
+| Archive | `application/zip`, `application/x-tar`, `application/gzip`, `application/x-7z-compressed` | expand | archive (local) | 20 GB | archive | member record |
+| Opaque, recognized | `application/vnd.remember.card`, with the detected format named in the manifest: DWG/DXF CAD, TrueType/OpenType/WOFF fonts, ISO/VMDK/VHD disk images, ELF/PE/Mach-O executables | card | file card (local) | 20 GB | card | none |
+
+**Aliases** resolved to the canonical types above (starting list; an entry
+may add more): `application/x-zip-compressed` → `application/zip`;
+`text/x-markdown` → `text/markdown`; `application/x-yaml`, `text/yaml` →
+`application/yaml`; `text/xml` → `application/xml`; `application/csv` →
+`text/csv`; `application/jsonl`, `application/x-jsonlines` →
+`application/x-ndjson`; `audio/x-wav` → `audio/wav`; `image/jpg` →
+`image/jpeg`; `application/x-sqlite3` → `application/vnd.sqlite3`.
+
+The three message-export shapes are the shipped set. Each export converter
+declares its detection test (§2.2 step 4.5 for JSON shapes, step 2 for ZIP
+shapes, a line grammar tested after step 4.4 for line shapes); adding a shape
+is a registry entry. Where the table lists a type in `vnd.remember.*`, no
+registered media type exists and the engine uses its own.
 
 Bytes not recognized as any family are refused by D132. Adding a family is a
 registry entry (detection step, row above) plus, where needed, a converter —
@@ -274,10 +290,18 @@ The mechanism:
 1. An engine-level, versioned **extraction eligibility policy** maps
    `derivation_kind` to eligible or not. Its only ineligible kind is
    `profile_structure`.
-2. **E1 cuts chunks at eligibility boundaries.** A chunk never contains both
-   eligible and ineligible ranges, so eligibility is a property of whole
-   chunks, computed deterministically from the representation's labeled
-   ranges and the policy version, and stored on the chunk.
+2. **Eligibility changes only at block boundaries.** E1 chunks are runs of
+   whole blocks (D57/D58), so the boundary must be one. It is a converter
+   output obligation: every section of §4.2 starts with a Markdown heading on
+   its own line after a blank line, which the blockizer always treats as a
+   block start, and no labeled range of an ineligible kind shares a block with
+   an eligible range. The convert stage validates this after blockizing: a
+   representation where an eligibility change falls inside a block is a
+   converter error (`ConversionError`, not retried), never a silently
+   mis-chunked document. E1 then forces a chunk boundary at every block where
+   eligibility changes, so a chunk is wholly eligible or wholly ineligible;
+   eligibility is stored on the chunk, computed from the labeled ranges and
+   the policy version.
 3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk
    completes deterministically with zero propositions and publishes no D122
    reference cards, like an empty Selection result; the Selection barrier
@@ -289,11 +313,14 @@ The mechanism:
 
 At conversion time a profiler writes each table it profiled as a normalized
 Parquet file: sheets, CSV, database tables, JSON arrays of records and
-parsed log lines. These are not `media/` assets. They are **private query
-assets** under the representation's `query/` prefix in the artifacts store:
-never published to a mount or P3, never returned by `hydrate`, purged with
-the representation and inventoried by hard forget (§5.4). The manifest lists
-them with hashes and table names. Parquet gives one typed layout for every
+parsed log lines. These are **private query assets**, stored in the
+deployment's **private store** — a third object-store root beside raw and
+artifacts (`e0_files_design.md` §2) that no mount, P3 projection or `hydrate`
+depth ever reads — at `<doc_id>/<content_hash>/<representation_id>/<table>.parquet`.
+Only the `data_query` worker's staging step reads it. It is purged with the
+representation and inventoried by hard forget (§5.4). The manifest lists the
+assets with hashes and table names. Staged container members (§5.1) live in
+the same store. Parquet gives one typed layout for every
 format; the cost is a second stored copy, accepted because the alternative
 re-parses the original on every query.
 
@@ -301,7 +328,7 @@ re-parses the original on every query.
 [`retrieval_design.md`](retrieval_design.md) §3:
 
 ```
-data_query(version_id, representation_id?, sql, params?) → envelope (evidence grain) + QueryResult/v1
+data_query(version_id, representation_id?, sql, params?) → envelope (evidence grain) carrying DataQueryResult/v1
 ```
 
 - **What it runs:** one read-only SQL statement in DuckDB (an in-process
@@ -311,28 +338,41 @@ data_query(version_id, representation_id?, sql, params?) → envelope (evidence 
   depth and untrusted SQL needs a sandbox
   (<https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview>,
   retrieved 2026-09-23). So:
-  - each query runs in a **separate worker process** with no credentials,
-    no network access (OS-level network isolation where the platform
-    provides it; the process is never given connection details), and OS
-    resource limits on CPU time, address space, open files and file size;
-  - the parent stages read-only copies of only the needed Parquet files into
-    a per-query temporary directory;
-  - DuckDB is configured before any agent SQL: `allowed_directories` = that
-    directory, `enable_external_access=false`,
+  - each query runs in a **separate worker process** with no credentials and
+    **no network**: the process runs in an OS network sandbox with no
+    interfaces (a network namespace, or a container started without a
+    network). A deployment platform that cannot provide one does not enable
+    `data_query`; the primitive then answers with a typed `boundary`, never
+    with a weaker sandbox. OS resource limits cap CPU time, address space,
+    open files and file size;
+  - the parent stages copies of only the needed Parquet files into a
+    per-query **input directory** the worker can read but not write, and
+    creates a separate, empty per-query **scratch directory** for DuckDB's
+    temporary files;
+  - DuckDB is configured before any agent SQL: `allowed_directories` = the
+    input directory, `enable_external_access=false`,
     `autoinstall_known_extensions=false`, `autoload_known_extensions=false`,
-    `allow_community_extensions=false`, `temp_directory` inside the staging
+    `allow_community_extensions=false`, `temp_directory` = the scratch
     directory with `max_temp_directory_size`, `memory_limit`, `threads`, then
     `lock_configuration=true`;
   - the parent enforces **wall time** by killing the process and cancels on
-    caller disconnect; the staging directory is deleted afterwards.
+    caller disconnect; both directories are deleted afterwards.
   - Starting limits: 10 seconds wall time, 1 GiB memory, 2 threads, 1 GiB
     temporary disk, 1,000 returned rows.
-- **Result:** the D49 envelope at evidence grain carrying a `QueryResult/v1`
-  as the open query space defines it — typed columns, rows, an explicit
-  `truncated` flag — with provenance naming the document version,
-  representation and tables read. Errors extend the open-query-space error
-  taxonomy; a document without query assets returns a typed `boundary`
-  saying why (not a profiled family, or conversion incomplete).
+- **Result: `DataQueryResult/v1`**, its own contract — not the open query
+  space's `QueryResult/v1`, which is bound to PostgreSQL and the `memory_v1`
+  schema. Fields: `contract = "DataQueryResult/v1"`; `statement_sha256` (of
+  the SQL text exactly as received) and `params`; `columns[]` with name,
+  DuckDB type and a portable type (`integer`, `decimal`, `float`, `text`,
+  `boolean`, `date`, `timestamp`, `binary`, `nested`); `rows[]`;
+  `row_count`; `truncated`; `elapsed_ms`; and `source` = document version,
+  representation, and each table read with its asset hash. The D49 envelope
+  carries it as the payload of its single evidence item — `data_query`'s own
+  envelope binding, not a generic result adapter. Errors are typed:
+  `invalid_sql`, `write_rejected` (anything other than one read-only query),
+  `timeout`, `resource_limit`, `invalid_parameter`, and `boundary` when the
+  document has no query assets (not a profiled family, or conversion
+  incomplete) or the platform cannot sandbox the worker.
 - **Authorization and audit:** the same authorization path as
   `hydrate depth=bytes` and `source_open`; every call audits principal,
   document version, statement hash and rows returned.
@@ -358,9 +398,8 @@ ingest ──► convert ──► expand ──► structure ──► crossref
   (`ConversionResult.members`): for each member its member key (§5.2),
   member path, relation (`archive_member`, `attachment`, `message`,
   `conversation`, `embedded_image`), its locator in the parent, its own
-  timestamp when the container records one, and its bytes staged as a
-  private conversion object keyed by the parent's content hash and the
-  member key.
+  timestamp when the container records one, and its bytes staged in the private store (§4.6) keyed by the parent's
+  content hash and the member key.
 - `expand` reads the descriptors and, for each member, performs one E0
   ingest write with the child's lineage identity. It is idempotent: the
   member record's primary key and E0's content-hash no-op make a replay a
@@ -369,17 +408,24 @@ ingest ──► convert ──► expand ──► structure ──► crossref
   child document version: `(parent_version_id, member_key)` primary key,
   member path, relation, child `doc_id` and `version_id`, parent locator,
   and a per-member status (`ingested`, `skipped` with reason, `failed`).
-- **Partial failure:** a member that fails ingest (refused by detection,
-  over its family's limit) is recorded `skipped` or `failed` with the reason
-  and named in the parent's `coverage.gaps`. Other members proceed.
+- **Two records, two lifetimes.** The parent's representation is immutable
+  once written (D65). Its `coverage.gaps` names only what *conversion* left
+  out, which the bytes fix: members beyond the expansion bounds, unsafe
+  paths, decorative images below the floor. What happens to each member
+  afterwards is mutable state in `document_members`: `ingested`, `skipped`
+  (refused by detection, over its family's limit, or suppressed by §5.4) or
+  `failed`, with the reason. Other members proceed when one fails.
 - **Readiness:** the parent's representation becomes current when its own
   reading completes; it does not wait for its children. The parent version
   carries a separate expansion status (`pending`, `complete`, `partial`)
   — a scoped readiness fact in the sense of `media_design.md` §4b. Each
   child becomes ready on its own schedule.
-- The parent's `document.md` lists its members with links to their P3
-  stubs. It does not inline their content, so the same text is never
-  extracted twice.
+- The parent's `document.md` lists its members by name and relation, each
+  with a stable **member handle** (`member:<member_key>`) rather than a path
+  to a child that may not exist yet. P3 and retrieval resolve a handle through
+  `document_members` when they render, so links appear once a child is
+  ingested and the parent is never rewritten. The listing does not inline
+  member content, so the same text is never extracted twice.
 
 ### 5.2 Member identity
 
@@ -390,16 +436,21 @@ the member is "the same thing":
 
 | Container | Member key |
 |---|---|
-| Archive | Normalized path; when a path repeats inside one archive, the path plus `#<n>` by order of appearance |
-| Email attachment | MIME part path plus attachment file name |
-| Mailbox | `Message-ID` when present and unique in the mailbox; otherwise `sha256:` of the message bytes; repeats get `#<n>` |
+| Archive | Normalized path. When a path repeats inside one archive, the path plus `@sha256:<member hash>`; byte-identical repeats of one path are one member |
+| Email attachment | Attachment file name plus `@sha256:<attachment hash>`; byte-identical repeats are one member |
+| Mailbox | `Message-ID` when present and unique in the mailbox; otherwise `sha256:` of the message bytes |
 | Message export | The export's native conversation identifier; otherwise `sha256:` of the canonical serialization |
-| Embedded image | `sha256:` of the image bytes; repeats get `#<n>` in document order |
+| Embedded image | `sha256:` of the image bytes; byte-identical repeats are one member, with every occurrence's locator on its member record |
+
+No key uses position or ordinal, so inserting a member never changes another
+member's key; byte-identical repeats collapse to one child because they carry
+the same content.
 
 Consequences, stated so they are not surprises: renaming a file inside an
-archive is a new child lineage (the old one is retired as absent); inserting
-a message into a mailbox does not renumber others; an unchanged figure in an
-edited document keeps its child lineage.
+archive is a new child lineage (the old one is retired as absent); changing
+the content of a duplicated path makes a new key; inserting a message into a
+mailbox changes no other key; an unchanged figure in an edited document keeps
+its child lineage.
 
 A child's bytes are the member's exact bytes where the container delimits
 them. Where it does not (one conversation inside a chat-export JSON), the
@@ -435,9 +486,10 @@ parent's.
 - **Forgetting one child** records a **member suppression** (schema:
   `document_member_suppressions`: parent `doc_id`, member key). `expand`
   skips suppressed keys in every later expansion of that parent — including
-  re-expansion of an unchanged parent version after restore — and names the
-  skip in the parent's `coverage.gaps`. The suppression record is
-  content-free (a key, not bytes).
+  re-expansion of an unchanged parent version after restore — and records
+  `skipped` with reason `suppressed` on the member record. The suppression is
+  content-free (a key, not bytes) and is carried in the forget manifest, so
+  restore replay re-creates it (`hard_forget_design.md` §2).
 
 ### 5.5 Bounds
 

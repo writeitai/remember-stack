@@ -6155,19 +6155,24 @@ way to become several documents.
    (a deterministic file card for recognized formats with no reading). Structured
    families are read fully only within hard bounds (200 rows, 20,000 characters).
 3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
-   structure searchable but not claim-extracted; E1 cuts chunks where eligibility
-   changes and E2 schedules Selection only for eligible chunks.
-4. Profiled tables are stored as private normalized Parquet (never mounted), and a
-   new direct primitive, **`data_query`**, runs one read-only SQL statement over them
-   in DuckDB inside an isolated worker process with OS limits, a staged read-only
-   directory, disabled external access and extensions, and a parent-enforced wall
-   time. It is exposed on MCP beside `source_open`.
+   structure searchable but not claim-extracted. Converters must change eligibility
+   only at block boundaries (validated at conversion); E1 forces a chunk boundary
+   there and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as normalized Parquet in a new **private store** (a
+   third object-store root no mount, P3 or `hydrate` reads), and a new direct
+   primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
+   inside a worker process with no network, OS resource limits, a staged read-only
+   input directory, a separate scratch directory, disabled external access and
+   extensions, and a parent-enforced wall time; a platform that cannot sandbox it
+   answers with a typed `boundary`. It returns its own `DataQueryResult/v1` and is
+   exposed on MCP beside `source_open`.
 5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
-   ordinary E0 lineages keyed by a collision-safe member key, linked by member
-   records; the parent does not wait for its children. A container and its members
+   ordinary E0 lineages keyed by a content- or identifier-based member key (never a
+   position), linked by mutable member records; the parent's immutable
+   representation lists members by stable handle and does not wait for them. A container and its members
    count as one source (`counting_lineage_id`, refining D54); deleting or forgetting
-   a parent covers its descendant closure under one manifest, and a forgotten member
-   stays suppressed (refining D74). Bounds apply to the whole tree.
+   a parent covers its descendant closure under one versioned (v2) manifest, and a
+   forgotten member stays suppressed across restore (refining D74). Bounds apply to the whole tree.
 6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
 
 **Alternatives and consequences.** Full-row extraction for structured data,
@@ -6193,19 +6198,20 @@ is about, and a file name is not an identity (collisions, renames).
 **document-subject binding**, replacing the D18-era typed-Document bridge. The
 entity is minted atomically (documents row lock) the first time a claim takes the
 document as its subject, with file name, title and path segment as
-`document_metadata` aliases that record their source document. Every Selection and
-Claimify request gets an engine-supplied `DOCUMENT` metadata passage and self card;
-citing it (supporting only, never origin; its tokens count as grounded context)
-sets the persisted claim flag `subject_is_document`. The resolver binds the
-reference matching the document's names to the document entity without the
-cascade (tier `document_self`). Two bound entities never merge. Mentions from
+`document_metadata` aliases tracked per contributing document. Every Selection and
+Claimify request gets an engine-supplied `DOCUMENT` metadata passage and self card
+(supporting only, never origin; its tokens count as grounded context). Claimify
+marks a claim whose subject is the document with `document_is_subject`; the gate
+validates it and persists `subject_is_document`. The resolver binds only a
+**subject** reference matching the document's names to the document entity,
+without the cascade (tier `document_self`); objects never bind this way. Two bound entities never merge. Mentions from
 other documents resolve normally with no auto-accept. Identical bytes under a new
 name are a metadata observation that adds aliases. Hard forget removes the binding
 and the document's aliases; a surviving entity is renamed or retired.
 
 **Alternatives and consequences.** File name in text only, provenance only,
 minting an entity for every document at ingest, resolving self-references by
-name, and model-marked self references were rejected (design §Alternatives).
+name, and binding on a citation alone were rejected (design §Alternatives).
 Amends D122 for the self passage and card only and refines D96 without
 introducing types.
 

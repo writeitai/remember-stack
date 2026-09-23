@@ -67,8 +67,12 @@ per-document name anchors for resolution replay and is unchanged.
 ### 2. Aliases — the names the document goes by
 
 On mint, E0 writes the document's names as aliases with a new provenance
-value, `document_metadata`, and the source `doc_id` recorded on the alias
-row:
+value, `document_metadata`. Each name is recorded as an **alias
+contribution** — (entity, normalized name, provenance, contributing
+`doc_id`) — and the searchable `aliases` row exists while at least one
+contribution for it survives. Contributions keep sources apart even when two
+documents give a merged entity the same name, so forgetting one document
+removes only its contribution (§8). The names:
 
 - the file name, with and without its extension;
 - the document title, where the format declares one or the profile/card
@@ -99,21 +103,31 @@ passage caps.
   the exact grounding exception this design adds.
 - When a proposition's subject is the document itself — a profile's
   overview, a file card, or prose referring to itself ("this report") —
-  Claimify writes a self-contained claim naming the document and cites
-  `DOCUMENT`.
-- The grounding gate validates the citation and sets a persisted claim flag,
-  **`subject_is_document`**, from it. The flag is part of the claim and so
-  survives D56 reuse with it.
+  Claimify writes a self-contained claim that names the document as its
+  grammatical subject, cites `DOCUMENT`, and sets a new output field,
+  **`document_is_subject: true`**. Citing `DOCUMENT` without that field is
+  allowed and means only that the document's name gave context (for example
+  as an object: "Alice authored Q3_sales.xlsx").
+- The grounding gate accepts `document_is_subject: true` only when the claim
+  also cites `DOCUMENT` and the claim text contains one of the `DOCUMENT`
+  passage's names (after the same normalization aliases use). The gate does
+  not parse grammar; which reference is the subject is decided structurally
+  in E3 (§4). Otherwise the field is dropped and recorded as
+  a grounding diagnostic; the claim itself is kept. The accepted value is
+  persisted as **`subject_is_document`** on the claim and survives D56 reuse
+  with it.
 
 ### 4. Binding in E3
 
-E3's `EntityRef` does not change and the model marks nothing. When a claim
-has `subject_is_document=true`, the resolver compares each emitted
-`EntityRef`'s normalized `name` and `surface` with the document's
-`document_metadata` aliases and the `DOCUMENT` passage names. The matching
-reference binds to the document entity through §1, without the T0–T4
-cascade. If none matches, nothing binds specially: the references resolve
-through the normal cascade and a diagnostic records the miss.
+E3's `EntityRef` does not change. When a claim has
+`subject_is_document=true`, the resolver considers **only the subject
+position**: the `subject` of each relation the claim yields and the entity of
+each observation it yields. A subject reference whose normalized `name` or
+`surface` equals one of the `DOCUMENT` passage's names binds to the document
+entity through §1, without the T0–T4 cascade. Objects and context references
+never bind this way, even when they match. If no subject matches, or several
+distinct subject references match, nothing binds specially: the references
+resolve through the normal cascade and a diagnostic records why.
 
 This is the one amendment to D122's rule that choosing a card never bypasses
 resolution: the self card's identity is known from provenance, so there is
@@ -151,8 +165,9 @@ document binding, from which the agent reaches the document: P3 stub,
 - **Normal deletion** of the document clears the binding with the lineage
   tombstone; its own claims stop being current testimony through the
   existing cascade.
-- **Hard forget (D74)** deletes the binding, every alias whose source
-  `doc_id` is the forgotten document, and the document's claims. If the
+- **Hard forget (D74)** deletes the binding, every alias contribution from
+  the forgotten document (and each `aliases` row left with none), and the
+  document's claims. If the
   entity is still referenced by claims from other lineages, it survives with
   only the aliases those lineages contributed; its canonical name is
   recomputed from them and its profile cache recomputed from remaining
@@ -169,10 +184,12 @@ Reconciled into [`postgres_schema_design.md`](postgres_schema_design.md):
 
 - `documents.document_entity_id`: now the one-to-one document-subject
   binding, `UNIQUE (deployment_id, document_entity_id)`.
-- `alias_provenance` gains `document_metadata`; `aliases` gains nullable
-  `source_doc_id`, set for `document_metadata` rows.
+- `alias_provenance` gains `document_metadata`; a new `alias_contributions`
+  table records each (entity, normalized name, provenance, contributing
+  `doc_id`) for `document_metadata` aliases.
 - `resolution_tier` gains `document_self`.
-- `claims` gains `subject_is_document boolean NOT NULL DEFAULT false`.
+- `claims` gains `subject_is_document boolean NOT NULL DEFAULT false`;
+  Claimify's `CandidateClaim` gains the optional `document_is_subject` field.
 
 ## Alternatives
 
@@ -182,12 +199,15 @@ Reconciled into [`postgres_schema_design.md`](postgres_schema_design.md):
 | Provenance only | Answers where a claim came from, not what it is about; document-subject claims would float without a holder. |
 | Mint a document entity for every document at ingest | Correct identity, but floods entity search and T0 candidate lists at millions of documents with entities nobody talks about. |
 | Let the name cascade resolve self-references | Guesses an identity already known from provenance, and invites merging two same-named files. |
-| Have the E3 model mark document-self references | A model judgment where a deterministic citation and alias match suffice. |
+| Bind on a `DOCUMENT` citation alone | A citation shows the name gave context, not that the document is the subject: "Alice authored Q3_sales.xlsx" would bind the object. Claimify's `document_is_subject` plus the E3 subject-position rule separates the two. |
+| Have the E3 normalizer mark document-self references | A second model judgment; Claimify already decides what the claim is about when it writes it, and E3 only has to read the subject position. |
 
 ## Tests
 
 Self-reference in a profile, a file card and prose; `DOCUMENT` cited as an
-origin is rejected; two same-named files stay two entities and never merge;
+origin is rejected; a document cited only as an object ("Alice authored
+Q3_sales.xlsx") never binds; `document_is_subject` without the document's name in
+the claim text is dropped; two same-named files stay two entities and never merge;
 concurrent first claims mint one entity; rename through a metadata
 observation adds an alias and old claims still reach the entity; a mention
 from another document is a candidate but never auto-accepted; a document with
