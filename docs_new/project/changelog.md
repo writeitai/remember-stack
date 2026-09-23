@@ -21,6 +21,11 @@ runs today, and what that means for you, is on
 
 ## 0.17.0 (22 September 2026)
 
+**Existing deployments must be recreated.** The migrations for mutable fact
+windows and multi-span claim evidence refuse a database that already holds
+claims. Start from an empty deployment and send your sources again; see
+[Upgrades and migrations](../self-hosting/upgrades.md).
+
 **One package: `remember`.**
 
 - **Action needed.** The Python client, the CLI and the MCP server ship in
