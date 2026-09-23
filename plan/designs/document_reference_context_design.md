@@ -118,6 +118,12 @@ invalidation; shifting chunk boundaries can also change actual input context.
 
 ## Relationship to E3 and entity resolution
 
+> **Amended by D134.** Every Selection request also receives one **self card** for the
+> document being processed, outside the card caps above. A claim citing the self card
+> carries a structured document-self marker and binds to the document entity without
+> the resolution cascade — the only card for which choosing it bypasses resolution.
+> Authority: [`document_subject_entity_design.md`](document_subject_entity_design.md).
+
 The grounded, self-contained claim carries the referent into normalization. E3
 may emit the ordinary subject/object and D123's context references from that
 claim. It resolves them through the current resolver, including D102's validated

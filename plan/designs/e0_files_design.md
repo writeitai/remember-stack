@@ -160,19 +160,19 @@ gates everything downstream:
   sequence from `document.md` downstream of every route, emitting `blocks.json` — see
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
-- **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → dedicated OCR
-  plus an independent vision-LLM description call for every supported image, without a
-  classifier or conditional lane budgets (D115; `media_design.md` §2); office / html /
-  email → **markitdown**; plain
-  text → passthrough. (This generalizes the common practice of
-  *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
-  bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
-  block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;
-  standalone image that is a *picture* → **VLM description** + OCR of visible text, behind a
-  document-vs-picture discriminator (MIME alone cannot tell a scanned page from a photo).
-  Media converters are versioned like every other — an ASR/VLM upgrade is a
-  `converter_version` bump, flowing the processing-driven lifecycle ruleset
+- **Routing by format family (D133).** An engine-shipped **format registry** maps every
+  recognized family to a posture — **full** reading, **profile** (a description of a data
+  file, not its rows), **expand** (container members become child documents), or **card**
+  (a deterministic file card) — and to the converter implementing it. Deployments overlay
+  the registry (turn families off, configure providers, lower limits); they never replace
+  it. The routing key is the byte-detected MIME (D132), normalized and alias-resolved. The
+  family table, postures, profiles, `data_query`, child documents and new locator kinds
+  are bound in [`format_conversion_design.md`](format_conversion_design.md). **Media
+  routes (D65/D115),** bound in `media_design.md` §2: audio → **diarized ASR**
+  (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
+  keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
+  independent vision-LLM description call. Converters are versioned — a model or parser
+  upgrade is a `converter_version` bump, flowing the processing-driven lifecycle ruleset
   (`evidence_lifecycle_design.md` §3).
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
@@ -191,8 +191,10 @@ gates everything downstream:
   configured route table. Adding one route cannot release other unsupported
   formats. A worker that still lacks the route parks the item again and refunds
   its just-started attempt; converter content errors remain ordinary failures.
-  This handles configuration skew without a dead-letter loop. Matching follows
-  the router's exact MIME lookup. The admission and managed text-classification
+  This handles configuration skew without a dead-letter loop. Matching uses
+  the registry's normalized routing key (D133). Parking covers recognized families
+  whose converter needs an unconfigured provider; a family the deployment turned
+  off is refused at ingest. The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps

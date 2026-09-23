@@ -1,0 +1,294 @@
+# Format coverage and the conversion architecture
+
+**Status:** non-binding analysis supporting D133 and D134.
+**Date:** 2026-09-23. **Evidence inspected:** engine `origin/main` `81f292e4`;
+open PR #452 (proposed D132, byte-class detection); installed `markitdown`
+0.1.6 package metadata; DuckDB security documentation (cited in §6).
+**Binding outcome:** [format conversion design](../designs/format_conversion_design.md)
+(D133) and [document subject entities](../designs/document_subject_entity_design.md)
+(D134).
+
+## 1. The question
+
+Can the conversion architecture we have — one converter contract (D38, D57,
+D65), per-deployment routes, stored originals (D51/D117) — take *any* format
+an agent is likely to be handed (office files, spreadsheets, JSON, CSV,
+logs, archives, email, special-purpose formats), and what has to change so it
+does? A second, narrower question fell out of the answer: when memory
+records something *about a file* ("the Q3 sales workbook covers EU revenue
+by region"), how does that claim point at the file?
+
+"Wrong" here is expensive in two directions. If the architecture cannot
+represent a format family, every later converter becomes a special case
+that bypasses the contract. If it represents a family *badly* — for example
+running claim extraction over every row of a 50,000-row spreadsheet — the
+system pays model cost proportional to data volume and still cannot answer
+the questions people ask of that data.
+
+## 2. What the engine does today (code, not design)
+
+### 2.1 What routes exist
+
+| Fact | Where |
+|---|---|
+| The stock route table is two entries: `text/markdown` and `text/plain` → `passthrough`. | `core/conversion.py:29-32` |
+| Setting `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` **replaces** the table; it does not extend it. | `profiles/selfhost.py:152-158, 266-275` |
+| Four converter names exist: `passthrough`, `markitdown`, `mistral_ocr`, `image_ocr_description`. | `adapters/converters/__init__.py:73-78` |
+| Routing is an exact dictionary lookup on the declared MIME string: no content sniffing, no parameter stripping (`text/plain; charset=utf-8` misses), no family (`image/*`) routes, no fallback chain. | `core/conversion.py` `ConversionRouter.converter_for` |
+| An unrouted MIME is stored and its conversion parked with `no_route` (D117), resumable with `remember ops resume-no-route`. | `spine/document_catalog.py:99-103`, `workers/e0.py` |
+| CLI/SDK guess MIME from the extension (`mimetypes.guess_type`), falling back to `application/octet-stream`. | `remember/client.py:807-824` |
+| The watched-directory connector only picks up `.md`, `.txt`, `.html`. | `adapters/selfhost/watcher.py:16,38` |
+
+So out of the box the engine turns exactly two formats into memory. PDF and
+PNG/JPEG work only when an operator adds routes *and* provider keys; HTML only
+after an opt-in route.
+
+### 2.2 Where the engineering effort sits
+
+| Converter | Lines | Emits a source map | Formats |
+|---|---:|---|---|
+| `image_ocr_description.py` | 1,092 | yes (whole-image locators) | PNG, JPEG |
+| `mistral_ocr.py` | 579 | yes (page, region) | PDF, document images |
+| `markitdown.py` | **68** | **no** (`source_map=None`, labels everything `source_expression`, `complete=True`) | nominally office, HTML, email, CSV, JSON |
+
+The markitdown route is the one that would carry most real uploads, and it is
+both the thinnest and — as installed — mostly non-functional: the engine
+depends on bare `markitdown>=0.1.6` (`pyproject.toml:79`). The package's own
+metadata declares format support as optional extras: `[docx]` (mammoth, lxml),
+`[pptx]` (python-pptx), `[xlsx]` (openpyxl, pandas), `[xls]`, `[pdf]`,
+`[outlook]` (olefile), `[all]`. None is installed, so DOCX/PPTX/XLSX would fail
+if routed. The contract meanwhile already carries fields for timelines, tracks,
+keyframes and video regions that no converter produces. Design and
+implementation depth are inverted relative to likely upload volume.
+
+### 2.3 Embedded images in PDFs
+
+`mistral_ocr` requests `include_image_base64` and turns every embedded image
+into a located `DerivedAsset` (`kind="embedded_image"`, page + bbox) stored
+under the representation's `media/` and linked from `document.md`
+(`mistral_ocr.py:490-548`, `workers/e0.py:484-553`). But the request never
+asks for image annotations, so `description` is always empty, and the image
+is never itself converted. A chart's numbers or a diagram's structure are
+invisible to extraction and search: the image is *kept* but not *read*.
+
+### 2.4 Detection is being addressed separately
+
+Open PR #452 proposes D132: classify the uploaded bytes (signatures, office
+ZIP members, strict UTF-8) before E0 stores anything, refuse unknown binary
+or a declaration that contradicts the bytes, and use the resulting MIME for
+routing, storage class and metering. That fixes "trust the client's MIME".
+It does not give the engine more routes, and its class list (PDF, image,
+audio, video, office, text) would refuse SQLite, Parquet, archives and mbox —
+families this analysis wants recognized. D133 therefore composes with D132
+and names the detection families it must cover (design §2).
+
+## 3. Is the architecture extensible? Two separate questions
+
+### 3.1 Mechanically: yes
+
+The contract is `convert(bytes, mime) → {document.md, source_map,
+derived_assets, manifest}`. Anything that can be rendered to text fits it, and
+the parts that make it trustworthy are format-neutral:
+
+- **One coordinate system.** All downstream offsets (chunks, claims, D32
+  grounding) point into `document.md`, so a new format adds a converter, not a
+  pipeline.
+- **Locators describe layout, not formats.** Five kinds (`page`,
+  `source_range`, `image_region`, `time`, `video_region`) already cover most
+  formats: a PPTX slide is a page, a DOCX paragraph a source range.
+- **Honest self-accounting.** Coverage policy + gaps, component graph with
+  local-vs-provider execution (D61), and range labels separating the
+  source's own words from a model's observations and interpretations (D65 §5).
+- **Originals are always kept** (D51/D117), so a lossy reading never destroys
+  the evidence.
+
+The locator union is a closed discriminated union, but adding a variant is
+additive: consumers dispatch on `kind`, and nothing downstream assumes the
+set. Special-purpose formats (DICOM, GeoJSON, CAD, notebooks) fit as
+converters that render a textual self-description while the original stays
+available.
+
+### 3.2 Semantically: not for structured data
+
+The pipeline assumes **knowledge is a set of statements to extract from
+text**. That is right for testimony — prose, slides, email, scans, images,
+recordings. It is wrong for data whose value is its structure: spreadsheets,
+large CSV/JSON, logs, Parquet, SQLite. Take a 50,000-row sales export:
+
+- rendered as a Markdown table and chunked, claim extraction runs one model
+  call per chunk — cost proportional to rows, the opposite of what memory
+  should cost;
+- the rendering discards what makes the data useful: types, formulas,
+  cross-sheet references, nesting;
+- the questions people ask of data are aggregations ("total Q3 revenue by
+  region"). No amount of claim retrieval answers an aggregation correctly.
+
+More converters do not fix this; the fix is a different *representation
+posture*.
+
+### 3.3 Four structural gaps
+
+1. **One input, one document.** Email with attachments, ZIP archives, PDFs
+   with figures, message exports (mbox, chat JSON) are containers. The
+   contract has no way to emit child documents with provenance to the parent.
+2. **Routing is operator plumbing.** Exact MIME match, a two-entry default
+   and replace-not-extend configuration mean every deployment rebuilds the
+   table by hand — which is how a hosted deployment ended up with three
+   routes (text, Markdown, PDF) and silently failed everything else.
+3. **No pointers into structured sources.** No locator for a spreadsheet
+   cell range, a table's column/rows, a JSON path, or a log line range.
+4. **Admission policy is scattered.** Size caps and provider limits live
+   inside individual converters (e.g. Mistral's 50 MB). No single place says,
+   per family: accepted or not, up to what size, which posture, which
+   converter, which cost class.
+
+## 4. Metadata instead of rows for structured data
+
+**Proposal (owner, 2026-09-23):** for XLSX, large CSV and JSON, logs, Parquet
+and SQLite, memory tracks what the file is — what it is about, its sheets,
+tables, columns, important formulas and relations — not the rows.
+
+The reasoning: memory's job is to know **that the data exists, what it is,
+and how to get at it**. Answering from the rows is a query over the original,
+not a memory lookup. We call the metadata reading a **profile**.
+
+Refinements reached in discussion:
+
+1. **Small is content.** A 15-row pricing table or a 40-line `config.json`
+   *is* the knowledge; converting it fully is cheaper and better than
+   describing it. Posture is decided per file by size and shape.
+2. **Values that link, not rows.** Column names alone cannot answer "which
+   file has Acme's orders?". The profile keeps a bounded set of *identifying*
+   values — top distinct values of low-cardinality or identifier-like columns,
+   date spans, totals, named cells — so the file links to entities in memory.
+   Measure columns and free-text columns contribute statistics only.
+3. **Formulas and structure are the spreadsheet's knowledge.** Named ranges,
+   pivot tables, cross-sheet references and the formulas behind headline
+   numbers belong in the profile; per-cell formulas do not.
+4. **Logs are partly event data.** A log profile (source, span, services,
+   level distribution) is right as the default. The genuinely useful memory
+   in logs is often *events* (errors, deploys). An event digest is recorded as
+   a documented alternative, not part of the design (§7).
+
+How a profile is produced: a **deterministic profiler** (library code: sheets,
+columns, types, counts, ranges, null rates, top values, formulas) and **one
+bounded model call** that writes the overview from the profile plus a few
+sample rows. The sample rows are shown to the model, never stored in
+`document.md`.
+
+### 4.1 Does the contract carry a profile?
+
+About 80% already fits:
+
+| Need | Existing primitive | Fit |
+|---|---|---|
+| Profile text | `document.md` with a section per sheet/table | as is |
+| "Rows deliberately not represented" | `ConversionCoverage(policy=…, complete=False, gaps=…)` | as is |
+| Deterministic facts vs model summary | `DerivationRange` (`derivation_kind` is free text) | needs one more `evidence_mode` (see below) |
+| Component graph | `ConverterManifest.components` | as is |
+| Pointers into the file | — | four new locator kinds |
+| Queryable normalized copy | `DerivedAsset` | fits; needs a declared asset kind |
+| Answering from rows | — | a new retrieval primitive over the stored data |
+
+**Evidence mode.** A row count or a column minimum is neither the source's
+own words (`source_expression`) nor a model's observation. Labeling it
+`source_expression` would overstate it (the source never *said* "48,210
+rows"); labeling it `model_observation` would suggest a model was involved.
+A fourth mode, `computed`, keeps the disclosure honest. Column names, sheet
+names, formula text and named-cell values copied verbatim stay
+`source_expression`.
+
+**Extraction eligibility.** Left alone, E2 would turn a profile's structure
+tables into schema trivia ("Sheet Q3 has a column Revenue"). Those ranges
+should be searchable (they are how a file is found) but not claim-extracted;
+claims come from the overview and key-values sections. The range labels
+already give E2 the signal.
+
+## 5. Documents as the subject of claims
+
+A profile produces almost only claims whose subject is **the file itself**.
+The same happens in prose: "This report covers the 2025 audit", "the
+attached spreadsheet lists…". Today such a claim has no subject to bind to:
+the file is not an entity.
+
+Options considered:
+
+| Option | Assessment |
+|---|---|
+| Put the file name in the claim text only | Readable and searchable, but a string is not an identity: names collide (`Book1.xlsx`, `export (3).csv`), change on rename, and the same name in two folders is two files. Nothing binds the claim to the document. |
+| Rely on provenance (claim → span → version → document) | Already exists and is right for claims *about the world*. It does not make the document the *subject*: "covers EU revenue" would float without a holder. |
+| Make every document an entity at ingest | Correct identity, but at millions of documents it floods entity search and T0 candidate lists with entities nobody talks about. |
+| **Mint a document entity when a claim first takes the document as its subject** | Identity from the lineage (no resolution guesswork), aliases from file name/title/path, created only when needed. **Chosen.** |
+
+Binding mechanism: D122 already shows Claimify a bounded set of *source
+reference cards* (things the source introduces). A document gets one extra,
+always-present **self card** naming the document. A claim whose subject is
+the document cites the self card, and E3 binds that mention to the document
+entity from provenance, without running the identity cascade. Mentions of the
+file *from other documents* ("see Q3_sales_2025.xlsx") go through the normal
+cascade, where the document entity's file-name aliases make it a candidate —
+no auto-accept, preserving D95/D100.
+
+Claim text stays immutable. A profile's heading carries the file name, so
+Claimify can write a self-contained, grounded claim ("The workbook
+Q3_sales_2025.xlsx covers…") naming the file as that version named itself.
+A later rename adds an alias to the entity; old claims are not rewritten, and
+the entity id is the link that survives.
+
+The entity also gives the agent a **handle to act on**: resolve the entity →
+its document → `source_open` or the new data query.
+
+## 6. The data query primitive — engine choice
+
+The agent needs to answer aggregations over a profiled file. Alternatives:
+
+| Option | Assessment |
+|---|---|
+| Load rows into PostgreSQL and reuse the open-query-space sandbox | Violates D37 (Postgres stores no document bodies); a million-row CSV becomes a million Postgres rows per version; version and forget cascades multiply. Rejected. |
+| Agent downloads the original and computes | Works only for mounted harnesses with a code runner, burns context, and is not a memory surface. Kept as the fallback that already exists (raw mount / `source_open`). |
+| Per-format query languages (jq for JSON, SQL for SQLite, pandas for XLSX) | Several dialects and sandboxes to secure. Rejected for surface area. |
+| **One embedded analytical engine (DuckDB) over a normalized copy** | One SQL dialect for CSV, XLSX sheets, Parquet, JSON and SQLite; in-process; reads Parquet natively. **Chosen.** |
+
+DuckDB is untrusted-SQL capable when configured defensively. Its security
+guide recommends disabling external access (`enable_external_access=false`,
+which blocks file and network reads outside what was attached), restricting
+`allowed_directories`, capping `memory_limit` and `threads`, and then
+`lock_configuration=true` so a query cannot re-enable anything. Sources:
+<https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview>,
+<https://duckdb.org/2025/03/06/gems-of-duckdb-1-2> (both retrieved
+2026-09-23). The engine attaches only the one representation's normalized
+tables read-only, applies those settings, then runs the agent's query with a
+time limit and a returned-row cap.
+
+**The normalized copy.** Converting each table to Parquet at conversion time
+(stored as a derived asset) makes the query path format-independent, fast and
+typed, at the cost of storing the data a second time. The alternative —
+querying originals directly — would need a DuckDB reader per format at query
+time and would re-parse XLSX on every call. The storage cost is accepted.
+
+## 7. Alternatives recorded, not chosen
+
+- **Full-row extraction for structured data** — rejected (§3.2): cost scales
+  with rows, and it still cannot answer aggregations.
+- **Refuse structured formats** — rejected: the file is useful to agents, and
+  D117 already established store-first behavior.
+- **A separate ingestion path for message exports** — rejected. Conversations
+  are already ingested as dialogue-shaped documents (the shape D131's
+  extraction handles). An mbox or chat export is a *container* whose members
+  are conversations; fan-out plus a transcript converter reuses everything.
+- **Log event digest** — a converter posture that extracts error/deploy/
+  anomaly events from logs as dialogue-like records. Not chosen: event
+  selection needs its own evaluation, and the profile plus data query already
+  answer "what happened between 10:00 and 10:05". Adoption trigger: agents
+  repeatedly need log events as remembered facts rather than queried rows.
+- **Always mint document entities at ingest** — rejected for entity-space
+  pollution at scale (§5).
+- **Mistral per-image annotation instead of embedded-image children** —
+  cheaper (one parameter) but produces a caption without OCR and without the
+  image route's two-lane contract. Container fan-out handles embedded figures
+  through the same image route as standalone images.
+
+## 8. Sequencing
+
+Sequencing is in [the delivery plan](../plans/format_coverage_delivery.md);
+it does not belong in the design.

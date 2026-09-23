@@ -623,6 +623,13 @@ lemma to make an exception for.
 
 ## 5. No entity types (amends D18 typing and domain/range)
 
+> **D134 (documents as subjects).** A document can be the subject of a claim. Its
+> entity is an ordinary untyped entity; what makes it a document entity is a one-to-one
+> document-subject binding to the lineage, and a claim citing the document's self card
+> binds to it without the §3 cascade. Mentions of the file from other documents resolve
+> through the cascade as usual. Authority:
+> [`document_subject_entity_design.md`](document_subject_entity_design.md).
+
 There is **no** class on the entity, **no** hats table, **no** extract
 type, **no** domain/range over kinds.
 

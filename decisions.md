@@ -948,6 +948,11 @@ change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
 
+**Refined by D133.** The operator-built MIME → converter table is replaced by an
+engine-shipped format registry (family → posture → converter) that deployments
+overlay rather than replace; routing keys are normalized. The pluggable, versioned
+converter module and its contract remain binding.
+
 **Decision.** A pluggable, **configurable** conversion module (a reusable open-source library):
 interface `convert(bytes, mime, hints) -> { markdown, blocks[] }` where `blocks` carry **page +
 character offsets back to the source** (load-bearing for E2 grounding D32, chunking, PageIndex). A
@@ -2280,6 +2285,10 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+**Refined by D133.** The locator union gains `sheet_range`, `table_region`,
+`json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
+routes, contract shape and every other D65 binding remain.
 
 **Decision.** Standalone images, audio, and video enter the system as **E0 inputs, never a new
 plane or parallel pipeline**: a media file is a source whose testimony reaches the system
@@ -4174,6 +4183,10 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
+**Refined by D134.** A document can be the subject of a claim: a document entity
+is an ordinary untyped entity whose identity comes from a document-subject binding
+to its lineage rather than from the name cascade. No entity type is introduced.
+
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
 > vertices, not P2 snapshot nodes; no graph generation is implied.
@@ -5703,6 +5716,11 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
+**Refined by D133.** Parking applies to families the registry recognizes whose
+converter needs an unconfigured provider. A family a deployment explicitly turned
+off is refused at ingest with a typed error; unrecognized bytes remain a D132
+refusal.
+
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
 **Context.** Accepting an unsupported format previously stored it and then
@@ -5871,6 +5889,11 @@ promising billed tokens or a fixed saving.
 [delivery](plan/plans/lean_processing_delivery.md).
 
 ## D122. Share frozen source reference context between extraction chunks
+
+**Amended by D134.** Every Selection request also receives one self card for the
+document being processed, outside the card cap. A claim citing the self card binds
+to the document entity without the resolution cascade — the single exception to
+this entry's rule that choosing a card never bypasses resolution.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6091,3 +6114,77 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 **Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
+## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
+
+**Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
+PR #452.)
+
+**Context.** Out of the box the engine converts two formats (text, Markdown).
+Routes are an exact lookup on the declared MIME in a table each deployment must
+rebuild by hand, and configuring one route replaces the defaults. The office/HTML
+converter is the thinnest and emits no source map, and the parser extras it needs
+are not installed. The pipeline also assumes every file is prose to extract claims
+from, which is wrong for structured data: row-by-row extraction scales model cost
+with rows and still cannot answer aggregations. Containers (archives, email with
+attachments, mailboxes, message exports, documents with embedded images) have no
+way to become several documents.
+
+**Decision.**
+1. An engine-shipped **format registry** maps each format family to detection,
+   canonical MIME types and aliases, a **posture**, a converter, provider
+   requirements, size limit, an opaque cost-class label and a storage class.
+   Deployments overlay it (turn families off, configure providers, lower limits);
+   they never replace it. Routing keys are normalized (lower case, no parameters,
+   aliases resolved).
+2. Four postures: **full** (complete reading), **profile** (a description of a data
+   file — overview, structure, identifying values, formulas — never its rows),
+   **expand** (members become child documents routed on their own), and **card**
+   (a deterministic file card for recognized formats with no reading). Structured
+   families use a size-and-shape rule: small files are read fully.
+3. `evidence_mode` gains `computed` for deterministic statistics. Claim extraction
+   skips profile structure ranges; they remain searchable.
+4. Profiled tables are stored as normalized Parquet derived assets, and a new direct
+   retrieval primitive, **`data_query`**, runs one read-only SQL statement over them
+   in an isolated, resource-capped DuckDB instance.
+5. Child documents are ordinary E0 documents with a member record to the parent;
+   they count as one source with their root container (D54), re-expand per parent
+   version with content-hash reuse, cascade on parent forget, and are bounded
+   against zip bombs. Embedded images run the image route.
+6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. Detection (D132) must recognize every registry family; a family whose converter
+   needs an unconfigured provider parks (D117); a disabled family is refused.
+
+**Alternatives and consequences.** Full-row extraction for structured data,
+loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
+query dialects, a separate conversation-ingest path, and minting per-image captions
+through the OCR provider instead of image children were rejected (analysis §6–§7).
+Normalized Parquet stores data a second time. The log event digest is a documented
+alternative with an adoption trigger.
+
+**Authority:** [design](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
+[delivery order](plan/plans/format_coverage_delivery.md).
+
+## D134. A document can be the subject of a claim
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** Profiles, file cards and self-referring prose ("this report…") produce
+claims about the file itself. Provenance says where a claim came from, not what it
+is about, and a file name is not an identity (collisions, renames).
+
+**Decision.** A **document entity** is minted the first time a claim takes a
+document as its subject; a one-to-one document-subject binding to the lineage is
+its identity, with file name, title and path segment as `document_metadata`
+aliases. Every Selection request gets a **self card** for its document; a claim
+citing it carries a structured document-self marker and binds to the document
+entity without the resolution cascade. Mentions of the file from other documents
+resolve normally with no auto-accept. Claim text is immutable; renames add aliases.
+
+**Alternatives and consequences.** File name in text only, provenance only,
+minting an entity for every document at ingest, and resolving self-references by
+name were rejected (design §Alternatives). Amends D122 for the self card only and
+refines D96 without introducing types.
+
+**Authority:** [design](plan/designs/document_subject_entity_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.
