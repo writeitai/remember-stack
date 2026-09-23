@@ -1,7 +1,10 @@
-"""Generate the animated SVG diagrams for docs_new in the remember.dev visual language."""
+"""Generate the animated SVG diagrams for docs_new in the remember.dev visual language.
+
+Run: python3 docs_new/assets/diagrams/generate.py (search-vs-memory.svg is hand-written).
+"""
 from pathlib import Path
 
-OUT = Path("/Users/jpuc/code/moje/remember-stack-docs-new/docs_new/assets/diagrams")
+OUT = Path(__file__).resolve().parent
 CYCLE = 14  # seconds per loop
 
 
