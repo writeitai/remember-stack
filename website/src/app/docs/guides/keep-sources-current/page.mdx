@@ -32,7 +32,6 @@ client = remember.Client.from_env()
 
 v2 = client.ingest(
     "specs/billing-migration-plan.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="specs/billing-migration-plan.md",
     source_modified_at=datetime(2026, 9, 17, 14, 0, tzinfo=UTC),
@@ -62,7 +61,6 @@ The same with the CLI:
 
 ```bash
 remember ingest specs/billing-migration-plan.md \
-  --mime text/markdown \
   --source-kind file --source-ref specs/billing-migration-plan.md \
   --source-modified-at 2026-09-17T14:00:00+00:00 \
   --versioning-mode living \
@@ -154,7 +152,6 @@ new_versions = []
 for path in sorted(root.glob("*.md")):
     version = client.ingest(
         path,
-        mime="text/markdown",
         source_kind="file",
         source_ref=f"specs/{path.name}",
         source_modified_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
@@ -164,7 +161,7 @@ for path in sorted(root.glob("*.md")):
         new_versions.append(version.version_id)
 
 if new_versions:
-    client.wait_for_readiness(new_versions, timeout=1800, poll_interval=30)
+    client.wait_for_readiness(new_versions)
 ```
 
 Run it on a schedule. Unchanged files are no-ops; edited files become new

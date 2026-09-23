@@ -25,35 +25,21 @@ client = remember.Client.from_env()
 
 version = client.ingest(
     "notes/2026-09-17-standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/2026-09-17-standup.md",
 )
 
-report = client.wait_for_readiness(
-    [version.version_id],
-    timeout=1800,
-    poll_interval=30,
-)
+report = client.wait_for_readiness([version.version_id])
 print(report.ready)
 ```
 
-`wait_for_readiness(version_ids, *, timeout=30.0, poll_interval=0.5,
-require_p3=False)` polls the deployment until every listed version is
-ready, then returns the last report. If `timeout` seconds pass first, it
-raises `TimeoutError`, whose message includes the last report.
-
-<Callout type="warning">
-
-The default `timeout` is 30 seconds and the default `poll_interval` is
-half a second. A small Markdown file takes minutes to process, so the
-defaults time out on almost every real document while polling twice a
-second. Always pass both. `timeout=1800` (30 minutes) and
-`poll_interval=30` suit single documents; raise the timeout for bulk
-loads. The same pacing applies everywhere: first check after about 30
-seconds, then every 30 to 60 seconds, never more often than every 15.
-
-</Callout>
+`wait_for_readiness(version_ids, *, timeout=1800.0, poll_interval=15.0,
+require_p3=False)` checks the deployment at once, then every
+`poll_interval` seconds, until every listed version is ready, and returns
+the last report. The defaults, 30 minutes and 15 seconds, are starting
+points sized for single documents, where processing takes minutes. Raise
+`timeout` for bulk loads. If `timeout` seconds pass first, it raises
+`TimeoutError`, whose message includes the last report.
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
@@ -65,50 +51,30 @@ check covers at most 1,000 versions; split larger lists.
 
 A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
-finished one returns ready on the first poll.
+finished one returns ready on the first check.
 
 ## Stop on failure
 
-`wait_for_readiness` does not stop when a stage dead-letters. A
-dead-lettered version is never ready, so the call keeps polling until the
-timeout. When you wait on
-many versions or long timeouts, poll yourself and stop on the first
-dead letter:
+A stage that is `failed` has a retry scheduled and can still succeed, so
+`wait_for_readiness` keeps waiting through it. A stage that is
+`dead_letter` has used all its attempts and will never become ready, so
+`wait_for_readiness` stops at the first check that shows one and raises
+`remember.PipelineDeadLettered`:
 
 ```python
-import time
-
 import remember
-from remember import ReadinessRequirements
 
-TERMINAL = {"dead_letter"}
-
-def wait_or_fail(client, version_ids, *, timeout=1800.0, poll_interval=30.0):
-    require = ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=False)
-    deadline = time.monotonic() + timeout
-    time.sleep(min(30.0, timeout))
-    while True:
-        report = client.pipeline_readiness(version_ids=tuple(version_ids), require=require)
-        if report.ready:
-            return report
-        failed = [
-            (version.version_id, stage.stage, stage.status)
-            for version in report.versions
-            for stage in version.stages
-            if stage.status in TERMINAL
-        ]
-        if failed:
-            raise RuntimeError(f"processing failed: {failed}")
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"not ready after {timeout}s: {report.capabilities}")
-        time.sleep(poll_interval)
-
-client = remember.Client.from_env()
-report = wait_or_fail(client, [version.version_id])
+try:
+    client.wait_for_readiness([version.version_id])
+except remember.PipelineDeadLettered as error:
+    for version_id, stage, status in error.dead_lettered:
+        print(f"{version_id}: {stage} is {status}")
+    # error.report is the full readiness report that showed the dead letter.
 ```
 
-`pipeline_readiness` takes the version IDs as a tuple of `UUID` values and
-a `ReadinessRequirements` naming all four capabilities.
+`dead_lettered` lists every `(version_id, stage, status)` that is
+dead-lettered, and the message names them too. What to do next is under
+[When a version fails](#when-a-version-fails).
 
 ## Read the report
 
@@ -194,25 +160,23 @@ algorithm. Your agent's instructions should say the same:
 1. Wait about 30 seconds after ingest before the first check.
 2. Then check every 30 to 60 seconds, backing off gently. Never check more
    often than every 15 seconds.
-3. Stop at once if any `stages[].status` is `failed` or `dead_letter`, and
-   report that stage.
-4. After 20 to 30 minutes without `ready: true` and without a failure, stop
-   and escalate to the operator with the `version_id` and the last
+3. A `failed` stage is retrying: keep polling, and describe it as retrying
+   if you report progress.
+4. Stop at once if any `stages[].status` is `dead_letter`, and report the
+   `version_id` and that stage.
+5. After 20 to 30 minutes without `ready: true` and without a dead letter,
+   stop and escalate to the operator with the `version_id` and the last
    `stages[]`.
-
-   Step 3 follows the tool's guidance, which treats `failed` as a stop signal so an agent does
-   not sit on a retry loop. A `failed` stage can still recover on its own;
-   if you are not in a hurry, check again later before reporting it.
 
 Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
 the agent also reads a published corpus snapshot. `ready: true` means the
 assured operations can see the content; whether a given question finds it
 still depends on relevance.
 
-An ingest that returned `created: false` started no new processing. Check
-readiness once: `ready: true` means the content is already queryable, and a
-`failed` or `dead_letter` stage means stop and report. If it is neither, an
-earlier run of the same bytes is still going; poll it as above.
+An ingest that returned `created: false` started no new processing, but an
+earlier run of the same bytes may still be going. Check readiness:
+`ready: true` means the content is already queryable. Otherwise poll it
+exactly as above, stopping only on `dead_letter` or the time limit.
 
 ## Next
 

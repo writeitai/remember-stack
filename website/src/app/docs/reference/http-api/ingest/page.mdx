@@ -144,7 +144,6 @@ from remember import Client
 memory = Client()
 version = memory.ingest(
     "billing-migration.md",
-    mime="text/markdown",
     source_kind="notes",
     source_ref="specs/billing-migration.md",
     versioning_mode="living",
@@ -153,8 +152,10 @@ print(version.version_id, version.created)
 ```
 
 `Client.ingest` accepts a path (string or `Path`) or bytes; with bytes, pass
-`filename`. It guesses `mime` from the file name and falls back to
-`application/octet-stream`. `Client.ingest_file(path, ...)` is the same call.
+`filename`. It takes `mime` from the extension of the file's name (for
+bytes, of `filename`): `.md` is `text/markdown` on every Python
+installation; see [the full table](/docs/guides/ingest-files#the-mime-type).
+An unknown extension is sent as `application/octet-stream`. `Client.ingest_file(path, ...)` is the same call.
 
 ## POST /readiness
 
@@ -188,8 +189,9 @@ The stages a self-hosted deployment reports, in order: `convert`, `structure`,
 `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`,
 `embed_claim`, `reconcile`, `label_relation`.
 
-If a stage is `failed` or `dead_letter`, stop polling: that version will not
-become ready without intervention.
+A `failed` stage has a retry scheduled and can still succeed; keep polling.
+If a stage is `dead_letter`, stop polling: it used all its attempts, and
+that version will not become ready without intervention.
 
 Capability `reason` values:
 
@@ -229,12 +231,13 @@ report = memory.pipeline_readiness(
 )
 
 # Or poll until ready (pipeline, p1 and live_graph required; p3 optional):
-report = memory.wait_for_readiness([version.version_id], timeout=300, poll_interval=2)
+report = memory.wait_for_readiness([version.version_id])
 ```
 
-`wait_for_readiness` polls every `poll_interval` seconds (default 0.5) and
-raises `TimeoutError` after `timeout` seconds (default 30). It does not stop
-early on a `failed` stage. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+`wait_for_readiness` polls every `poll_interval` seconds (default 15) and
+raises `TimeoutError` after `timeout` seconds (default 1800). It keeps
+polling through a `failed` stage and raises `PipelineDeadLettered` at once
+on a `dead_letter` stage. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ## GET /documents
 

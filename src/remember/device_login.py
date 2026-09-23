@@ -353,7 +353,7 @@ def credential_from_token(
 
         return CredentialFile(
             version=1,
-            api_url="https://api.remember.dev",
+            api_url=token_host,
             token_host=token_host,
             access_token=SecretStr(""),
             token_id=token.token_id or uuid4(),

@@ -18,6 +18,7 @@ from remember.errors import CloudError
 from remember.errors import ConnectorNotFoundError
 from remember.errors import MemoryApiError
 from remember.errors import NotPermitted
+from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
 from remember.errors import Unauthenticated
 from remember.models import BillingStatus
@@ -66,6 +67,7 @@ __all__ = (
     "MemoryApiError",
     "MemoryClient",
     "NotPermitted",
+    "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
     "QueryResultDict",

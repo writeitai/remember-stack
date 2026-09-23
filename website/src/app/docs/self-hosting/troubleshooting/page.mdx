@@ -242,12 +242,11 @@ whose MIME type is still unrouted stays parked.
 The MIME type is the one the upload declared, not something the engine
 detects. These uploads arrive with a type the default routes do not cover:
 
-- the Python client with `bytes` instead of a path, and no `mime=`:
+- a file or `filename` with no extension, or an extension the client does
+  not map and the sending machine's MIME table does not know:
   `application/octet-stream`;
-- the MCP `ingest` tool with `content_base64` and no `mime`:
-  `application/octet-stream`, whatever the `filename`;
-- a file with no extension, or an extension the sending machine's MIME
-  table does not know;
+- an older `remember` client on a Python installation that does not know
+  `.md`: `application/octet-stream`;
 - a `curl` call with a type such as `text/x-markdown`. The match is exact.
 
 Re-sending the same file with the right type does not help. RememberStack
@@ -264,8 +263,11 @@ SELECT mime, count(*) FROM content_objects GROUP BY mime;
 SQL
 ```
 
-For new uploads, pass the type: `remember ingest notes.md --mime text/markdown`,
-or `mime="text/markdown"` in Python.
+The current client sends `.md` and `.markdown` as `text/markdown` on
+every Python installation, and takes the type of bytes from their
+`filename`. For a file whose extension does not say what it is, pass the
+type: `remember ingest notes --mime text/markdown`, or `mime="text/markdown"`
+in Python.
 
 ### Dead letters
 

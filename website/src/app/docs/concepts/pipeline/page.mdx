@@ -129,18 +129,16 @@ with remember.Client() as memory:
         source_kind="notes",
         source_ref="notes/2026-04-28-standup.md",
     )
-    report = memory.wait_for_readiness(
-        [version.version_id], timeout=1800, poll_interval=30
-    )
+    report = memory.wait_for_readiness([version.version_id])
     print(report.ready)
 ```
 
 `wait_for_readiness` requires `pipeline`, `p1` and `live_graph` (add
-`require_p3=True` for `p3`) and raises `TimeoutError` when the time runs out.
-Its default timeout is 30 seconds, which is too short for real documents;
-set it explicitly as above. It keeps polling through a `dead_letter`, so for
-long waits, inspect `report.versions[*].stages` yourself and stop on
-`dead_letter`. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+`require_p3=True` for `p3`). It checks every 15 seconds for up to 30
+minutes by default and raises `TimeoutError` when the time runs out. It
+keeps waiting through a `failed` stage, which is being retried, and stops
+at once with `PipelineDeadLettered` on a `dead_letter` stage. See
+[Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 The report also carries `build_revision` and `model_bindings`: which engine
 build and which models are processing your documents.

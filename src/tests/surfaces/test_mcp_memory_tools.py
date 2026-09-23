@@ -246,8 +246,10 @@ def test_memory_write_descriptors_are_stable() -> None:
     assert "source_ref" in ingest["description"]
     assert "REMEMBERSTACK_MCP_INGEST_ROOTS" in ingest["description"]
     assert isinstance(readiness["description"], str)
-    assert "failed" in readiness["description"]
-    assert "dead_letter" in readiness["description"]
+    assert "if any stages[].status is dead_letter, STOP" in readiness["description"]
+    assert "status=failed is NOT terminal" in readiness["description"]
+    assert "created=false" in readiness["description"]
+    assert "may still be processing" in readiness["description"]
     assert "live_graph" in readiness["description"]
     assert "p3=false" in readiness["description"]
     assert (
@@ -325,11 +327,12 @@ def test_ingest_text_happy_path_points_at_pipeline_readiness() -> None:
         "require": {"pipeline": True, "p1": True, "live_graph": True, "p3": False},
     }
     guidance = payload["pipeline"]["guidance"].lower()
-    assert "failed" in guidance or "dead_letter" in guidance
+    assert "stop immediately if any stages[].status is dead_letter" in guidance
+    assert "failed stage is retrying" in guidance
     assert "live_graph" in guidance and "p3=false" in guidance
     assert backend.last_ingest is not None
     assert backend.last_ingest["content"] == b"remember this"
-    assert backend.last_ingest["mime"] == "text/plain"
+    assert backend.last_ingest["mime"] == "text/markdown"
     assert backend.last_ingest["source_kind"] == "agent"
 
 
@@ -347,9 +350,10 @@ def test_ingest_created_false_guidance_is_honest() -> None:
         "no-op" in payload["pipeline"]["guidance"].lower()
         or "already" in payload["pipeline"]["guidance"].lower()
     )
-    assert "failed" in payload["pipeline"]["guidance"].lower() or "dead_letter" in (
-        payload["pipeline"]["guidance"].lower()
-    )
+    guidance = payload["pipeline"]["guidance"].lower()
+    assert "may still be processing" in guidance
+    assert "keep polling" in guidance
+    assert "dead_letter" in guidance and "failed stage is retrying" in guidance
 
 
 def test_ingest_path_and_base64_modes(tmp_path: Path) -> None:
@@ -380,7 +384,7 @@ def test_ingest_path_and_base64_modes(tmp_path: Path) -> None:
     _success_payload(b64_result)
     assert backend.last_ingest is not None
     assert backend.last_ingest["content"] == b"pdf-bytes"
-    assert backend.last_ingest["mime"] == "application/octet-stream"
+    assert backend.last_ingest["mime"] == "application/pdf"
 
 
 def test_path_without_roots_is_rejected(tmp_path: Path) -> None:
@@ -525,10 +529,7 @@ def test_filename_override_mime_matches_sdk_path_name(tmp_path: Path) -> None:
     _success_payload(result)
     assert backend.last_ingest is not None
     assert backend.last_ingest["filename"] == "report.pdf"
-    # .md → text/markdown (or text/x-markdown on some platforms); not application/pdf
-    mime = str(backend.last_ingest["mime"])
-    assert "pdf" not in mime
-    assert mime.startswith("text/") or mime == "application/octet-stream"
+    assert backend.last_ingest["mime"] == "text/markdown"
 
 
 def test_ingest_rejects_mutual_exclusion_and_lineage_pair() -> None:

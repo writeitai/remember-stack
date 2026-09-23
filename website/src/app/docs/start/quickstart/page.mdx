@@ -84,9 +84,8 @@ export REMEMBER_API_KEY=umc_dp_...
 ```
 
 The Python client and the `remember` CLI both read these. Instead of
-exporting a token you can sign the CLI in with
-`remember login --token-host https://remember.dev/app/api`, which opens
-a browser and stores the token in `~/.config/remember/credentials.json`.
+exporting a token you can sign the CLI in with `remember login`, which
+opens a browser and stores the token in `~/.config/remember/credentials.json`.
 
 </Tab>
 
@@ -121,7 +120,6 @@ import remember
 client = remember.Client.from_env()
 version = client.ingest(
     "standup.md",
-    mime="text/markdown",
     source_kind="file",
     source_ref="notes/standup.md",
     source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
@@ -129,8 +127,7 @@ version = client.ingest(
 print(version.version_id, version.created)
 ```
 
-Pass `mime` explicitly. Python does not recognise `.md` files as Markdown
-on every platform, and a file sent with the wrong type is not processed.
+The client sends `.md` files as `text/markdown`, whatever Python you run.
 
 `created` is `True` the first time. Send the same bytes again and it is
 `False`: nothing new is stored and nothing is charged.
@@ -138,16 +135,12 @@ on every platform, and a file sent with the wrong type is not processed.
 ## 5. Wait until it is processed
 
 ```python
-client.wait_for_readiness(
-    [version.version_id],
-    timeout=1800,
-    poll_interval=15,
-)
+client.wait_for_readiness([version.version_id])
 ```
 
 Processing reads, structures and connects the document. It takes minutes.
-Always pass a `timeout`: the default is 30 seconds, which is shorter than a
-typical run.
+`wait_for_readiness` checks every 15 seconds for up to 30 minutes by
+default, and stops with an error at once if a stage fails for good.
 
 ## 6. Ask
 
@@ -170,7 +163,7 @@ The result is an envelope. Look for:
 ## The same with the CLI
 
 ```bash
-remember ingest standup.md --mime text/markdown \
+remember ingest standup.md \
   --source-kind file --source-ref notes/standup.md \
   --source-modified-at 2026-09-17T09:30:00+00:00
 

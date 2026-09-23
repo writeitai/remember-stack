@@ -47,6 +47,7 @@ The client is synchronous. There is no async client yet
 | `CloudError` | exception | [Errors](#errors) |
 | `Unauthenticated` | exception | [Errors](#errors) |
 | `NotPermitted` | exception | [Errors](#errors) |
+| `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `RateLimited` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `BillingStatus` | model | [Models](#models) |
@@ -371,7 +372,7 @@ results.
 | `source` | A `Path` or `str` file path (read from disk), or `bytes`. |
 | `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the filename. |
 | `filename` | Required for bytes. Defaults to the file's name for a path. |
-| `mime` | Media type. Defaults to a guess from the file name, then `application/octet-stream`. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type). An unknown extension is sent as `application/octet-stream`. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
 | `source_kind`, `source_ref` | The document's stable identity: what kind of source it is and its id within that kind. Always together. Ingesting again with the same pair creates a new version of the same document when the bytes differ. See [Documents, versions and sources](/docs/concepts/documents-and-sources). |
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
@@ -440,35 +441,33 @@ What each capability means: [The pipeline and readiness](/docs/concepts/pipeline
 MemoryClient.wait_for_readiness(
     version_ids: Sequence[str | UUID],
     *,
-    timeout: float = 30.0,
-    poll_interval: float = 0.5,
+    timeout: float = 1800.0,
+    poll_interval: float = 15.0,
     require_p3: bool = False,
 ) -> PipelineReadinessReport
 ```
 
-Calls `pipeline_readiness` every `poll_interval` seconds until the report says
-`ready`, requiring `pipeline`, `p1` and `live_graph` (and `p3` when
-`require_p3=True`). Returns the ready report.
+Calls `pipeline_readiness` at once and then every `poll_interval` seconds
+until the report says `ready`, requiring `pipeline`, `p1` and `live_graph`
+(and `p3` when `require_p3=True`). Returns the ready report. The defaults,
+30 minutes and 15 seconds, are starting points sized for single documents;
+raise `timeout` for bulk loads.
+
+A stage that is `failed` has a retry scheduled, so the method keeps
+polling. A stage that is `dead_letter` has used all its attempts and never
+becomes ready, so the method stops at once.
 
 Raises:
 
+- [`PipelineDeadLettered`](#pipelinedeadlettered) when any stage of any
+  listed version is `dead_letter`;
 - `TimeoutError` when `timeout` seconds pass first;
 - `ValueError` when an id is not a UUID.
 
-<Callout type="warning">
-
-The default `timeout` is 30 seconds. Processing a document takes minutes.
-Pass a timeout that fits your documents, for example `timeout=1800`.
-
-</Callout>
-
-The method keeps polling when a stage has failed; it stops only on `ready`
-or on the timeout. Check `stages[].status` for `failed` or `dead_letter`
-yourself if you want to stop earlier. See
-[Wait until a document is queryable](/docs/guides/wait-for-readiness).
+See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ```python
-memory.wait_for_readiness([version.version_id], timeout=1800, poll_interval=15)
+memory.wait_for_readiness([version.version_id])
 ```
 
 #### `deployment_build_info`
@@ -1041,7 +1040,8 @@ The same checks are available as a command: [`remember-status`](/docs/reference/
 
 ```text
 RuntimeError
-└── MemoryApiError                 memory clients (Client, MemoryClient)
+├── MemoryApiError                 memory clients (Client, MemoryClient)
+└── PipelineDeadLettered           wait_for_readiness
 Exception
 ├── CloudError                     CloudClient
 │   ├── Unauthenticated            401
@@ -1075,6 +1075,22 @@ except remember.MemoryApiError as error:
 ```
 
 Status codes and their meaning: [Errors and status codes](/docs/reference/errors).
+
+### PipelineDeadLettered
+
+Raised by `wait_for_readiness` when a stage of a version it waits on is
+`dead_letter`: the stage used all its retry attempts and will not finish by
+waiting.
+
+| Attribute | Meaning |
+|---|---|
+| `dead_lettered` | Every dead-lettered stage found, as `(version_id, stage, status)` tuples. |
+| `report` | The `PipelineReadinessReport` that showed them. |
+
+`str(error)` names each version and stage. On a self-hosted deployment the
+operator can replay the work after fixing the cause; on remember.dev,
+report the `version_id` and stage to support. See
+[When a version fails](/docs/guides/wait-for-readiness#when-a-version-fails).
 
 ### CloudError and subclasses
 

@@ -15,7 +15,6 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
-import mimetypes
 from pathlib import Path
 import time
 from types import TracebackType
@@ -37,11 +36,14 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from remember.errors import CloudError
 from remember.errors import MemoryApiError
 from remember.errors import NotPermitted
+from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
 from remember.errors import Unauthenticated
+from remember.mime import infer_upload_mime
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import BillingStatus
@@ -738,27 +740,50 @@ class MemoryClient:
         self,
         version_ids: Sequence[str | UUID],
         *,
-        timeout: float = 30.0,
-        poll_interval: float = 0.5,
+        timeout: float = 1800.0,
+        poll_interval: float = 15.0,
         require_p3: bool = False,
     ) -> PipelineReadinessReport:
-        """Poll /readiness until all requested version_ids are ready or timeout expires."""
-        start = time.monotonic()
-        req_ids = [UUID(str(v)) for v in version_ids]
+        """Poll /readiness until every listed version is ready.
+
+        The first check is immediate, so a version that is already processed
+        (for example one whose ingest returned ``created=False``) returns at
+        once. Later checks are ``poll_interval`` seconds apart.
+
+        The defaults — ``timeout`` 30 minutes, ``poll_interval`` 15 seconds —
+        are starting points sized for single documents, where processing takes
+        minutes; raise ``timeout`` for bulk loads.
+
+        A stage whose status is ``failed`` has a retry scheduled and can still
+        succeed, so waiting continues. A stage that is ``dead_letter`` has used
+        all its retries and never becomes ready, so the wait stops at once with
+        :class:`~remember.errors.PipelineDeadLettered`. ``TimeoutError`` is
+        raised when ``timeout`` seconds pass first.
+        """
+        deadline = time.monotonic() + timeout
+        req_ids = tuple(UUID(str(v)) for v in version_ids)
         require = ReadinessRequirements(
             pipeline=True, p1=True, live_graph=True, p3=require_p3
         )
         while True:
-            report = self.pipeline_readiness(
-                version_ids=tuple(req_ids), require=require
-            )
+            report = self.pipeline_readiness(version_ids=req_ids, require=require)
             if report.ready:
                 return report
-            if time.monotonic() - start > timeout:
+            dead_lettered = tuple(
+                (version.version_id, stage.stage, stage.status)
+                for version in report.versions
+                for stage in version.stages
+                if stage.status == "dead_letter"
+            )
+            if dead_lettered:
+                raise PipelineDeadLettered(dead_lettered=dead_lettered, report=report)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise TimeoutError(
-                    f"Version IDs {version_ids} not ready after {timeout}s: {report}"
+                    f"Version IDs {list(version_ids)} not ready after {timeout}s:"
+                    f" {report}"
                 )
-            time.sleep(poll_interval)
+            time.sleep(min(poll_interval, remaining))
 
     def ingest(
         self,
@@ -796,6 +821,9 @@ class MemoryClient:
         ):
             raise ValueError("source_modified_at must be timezone-aware UTC")
 
+        # An explicit mime always wins. Otherwise a file path's type comes
+        # from the real path name (an overridden filename does not change
+        # it), and bytes take the type of the filename they are sent under.
         payload_bytes: bytes
         if content is not None:
             payload_bytes = content
@@ -804,7 +832,7 @@ class MemoryClient:
         elif isinstance(source, Path):
             payload_bytes = source.read_bytes()
             filename = filename or source.name
-            mime = mime or mimetypes.guess_type(source.name)[0]
+            mime = mime or infer_upload_mime(source.name)
         elif isinstance(source, bytes):
             payload_bytes = source
         elif isinstance(source, str):
@@ -812,7 +840,7 @@ class MemoryClient:
             if p.is_file():
                 payload_bytes = p.read_bytes()
                 filename = filename or p.name
-                mime = mime or mimetypes.guess_type(p.name)[0]
+                mime = mime or infer_upload_mime(p.name)
             else:
                 raise ValueError(f"file not found: {source}")
         else:
@@ -820,8 +848,7 @@ class MemoryClient:
 
         if not filename:
             raise ValueError("filename is required when ingesting bytes")
-        if not mime:
-            mime = "application/octet-stream"
+        mime = mime or infer_upload_mime(filename) or "application/octet-stream"
         params: dict[str, str] = {
             "filename": filename,
             "mime": mime,
@@ -1032,8 +1059,6 @@ def _validated(model: type[_ModelT], payload: object, *, endpoint: str) -> _Mode
         ) from error
 
 
-DEFAULT_BASE_URL = "https://remember.dev/app/api"
-
 #: Environment variables, named so they cannot be confused with the memory
 #: client's ``REMEMBERSTACK_*`` pair — a machine often holds both.
 TOKEN_ENV = "REMEMBER_CLOUD_TOKEN"
@@ -1240,7 +1265,7 @@ class CloudClient:
         *,
         token: str,
         org_id: str,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str = DEFAULT_CONTROL_PLANE_URL,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
@@ -1270,7 +1295,7 @@ class CloudClient:
         base_url = (
             overrides.pop("base_url", None)
             or env.remember_cloud_url
-            or DEFAULT_BASE_URL
+            or DEFAULT_CONTROL_PLANE_URL
         )
         if not token:
             raise ValueError(
