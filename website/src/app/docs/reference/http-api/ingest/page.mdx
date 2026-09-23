@@ -155,7 +155,7 @@ print(version.version_id, version.created)
 `filename`. It takes `mime` from the extension of the file's name (for
 bytes, of `filename`): `.md` is `text/markdown` on every Python
 installation; see [the full table](/docs/guides/ingest-files#the-mime-type).
-An unknown extension is sent as `application/octet-stream`. `Client.ingest_file(path, ...)` is the same call.
+An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. `Client.ingest_file(path, ...)` is the same call.
 
 ## POST /readiness
 
