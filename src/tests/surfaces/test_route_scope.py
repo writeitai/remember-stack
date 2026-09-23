@@ -30,6 +30,7 @@ from rememberstack.surfaces.route_scope import routes_that_decide_for_themselves
         ("POST", "/query/sql"),
         ("POST", "/readiness"),
         ("POST", "/query/saved/ns/name/run"),
+        ("GET", "/deployment"),
     ],
 )
 def test_reads_are_reachable_by_a_read_credential(method: str, path: str) -> None:
@@ -148,3 +149,25 @@ def test_an_ingest_credential_reaches_no_assured_operation(
 ) -> None:
     """Dynamic operations are outside D62 whether they read or mutate."""
     assert not PerimeterScope.INGEST.covers(required=operation_scope(mutates=mutates))
+
+
+def test_every_assured_operation_is_readable_by_a_read_credential() -> None:
+    """The four assured operations only read, and say so in their descriptors.
+
+    `POST /operations/{name}` decides its scope from the descriptor, so an
+    operation that left `mutates` undeclared would be refused to the read
+    credentials the app and hosted MCP use.
+    """
+    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
+    from rememberstack.surfaces.operation_surface import operation_descriptors
+
+    descriptors = operation_descriptors(operations=CANONICAL_OPERATIONS)
+    assert {descriptor.name for descriptor in descriptors} == {
+        "resolve_entity",
+        "claims_and_sources_context",
+        "facts_context",
+        "combined_context",
+    }
+    for descriptor in descriptors:
+        assert descriptor.mutates is False
+        assert operation_scope(mutates=descriptor.mutates) is PerimeterScope.READ
