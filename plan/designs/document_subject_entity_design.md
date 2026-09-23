@@ -69,8 +69,10 @@ per-document name anchors for resolution replay and is unchanged.
 On mint, E0 writes the document's names as aliases with a new provenance
 value, `document_metadata`. Each name is recorded as an **alias
 contribution** — (entity, normalized name, provenance, contributing
-`doc_id`) — and the searchable `aliases` row exists while at least one
-contribution for it survives. Contributions keep sources apart even when two
+`doc_id`, that source's exact spelling) — and the searchable `aliases` row
+exists while at least one contribution for it survives. Its displayed
+spelling is rebuilt from the surviving contributions (the earliest seen), so
+no spelling only a forgotten document supplied remains. Contributions keep sources apart even when two
 documents give a merged entity the same name, so forgetting one document
 removes only its contribution (§8). The names:
 

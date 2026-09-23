@@ -159,8 +159,8 @@ values are starting points.
 | Archive | `application/zip`, `application/x-tar`, `application/gzip`, `application/x-7z-compressed` | expand | archive (local) | 20 GB | archive | member record |
 | Opaque, recognized | `application/vnd.remember.card`, with the detected format named in the manifest: DWG/DXF CAD, TrueType/OpenType/WOFF fonts, ISO/VMDK/VHD disk images, ELF/PE/Mach-O executables | card | file card (local) | 20 GB | card | none |
 
-**Aliases** resolved to the canonical types above (starting list; an entry
-may add more): `application/x-zip-compressed` → `application/zip`;
+**Aliases.** One registry-wide table maps non-canonical MIME spellings to
+the canonical types above; the shipped table is: `application/x-zip-compressed` → `application/zip`;
 `text/x-markdown` → `text/markdown`; `application/x-yaml`, `text/yaml` →
 `application/yaml`; `text/xml` → `application/xml`; `application/csv` →
 `text/csv`; `application/jsonl`, `application/x-jsonlines` →
@@ -436,21 +436,25 @@ the member is "the same thing":
 
 | Container | Member key |
 |---|---|
-| Archive | Normalized path. When a path repeats inside one archive, the path plus `@sha256:<member hash>`; byte-identical repeats of one path are one member |
-| Email attachment | Attachment file name plus `@sha256:<attachment hash>`; byte-identical repeats are one member |
-| Mailbox | `Message-ID` when present and unique in the mailbox; otherwise `sha256:` of the message bytes |
-| Message export | The export's native conversation identifier; otherwise `sha256:` of the canonical serialization |
-| Embedded image | `sha256:` of the image bytes; byte-identical repeats are one member, with every occurrence's locator on its member record |
+| Archive | `<normalized path>@sha256:<member hash>`, always |
+| Email attachment | `<attachment file name>@sha256:<attachment hash>`, always |
+| Mailbox | `sha256:<message bytes hash>`, always (a mailbox message's bytes do not change) |
+| Message export | The shape's native conversation identifier, always (each shipped shape has one: ChatGPT conversation `id`, Slack channel ID, and the fixed key `chat` for a single-conversation WhatsApp file) |
+| Embedded image | `sha256:<image bytes hash>`, always, with every occurrence's locator on its member record |
 
-No key uses position or ordinal, so inserting a member never changes another
-member's key; byte-identical repeats collapse to one child because they carry
-the same content.
+Every key has the same form whatever else the container holds: no key uses a
+position or ordinal, and none changes shape when a duplicate appears.
+Byte-identical repeats collapse to one member because they have the same
+key.
 
-Consequences, stated so they are not surprises: renaming a file inside an
-archive is a new child lineage (the old one is retired as absent); changing
-the content of a duplicated path makes a new key; inserting a message into a
-mailbox changes no other key; an unchanged figure in an edited document keeps
-its child lineage.
+Consequences, stated so they are not surprises: renaming **or editing** a
+file inside an archive, or an attachment, makes a new child lineage and
+retires the old one as absent — archive and attachment members have no
+version history of their own, because a key that followed edits would need
+the path alone, and a path alone is not unique inside an archive. A growing
+chat conversation keeps its lineage and gains versions. Adding a member never
+changes another member's key, and an unchanged figure in an edited document
+keeps its child lineage.
 
 A child's bytes are the member's exact bytes where the container delimits
 them. Where it does not (one conversation inside a chat-export JSON), the

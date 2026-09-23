@@ -89,9 +89,10 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
   to "the lineage" is scoped per entry. The top-level `doc_id` remains the requested lineage.
 - `member_suppressions[]`: `(parent_doc_id, member_key)` pairs. A request to forget one member
   lineage records its own pair here, so that the parent is never re-expanded into it.
-- `alias_contributions[]`: `(entity_id, normalized_lemma, provenance)` keys of the
-  `document_metadata` alias contributions removed, so replay can remove them from a restored
-  database even after PostgreSQL has scrubbed its copy.
+- `alias_entities[]`: the IDs of entities that held `document_metadata` alias contributions from
+  any lineage in `lineages[]`. Names are never written to the manifest. Replay deletes every
+  contribution whose `source_doc_id` is in `lineages[]` from those entities and rebuilds their
+  alias rows from what survives, even when the restored database predates the scrub.
 
 **Restore guards for v2.** Replay treats every `lineages[]` entry exactly as v1 treats its one
 lineage: its source fingerprint and content hashes refuse re-admission of the same source, and

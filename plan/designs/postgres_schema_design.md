@@ -798,15 +798,18 @@ CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normal
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
 
--- D134: which document contributed each document_metadata alias. The aliases row exists while
--- at least one contribution survives, so forgetting one document removes only its contribution
--- even when two documents gave a merged entity the same name.
+-- D134: which document contributed each document_metadata alias, with its exact spelling. The
+-- aliases row exists while at least one contribution survives, and its alias_text is rebuilt from
+-- the surviving contributions (the earliest first_seen), so forgetting one document removes its
+-- contribution AND any spelling only it supplied, even when two documents gave a merged entity
+-- the same normalized name.
 CREATE TABLE alias_contributions (
   deployment_id    uuid NOT NULL,
   entity_id        uuid NOT NULL,
   normalized_lemma text NOT NULL,
   provenance       alias_provenance NOT NULL,
   source_doc_id    uuid NOT NULL,              -- the contributing lineage
+  alias_text       text NOT NULL,              -- this source's exact spelling
   first_seen       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (deployment_id, entity_id, normalized_lemma, provenance, source_doc_id),
   FOREIGN KEY (deployment_id, entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE
@@ -1298,7 +1301,7 @@ CREATE TABLE document_members (
   parent_locator    jsonb,                     -- SourceLocator of the member inside the parent (e.g. page + region of a figure)
   canonical_serialization boolean NOT NULL DEFAULT false, -- bytes are a canonical serialization, not an exact byte slice
   status            text NOT NULL CHECK (status IN ('pending','ingested','skipped','failed')),
-  reason            text,                      -- skip/failure reason, mirrored into the parent's coverage.gaps
+  reason            text,                      -- skip/failure reason; mutable state here only — never written into the parent's immutable coverage.gaps (D133 §5.1)
   PRIMARY KEY (deployment_id, parent_version_id, member_key),
   FOREIGN KEY (deployment_id, parent_version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
 );

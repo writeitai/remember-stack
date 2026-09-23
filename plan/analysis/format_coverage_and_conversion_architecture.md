@@ -346,3 +346,17 @@ all) in the added mechanisms. All were accepted:
 | The D74 manifest still described one lineage | Manifest v2: per-descendant entries, member suppressions, alias-contribution keys, restore guards |
 | A `DOCUMENT` citation could bind an object | Claimify's `document_is_subject` field validated at the gate; E3 binds only the subject position |
 | One `source_doc_id` per alias row cannot keep two sources apart | `alias_contributions` table; an alias survives while any contribution does |
+
+### Round 3
+
+A verification pass resolved most items and left four: the registry decision
+text still promised per-entry aliases and storage classes (now: one alias
+table, D132's storage rule); one schema comment still copied member skip
+reasons into the parent's immutable coverage (removed); member keys could
+change form when a duplicate appeared (every key now has one fixed form,
+content-hash-qualified for archive members and attachments, which means an
+edited archive member becomes a new lineage); and alias contributions lacked
+each source's spelling (now stored, and the displayed alias rebuilt from
+survivors). Separately, the v2 forget manifest had listed alias lemmas,
+which are names; it now lists only entity IDs, keeping the manifest
+content-free.

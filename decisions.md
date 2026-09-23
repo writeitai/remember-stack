@@ -6140,8 +6140,9 @@ way to become several documents.
 
 **Decision.**
 1. An engine-shipped **format registry** maps each format family to detection,
-   canonical MIME types and aliases, a **posture**, a converter, provider
-   requirements, a size limit, an opaque cost-class label and a storage class.
+   canonical MIME types, a **posture**, a converter, provider requirements, a size
+   limit and an opaque cost-class label; one registry-wide alias table maps
+   non-canonical MIME spellings, and originals keep D132's storage-class rule.
    Deployments overlay it (turn families off, configure providers, lower limits);
    they never replace it. Detection is byte-first in a fixed precedence (D132's
    binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
