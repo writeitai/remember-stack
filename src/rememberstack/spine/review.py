@@ -26,6 +26,7 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.fact_applications import application_fence
+from rememberstack.spine.lifecycle import LIVE_CARRIAGE_SQL
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -365,6 +366,15 @@ class ReviewQueue:
             fact_id=fact_id,
             claim_id=claim_id,
         )
+        if not connection.execute(
+            _CLAIM_LIVE, {"claim_id": claim_id, "deployment_id": deployment_id}
+        ).scalar_one():
+            # D135: deletion is the source acting. Restoring testimony that no
+            # live version carries would bring a deleted document back.
+            raise ReviewDecisionError(
+                f"claim {claim_id} belongs to a deleted document or version;"
+                " its support cannot be restored"
+            )
         doc_id = connection.execute(
             _CLAIM_DOC, {"claim_id": claim_id, "deployment_id": deployment_id}
         ).scalar_one()
@@ -732,6 +742,13 @@ _CLOSE_REVIEW = text(
     WHERE review_id = :review_id
     """
 ).bindparams(bindparam("history_entry", type_=JSON))
+
+_CLAIM_LIVE = text(
+    f"""
+    SELECT {LIVE_CARRIAGE_SQL} FROM claims cl
+    WHERE cl.claim_id = :claim_id AND cl.deployment_id = :deployment_id
+    """
+)
 
 _CLAIM_DOC = text(
     """

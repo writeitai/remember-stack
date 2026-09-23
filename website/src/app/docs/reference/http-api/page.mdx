@@ -302,7 +302,7 @@ A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins; empty by default). For those origins it allows:
 
-- methods `GET` and `POST`,
+- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.

@@ -175,9 +175,10 @@ If you send the same file again later, it is added back as a new version and
 processed like a new document. The facts that were closed stay closed; its
 new claims support facts in the usual way.
 
-A document that was still being processed when you deleted it finishes
-processing, but nothing it produces becomes visible: it is retired when its
-version reaches the `reconcile` stage. Details and errors:
+A deletion is all or nothing. A document that was still being processed
+when you deleted it publishes no further claims, and anything it had already
+produced is never visible and is retired when its version reaches the
+`reconcile` stage. Details and errors:
 [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
 ## Document statuses

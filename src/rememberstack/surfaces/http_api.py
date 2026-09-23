@@ -1081,14 +1081,22 @@ def _mount_document_deletion(
         leaves the inventory and every read. The claims and the stored
         original are kept as history: this is not an erasure.
 
-        An unknown id and an already deleted document are both 404: from
-        the caller's side each is absent. A repeat that finds an earlier
-        attempt stopped part-way finishes it and answers 200 instead.
+        The deletion is all or nothing. An unknown id and an already deleted
+        document are both 404: from the caller's side each is absent. A
+        document hidden by another path whose evidence was never updated is
+        finished and answers 200 instead.
         """
         try:
             return deletion.delete_document(deployment_id=deployment_id, doc_id=doc_id)
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ForgetInProgressError as error:
+            # Admission was open when the request arrived, but a hard forget
+            # was already preparing when the delete took the D74 fence. The
+            # delete ran no statement; answer exactly as admission would.
+            raise HTTPException(
+                status_code=503, detail={"code": "forget_in_progress"}
+            ) from error
 
 
 def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:

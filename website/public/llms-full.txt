@@ -917,9 +917,10 @@ If you send the same file again later, it is added back as a new version and
 processed like a new document. The facts that were closed stay closed; its
 new claims support facts in the usual way.
 
-A document that was still being processed when you deleted it finishes
-processing, but nothing it produces becomes visible: it is retired when its
-version reaches the `reconcile` stage. Details and errors:
+A deletion is all or nothing. A document that was still being processed
+when you deleted it publishes no further claims, and anything it had already
+produced is never visible and is retired when its version reaches the
+`reconcile` stage. Details and errors:
 [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
 ## Document statuses
@@ -9071,8 +9072,9 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
 - Each entry must be an `https` origin exactly as a browser sends it:
   lowercase scheme and host, an optional port, nothing else. A malformed
   entry, an empty entry or a trailing comma stops the API at start.
-- Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-  are allowed. Cookies are not; the browser must send a token.
+- Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+  headers are allowed. `DELETE` (deleting a document) still needs a token with
+  `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 
@@ -9568,8 +9570,8 @@ refuses to start with it. For local development, serve the app over
 `https`, or send the API calls through your development server's proxy so
 the browser sees one origin.
 
-Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-are allowed, and cookies are not. See
+Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+headers are allowed, and cookies are not. See
 [Browser origins](https://remember.dev/docs/self-hosting/authentication#browser-origins-cors).
 
 ## A document never becomes queryable
@@ -10744,7 +10746,7 @@ A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins; empty by default). For those origins it allows:
 
-- methods `GET` and `POST`,
+- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.
@@ -11129,9 +11131,12 @@ deployment as history, and the retraction is recorded. Erasing a document's
 bytes and every trace of it is a separate operator operation that is not
 offered through the API.
 
-Processing that was still running for the document finishes, but what it
-produces is never visible, and it is retired as soon as that version reaches
-the `reconcile` stage.
+Processing that was still running for the document stops publishing new
+claims. Anything it already produced is never visible and is retired when
+that version reaches the `reconcile` stage.
+
+A pending review of whether the document's claims were extracted correctly is
+closed as moot, because the document is gone.
 
 If you ingest the same file again later, it is added back as a new version
 and processed from the start, like any new document. The facts that closed
@@ -11161,11 +11166,16 @@ The counts describe what this call changed.
 
 ### Deleting twice
 
-A second `DELETE` of the same document answers `404` `document_not_found`,
-the same as an id the deployment never held. The one exception: if an
-earlier call stopped part-way (the document was hidden, but its facts were
-not yet updated), the next call finishes the job and answers `200` with what
-it finished. Retrying after a timeout is therefore safe.
+A deletion is all or nothing: the document is hidden and its evidence
+updated in one step, or nothing changes. A second `DELETE` of the same
+document answers `404` `document_not_found`, the same as an id the deployment
+never held, so retrying after a timeout is safe. The one exception is a
+document that was hidden some other way but whose evidence was never updated;
+deleting it finishes the job and answers `200` with what it finished.
+
+If you ingest the document again while a `DELETE` of it is running, the
+ingest waits for the delete to finish and then adds the document back as a
+new version.
 
 ### Errors
 
@@ -11174,7 +11184,7 @@ it finished. Retrying after a timeout is therefore safe.
 | `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
 
 ### Example
 
@@ -13865,7 +13875,7 @@ changed. The counts describe this call only.
 | Field | Type | Contents |
 |---|---|---|
 | `doc_id` | UUID | The deleted document. |
-| `deleted_at` | date-time | When the document was deleted. For a call that finished an interrupted deletion, the time of the first attempt. |
+| `deleted_at` | date-time | When the document was deleted. For a call that finished a deletion another path started, when the document was first hidden. |
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |

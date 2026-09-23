@@ -1565,12 +1565,11 @@ class _SelfHostDocumentDeletion:
     ) -> None:
         """Compose the lifecycle catalog and the profile projection it touches."""
         from rememberstack.spine import EntityProfileRefresher
-        from rememberstack.spine import LifecycleCatalog
         from rememberstack.workers import DocumentDeleter
 
         self._engine = engine
         self._deleter = DocumentDeleter(
-            catalog=LifecycleCatalog(engine=engine),
+            engine=engine,
             profile_refresher=EntityProfileRefresher(
                 engine=engine,
                 model_provider=model_provider,

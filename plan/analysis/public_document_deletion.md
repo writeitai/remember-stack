@@ -98,8 +98,8 @@ answer questions the internal service never had to:
 
   Verified in CI while building this: claim extraction already fences
   publication on a tombstoned lineage (`selection_catalog` refuses a chunk
-  whose document is deleted), so a document deleted before extraction never
-  gets claims at all. The window reconcile covers is narrower: claims
+  whose document is deleted; after review round 1 also a chunk whose version
+  is deleted), so a document deleted before extraction never gets claims. The window reconcile covers is narrower: claims
   extracted just before the tombstone, then fact application after it. Fact
   application counts only current testimony, so it can leave a fact open with
   zero support; reconcile (and a repeated delete) therefore recount and close
@@ -163,3 +163,34 @@ answer questions the internal service never had to:
   is outside this decision.
 - A deleted document's T4 anchors are cleared at delete time and again if late
   work re-creates them.
+
+## 5. Review round 1 (2026-09-23) and what changed
+
+An independent review (Codex) found five gaps in the first implementation.
+Each is now closed; the design section carries the resulting contract.
+
+1. **A concurrent re-ingest could lose its testimony.** The tombstone
+   committed before the cascade, and the cascade selected every current claim
+   by `doc_id`. A re-add landing in between would have been retired. Fix: the
+   whole deletion is one transaction (a re-ingest waits on the lineage row),
+   and the cascade retires only testimony no live version carries.
+2. **An open `support_withdrawn` review defeated deletion.** Zero-support
+   closure skips facts under an open review, and `restore_support` did not
+   check for deletion. Fix: the cascade auto-resolves reviews on claims no
+   live version carries, and restore refuses such claims.
+3. **A second deletion's projection event was swallowed.** Both episodes used
+   `delete-lineage:<doc_id>`; the knowledge queue deduplicates on it. Fix: the
+   run id includes the tombstone instant.
+4. **Old-version reconcile work cleared a re-added document's anchors.** Fix:
+   anchors are rebuilt from live testimony when the lineage is live, and
+   cleared only when the lineage itself is deleted. Claim publication and
+   Selection reuse now also refuse deleted versions.
+5. **A hard forget could start mid-delete.** Admission was checked once, before
+   the delete. Fix: the delete takes the D74 fence first and holds it to
+   commit; a forget already preparing turns into `forget_in_progress` (503)
+   before any change.
+
+The single transaction replaces the "tombstone committed, cascade crashed"
+window that the finish-or-refuse rule was first designed around. The rule
+stays, for tombstones other paths leave (source-observed deletion before
+finalization, a crashed operator run).

@@ -174,6 +174,22 @@ def test_a_hard_forget_in_progress_closes_deletion_too() -> None:
     assert deletion.calls == []
 
 
+def test_a_forget_that_wins_the_fence_is_a_503_not_a_500() -> None:
+    """Admission was open, but a forget was preparing when the delete took
+    the D74 fence: the same stable negative as the admission check."""
+
+    class _Fenced(_Deletion):
+        def delete_document(
+            self, *, deployment_id: UUID, doc_id: UUID
+        ) -> DocumentDeletion:
+            raise ForgetInProgressError("forget preparing")
+
+    response = _client(_Fenced()).delete(f"/documents/{_DOC}")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "forget_in_progress"}}
+
+
 def test_deletion_is_not_a_chargeable_path() -> None:
     """No spend lease is reserved: removing a document starts no pipeline work.
 

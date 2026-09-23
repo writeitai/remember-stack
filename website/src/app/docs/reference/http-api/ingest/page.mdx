@@ -358,9 +358,12 @@ deployment as history, and the retraction is recorded. Erasing a document's
 bytes and every trace of it is a separate operator operation that is not
 offered through the API.
 
-Processing that was still running for the document finishes, but what it
-produces is never visible, and it is retired as soon as that version reaches
-the `reconcile` stage.
+Processing that was still running for the document stops publishing new
+claims. Anything it already produced is never visible and is retired when
+that version reaches the `reconcile` stage.
+
+A pending review of whether the document's claims were extracted correctly is
+closed as moot, because the document is gone.
 
 If you ingest the same file again later, it is added back as a new version
 and processed from the start, like any new document. The facts that closed
@@ -390,11 +393,16 @@ The counts describe what this call changed.
 
 ### Deleting twice
 
-A second `DELETE` of the same document answers `404` `document_not_found`,
-the same as an id the deployment never held. The one exception: if an
-earlier call stopped part-way (the document was hidden, but its facts were
-not yet updated), the next call finishes the job and answers `200` with what
-it finished. Retrying after a timeout is therefore safe.
+A deletion is all or nothing: the document is hidden and its evidence
+updated in one step, or nothing changes. A second `DELETE` of the same
+document answers `404` `document_not_found`, the same as an id the deployment
+never held, so retrying after a timeout is safe. The one exception is a
+document that was hidden some other way but whose evidence was never updated;
+deleting it finishes the job and answers `200` with what it finished.
+
+If you ingest the document again while a `DELETE` of it is running, the
+ingest waits for the delete to finish and then adds the document back as a
+new version.
 
 ### Errors
 
@@ -403,7 +411,7 @@ it finished. Retrying after a timeout is therefore safe.
 | `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
 
 ### Example
 

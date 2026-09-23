@@ -670,7 +670,7 @@ changed. The counts describe this call only.
 | Field | Type | Contents |
 |---|---|---|
 | `doc_id` | UUID | The deleted document. |
-| `deleted_at` | date-time | When the document was deleted. For a call that finished an interrupted deletion, the time of the first attempt. |
+| `deleted_at` | date-time | When the document was deleted. For a call that finished a deletion another path started, when the document was first hidden. |
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |

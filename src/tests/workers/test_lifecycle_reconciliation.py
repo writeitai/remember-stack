@@ -14,6 +14,8 @@ from datetime import datetime
 from datetime import UTC
 from pathlib import Path
 import re
+import threading
+import time
 from uuid import UUID
 from uuid import uuid4
 
@@ -38,15 +40,18 @@ from rememberstack.eval import register_lifecycle_evaluator
 from rememberstack.eval import run_lifecycle_suite
 from rememberstack.eval.harness import EvalHarness
 from rememberstack.model import ClaimedWork
+from rememberstack.model import CurrencyTransition
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ResolverConfig
+from rememberstack.model import ReviewDecisionError
 from rememberstack.model import RunResultOutcome
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import ChunkCatalog
@@ -1153,9 +1158,7 @@ class _UnavailableProfiles:
 
 def _deleter(rig: _LifecycleRig) -> DocumentDeleter:
     """The public delete over the rig's catalog and profile projection."""
-    return DocumentDeleter(
-        catalog=rig.lifecycle, profile_refresher=rig.profile_refresher
-    )
+    return DocumentDeleter(engine=rig.engine, profile_refresher=rig.profile_refresher)
 
 
 def _open_works_for(rig: _LifecycleRig) -> object:
@@ -1255,7 +1258,7 @@ def test_a_provider_outage_does_not_fail_a_committed_delete(rig: _LifecycleRig) 
     rig.drain()
 
     result = DocumentDeleter(
-        catalog=rig.lifecycle,
+        engine=rig.engine,
         profile_refresher=_UnavailableProfiles(),  # type: ignore[arg-type]
     ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
 
@@ -1377,3 +1380,327 @@ def test_reconcile_retires_testimony_of_a_deleted_lineage(rig: _LifecycleRig) ->
     # nothing was left for the public delete to finish
     with pytest.raises(DocumentNotFoundError):
         _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+
+
+_STAFFING = DocumentUpload(
+    filename="staffing.md", mime="text/markdown", content=f"{_FACT_SENTENCE}\n".encode()
+)
+
+
+def _drain_except_reconcile(rig: _LifecycleRig) -> None:
+    """Run every stage but reconcile until idle, leaving reconcile rows queued."""
+    while True:
+        progressed = False
+        for stage in (
+            stage for stage in _STAGES if stage is not PipelineStage.RECONCILE
+        ):
+            outcome = rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            if outcome is not RunResultOutcome.NO_WORK:
+                progressed = True
+        if not progressed:
+            return
+
+
+def _wait_for_blocked(rig: _LifecycleRig, *, count: int) -> None:
+    """Wait until ``count`` sessions are blocked on a lock (bounded)."""
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        blocked = rig.scalar("SELECT count(*) FROM pg_locks WHERE NOT granted")
+        if isinstance(blocked, int) and blocked >= count:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"expected {count} blocked sessions")
+
+
+def _bindings(rig: _LifecycleRig, doc_id: UUID) -> set[tuple[object, ...]]:
+    """The lineage's D102 rows as comparable tuples."""
+    with rig.engine.connect() as connection:
+        return {
+            tuple(row)
+            for row in connection.execute(
+                text(
+                    "SELECT canonical_lemma, entity_id, anchor_decision_id"
+                    " FROM document_entity_bindings WHERE doc_id = :d"
+                ),
+                {"d": doc_id},
+            )
+        }
+
+
+def test_a_re_ingest_racing_a_delete_keeps_its_new_testimony(
+    rig: _LifecycleRig,
+) -> None:
+    """Blocker: the delete holds its tombstone and cascade in one transaction,
+    so a re-ingest that arrives mid-delete waits, then lands as a new live
+    version whose testimony the finished delete never touches."""
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(
+        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
+        {"d": first.doc_id},
+    )
+    outcomes: dict[str, object] = {}
+
+    def delete() -> None:
+        outcomes["deleted"] = _deleter(rig).delete_document(
+            deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id
+        )
+
+    def re_ingest() -> None:
+        outcomes["again"] = rig.ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID, upload=_STAFFING
+        )
+
+    deleting = threading.Thread(target=delete)
+    deleting.start()
+    _wait_for_blocked(rig, count=1)  # paused after its tombstone
+    adding = threading.Thread(target=re_ingest)
+    adding.start()
+    _wait_for_blocked(rig, count=2)  # the re-ingest waits for the delete
+    blocker.rollback()
+    blocker.close()
+    deleting.join(timeout=60)
+    adding.join(timeout=60)
+
+    again = outcomes["again"]
+    assert isinstance(again, IngestedVersion)
+    assert again.created is True
+    rig.drain()
+    assert _current_claims(rig, first.doc_id) == 1
+    assert _open_works_for(rig) == 1
+    assert (
+        rig.scalar(
+            "SELECT deleted_at FROM document_versions WHERE version_id = :v",
+            v=first.version_id,
+        )
+        is not None
+    )
+
+
+def _withdraw_support(rig: _LifecycleRig, doc_id: UUID) -> tuple[UUID, UUID]:
+    """Simulate an extractor bump that stopped deriving the fact's claim."""
+    claim_id = rig.scalar("SELECT claim_id FROM claims WHERE doc_id = :d", d=doc_id)
+    assert isinstance(claim_id, UUID)
+    fact_id = rig.relation()["relation_id"]
+    assert isinstance(fact_id, UUID)
+    rig.lifecycle.apply_transitions(
+        deployment_id=_DEPLOYMENT_ID,
+        reconciliation_id=uuid4(),
+        transitions=(
+            CurrencyTransition(
+                claim_id=claim_id,
+                doc_id=doc_id,
+                became_current=False,
+                reason="reextracted",
+                from_extractor_version="old-extractor",
+            ),
+        ),
+    )
+    rig.lifecycle.recount(relation_ids=(fact_id,), observation_ids=())
+    review_id = rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    assert rig.relation()["evidence_count"] == 0
+    assert rig.relation()["invalidated_at"] is None  # held open for review
+    return review_id, claim_id
+
+
+def test_deleting_a_document_under_support_review_closes_the_fact(
+    rig: _LifecycleRig,
+) -> None:
+    """Blocker: review -> delete. The pending review no longer holds the
+    deleted document's fact open, and a later restore verdict is refused."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    review_id, _claim = _withdraw_support(rig, added.doc_id)
+
+    result = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    )
+
+    assert result.relations_closed == 1
+    assert rig.relation()["invalidated_at"] is not None
+    assert (
+        rig.scalar(
+            "SELECT status::text FROM review_queue WHERE review_id = :r", r=review_id
+        )
+        == "auto_resolved"
+    )
+    with pytest.raises(ReviewDecisionError):
+        rig.review.decide_support_withdrawn(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="restore_support",
+            reviewer="ravi",
+        )
+    assert _current_claims(rig, added.doc_id) == 0
+
+
+def test_a_restore_verdict_before_a_delete_is_then_deleted_normally(
+    rig: _LifecycleRig,
+) -> None:
+    """review -> verdict -> delete: the restored claim is ordinary current
+    testimony, so the delete retires it and closes the fact."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    review_id, _claim = _withdraw_support(rig, added.doc_id)
+    rig.review.decide_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        review_id=review_id,
+        verdict="restore_support",
+        reviewer="ravi",
+    )
+    assert _current_claims(rig, added.doc_id) == 1
+
+    result = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+    )
+
+    assert result.claims_retired == 1
+    assert result.relations_closed == 1
+    assert _current_claims(rig, added.doc_id) == 0
+
+
+def test_restoring_support_from_a_deleted_version_is_refused(
+    rig: _LifecycleRig,
+) -> None:
+    """delete -> verdict, when the review survived (it predates D135 or raced):
+    restore_support never makes a deleted claim current again."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    review_id, _claim = _withdraw_support(rig, added.doc_id)
+    rig.lifecycle.delete_lineage(doc_id=added.doc_id)  # tombstone, review open
+
+    with pytest.raises(ReviewDecisionError, match="deleted"):
+        rig.review.decide_support_withdrawn(
+            deployment_id=_DEPLOYMENT_ID,
+            review_id=review_id,
+            verdict="restore_support",
+            reviewer="ravi",
+        )
+    assert _current_claims(rig, added.doc_id) == 0
+
+
+def test_each_deletion_episode_emits_its_own_evidence_change(
+    rig: _LifecycleRig,
+) -> None:
+    """Major: delete -> re-add -> delete. The second episode has its own run
+    id, so its evidence_changed event is not swallowed by the first's."""
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    assert _open_works_for(rig) == 1
+    before = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+
+    second = _deleter(rig).delete_document(
+        deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id
+    )
+
+    assert second.claims_retired == 1
+    assert second.relations_closed == 1
+    after = rig.scalar(
+        "SELECT count(*) FROM knowledge_refresh_queue WHERE trigger = 'evidence_changed'"
+    )
+    assert isinstance(before, int) and isinstance(after, int)
+    assert after == before + 1
+
+
+def test_old_reconcile_work_keeps_the_re_added_documents_anchors(
+    rig: _LifecycleRig,
+) -> None:
+    """Major: the deleted version's queued reconcile runs after the document
+    was re-added. It rebuilds anchors from live testimony instead of
+    dropping the live version's anchors."""
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    _drain_except_reconcile(rig)  # v1's reconcile stays queued
+    _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    again = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    assert again.created is True
+    _drain_except_reconcile(rig)
+    live_anchors = _bindings(rig, first.doc_id)
+    assert live_anchors  # v2's resolution created document-local anchors
+
+    rig.drain()  # both reconcile rows run, v1's included
+
+    assert _bindings(rig, first.doc_id) == live_anchors
+    assert _current_claims(rig, first.doc_id) == 1
+    assert _open_works_for(rig) == 1
+
+
+def test_a_forget_already_preparing_refuses_the_delete(rig: _LifecycleRig) -> None:
+    """Major: a forget that entered preparing before the delete took the
+    fence refuses it with ForgetInProgressError, and nothing is changed."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
+    rig.drain()
+    ForgetCatalog(engine=rig.engine).prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id, forget_id=uuid4()
+    )
+
+    with pytest.raises(ForgetInProgressError):
+        _deleter(rig).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
+
+    assert (
+        rig.scalar("SELECT deleted_at FROM documents WHERE doc_id = :d", d=added.doc_id)
+        is None
+    )
+    assert _current_claims(rig, added.doc_id) == 1
+
+
+def test_a_forget_cannot_start_while_a_delete_is_running(rig: _LifecycleRig) -> None:
+    """Major: the delete holds the D74 fence to its commit. A forget prepared
+    mid-delete waits for it, so the delete completes whole."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
+    rig.drain()
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(
+        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
+        {"d": added.doc_id},
+    )
+    outcomes: dict[str, object] = {}
+
+    def delete() -> None:
+        try:
+            outcomes["deleted"] = _deleter(rig).delete_document(
+                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+            )
+        except Exception as error:  # noqa: BLE001 — asserted below
+            outcomes["error"] = error
+
+    def forget() -> None:
+        ForgetCatalog(engine=rig.engine).prepare(
+            deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id, forget_id=uuid4()
+        )
+        outcomes["forget_prepared_at"] = time.monotonic()
+
+    deleting = threading.Thread(target=delete)
+    deleting.start()
+    _wait_for_blocked(rig, count=1)  # mid-delete, fence held
+    forgetting = threading.Thread(target=forget)
+    forgetting.start()
+    _wait_for_blocked(rig, count=2)  # the forget waits on the fence
+    assert "forget_prepared_at" not in outcomes
+    blocker.rollback()
+    blocker.close()
+    deleting.join(timeout=60)
+    forgetting.join(timeout=60)
+
+    assert "error" not in outcomes, outcomes.get("error")
+    assert "forget_prepared_at" in outcomes
+    assert _current_claims(rig, added.doc_id) == 0
+    assert rig.relation()["invalidated_at"] is not None

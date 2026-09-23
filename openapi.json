@@ -591,7 +591,7 @@
       },
       "DocumentDeletion": {
         "additionalProperties": false,
-        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes an earlier,\ninterrupted deletion reports only the work it finished.",
+        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
         "properties": {
           "claims_retired": {
             "minimum": 0.0,
@@ -3683,7 +3683,7 @@
     },
     "/documents/{doc_id}": {
       "delete": {
-        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nAn unknown id and an already deleted document are both 404: from\nthe caller's side each is absent. A repeat that finds an earlier\nattempt stopped part-way finishes it and answers 200 instead.",
+        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nThe deletion is all or nothing. An unknown id and an already deleted\ndocument are both 404: from the caller's side each is absent. A\ndocument hidden by another path whose evidence was never updated is\nfinished and answers 200 instead.",
         "operationId": "delete_document_documents__doc_id__delete",
         "parameters": [
           {

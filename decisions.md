@@ -6120,16 +6120,29 @@ is charged. Analysis: `plan/analysis/public_document_deletion.md`.
 2. It requires full write scope, runs behind the D74 admission barrier, and is not
    spend-gated. Its only provider call — re-embedding entity profiles whose facts changed —
    is metered on the surface cost ledger (`profile_delete`) and is best effort.
-3. **Finish or refuse.** An unknown id is `document_not_found` (404). For a tombstoned
-   lineage the cascade reruns under its stable run id; if nothing changes the answer is
-   `document_not_found`, and if something changes the call finishes the interrupted
-   deletion and answers 200.
+3. **One fenced, atomic episode; finish or refuse.** The tombstone and the whole cascade
+   commit in one transaction that holds the D74 hard-forget fence (shared advisory lock)
+   from start to commit: a forget already preparing refuses the delete
+   (`forget_in_progress`, 503) before any change, a forget requested mid-delete waits for
+   it, and a concurrent re-ingest of the lineage waits on the lineage row. The cascade
+   retires only testimony no live version carries. Each episode has its own run id, derived
+   from the lineage and its tombstone instant (stable for a repeat, new after a re-add), so
+   every episode gets its own ledger rows and `evidence_changed` event. An unknown id is
+   `document_not_found` (404). For a lineage already tombstoned by another path, the cascade
+   reruns; if nothing changes the answer is `document_not_found`, otherwise the call
+   finishes it and answers 200.
 4. Lineage deletion (operator or source-observed) tombstones every version with the
    lineage. Returning bytes are a new version processed afresh; D56 reuse never draws on a
    deleted version (refines D55).
-5. Pipeline work that lands after a delete is retired at the reconcile stage through the
-   same cascade, with T4 anchors cleared again (D102); the chain ends there.
-6. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
+5. Claim publication refuses a deleted version as well as a deleted lineage. Fact work
+   that lands after a delete is retired at the reconcile stage through the same cascade,
+   recounting and closing every fact the deleted testimony touches; T4 anchors are cleared
+   for a deleted lineage and rebuilt from live testimony for a re-added one (D102). The
+   chain ends there.
+6. A `support_withdrawn` review on a claim no live version carries is closed as
+   `auto_resolved` by the deletion, so it no longer holds the fact open, and
+   `restore_support` refuses a claim no live version carries.
+7. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
    operations.
 
 **Alternatives and consequences.** Idempotent 200 for every repeat hides a wrong id;

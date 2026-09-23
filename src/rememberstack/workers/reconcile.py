@@ -18,10 +18,15 @@ job; `DeletionService` is the operator's grain (§8) through the same
 cascade, and `DocumentDeleter` is its public, caller-facing form (D135).
 """
 
+from datetime import datetime
 import logging
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Engine
 
 from rememberstack.core import chunker_version as chunker_version_of
 from rememberstack.core import ChunkerParams
@@ -30,12 +35,15 @@ from rememberstack.model import CurrencyTransition
 from rememberstack.model import DocumentDeletion
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import EnqueueWork
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
+from rememberstack.spine.admission import active_forget_id_on
+from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
@@ -270,9 +278,16 @@ class ReconcileHandler:
             )
         # Deletion cleared the document's T4 anchors; late work may have
         # re-created them, and deleted evidence must never anchor identity.
-        self._catalog.clear_document_bindings(
-            deployment_id=deployment_id, doc_id=doc_id
-        )
+        # A lineage that is live again keeps the anchors its live versions
+        # earned: rebuild them from live testimony instead of dropping all.
+        if context.get("lineage_deleted_at") is not None:
+            self._catalog.clear_document_bindings(
+                deployment_id=deployment_id, doc_id=doc_id
+            )
+        else:
+            self._catalog.rebuild_live_document_bindings(
+                deployment_id=deployment_id, doc_id=doc_id
+            )
         scope: tuple[UUID, ...] = ()
         if context.get("lineage_deleted_at") is not None:
             late = self._catalog.stale_for_deletion(
@@ -560,64 +575,54 @@ class DeletionService:
 
 
 class DocumentDeleter:
-    """The public document delete (D135): lineage grain, finish-or-refuse.
+    """The public document delete (D135): one fenced, atomic deletion episode.
 
-    Wraps the §8 lineage cascade with the contract a caller sees: a live
-    document is tombstoned and its contribution removed; an absent one is
-    ``DocumentNotFoundError``; a document whose earlier deletion stopped
-    part-way (or whose in-flight pipeline work landed after it) is finished
-    rather than refused. Entity profiles are refreshed afterwards on a best
-    effort basis — they are disposable orientation text, and a provider
-    outage must not fail a deletion that has already committed.
+    The tombstone and the whole §8 cascade run in ONE database transaction
+    that holds the D74 hard-forget fence (a shared advisory lock) from the
+    first statement to the commit. So a delete either happens completely or
+    not at all; a concurrent re-ingest of the same lineage waits on the
+    lineage row until it commits; and a hard-forget cannot enter
+    ``preparing`` part-way through (a forget already preparing refuses the
+    delete up front with ``ForgetInProgressError``).
+
+    An absent document is ``DocumentNotFoundError``. A lineage some other
+    path tombstoned without finishing its cascade (a crashed operator run, a
+    source deletion awaiting finalization) is finished rather than refused.
+    Entity profiles are refreshed after the commit on a best effort basis —
+    they are disposable orientation text, and a provider outage must not
+    fail a deletion that has already committed.
     """
 
     def __init__(
-        self, *, catalog: LifecycleCatalog, profile_refresher: ProfileRefresherPort
+        self, *, engine: Engine, profile_refresher: ProfileRefresherPort
     ) -> None:
-        """Bind lifecycle mutation and the profile projection it invalidates."""
-        self._catalog = catalog
+        """Bind the spine and the profile projection the deletion touches."""
+        self._engine = engine
         self._profile_refresher = profile_refresher
 
     def delete_document(
         self, *, deployment_id: UUID, doc_id: UUID, meter: CostMeterPort | None = None
     ) -> DocumentDeletion:
         """Remove one document's contribution to this deployment's memory."""
-        state = self._catalog.lineage_deletion_state(
-            deployment_id=deployment_id, doc_id=doc_id
-        )
-        if state is None:
-            raise DocumentNotFoundError(str(doc_id))
-        already_deleted = state["deleted_at"] is not None
-        deleted_at = self._catalog.delete_lineage(doc_id=doc_id)
-        # The same stable run id as `DeletionService.delete_lineage`, so an
-        # interrupted run is finished by the next call rather than duplicated.
-        reconciliation_id = _derived_run_id(kind="delete-lineage", id_=doc_id)
-        delta, changed = _cascade_run(
-            catalog=self._catalog,
-            deployment_id=deployment_id,
-            transitions=_with_recorded(
-                catalog=self._catalog,
-                transitions=self._catalog.stale_for_deletion(
-                    deployment_id=deployment_id, doc_id=doc_id
-                ),
-                reconciliation_id=reconciliation_id,
-            ),
-            reconciliation_id=reconciliation_id,
-            boundary=None,
-            scope_claim_ids=self._catalog.lineage_claim_ids(
-                deployment_id=deployment_id, doc_id=doc_id
-            ),
-        )
-        if already_deleted and not changed:
-            # Nothing was left to finish: the document was already gone.
-            raise DocumentNotFoundError(str(doc_id))
+        try:
+            with self._engine.begin() as connection:
+                delta, deleted_at = self._delete_fenced(
+                    connection=connection, deployment_id=deployment_id, doc_id=doc_id
+                )
+        except ApplicationInputChanged as error:
+            # Only the forget fence raises this inside the delete; the fence
+            # is held throughout, so this is a forget that was already
+            # preparing when a savepoint re-checked it.
+            raise ForgetInProgressError(
+                f"deployment {deployment_id} is honoring a hard forget"
+            ) from error
         try:
             self._profile_refresher.refresh_for_facts(
                 deployment_id=deployment_id,
                 relation_ids=delta.recounted_relations,
                 observation_ids=delta.recounted_observations,
                 meter=meter,
-                call_key=f"profile:delete:{reconciliation_id}",
+                call_key=f"profile:delete:{delta.reconciliation_id}",
             )
         except Exception:  # noqa: BLE001 — the deletion itself has committed
             _logger.warning(
@@ -633,6 +638,54 @@ class DocumentDeleter:
             relations_closed=len(delta.relations_closed),
             observations_closed=len(delta.observations_closed),
         )
+
+    def _delete_fenced(
+        self, *, connection: Connection, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[ReconciliationDelta, datetime]:
+        """Tombstone and cascade inside the caller's fenced transaction."""
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
+            {"key": f"hard-forget:{deployment_id}"},
+        )
+        if active_forget_id_on(connection=connection, deployment_id=deployment_id):
+            raise ForgetInProgressError(
+                f"deployment {deployment_id} is honoring a hard forget"
+            )
+        catalog = LifecycleCatalog.on_connection(connection=connection)
+        state = catalog.lineage_deletion_state(
+            deployment_id=deployment_id, doc_id=doc_id
+        )
+        if state is None:
+            raise DocumentNotFoundError(str(doc_id))
+        already_deleted = state["deleted_at"] is not None
+        deleted_at = catalog.delete_lineage(doc_id=doc_id)
+        # One run id per deletion EPISODE: stable across a repeat of the same
+        # deletion (the tombstone instant does not move), new for a later
+        # deletion after the document was added back — so each episode gets
+        # its own ledger rows and its own evidence_changed event.
+        reconciliation_id = _derived_run_id(
+            kind="delete-lineage", id_=doc_id, at=deleted_at.isoformat()
+        )
+        delta, changed = _cascade_run(
+            catalog=catalog,
+            deployment_id=deployment_id,
+            transitions=_with_recorded(
+                catalog=catalog,
+                transitions=catalog.stale_for_deleted_testimony(
+                    deployment_id=deployment_id, doc_id=doc_id
+                ),
+                reconciliation_id=reconciliation_id,
+            ),
+            reconciliation_id=reconciliation_id,
+            boundary=None,
+            scope_claim_ids=catalog.lineage_claim_ids(
+                deployment_id=deployment_id, doc_id=doc_id
+            ),
+        )
+        if already_deleted and not changed:
+            # Nothing was left to finish: the document was already gone.
+            raise DocumentNotFoundError(str(doc_id))
+        return delta, deleted_at
 
 
 def cascade_lineage_removal(
@@ -737,6 +790,12 @@ def _cascade_run(
     changed_relations, changed_observations = catalog.recount(
         relation_ids=relation_ids, observation_ids=observation_ids
     )
+    # A support_withdrawn review on a claim no live version carries asks a
+    # question the deletion already answered; resolve it so the zero-support
+    # guard below does not keep a deleted document's fact open (D135).
+    resolved_reviews = catalog.resolve_deleted_support_reviews(
+        deployment_id=deployment_id, claim_ids=claim_ids
+    )
     closed_relations = catalog.close_relations(
         deployment_id=deployment_id,
         relation_ids=catalog.open_zero_support_relations(
@@ -763,6 +822,7 @@ def _cascade_run(
     catalog.emit_evidence_changed(deployment_id=deployment_id, delta=delta)
     changed = bool(
         applied
+        or resolved_reviews
         or changed_relations
         or changed_observations
         or closed_relations

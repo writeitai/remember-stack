@@ -48,9 +48,13 @@ def require_extraction_sources_on(
             text("""
         SELECT c.chunk_id FROM chunks c JOIN documents d
           ON d.deployment_id=c.deployment_id AND d.doc_id=c.doc_id
+        JOIN document_versions v ON v.version_id=c.version_id
         JOIN document_representations r ON r.representation_id=c.representation_id
         WHERE c.deployment_id=:deployment_id
           AND c.chunk_id=ANY(CAST(:chunk_ids AS uuid[])) AND d.deleted_at IS NULL
+          -- D135: a deleted VERSION of a live (re-added) lineage publishes
+          -- nothing either (the lock on d already serializes with a delete)
+          AND v.deleted_at IS NULL
         FOR SHARE OF d, r
     """),
             {"deployment_id": deployment_id, "chunk_ids": list(chunk_ids)},
@@ -128,6 +132,7 @@ class SelectionCatalog:
                   AND s.extractor_version=:extractor_version
                   AND v.version_no < (SELECT version_no FROM document_versions
                                        WHERE version_id=:version_id)
+                  AND v.deleted_at IS NULL
                 ORDER BY v.version_no DESC,c.ordinal LIMIT 1
             """),
                     {
