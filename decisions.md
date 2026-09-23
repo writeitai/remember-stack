@@ -6175,6 +6175,12 @@ way to become several documents.
    a parent covers its descendant closure under one versioned (v2) manifest, and a
    forgotten member stays suppressed across restore (refining D74). Bounds apply to the whole tree.
 6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. D133 binds the framework, not individual formats. The family table is the
+   target coverage. **Each family is delivered one at a time through its own
+   family design, implementation and test suite** (fixtures, detection, golden
+   rendering, source map, failures, end-to-end retrieval, performance), and is
+   supported only when all three are merged; until then its uploads are stored
+   and parked (D117).
 
 **Alternatives and consequences.** Full-row extraction for structured data,
 loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format

@@ -8,6 +8,16 @@
 ([document subject entities](document_subject_entity_design.md)).
 Numbers below are starting points to measure, not committed constants.
 
+**What this design binds, and what it deliberately does not.** It binds the
+*framework* every format goes through: detection, the registry, the four
+postures, the profile and expansion machinery, `data_query`, and the new
+locators. It does **not** specify how any individual format is parsed or
+rendered. The family table in §3 is the **target coverage**, with starting
+values. **Each family is delivered on its own, through a dedicated family
+design, its own implementation, and its own test suite (§10)**, and a family
+is not supported until all three exist. Until then its files are recognized,
+stored and parked (D117), never half-converted.
+
 This design is the one home for *which formats the engine accepts and what
 it does with each*. [`e0_files_design.md`](e0_files_design.md) keeps the
 conversion stage's place in E0; [`media_design.md`](media_design.md) keeps
@@ -57,6 +67,7 @@ others. Outcomes at ingest:
 | Bytes not recognized as any family | Refused (D132 typed refusal) |
 | Family turned off by the deployment | Refused with a typed error naming the family |
 | Over the family's `max_bytes` | Refused with a typed error naming the limit |
+| Family recognized but not yet shipped (§10) | Stored; conversion parks with `no_route` (D117) until the family ships |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |
 
@@ -127,10 +138,16 @@ removed (`text/plain; charset=utf-8` → `text/plain`), aliases resolved
 (`application/x-zip-compressed` → `application/zip`). Container members are
 detected again from their own bytes; a member's name is only a hint.
 
-## 3. The shipped registry
+## 3. The target registry
 
-"Local" means a library installed with the engine, no provider call. `max_bytes`
-values are starting points.
+The families the engine is designed to cover. A row becomes a **shipped**
+registry entry only when that family's design, implementation and tests are
+done (§10); the family design may revise the row's converter, limits and
+locators. Detection (§2.2) recognizes every family from the start, so an
+upload of a family that has not shipped yet is stored and parked with
+`no_route` (D117) and processed once it ships. "Local" means a library
+installed with the engine, no provider call. `max_bytes` values are starting
+points.
 
 | Family | Canonical MIME types | Posture | Converter (requires) | `max_bytes` | `cost_class` | Primary locator |
 |---|---|---|---|---:|---|---|
@@ -585,3 +602,79 @@ version and representation):
 - **Executing active content.** Macros, scripts in documents, and
   executables are never run; a macro-enabled spreadsheet is profiled from
   its stored values and formula text only.
+
+## 10. Delivering a family: design, implementation, tests
+
+Every family in §3 is delivered as its own unit of work, one family at a
+time, in the order of the [delivery plan](../plans/format_coverage_delivery.md).
+Each unit has three parts, and the family ships only when all three are
+merged.
+
+### 10.1 The family design
+
+A binding document at `plan/designs/formats/<family>_design.md`, written
+before implementation, with at least:
+
+1. **Scope.** The exact formats and variants covered (e.g. DOCX but not
+   password-protected DOCX; PDF 1.x–2.0; which chat-export versions), and
+   what is explicitly out, with the outcome for each excluded case (typed
+   refusal, parking, or card).
+2. **Parser choice.** The library or service used, the alternatives
+   considered and why they lost, licence, maintenance status, and the
+   official documentation cited with retrieval date.
+3. **Detection.** The exact test for §2.2, its position in the order, and
+   the ambiguous cases it must separate.
+4. **Rendering.** What `document.md` looks like for this family: headings,
+   paragraphs, lists, tables, footnotes, comments, tracked changes, speaker
+   notes, headers/footers, hidden content — each either rendered in a stated
+   way or listed as a coverage gap. For the profile posture: which statistics,
+   which values, which formulas, and how the overview prompt is built.
+5. **Source map.** Which locator each rendered range gets, at what precision,
+   and what cannot be mapped.
+6. **Derivation labels.** Which ranges are `source_expression`, `computed`,
+   or model output, and which are extraction-ineligible.
+7. **Limits and failures.** Size, page, row, member and time limits; what
+   happens on corrupt, truncated, encrypted or oversized input; which
+   failures are retryable.
+8. **Security.** Parser isolation needs for this format (XML entity
+   expansion, zip bombs, macros, embedded scripts, external references),
+   and how each is neutralized.
+9. **Cost.** Provider calls per file, the `cost_class`, and expected cost for
+   typical files.
+10. **Test plan** (below).
+
+### 10.2 The implementation
+
+One pull request (or a short series) implementing exactly that design: the
+detection test, the converter, the registry row moved from target to
+shipped, dependencies pinned, and the docs site updated in the same PR
+(D66) including `/docs/project-status`.
+
+### 10.3 The tests
+
+Each family ships with its own suite; a family without it is not shipped:
+
+- **A fixture corpus** of real-world files for the family, including
+  variants from different producers (e.g. Word, LibreOffice and Google Docs
+  exports), edge cases, and hostile inputs (corrupt, encrypted, oversized,
+  zip-bomb, XXE where applicable). Fixtures are small and committed, or
+  generated deterministically.
+- **Detection tests:** every fixture is classified as this family, and
+  near-miss files from other families are not.
+- **Golden rendering tests:** each fixture's `document.md`, source map and
+  derivation labels match a reviewed expected output.
+- **Source-map tests:** sampled ranges resolve to the right place in the
+  original (page, slide, cell, line, time).
+- **Failure tests:** every failure case in the design produces its stated
+  outcome, never a partial representation.
+- **An end-to-end retrieval check:** a handful of questions per fixture
+  that an agent must answer from memory (and, for profiled families, with
+  `data_query`), run through the normal pipeline.
+- **Performance:** conversion time and memory for the family's largest
+  allowed file stay within the design's limits.
+
+The cross-cutting mechanisms this design binds — the registry and
+detection (§2), profiles and extraction eligibility (§4.1–§4.5),
+`data_query` (§4.6), expansion (§5), file cards (§6) and the locators (§7) —
+are each implemented and tested as their own unit against this design
+before the first family that depends on them.
