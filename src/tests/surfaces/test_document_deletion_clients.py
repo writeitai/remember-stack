@@ -26,6 +26,7 @@ from remember import MemoryClient
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
+from rememberstack.model import ForgetInProgressError
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
@@ -295,3 +296,45 @@ def test_local_mcp_offers_deletion_only_when_composed() -> None:
     assert _payload(done)["claims_retired"] == 4
     gone = server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
     assert _payload(gone)["code"] == "document_not_found"
+
+
+class _Forgetting:
+    """A deletion port whose deployment is under a hard forget."""
+
+    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
+        raise ForgetInProgressError("forget preparing")
+
+
+def test_local_mcp_reports_a_forget_as_retryable() -> None:
+    """Round 3: the in-process server answers like the route, not internal_error."""
+    server = OperationMcpServer(
+        surface=_StubSurface(),  # type: ignore[arg-type]
+        deletion=_Forgetting(),
+    )
+    error = _payload(
+        server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
+    )
+    assert error["code"] == "forget_in_progress"
+    assert error["retryable"] is True
+    assert error["http_status"] == 503
+
+
+def test_remote_mcp_reports_a_forget_as_retryable() -> None:
+    """The route's 503 forget_in_progress maps to the same tool error."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        return httpx.Response(503, json={"detail": {"code": "forget_in_progress"}})
+
+    client = MemoryClient(
+        client=httpx.Client(
+            base_url="http://memory.test", transport=httpx.MockTransport(respond)
+        )
+    )
+    error = _payload(
+        _remote(client=client).call_tool(
+            name="delete_document", arguments={"doc_id": str(_DOC)}
+        )
+    )
+    assert error["code"] == "forget_in_progress"
+    assert error["retryable"] is True

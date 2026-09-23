@@ -42,6 +42,7 @@ from rememberstack.eval.harness import EvalHarness
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CurrencyTransition
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DocumentDeletion
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
@@ -1893,3 +1894,165 @@ def test_a_restore_verdict_racing_a_delete_cannot_revive_deleted_testimony(
         is False
     )
     assert rig.relation()["invalidated_at"] is not None
+
+
+def _drain_only(rig: _LifecycleRig, stages: tuple[PipelineStage, ...]) -> None:
+    """Run only the named stages until they are idle."""
+    while True:
+        progressed = False
+        for stage in stages:
+            outcome = rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            if outcome is not RunResultOutcome.NO_WORK:
+                progressed = True
+        if not progressed:
+            return
+
+
+def _delete_at_source(rig: _LifecycleRig, source_ref: str) -> None:
+    """One sync cycle that observes the file deleted at its source."""
+    cycle = _cycle(rig)
+    rig.sync.observe_deletion(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref=source_ref,
+        cycle_id=cycle,
+    )
+    _complete(rig, cycle)
+
+
+def _watched(rig: _LifecycleRig, *, source_ref: str, content: str) -> IngestedVersion:
+    """One observed snapshot version in its own completed sync cycle."""
+    cycle = _cycle(rig)
+    version = rig.observe(
+        source_ref=source_ref,
+        content=content,
+        versioning_mode="snapshot",
+        sync_cycle_id=cycle,
+    )
+    _complete(rig, cycle)
+    return version
+
+
+def test_a_source_deletion_under_a_pending_support_review_still_finalizes(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 3 blocker: the deleted claim is already non-current (a support
+    review withdrew it) and its fact is held open for that review. The
+    deletion episode is still pending: finalization resolves the review and
+    closes the fact."""
+    added = _watched(rig, source_ref="reviewed.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    review_id, _claim = _withdraw_support(rig, added.doc_id)
+    assert _current_claims(rig, added.doc_id) == 0
+
+    _delete_at_source(rig, "reviewed.md")
+    _finalize(rig)
+
+    assert (
+        rig.scalar(
+            "SELECT status::text FROM review_queue WHERE review_id = :r", r=review_id
+        )
+        == "auto_resolved"
+    )
+    assert rig.relation()["invalidated_at"] is not None
+    assert rig.lifecycle.stranded_deletion_episodes(deployment_id=_DEPLOYMENT_ID) == ()
+
+
+def test_fact_work_that_outlived_a_finalized_deletion_is_closed_at_reconcile(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 3 blocker: the file is deleted and finalized between claim
+    extraction and fact application, then recreated (without the fact) before
+    the old version's reconcile runs. Fact application attaches the already
+    retired claim; the old version's reconcile must still close that
+    zero-support fact although the lineage is live again."""
+    first = _watched(rig, source_ref="late.md", content=f"{_FACT_SENTENCE}\n")
+    _drain_only(rig, _STAGES[:6])  # through extraction and grounding only
+    assert _version_current_claims(rig, first.version_id) == 1
+    _delete_at_source(rig, "late.md")
+    _finalize(rig)  # retires the extracted claim; no fact exists yet
+    assert _version_current_claims(rig, first.version_id) == 0
+    again = _watched(rig, source_ref="late.md", content=f"{_FILLER_SENTENCE}\n")
+    assert again.created is True
+
+    _drain_except_reconcile(rig)  # the old version's fact work lands now
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM relations WHERE predicate = 'works_for'"
+            " AND invalidated_at IS NULL AND evidence_count = 0"
+        )
+        == 1
+    )
+    rig.drain()  # the old version's reconcile runs on a live lineage
+
+    assert _open_works_for(rig) == 0
+
+
+def test_two_concurrent_deletes_answer_once(rig: _LifecycleRig) -> None:
+    """Round 3 major: the second delete waits on the lineage lock, then reads
+    the committed tombstone and is refused instead of answering 200."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    rig.drain()
+    blocker = rig.engine.connect()
+    blocker.begin()
+    blocker.execute(
+        text("SELECT claim_id FROM claims WHERE doc_id = :d FOR UPDATE"),
+        {"d": added.doc_id},
+    )
+    results: list[object] = []
+    guard = threading.Lock()
+
+    def delete() -> None:
+        try:
+            outcome: object = _deleter(rig).delete_document(
+                deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id
+            )
+        except Exception as error:  # noqa: BLE001 — asserted below
+            outcome = error
+        with guard:
+            results.append(outcome)
+
+    first = threading.Thread(target=delete)
+    first.start()
+    _wait_for_blocked(rig, count=1)
+    second = threading.Thread(target=delete)
+    second.start()
+    _wait_for_blocked(rig, count=2)
+    blocker.rollback()
+    blocker.close()
+    first.join(timeout=60)
+    second.join(timeout=60)
+
+    assert len(results) == 2
+    assert sum(isinstance(item, DocumentDeletion) for item in results) == 1
+    assert sum(isinstance(item, DocumentNotFoundError) for item in results) == 1
+
+
+def test_a_source_deletion_clears_anchors_and_a_recreate_earns_fresh_ones(
+    rig: _LifecycleRig,
+) -> None:
+    """Round 3 major: source deletion drops the lineage's D102 anchors with
+    its tombstone; the recreated file resolves afresh."""
+    added = _watched(rig, source_ref="anchored.md", content=f"{_FACT_SENTENCE}\n")
+    rig.drain()
+    _finalize(rig)
+    before = _bindings(rig, added.doc_id)
+    assert before
+    old_anchors = {row[2] for row in before if row[2] is not None}
+
+    _delete_at_source(rig, "anchored.md")
+    assert _bindings(rig, added.doc_id) == set()
+
+    again = _watched(rig, source_ref="anchored.md", content=f"{_FACT_SENTENCE}\n")
+    assert again.created is True
+    rig.drain()
+    _finalize(rig)
+
+    after = _bindings(rig, added.doc_id)
+    assert after
+    assert not ({row[2] for row in after if row[2] is not None} & old_anchors)
+    assert _current_claims(rig, added.doc_id) == 1
+    assert _open_works_for(rig) == 1
