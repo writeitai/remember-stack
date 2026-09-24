@@ -43,6 +43,8 @@ from benchmarks.locomo.retrieval import p3_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.models import ContextBundleV2
 from remember.models import Envelope
@@ -59,8 +61,6 @@ from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 AblationProfile = Literal["codex-p3", "codex-p3-mcp", "mcp", "mcp-p3"]
 AuditStatus = Literal["not_required", "pending", "clean", "invalid"]
@@ -76,15 +76,7 @@ _MCP_SERVER: Final = "rememberstack_locomo"
 _MAX_ACTIONS_PER_QUESTION: Final = 8
 _MAX_AGENT_CALLS_PER_QUESTION: Final = 9
 _ANSWER_RETRY_BUDGET: Final = 2
-_MCP_ENV_VARS: Final = (
-    "REMEMBER_DATA_PLANE_URL",
-    "REMEMBER_API_URL",
-    "REMEMBERSTACK_API_URL",
-    "REMEMBER_API_KEY",
-    "REMEMBER_TOKEN",
-    "REMEMBER_API_AUTHORIZATION",
-    "REMEMBERSTACK_API_AUTHORIZATION",
-)
+_MCP_ENV_VARS: Final = ("REMEMBER_API_URL", "REMEMBER_API_KEY")
 _MCP_CONTENT_TOOLS: Final = frozenset(
     {
         "claims_and_sources_context",

@@ -20,8 +20,8 @@ https://remember.dev/app/api
 ```
 
 Every path on this page is relative to it, for example
-`https://remember.dev/app/api/v1/orgs`. This is also the default base URL
-of `remember.CloudClient` and the token host to pass to `remember login`.
+`https://remember.dev/app/api/v1/orgs`. This is the account API that
+[`client.account`](/docs/reference/python-sdk#clientaccount) calls.
 
 ## Authentication
 
@@ -156,7 +156,8 @@ that it never expires.
 
 ## Device login
 
-These routes implement `remember login` (OAuth 2.0 device authorization).
+These routes implement the OAuth 2.0 device authorization flow for
+deployment and control-plane tokens.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|

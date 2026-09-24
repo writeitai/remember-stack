@@ -116,12 +116,12 @@ export REMEMBER_API_URL=http://localhost:8080
 
 A second cause looks different: ingest works, but the document never shows
 up on your deployment. With no `REMEMBER_API_URL` in the environment, the
-`remember` CLI uses the credentials that `remember login` stored, and
-those point at remember.dev if you have ever signed in there. Only with no
-stored credentials does it fall back to `http://127.0.0.1:8000`. The
-`--self-hosted` flag on `remember ingest` and `remember query` does not
-change this. Set `REMEMBER_API_URL` in every shell and agent configuration
-that should reach your own deployment.
+`remember` CLI uses the key that `remember login` stored, and that key
+reaches your remember.dev project. Set `REMEMBER_API_URL` (and, if your
+engine needs one, `REMEMBER_API_KEY`) in every shell and agent
+configuration that should reach your own deployment. The stored remember.dev
+key is never sent to your engine; a command that would need it there stops
+with status 2.
 
 </Cloud>
 

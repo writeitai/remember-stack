@@ -18,12 +18,12 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.cli import main as cli_main
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine.cost_export import decode_cost_export_cursor
 from rememberstack.spine.cost_export import SqlCostExportReader
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces import cli_main
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("11111111-1111-1111-1111-111111111111")

@@ -119,7 +119,7 @@ def map_error(error: BaseException) -> ToolError:
             http_status=0,
             retryable=True,
             agent_action=(
-                "Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and"
+                "Retry with back-off; check REMEMBER_API_URL, credentials, and"
                 " network reachability."
             ),
         )
@@ -216,8 +216,7 @@ def _map_http_style_error(
             http_status=401,
             retryable=False,
             agent_action=(
-                "Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if"
-                " the token was revoked."
+                "Refresh or replace REMEMBER_API_KEY; re-mint if the token was revoked."
             ),
             reason_code=reason_code,
         )
@@ -239,9 +238,7 @@ def _map_http_style_error(
             message=detail or "Transport failure talking to the deployment API.",
             http_status=0,
             retryable=True,
-            agent_action=(
-                "Retry with back-off; check REMEMBERSTACK_API_URL and network."
-            ),
+            agent_action=("Retry with back-off; check REMEMBER_API_URL and network."),
             reason_code=reason_code,
         )
     if 400 <= status_code < 500:

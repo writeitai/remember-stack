@@ -98,13 +98,12 @@ refuses ingest, search, operations and SQL queries with `423` and a
 Contact [support](/docs/cloud/support) if you see either.
 
 The spend gate's current decision is readable at
-`GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate`, and
-`remember-status` includes it.
+`GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate`.
 
 ## Warnings
 
 remember.dev does not yet send a warning as you approach a cap or run low
-on balance. Watch **Billing** and **Usage**, use `remember-status` in a
+on balance. Watch **Billing** and **Usage**, read the spend gate from a
 scheduled job, or turn on auto top-up.
 
 ## Auto top-up

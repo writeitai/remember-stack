@@ -13,13 +13,13 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
+from remember.cli import main as cli_main
 from remember.client import MemoryClient
 from remember.models import ChunkEvidenceResult
 from remember.models import current_temporal_scope
 from remember.models import Envelope
 from remember.models import Freshness
 from remember.models import Grain
-from rememberstack.surfaces.cli import main as cli_main
 from rememberstack.surfaces.http_api import _spend_gated_route
 from rememberstack.surfaces.http_api import build_api
 
@@ -255,9 +255,7 @@ def test_cli_query_adjacent_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
             assert window == 2
             return fake_envelope
 
-    monkeypatch.setattr(
-        "rememberstack.surfaces.cli._cli_memory_client", lambda _args: _StubClient()
-    )
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: _StubClient())
     monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: _StubClient())
     stdout = StringIO()
     monkeypatch.setattr("sys.stdout", stdout)

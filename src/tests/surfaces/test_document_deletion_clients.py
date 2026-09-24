@@ -23,6 +23,7 @@ from remember import DocumentDeletion
 from remember import DocumentPage
 from remember import MemoryApiError
 from remember import MemoryClient
+from remember.cli import main as cli_main
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model import DocumentNotFoundError
@@ -30,7 +31,6 @@ from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
 from rememberstack.model import ForgetInProgressError
 from rememberstack.surfaces import build_api
-from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.mcp import OperationMcpServer
 
@@ -186,8 +186,8 @@ def test_cli_lists_and_deletes_documents(
 ) -> None:
     """`remember documents list|delete` print JSON; a repeat delete exits 1."""
     client, deletion, inventory = surface
-    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
-    monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
 
     assert cli_main(["documents", "list", "--status", "ready", "--limit", "5"]) == 0
     listed = json.loads(capsys.readouterr().out)

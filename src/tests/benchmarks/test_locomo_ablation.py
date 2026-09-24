@@ -26,6 +26,8 @@ from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool as catalogue_tool
@@ -35,8 +37,6 @@ from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAccessError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports import ModelProviderPort
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 
 class _FakeMcpServer:
@@ -502,7 +502,7 @@ def test_codex_hybrid_overrides_are_secret_free_and_read_only() -> None:
     assert "enabled_tools" in joined
     assert "facts_context" in joined
     assert "env_vars" in joined
-    assert "REMEMBERSTACK_API_AUTHORIZATION" in joined
+    assert "REMEMBER_API_KEY" in joined
     assert "Bearer " not in joined
 
 

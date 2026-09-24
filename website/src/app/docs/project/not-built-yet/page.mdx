@@ -76,11 +76,16 @@ absent from the current release; nothing here has a date.
 
 ## remember.dev account
 
+- **Sign-in with one key.** `remember login`, `remember switch`, project
+  resolution for a key and `client.account` need remember.dev to publish
+  OAuth metadata with a device-authorization, project and account endpoint.
+  remember.dev does not publish them yet, so these fail with an error naming
+  the metadata URL. Until then, use a deployment API token from the console
+  with `REMEMBER_API_URL` and `REMEMBER_API_KEY`.
 - **Control-plane tokens in the console.** The console has no page to create
-  a control-plane token for [`CloudClient`](/docs/reference/python-sdk#cloudclient)
-  or `remember-status`; get one with `remember login --control`.
-- **Projects and members from the CLI.** `remember projects create`,
-  `remember members list` and `remember members invite` only point to the
-  console ([CLI](/docs/reference/cli#commands-that-point-to-the-console)).
+  a control-plane token; create one through the account API
+  ([Tokens and sign-in](/docs/cloud/tokens-and-sign-in#control-plane-tokens)).
+- **Projects, members and balance from the CLI.** The CLI has no commands
+  for them; use the console.
 
 </Cloud>

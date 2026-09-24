@@ -20,7 +20,7 @@ The one-time owner setup is complete:
    ```
 
    Under D108, the canonical PyPI distribution is `remember` (providing the `remember` CLI launcher
-   and the `remember` Python client package with backward-compatible `Client` and `CloudClient` shims),
+   and the `remember` Python client package),
    published from this repository starting with `v0.17.0`. The container image package is `ghcr.io/writeitai/remember-stack`.
 3. The GitHub environment `pypi` requires an owner review, so a tag cannot publish to PyPI without
    explicit approval.

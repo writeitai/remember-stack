@@ -17,6 +17,8 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import McpMemorySettings
@@ -31,8 +33,6 @@ from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.mcp import OperationMcpServer
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 _DEPLOYMENT = UUID("57000000-0000-0000-0000-000000000001")
 _DOC = UUID("57000000-0000-0000-0000-000000000002")
