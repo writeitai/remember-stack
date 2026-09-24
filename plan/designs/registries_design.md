@@ -872,8 +872,8 @@ the split cost are under-researched — registry SYNTHESIS G5.)*
 
 **Build** a thin cluster-review queue over Postgres (no OSS tool offers cluster-queue +
 append-only reversible verdicts + provenance + blast-radius gating). Review **clusters, not
-pairs**; route only the `expected_impact = blast_radius × (1 − confidence)` middle band to
-humans; hub merges never auto-accept. Evidence panel borrows Splink's waterfall; 3-way verdict
+pairs**; the queue ranks items by `expected_impact = blast_radius × (1 − confidence)`; hub
+merges never auto-accept. Evidence panel borrows Splink's waterfall; 3-way verdict
 ergonomics from Zingg; cluster-card-with-exclude interaction from OpenRefine. Every action
 appends a reversible, provenance-stamped record to `resolution_decisions`/`merge_events`.
 

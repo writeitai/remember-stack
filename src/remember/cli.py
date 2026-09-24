@@ -1094,10 +1094,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
     print(result.model_dump_json())
     if result.parked == "no_route":
         print(
-            f"warning: {args.file} was stored but not processed: this deployment"
-            " has no converter for its file type (parked: no_route). An operator"
-            " must add a conversion route for it and then run"
-            " `remember ops resume-no-route`.",
+            f"warning: {args.file} was stored but is parked waiting for a"
+            " conversion route for its file type (parked: no_route). An operator"
+            " adds a route if needed, then runs `remember ops resume-no-route`.",
             file=sys.stderr,
         )
     return 0

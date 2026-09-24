@@ -173,9 +173,10 @@ remember ingest notes/2026-09-18-billing-sync.md \
   --source-kind meeting-notes --source-ref billing-sync/2026-09-18
 ```
 
-It prints the `IngestedVersion` as one JSON line. When the deployment has
-no converter for the file's type, the line has `"parked":"no_route"` and
-the command also prints a warning to stderr; the exit status stays 0,
+It prints the `IngestedVersion` as one JSON line. When the file's
+conversion is parked waiting for a conversion route, the line has
+`"parked":"no_route"` and the command also prints a warning to stderr that
+names the release step (`remember ops resume-no-route`); the exit status stays 0,
 because the file is stored. See
 [File formats and converters](/docs/self-hosting/converters#files-no-route-accepts).
 

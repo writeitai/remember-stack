@@ -83,8 +83,9 @@ consumers are harnesses (requirements §Retrieval); operators install `[server]`
   cycles, debounce, and deletion detection (`connector_sync_cycles`, D55), semantics that
   must not depend on a client process staying alive. The client configures them; credentials
   live deployment-side.
-- **Admin**: the D24 review CLI (cluster review, `support_withdrawn` triage) and deployment
-  introspection (pipeline state, DLQ, budgets) — reading state the spine already persists.
+- **Admin**: none in the client. The D24 review CLI and budget introspection were removed
+  (D108); operator inspection (pipeline state, DLQ) is `remember ops`, inside the engine
+  container only.
 
 ## 3. Task execution — one model, two delivery shells
 

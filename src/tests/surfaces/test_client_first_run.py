@@ -207,7 +207,7 @@ def test_cli_ingest_warns_when_the_engine_parks_the_file(
     captured = capsys.readouterr()
     assert code == 0, captured.err
     assert '"parked":"no_route"' in captured.out
-    assert "stored but not processed" in captured.err
+    assert "parked waiting for a conversion route" in captured.err
     assert "parked: no_route" in captured.err
     assert "remember ops resume-no-route" in captured.err
 

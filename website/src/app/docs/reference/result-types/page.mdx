@@ -570,7 +570,7 @@ Returned by `POST /ingest`.
 | `version_id` | UUID | The version; pass it to `POST /readiness`. |
 | `content_hash` | string | SHA-256 of the bytes, hex. |
 | `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
-| `parked` | `"no_route"` or `null` | `"no_route"` when the deployment has no converter for the upload's MIME type: the bytes are stored, but conversion waits until an operator adds a route. `null` when it is not parked: conversion is queued, running or already done. |
+| `parked` | `"no_route"` or `null` | `"no_route"` when the upload's conversion is parked waiting for a conversion route for its MIME type: the bytes are stored, and conversion waits until an operator adds a route if needed and runs `remember ops resume-no-route`. `null` means only that it is not parked for `no_route`; read processing state from `POST /readiness`. |
 
 ## Readiness
 
