@@ -15127,7 +15127,8 @@ Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
 1. `ingest`, `pipeline_readiness` and `delete_document`, then
-   `search_documents` when the deployment's `GET /deployment` lists it
+   `search_documents` when the deployment's `GET /deployment` lists it at
+   the same tool version as this `remember` package
    (only `pipeline_readiness` and `search_documents` with `--read-only`).
    A deployment that does not answer `GET /deployment` gets no
    `search_documents`.

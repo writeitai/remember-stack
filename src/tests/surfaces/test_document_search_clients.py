@@ -16,6 +16,7 @@ from typing import cast
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 from remember import DocumentSearchFilters
@@ -24,6 +25,7 @@ from remember import DocumentSearchRequest
 from remember import MemoryApiError
 from remember import MemoryClient
 from remember.cli import main as cli_main
+from remember.mcp_tools import tool
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentSearchResult
 from remember.remote_mcp import RemoteOperationMcpServer
@@ -243,6 +245,8 @@ def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:
 
 
 class _BuildInfo:
+    """Build info; the real app fills ``tools`` from what it composed."""
+
     def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
         assert deployment_id == _DEPLOYMENT_ID
         return DeploymentBuildInfo(build_revision="abc")
@@ -254,3 +258,35 @@ def test_remote_mcp_lists_search_documents_only_when_the_origin_serves_it() -> N
     assert "search_documents" not in _remote_names(
         document_search=False, read_only=False
     )
+
+
+def test_remote_mcp_omits_search_documents_at_a_different_tool_version() -> None:
+    """An origin serving another tool_version is not rendered (equal-version rule)."""
+    served = tool("search_documents").tool_version
+    for other in (served - 1, served + 1):
+        client = MemoryClient(client=_origin_reporting(version=other))
+        names = _listed(RemoteOperationMcpServer(client=client))
+        assert "search_documents" not in names, other
+    client = MemoryClient(client=_origin_reporting(version=served))
+    assert "search_documents" in _listed(RemoteOperationMcpServer(client=client))
+
+
+def _origin_reporting(*, version: int) -> httpx.Client:
+    """An origin whose GET /deployment reports search_documents at ``version``."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/deployment":
+            return httpx.Response(
+                200,
+                json={"build_revision": "abc", "tools": {"search_documents": version}},
+            )
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    return httpx.Client(
+        base_url="http://memory.test", transport=httpx.MockTransport(respond)
+    )
+
+
+def _listed(server: RemoteOperationMcpServer) -> list[str]:
+    tools = cast("list[dict[str, object]]", server.list_tools()["tools"])
+    return [cast(str, entry["name"]) for entry in tools]

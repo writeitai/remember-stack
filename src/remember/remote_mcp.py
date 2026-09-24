@@ -212,18 +212,20 @@ class RemoteOperationMcpServer:
         }
 
     def _origin_serves(self, *, name: str) -> bool:
-        """Whether the origin's ``GET /deployment`` lists this catalogue tool.
+        """Whether the origin's ``GET /deployment`` serves this tool at our version.
 
-        A tool whose route the origin may not serve is advertised only when
-        the origin says it serves it. An origin that cannot answer (an older
-        engine, a proxy without the route, a transport failure) is taken as
-        not serving it: the tool is omitted, and nothing else fails.
+        A host renders a catalogue tool only when the deployment lists it at
+        the **same** ``tool_version`` (one-key client surfaces §3), so an
+        agent never sees an argument the deployment would reject. An origin
+        that cannot answer (an older engine, a proxy without the route, a
+        transport failure) is taken as not serving it: the tool is omitted,
+        and nothing else fails.
         """
         try:
             served = self._client.deployment_build_info().tools
         except MemoryApiError:
             return False
-        return name in served
+        return served.get(name) == tool(name).tool_version
 
     def _assured_operation_descriptors(self) -> tuple[ToolDescriptor, ...]:
         """Return remote assured-operation tools, or none if the origin has no registry.
