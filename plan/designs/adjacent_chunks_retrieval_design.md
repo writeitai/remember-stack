@@ -109,4 +109,4 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
 2. **Top-level MCP Scope Boundary (D50, D83, D87):**
-   * Raw primitives do not mint top-level MCP tools; the MCP tool surface remains strictly closed to the four platform-owned assured operations.
+   * Raw primitives do not mint top-level MCP tools. The four platform-owned assured operations are the only MCP intent tools; the rest of the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)) is infrastructure (`ingest`, `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools), and `adjacent_chunks` is not among them.

@@ -48,28 +48,33 @@ await the owner-provided stack conventions (roadmap §3).
 > idiom that lets N workers each atomically claim different pending rows with no coordinator
 > and no double-claims; **hexagonal / ports-and-adapters** = the code architecture where pure
 > domain logic depends on interfaces ("ports") and vendor integrations live in swappable
-> "adapters" at the edge; **extras** = optional pip dependency groups (`pip install
-> pkg[server]`).
+> "adapters" at the edge.
 
 ## 1. The delivery artifacts — three, each with a distinct consumer
 
 | Artifact | Consumer | Contents |
 |---|---|---|
 | **The GitHub repository** | contributors, evaluators | source + the `plan/` design corpus (itself a differentiator: the architecture rationale ships with the code) |
-| **The PyPI package** — dist/import **`rememberstack`**, CLI **`remember`** (product **RememberStack**, canonical home **`remember.dev`**; D76) | **agent harnesses and their operators** — positioned as *the client* | base install = the **client surface** (§2): typed SDK, CLI, MCP server. Extras: `[server]` (workers, spine, adapters), `[connectors-gdrive]` etc. (per-connector, server-side), `[k]` (the K compile machine's driver dependencies) |
-| **One container image + compose profile** (published on **GHCR** — same org as the repo, no second registry account) | self-hosters, CI, benchmarks | one shared image runs `api`, `worker`, or one-shot `setup` commands; `docker compose up` brings up the **self-host profile**: Postgres + MinIO + api + worker(s). API and workers execute the same package and dependency set, so separate images would duplicate publication without creating an isolation boundary. The ten-minute quickstart is a release-gating, CI-tested artifact — an infrastructure-shaped OSS that cannot be *tried* quickly dies |
+| **The PyPI package `remember`** — import **`remember`**, CLI **`remember`** (canonical home **`remember.dev`**; D108) | **agent harnesses and their operators** — positioned as *the client* | the **client surface** (§2): typed SDK, CLI, MCP server (including the public `remember.mcp_tools` catalogue, D136). Dependencies are `httpx`, `pydantic`, `pydantic-settings` only; it carries no server code and no server extras. The retired `rememberstack` PyPI name is an archived forwarder (D108) |
+| **One container image + compose profile** (`ghcr.io/writeitai/remember-stack`, published on **GHCR** — same org as the repo, no second registry account) | self-hosters, CI, benchmarks, cloud fleets | the only distribution of the engine (workers, spine, adapters, connectors, the K compile driver): one shared image runs `api`, `worker`, or one-shot `setup` commands; `docker compose up` brings up the **self-host profile**: Postgres + MinIO + api + worker(s). API and workers execute the same package and dependency set, so separate images would duplicate publication without creating an isolation boundary. The ten-minute quickstart is a release-gating, CI-tested artifact — an infrastructure-shaped OSS that cannot be *tried* quickly dies |
 
-One package, not a package family: the same distribution contains client and server code;
-extras select dependency weight. The *positioning* is what differs: the README sells
-`pip install <pkg>` as "connect your agent to a memory deployment," because the designed
-consumers are harnesses (requirements §Retrieval); operators install `[server]`.
+Client and engine are separate artifacts built from one repository: `pip install remember`
+(or `uvx remember`) is "connect your agent to a memory deployment," because the designed
+consumers are harnesses (requirements §Retrieval); operators run the container. The
+engine's own Python package (`rememberstack`, §5) exists inside the image and is not
+published to PyPI (D108).
 
 ## 2. The client surface (what the base package exposes)
 
 - **Query**: the typed SDK + CLI + MCP server over the retrieval API (D48–D51, D87) —
   primitives, the four closed assured operations, D49 envelopes, open SQL with bounded live-graph helpers, and governed
-  saved queries. MCP renders the four platform-owned assured descriptors plus open-query
-  infrastructure; customer and `examples.*` saved queries do not become top-level intent tools.
+  saved queries. The four platform-owned assured operations are the only MCP intent tools;
+  MCP renders the full shared catalogue, whose other entries are infrastructure (`ingest`,
+  `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools);
+  customer and `examples.*` saved queries do not become top-level tools.
+  Every memory tool's definition lives once in the public `remember.mcp_tools` catalogue,
+  which every MCP host imports (D136,
+  [one_key_client_surfaces_design.md](one_key_client_surfaces_design.md)).
 - **Ingest — lineage-aware by contract**: `client.ingest(bytes|path, *, source_kind=…,
   source_ref=…, source_modified_at=…, versioning_mode=…)` / `remember ingest …`. Writes always
   enter through E0 (D60 invariant — no surface writes around the pipeline). The optional
@@ -236,10 +241,10 @@ ports and published extension points, keeping it portable off GCP too.
 
 ## 6. Releases, upgrades, portability
 
-- **Versioning**: semantic versioning on the package and shared image (same version string);
-  every release publishes PyPI + the GHCR image + the compose file pinned to that tag.
-  *(D76: product RememberStack; dist/import/container `rememberstack`; CLI `remember`; canonical
-  home `remember.dev`.)*
+- **Versioning**: semantic versioning on the `remember` package and the shared image (same
+  version string); every release publishes `remember` to PyPI, the GHCR image, and the compose
+  file pinned to that tag. *(D76 naming as amended by D108: PyPI/CLI `remember`, container
+  `remember-stack`, internal engine import `rememberstack`; canonical home `remember.dev`.)*
 - **Upgrades**: Alembic migrations run **before** workers roll (the schema doc is the source
   of truth; migrations implement it). Processing-version stamps (D7/D12) mean code upgrades
   never silently invalidate derived state — reprocessing is explicit, per version filters,
@@ -300,8 +305,10 @@ must be rejected by the operator's transfer verification.
    prove forgotten-data non-resurrection and an independent control green. Production-builder
    delegation remains the separately green WP-7.4/WP-7.5 contract. No library transport feature is
    involved.
-5. **MCP server distribution**: whether the MCP server also ships as a standalone binary/uvx
-   target for harnesses that don't want a Python env — decide with the first external users.
+5. **MCP server distribution** — resolved by D108 and D136: `uvx remember mcp` needs no
+   managed Python environment, harnesses that accept remote servers connect to a URL
+   (a hosted endpoint, or a self-hoster's `remember mcp --transport http`), and the stdio
+   bridge covers harnesses that only launch local servers. No separate binary ships.
 
 ## References
 

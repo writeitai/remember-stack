@@ -71,8 +71,8 @@ Industry-leading open-core infrastructure companies (**Qdrant**, **Supabase**, *
 ### 2.1 Core Pillars of the Qdrant Model
 1. **One Unified Narrative**: The platform explains the underlying data and AI primitives first (how bitemporal memory works, why semantic vectors alone fail, how contradiction resolution operates). This establishes technical authority and educates both human engineers and AI coding agents.
 2. **One Universal Quickstart**: The onboarding guide starts with `uvx remember setup`. The user chooses whether to connect to Managed Cloud (instant, free trial credits) or Self-Hosted Docker Compose (`http://localhost:8000`).
-3. **Identical Code & MCP Tools**: The Python SDK (`RememberClient`) and MCP adapter (`remember mcp`) run identically regardless of backend destination. Zero code rewriting when moving from development to production.
-4. **Transparent Cloud Value Add**: The docs celebrate open source while clearly articulating why developers choose Cloud: zero-ops database management, automatic daily bitemporal compaction, automatic backups, managed OAuth device-grant credentials, and team seats.
+3. **Identical Code & MCP Tools**: The Python SDK (`RememberClient`) and MCP adapter (`remember mcp`) run identically regardless of backend destination; every host renders the same memory tools from the shared `remember.mcp_tools` catalogue (D136). Zero code rewriting when moving from development to production.
+4. **Transparent Cloud Value Add**: The docs celebrate open source while clearly articulating why developers choose Cloud: zero-ops database management, automatic daily bitemporal compaction, automatic backups, one signed key for every surface with browser sign-in (D136), and team seats.
 
 ---
 
@@ -110,7 +110,8 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 
 ### 3.5 Section 5: Remember Cloud Platform (Managed Services)
 - **Cloud Architecture & Physical Isolation**: How each project runs inside an isolated, dedicated container and database instance.
-- **Control Plane CLI**: `remember login`, `remember logout`, `remember whoami`, `remember projects`, `remember switch`, and `remember members`.
+- **Account CLI**: `remember login` (stores the one key, D136), `remember logout`, `remember whoami`, `remember projects`, `remember switch` (default project), and `remember members`.
+- **Hosted MCP and keys**: one MCP endpoint and one key across SDK, CLI, MCP and HTTP (D136; the cloud-side design owns the endpoint and key management).
 - **Billing, Usage & Credit Balance**: Credit model explanation, monitoring spend via `remember balance`, and payment methods.
 - **Security, Compliance & Data Sovereignty**: EU data residency, GDPR compliance, encryption at rest and in transit, and secret isolation (D92/D108).
 

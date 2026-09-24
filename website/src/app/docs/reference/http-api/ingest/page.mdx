@@ -1,16 +1,17 @@
 export const metadata = {
   title: "Ingest, readiness and documents",
-  description: "The routes that add a document, report how far its processing has got, and list what the deployment holds.",
+  description: "The routes that add a document, report how far its processing has got, list what the deployment holds, and delete a document.",
 };
 
 # Ingest, readiness and documents
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-Three routes cover the write side of memory. `POST /ingest` adds one file.
+Four routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
-document first.
+document first. `DELETE /documents/{doc_id}` removes a document from the
+memory.
 
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](/docs/reference/http-api).
@@ -47,7 +48,9 @@ attribution, which travels in headers so that it never lands in access logs.
 
 Without `source_kind` and `source_ref`, the file's content is its identity:
 the document id is derived from the SHA-256 of the bytes. Sending the same
-bytes again is a no-op, and different bytes are a different document.
+bytes again is a no-op, and different bytes are a different document. After
+you [delete](#delete-documentsdoc_id) a document, sending its bytes again adds
+it back as a new version (`"created": true`), processed from the start.
 
 With `source_kind` and `source_ref`, the pair is the identity. Use it for
 anything that changes over time — a spec that gets edited, a page in another
@@ -322,5 +325,119 @@ curl -s "$REMEMBER_API_URL/documents?status=failed&limit=20" \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
-The `remember` Python client has no method for this route yet. Call it over
-HTTP.
+```python
+from remember import Client
+
+memory = Client()
+page = memory.list_documents(status="failed", limit=20)
+for document in page.documents:
+    print(document.doc_id, document.title, document.latest.error)
+# page.cursor is None on the last page; pass it back to read the next one.
+```
+
+`remember documents list` prints the same page as JSON.
+
+## DELETE /documents/\{doc_id\}
+
+Remove one document from the memory: every version of it, all at once.
+
+**Scope:** `write`. **Spend hold (remember.dev):** none.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | The `doc_id` that `POST /ingest` returned, or that a claim, chunk or `GET /documents` names. |
+
+There is no body.
+
+### What deleting does
+
+When the call returns, the document is out of the memory:
+
+- it no longer appears in `GET /documents`, search, facts, the graph or SQL
+  queries;
+- its claims stop counting as evidence (their reason becomes
+  `version_deleted`);
+- a fact that only this document supported is closed, with a recorded
+  retraction (`retracted_source_removal`); a fact other documents also
+  support stays, with one supporter fewer.
+
+Deleting is not erasing. The claims and the stored original stay in the
+deployment as history, and the retraction is recorded. Erasing a document's
+bytes and every trace of it is a separate operator operation that is not
+offered through the API.
+
+Processing that was still running for the document stops publishing new
+claims. Anything it already produced is never visible and is retired when
+that version reaches the `reconcile` stage.
+
+A pending review of whether the document's claims were extracted correctly is
+closed as moot, because the document is gone.
+
+If you ingest the same file again later, it is added back as a new version
+and processed from the start, like any new document. The facts that closed
+stay closed; the new claims support facts as usual.
+
+The route starts no pipeline work, so it has no spend hold. Its one possible
+model call re-embeds the profile text of entities whose facts changed; that
+call is recorded with the deployment's other request-time model calls. If
+the model provider is down, the deletion still succeeds and those profiles
+catch up the next time the entity's evidence changes.
+
+### Response
+
+`200` with a [`DocumentDeletion`](/docs/reference/result-types#documentdeletion):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "deleted_at": "2026-09-23T10:41:07.318Z",
+  "claims_retired": 12,
+  "relations_closed": 2,
+  "observations_closed": 1
+}
+```
+
+The counts describe what this call changed.
+
+### Deleting twice
+
+A deletion is all or nothing: the document is hidden and its evidence
+updated in one step, or nothing changes. A second `DELETE` of the same
+document answers `404` `document_not_found`, the same as an id the deployment
+never held, so retrying after a timeout is safe. The one exception is a
+document that was hidden some other way but whose evidence was never updated;
+deleting it finishes the job and answers `200` with what it finished.
+
+If you ingest the document again while a `DELETE` of it is running, the
+ingest waits for the delete to finish and then adds the document back as a
+new version.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
+| `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
+| `422` | validation list | `doc_id` is not a UUID. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client, MemoryApiError
+
+memory = Client()
+try:
+    deletion = memory.delete_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+    print(deletion.claims_retired, deletion.relations_closed)
+except MemoryApiError as error:
+    if error.status_code != 404:
+        raise
+```

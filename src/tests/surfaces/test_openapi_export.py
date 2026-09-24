@@ -108,6 +108,7 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 #: caught: not by the machine, but by the edit being visible.
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
+        ("DELETE", "/documents/{doc_id}"),
         ("GET", "/chunks/{chunk_id}/adjacent"),
         ("GET", "/deployment"),
         ("GET", "/documents"),
@@ -159,6 +160,7 @@ _CAPABILITY_PORTS = frozenset(
         "connectors",
         "pipeline_readiness",
         "documents",
+        "deletion",
         "graph",
         "build_info",
     }

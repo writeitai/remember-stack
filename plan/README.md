@@ -12,6 +12,13 @@ explains why GitHub preserves the `remember-stack` history while public Python
 releases expose only `remember`, and why the retired PyPI name is archived
 rather than deleted.
 
+For credentials and client surfaces — the one signed key, the shared
+`remember.mcp_tools` catalogue, the `project` routing argument, `remember mcp`
+engine and bridge modes, `remember setup`, and the perimeter's signed-key
+contract — start with [D136's design](designs/one_key_client_surfaces_design.md)
+and its [analysis](analysis/one_key_client_surfaces_analysis.md). It amends the
+credential and login parts of D92/D108.
+
 For the temporal program, start with [D118 mutable fact windows](designs/mutable_fact_windows_design.md)
 and the [implementation sequence](plans/temporal_clocks.md). The
 [analysis](analysis/lean_mutable_fact_windows.md) explains the independent audits
@@ -41,3 +48,8 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 For conversational anaphora and question-affirmation resolution across dialogue turns,
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
+
+For deleting a document through the API, SDK, CLI or MCP, see D135 in the
+[evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
+and the [analysis](analysis/public_document_deletion.md). Erasure remains
+[D74 hard-forget](designs/hard_forget_design.md).

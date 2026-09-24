@@ -589,6 +589,46 @@
         "title": "DeploymentBuildInfo",
         "type": "object"
       },
+      "DocumentDeletion": {
+        "additionalProperties": false,
+        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+        "properties": {
+          "claims_retired": {
+            "minimum": 0.0,
+            "title": "Claims Retired",
+            "type": "integer"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "observations_closed": {
+            "minimum": 0.0,
+            "title": "Observations Closed",
+            "type": "integer"
+          },
+          "relations_closed": {
+            "minimum": 0.0,
+            "title": "Relations Closed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "deleted_at",
+          "claims_retired",
+          "relations_closed",
+          "observations_closed"
+        ],
+        "title": "DocumentDeletion",
+        "type": "object"
+      },
       "DocumentPage": {
         "additionalProperties": false,
         "properties": {
@@ -3651,6 +3691,71 @@
           }
         ],
         "summary": "List Documents"
+      }
+    },
+    "/documents/{doc_id}": {
+      "delete": {
+        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nThe deletion is all or nothing. An unknown id and an already deleted\ndocument are both 404: from the caller's side each is absent. A\ndocument hidden by another path whose evidence was never updated is\nfinished and answers 200 instead.",
+        "operationId": "delete_document_documents__doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDeletion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Document"
       }
     },
     "/graph/citation-path": {

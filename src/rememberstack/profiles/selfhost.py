@@ -42,6 +42,7 @@ from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import DocumentDeletion
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
@@ -984,6 +985,11 @@ class SelfHostProfile:
                 build_revision=_build_revision(),
             ),
             documents=DocumentInventory(engine=self._engine),
+            deletion=_SelfHostDocumentDeletion(
+                engine=self._engine,
+                model_provider=self._model_provider,
+                embedding_model=embedding_model,
+            ),
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
@@ -1507,6 +1513,47 @@ def _expected_components() -> dict[PipelineStage, str]:
             embedding_model=P1Settings().embedding_model
         ),
     }
+
+
+class _SelfHostDocumentDeletion:
+    """Serve `DELETE /documents/{doc_id}` (D135) over this profile's spine.
+
+    The deletion is database work; the one provider call it can make is the
+    entity-profile re-embedding afterwards. That call is recorded on the
+    surface cost ledger under its own call site, like a review verdict's
+    profile refresh, rather than disappearing.
+    """
+
+    def __init__(
+        self, *, engine: Engine, model_provider: ModelProviderPort, embedding_model: str
+    ) -> None:
+        """Compose the lifecycle catalog and the profile projection it touches."""
+        from rememberstack.spine import EntityProfileRefresher
+        from rememberstack.workers import DocumentDeleter
+
+        self._engine = engine
+        self._deleter = DocumentDeleter(
+            engine=engine,
+            profile_refresher=EntityProfileRefresher(
+                engine=engine,
+                model_provider=model_provider,
+                embedding_model=embedding_model,
+            ),
+        )
+
+    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
+        """Delete one lineage with metered, best-effort profile refresh."""
+        meter = SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=deployment_id
+            ),
+            deployment_id=deployment_id,
+            call_site=SurfaceCallSite.PROFILE_DELETE,
+        )
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            return self._deleter.delete_document(
+                deployment_id=deployment_id, doc_id=doc_id, meter=meter
+            )
 
 
 class _BuildInfo:

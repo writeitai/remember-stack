@@ -90,10 +90,11 @@ With the self-hosted server the agent gets these tools:
 | `combined_context` | Facts and claims together, when the agent wants everything in one call. |
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
+| `delete_document` | Remove a document from the memory when the user asks. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-two write tools.
+three write tools (`ingest`, `pipeline_readiness`, `delete_document`).
 
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.

@@ -4,7 +4,8 @@ Both MCP servers advertise and dispatch the same two static tools — ``ingest``
 and ``pipeline_readiness`` — from this module so schemas, argument parsing, and
 structured error envelopes cannot drift. Assured-operation and open-query tools stay in
 their own modules; this is only the write/readiness pair D37 requires on every
-general-purpose memory surface.
+general-purpose memory surface, plus ``delete_document`` (D135), which a server
+advertises only when it composes a deletion backend and is not read-only.
 
 Size preflight uses limits from a served capability document when the backend
 exposes one. When no capability document is available, the client does not
@@ -47,6 +48,7 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from remember.mime import infer_upload_mime
+from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -58,6 +60,7 @@ PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
+DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
 
 _FILENAME_MAX_LEN: Final = 512
 _MIME_MAX_LEN: Final = 255
@@ -121,6 +124,34 @@ _PIPELINE_READINESS_DESCRIPTION: Final = (
     " run of the same bytes may still be processing: poll that version_id the"
     " same way."
 )
+
+_DELETE_DOCUMENT_DESCRIPTION: Final = (
+    "Remove one document from this deployment's memory. Use only when the user"
+    " asks to delete or forget a specific document, or it is plainly wrong or"
+    " unwanted — never to tidy up, and never to change a fact (ingest a"
+    " correcting document instead). Takes the doc_id that ingest returned or"
+    " that a claim or source cites. The effect is immediate: the document leaves"
+    " search, facts and the document list; its claims stop counting as"
+    " evidence; facts that no other document supports are closed. Facts other"
+    " documents also support stay. The claims and stored original are kept as"
+    " history, so this is not an erasure. Ingesting the same document again later"
+    " adds it back as a new version. Returns claims_retired, relations_closed and"
+    " observations_closed. A document_not_found error means the id is unknown or"
+    " the document is already deleted: do not retry it."
+)
+
+_DELETE_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id), as ingest returned it.",
+        }
+    },
+}
 
 _INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
@@ -356,6 +387,14 @@ class MemoryWriteBackend(Protocol):
         ...
 
 
+class DocumentDeleteBackend(Protocol):
+    """Authority that deletes one document for one MCP composition (D135)."""
+
+    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
+        """Remove the document or raise a 404-shaped ``document_not_found``."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class ToolError:
     """Structured MCP tool error for write/readiness tools."""
@@ -462,6 +501,101 @@ def handle_memory_write_tool(
         return _error_result(mapped)
     return {
         "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
+        "isError": False,
+    }
+
+
+def delete_document_tool_descriptor() -> dict[str, object]:
+    """MCP ``tools/list`` entry for ``delete_document``."""
+    return {
+        "name": DELETE_DOCUMENT_TOOL_NAME,
+        "description": _DELETE_DOCUMENT_DESCRIPTION,
+        "inputSchema": _DELETE_DOCUMENT_INPUT_SCHEMA,
+    }
+
+
+def handle_delete_document_tool(
+    *, arguments: Mapping[str, object], backend: DocumentDeleteBackend | None
+) -> dict[str, object]:
+    """Dispatch ``delete_document`` to a success or structured error result."""
+    if backend is None:
+        return _error_result(
+            ToolError(
+                code="tool_not_composed",
+                message=(
+                    f"MCP tool {DELETE_DOCUMENT_TOOL_NAME!r} is not composed on this"
+                    " server (read-only, or no deletion port)."
+                ),
+                http_status=404,
+                retryable=False,
+                agent_action=(
+                    "Tell the user deletion is not available on this server; do"
+                    " not retry."
+                ),
+            )
+        )
+    try:
+        _reject_unknown_keys(arguments=arguments, allowed={"doc_id"})
+        raw = arguments.get("doc_id")
+        if not isinstance(raw, str) or not raw:
+            raise MemoryToolArgumentError(
+                error=_invalid_arguments(message="doc_id must be a non-empty string.")
+            )
+        try:
+            doc_id = UUID(raw)
+        except ValueError as error:
+            raise MemoryToolArgumentError(
+                error=_invalid_arguments(message="doc_id must be a UUID.")
+            ) from error
+        deletion = backend.delete_document(doc_id=doc_id)
+    except MemoryToolArgumentError as error:
+        return _error_result(error.error)
+    except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
+        if (
+            getattr(error, "status_code", None) == 404
+            and getattr(error, "detail", None) == "document_not_found"
+        ):
+            return _error_result(
+                ToolError(
+                    code="document_not_found",
+                    message=(
+                        f"No live document {arguments.get('doc_id')}: the id is"
+                        " unknown or the document is already deleted."
+                    ),
+                    http_status=404,
+                    retryable=False,
+                    agent_action=(
+                        "Do not retry. Check the doc_id; if the user meant this"
+                        " document, it is already gone from memory."
+                    ),
+                )
+            )
+        if getattr(error, "status_code", None) == 503 and "forget_in_progress" in str(
+            getattr(error, "detail", "")
+        ):
+            return _error_result(
+                ToolError(
+                    code="forget_in_progress",
+                    message=(
+                        "A hard forget is running on this deployment; nothing was"
+                        " deleted."
+                    ),
+                    http_status=503,
+                    retryable=True,
+                    agent_action=(
+                        "Retry the same delete later with back-off; the"
+                        " deployment accepts no changes until the forget finishes."
+                    ),
+                )
+            )
+        mapped = map_backend_error(error)
+        if mapped.code in {"internal_error", "local_backend_error"}:
+            logger.exception(
+                "MCP tool %s failed with %s", DELETE_DOCUMENT_TOOL_NAME, mapped.code
+            )
+        return _error_result(mapped)
+    return {
+        "content": [{"type": "text", "text": deletion.model_dump_json()}],
         "isError": False,
     }
 

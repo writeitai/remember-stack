@@ -218,8 +218,9 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
 - Each entry must be an `https` origin exactly as a browser sends it:
   lowercase scheme and host, an optional port, nothing else. A malformed
   entry, an empty entry or a trailing comma stops the API at start.
-- Only `GET` and `POST` with the `Authorization` and `Content-Type` headers
-  are allowed. Cookies are not; the browser must send a token.
+- Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
+  headers are allowed. `DELETE` (deleting a document) still needs a token with
+  `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 

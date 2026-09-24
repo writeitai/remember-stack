@@ -110,7 +110,15 @@ class DocumentCatalog:
                 .mappings()
                 .one_or_none()
             )
-            created = latest is None or latest["content_hash"] != record.content_hash
+            # A deleted latest version is never the no-op target: the bytes
+            # returning after a deletion are a new observation and must be
+            # processed again, or the document would come back live while
+            # contributing nothing (D135).
+            created = (
+                latest is None
+                or latest["content_hash"] != record.content_hash
+                or latest["deleted_at"] is not None
+            )
             version_id = uuid4() if created or latest is None else latest["version_id"]
             principal_id: UUID | None = None
             if created and record.ingested_by is not None:
@@ -665,7 +673,7 @@ _CONVERT_PARKED_NO_ROUTE = text(
 
 _SELECT_LATEST_VERSION = text(
     """
-    SELECT version_id, content_hash FROM document_versions
+    SELECT version_id, content_hash, deleted_at FROM document_versions
     WHERE deployment_id = :deployment_id AND doc_id = :doc_id
     ORDER BY version_no DESC
     LIMIT 1
