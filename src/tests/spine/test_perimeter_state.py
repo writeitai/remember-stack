@@ -65,32 +65,27 @@ def _document(seq: int, revoked: list[str]) -> dict[str, object]:
     }
 
 
-def test_the_row_only_moves_forward(database_engine: Engine) -> None:
+def test_the_row_is_a_compare_and_set_on_seq(database_engine: Engine) -> None:
     deployment_id = _deployment(database_engine)
     catalog = PerimeterStateCatalog(engine=database_engine)
     assert catalog.load(deployment_id=deployment_id) is None
 
-    assert catalog.save(
-        deployment_id=deployment_id, seq=2, document=_document(2, ["a"])
-    )
-    assert catalog.load(deployment_id=deployment_id) == _document(2, ["a"])
-
-    # Equal and lower sequences never overwrite, even with other content.
-    assert not catalog.save(
-        deployment_id=deployment_id, seq=2, document=_document(2, [])
-    )
-    assert not catalog.save(
-        deployment_id=deployment_id, seq=1, document=_document(1, [])
-    )
-    assert catalog.load(deployment_id=deployment_id) == _document(2, ["a"])
-
-    assert catalog.save(deployment_id=deployment_id, seq=3, document=_document(3, []))
-    assert catalog.load(deployment_id=deployment_id) == _document(3, [])
-    with database_engine.connect() as connection:
-        assert (
-            connection.execute(
-                text("SELECT seq FROM perimeter_state WHERE deployment_id = :d"),
-                {"d": deployment_id},
-            ).scalar_one()
-            == 3
+    def save(expected: int | None, seq: int, revoked: list[str]) -> bool:
+        return catalog.save(
+            deployment_id=deployment_id,
+            expected_seq=expected,
+            seq=seq,
+            document=_document(seq, revoked),
         )
+
+    assert save(None, 2, ["a"])
+    assert not save(None, 3, [])  # a row exists: the first insert lost
+    assert catalog.load(deployment_id=deployment_id) == _document(2, ["a"])
+
+    assert not save(1, 3, [])  # stale expectation
+    assert not save(2, 2, [])  # not forward
+    assert not save(2, 1, [])
+    assert catalog.load(deployment_id=deployment_id) == _document(2, ["a"])
+
+    assert save(2, 3, [])
+    assert catalog.load(deployment_id=deployment_id) == _document(3, [])

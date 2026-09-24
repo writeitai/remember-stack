@@ -177,7 +177,8 @@ token meant for a hosted MCP server, is refused.
 - **Permissions:** `memory:read` gives the `read` scope, `memory:write` the
   `write` scope, and `memory:ingest` the `ingest` scope (see
   [Scopes](#scopes)). `memory:write` wins when present; `memory:read` and
-  `memory:ingest` together without it are refused. Permissions without the
+  `memory:ingest` together without it are refused. `memory:ingest` is
+  accepted only on a `session` key. Permissions without the
   `memory:` prefix (such as `account:read`) are ignored. An unknown
   `memory:` permission is refused. A key with no `memory:` permission gets
   `403` on every route.

@@ -553,3 +553,29 @@ def test_a_project_id_other_than_the_deployment_id_is_matched() -> None:
     assert present(auth, issuer.credential(kind="session", projects=["proj_42"]))
     with pytest.raises(SignedTokenUnusable):
         present(auth, issuer.credential(projects=[str(issuer.deployment_id)]))
+
+
+@pytest.mark.parametrize("kind", ["key", "service"])
+@pytest.mark.parametrize(
+    "permissions", [("memory:ingest",), ("memory:write", "memory:ingest")]
+)
+def test_ingest_permission_is_refused_outside_a_session(
+    kind: str, permissions: tuple[str, ...]
+) -> None:
+    issuer, auth = ready_auth()
+    with pytest.raises(SignedTokenUnusable, match="ingest_outside_session"):
+        present(auth, issuer.credential(kind=kind, permissions=permissions))
+    context = present(auth, issuer.credential(kind="session", permissions=permissions))
+    assert context.scope in (PerimeterScope.INGEST, PerimeterScope.WRITE)
+
+
+@pytest.mark.parametrize("claim", ["iat", "nbf", "exp"])
+@pytest.mark.parametrize("bad", ["float", "bool"])
+def test_time_claims_must_be_integers(claim: str, bad: str) -> None:
+    issuer, auth = ready_auth()
+    now = int(time.time())
+    base = {"iat": now, "nbf": now, "exp": now + 300}
+    value: Any = float(base[claim]) + 0.5 if bad == "float" else True
+    overrides: dict[str, Any] = {claim: value}
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(**overrides))

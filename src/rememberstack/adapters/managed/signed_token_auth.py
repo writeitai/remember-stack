@@ -209,6 +209,11 @@ class SignedTokenAuth:
         except jwt.PyJWTError as error:
             raise SignedTokenUnusable("invalid_token") from error
 
+        for name in ("iat", "nbf", "exp"):
+            value = claims[name]
+            # PyJWT accepts any number; the contract is an integer epoch second.
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise SignedTokenUnusable("malformed_time")
         token_id = claims["jti"]
         if not isinstance(token_id, str) or not token_id:
             raise SignedTokenUnusable("missing_jti")
@@ -237,6 +242,11 @@ class SignedTokenAuth:
         scope = scope_for_permissions(permissions=claims["permissions"])
 
         kind = claims["kind"]
+        # The narrow upload permission exists only for short-lived session
+        # credentials; a long-lived key or a machine credential carrying it is
+        # not something an issuer mints.
+        if kind != "session" and "memory:ingest" in claims["permissions"]:
+            raise SignedTokenUnusable("ingest_outside_session")
         source: str | None = None
         if kind == "key":
             if audience != f"org:{self._tenant_id}":

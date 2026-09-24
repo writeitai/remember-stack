@@ -43,8 +43,11 @@ happens to fetches.
 
 Each replica refreshes on its own, but they share the persisted row. A
 refresh starts from whichever is newer, its own copy or the persisted one, and
-the write is conditional on the stored ``seq`` being lower, so one replica
-cannot move the deployment backwards past another. A document is published to
+the write is a compare-and-set on the stored ``seq`` the document was
+verified against. A replica that loses the race reloads the row and verifies
+its candidate again — including the signer rule against the peer's document —
+so one replica can neither move the deployment backwards nor bring back a
+signing key a peer's document retired. A document is published to
 requests only after it is persisted.
 """
 
@@ -83,6 +86,12 @@ REVOCATION_TYPE = "revocation+jwt"
 _MAX_FETCH_BYTES = 4 * 1024 * 1024
 
 _FETCH_TIMEOUT_SECONDS = 10.0
+
+#: Whole-fetch deadline: a server dripping bytes cannot hold a refresh open.
+_FETCH_DEADLINE_SECONDS = 10.0
+
+#: Compare-and-set attempts per refresh before waiting for the next cycle.
+_SAVE_ATTEMPTS = 3
 
 
 class RevocationRejected(Exception):
@@ -195,21 +204,26 @@ class PerimeterStateStore(Protocol):
         ...
 
     def save(
-        self, *, deployment_id: UUID, seq: int, document: Mapping[str, Any]
+        self,
+        *,
+        deployment_id: UUID,
+        expected_seq: int | None,
+        seq: int,
+        document: Mapping[str, Any],
     ) -> bool:
-        """Store the document when its ``seq`` is greater than the stored one.
+        """Replace the stored document only if its ``seq`` is still ``expected_seq``.
 
-        Returns ``False`` without writing when the stored ``seq`` is already
-        equal or greater.
+        ``expected_seq=None`` means no row may exist yet. Returns ``False``
+        without writing when another writer got there first.
         """
         ...
 
 
-def fetch_bounded(url: str) -> bytes:
-    """GET ``url`` without following redirects and refuse an oversized body."""
-    with httpx.stream(
-        "GET", url, timeout=_FETCH_TIMEOUT_SECONDS, follow_redirects=False
-    ) as response:
+def fetch_bounded(url: str, *, deadline_s: float = _FETCH_DEADLINE_SECONDS) -> bytes:
+    """GET ``url`` without following redirects, within a total deadline and size."""
+    deadline = time.monotonic() + deadline_s
+    timeout = min(_FETCH_TIMEOUT_SECONDS, deadline_s)
+    with httpx.stream("GET", url, timeout=timeout, follow_redirects=False) as response:
         if response.status_code != 200:
             raise ValueError(f"fetch returned HTTP {response.status_code}")
         body = bytearray()
@@ -217,6 +231,8 @@ def fetch_bounded(url: str) -> bytes:
             body.extend(chunk)
             if len(body) > _MAX_FETCH_BYTES:
                 raise ValueError("fetched document is too large")
+            if time.monotonic() > deadline:
+                raise TimeoutError("fetch exceeded its deadline")
     return bytes(body)
 
 
@@ -313,43 +329,49 @@ class PerimeterTrust:
             stop.wait(self.refresh_s)
 
     def _refresh_document(self, *, keys: Mapping[str, PyJWK]) -> None:
-        """Accept a newer valid document, persisting it before requests see it."""
-        baseline = self._snapshot.document
-        stored = self._load_stored()
-        if stored is not None and (baseline is None or stored.seq > baseline.seq):
-            # Another replica accepted a newer document: start from it.
-            baseline = stored
-            self._snapshot = _Snapshot(keys=keys, document=stored)
+        """Accept a newer valid document, persisting it before requests see it.
 
+        The write is a compare-and-set on the stored ``seq`` the candidate was
+        verified against. When a peer replica commits first, the stored row is
+        reloaded and the candidate verified again against it — its signer must
+        be active in the document the peer accepted — before retrying.
+        """
         token = self._fetch(self._revocation_url).decode("ascii").strip()
-        candidate = verify_revocation_document(
-            token=token,
-            keys=keys,
-            issuer=self._issuer,
-            deployment_id=self._deployment_id,
-            previous=baseline,
-        )
-        if baseline is not None:
-            if candidate.seq == baseline.seq and candidate.claims == baseline.claims:
-                return
-            if candidate.seq <= baseline.seq:
-                logger.error(
-                    "revocation document rollback attempt rejected",
-                    extra={"seq": candidate.seq, "accepted_seq": baseline.seq},
-                )
-                return
-        if not self._store.save(
-            deployment_id=self._deployment_id,
-            seq=candidate.seq,
-            document=candidate.claims,
-        ):
-            # A peer stored this seq or a later one first. Adopt the stored
-            # document only if it is this very document; anything else is
-            # reconciled next cycle, starting from the stored row.
+        for _ in range(_SAVE_ATTEMPTS):
             stored = self._load_stored()
-            if stored is None or stored.claims != candidate.claims:
+            baseline = self._snapshot.document
+            if stored is not None and (baseline is None or stored.seq > baseline.seq):
+                # Another replica accepted a newer document: start from it.
+                baseline = stored
+                self._snapshot = _Snapshot(keys=keys, document=stored)
+            candidate = verify_revocation_document(
+                token=token,
+                keys=keys,
+                issuer=self._issuer,
+                deployment_id=self._deployment_id,
+                previous=baseline,
+            )
+            if baseline is not None:
+                if (
+                    candidate.seq == baseline.seq
+                    and candidate.claims == baseline.claims
+                ):
+                    return
+                if candidate.seq <= baseline.seq:
+                    logger.error(
+                        "revocation document rollback attempt rejected",
+                        extra={"seq": candidate.seq, "accepted_seq": baseline.seq},
+                    )
+                    return
+            if self._store.save(
+                deployment_id=self._deployment_id,
+                expected_seq=None if stored is None else stored.seq,
+                seq=candidate.seq,
+                document=candidate.claims,
+            ):
+                self._snapshot = _Snapshot(keys=keys, document=candidate)
                 return
-        self._snapshot = _Snapshot(keys=keys, document=candidate)
+        raise RevocationRejected("perimeter state kept changing; retrying next cycle")
 
     def _load_stored(self) -> RevocationDocument | None:
         claims = self._store.load(deployment_id=self._deployment_id)

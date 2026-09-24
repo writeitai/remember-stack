@@ -27,7 +27,7 @@ MAX_AGE_S = 3_600.0
 
 
 class MemoryStateStore:
-    """The perimeter-state row, in memory, with the spine's conditional write."""
+    """The perimeter-state row, in memory, with the spine's compare-and-set."""
 
     def __init__(self) -> None:
         self.row: tuple[int, dict[str, Any]] | None = None
@@ -37,9 +37,15 @@ class MemoryStateStore:
         return None if self.row is None else dict(self.row[1])
 
     def save(
-        self, *, deployment_id: UUID, seq: int, document: Mapping[str, Any]
+        self,
+        *,
+        deployment_id: UUID,
+        expected_seq: int | None,
+        seq: int,
+        document: Mapping[str, Any],
     ) -> bool:
-        if self.row is not None and self.row[0] >= seq:
+        current = None if self.row is None else self.row[0]
+        if current != expected_seq or (current is not None and current >= seq):
             return False
         # Round-trip through JSON as jsonb would.
         self.row = (seq, json.loads(json.dumps(dict(document))))

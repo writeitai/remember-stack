@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 import json
+import threading
 import time
+from typing import Any
 from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -12,6 +16,7 @@ from jwt.algorithms import OKPAlgorithm
 import pytest
 
 from rememberstack.adapters.managed.composite_auth import CompositeAuth
+from rememberstack.adapters.managed.perimeter_trust import fetch_bounded
 from rememberstack.adapters.managed.perimeter_trust import load_verification_keys
 from rememberstack.adapters.managed.perimeter_trust import PerimeterTrust
 from rememberstack.adapters.managed.perimeter_trust import RevocationRejected
@@ -414,6 +419,103 @@ def test_replicas_sharing_the_row_only_move_forward() -> None:
     assert current[1].seq == 2
     assert current[1].revoked == frozenset({"j1"})
     assert store.row is not None and store.row[0] == 2
+
+
+def test_a_replica_losing_the_race_rechecks_the_signer_against_the_peer() -> None:
+    """A peer commits a document retiring k2 between our verify and our save.
+
+    Our candidate (signed by k2, valid against the document we started from)
+    must be verified again against the peer's document and rejected, rather
+    than stored over it and bringing k2 back.
+    """
+    issuer, first, store, clock = _setup(kids=("k1", "k2"))
+    second = build_trust(issuer=issuer, store=store, clock=clock)
+    issuer.revocation(active_kids=("k1", "k2"))
+    first.refresh()
+    second.refresh()
+    assert store.row is not None and store.row[0] == 1
+
+    retiring = issuer.revocation(signer="k1", active_kids=("k1",), seq=2)
+    candidate = issuer.revocation(signer="k2", active_kids=("k1", "k2"), seq=3)
+    real_save = store.save
+    raced = False
+
+    def save_after_peer(**kwargs: Any) -> bool:
+        nonlocal raced
+        if not raced:
+            raced = True
+            issuer.revocation_token = retiring
+            first.refresh()  # the peer commits seq 2 (k2 retired) first
+            issuer.revocation_token = candidate
+        return real_save(**kwargs)
+
+    store.save = save_after_peer  # type: ignore[method-assign]
+    issuer.revocation_token = candidate
+    second.refresh()
+
+    assert raced
+    assert store.row is not None and store.row[0] == 2
+    assert store.row[1]["active_kids"] == ["k1"]
+    current = second.current()
+    assert current is not None
+    assert current[1].seq == 2
+    assert current[1].active_kids == frozenset({"k1"})
+
+
+def test_a_replica_losing_the_race_retries_a_still_valid_candidate() -> None:
+    issuer, first, store, clock = _setup()
+    second = build_trust(issuer=issuer, store=store, clock=clock)
+    issuer.revocation()
+    first.refresh()
+    second.refresh()
+    peer = issuer.revocation(seq=2)
+    candidate = issuer.revocation(seq=3)
+    real_save = store.save
+    raced = False
+
+    def save_after_peer(**kwargs: Any) -> bool:
+        nonlocal raced
+        if not raced:
+            raced = True
+            issuer.revocation_token = peer
+            first.refresh()
+            issuer.revocation_token = candidate
+        return real_save(**kwargs)
+
+    store.save = save_after_peer  # type: ignore[method-assign]
+    issuer.revocation_token = candidate
+    second.refresh()
+    assert _accepted_seq(second) == 3
+    assert store.row is not None and store.row[0] == 3
+
+
+def test_a_slow_drip_fetch_is_cut_off_by_the_total_deadline() -> None:
+    """Per-read timeouts never fire on a server sending one byte at a time."""
+
+    class Drip(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            for _ in range(1000):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.02)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            fetch_bounded(f"http://127.0.0.1:{server.server_port}/", deadline_s=0.3)
+        assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_a_document_is_published_only_after_it_is_persisted() -> None:
