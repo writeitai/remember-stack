@@ -6276,7 +6276,8 @@ report.
 5. **A document's own name is not an entity.** E3 skips only the reference
    whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
    merge while a person who shares a document's title still resolves. The
-   D18-era `documents.document_entity_id` bridge is removed.
+   unused D18-era `documents.document_entity_id` bridge is not used and is removed
+   in a separate cleanup.
 
 **Alternatives and consequences.** Making documents entities bound to their
 lineage (the first D134 draft) was rejected as heavier than the questions

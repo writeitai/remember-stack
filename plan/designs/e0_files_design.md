@@ -139,9 +139,9 @@ versions, so a converter or structurer bump reprocesses exactly the affected doc
 
 Re-ingesting an identical file is a `content_hash` no-op (this is the *only* surviving "dedup" — as
 idempotency, never a value tier, per D25) — except that identical bytes arriving under a different
-name, title or path are a **metadata observation**: the lineage's `title`/`source_uri`
-update without a new version, and a `document_names` row is added so `search_documents` (D134)
-finds the file under its new name. **A changed file from a watched source is a new
+name, title or path are a **metadata observation**: no version is created and the lineage's
+`title` is unchanged; a `document_names` row is added so `search_documents` (D134) finds the file
+under its new name. **A changed file from a watched source is a new
 *version* of its lineage** (D55): connectors debounce rapid edits to one ingested version per
 stability window; unchanged chunks of the new version **reuse** their prior extraction and
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to

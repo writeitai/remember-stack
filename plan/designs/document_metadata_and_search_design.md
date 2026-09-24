@@ -93,9 +93,10 @@ the E2 extractor.
 
 **Renames.** Identical bytes arriving under a new file name, title or path
 create no version (E0's metadata observation). They append a row to
-`document_names` for the current version, which `search_documents` reads, and
-update the lineage's `title`/`source_uri`. The version's `document_metadata`
-keeps what conversion observed.
+`document_names` for the current version, which `search_documents` reads.
+Nothing else changes: the lineage's `title` stays first-write-wins, so a
+rename never changes an extraction reuse key, and the version's
+`document_metadata` keeps what was observed when it was ingested.
 
 **Deletion.** Normal delete soft-tombstones versions and keeps their rows for
 audit (schema §13.1), so the metadata rows stay too; every read in §3 and §4
@@ -251,6 +252,11 @@ filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
 | Metadata only as text in `document.md` | Searchable but not filterable; "emails from Alice" would become a text match that also hits every email *mentioning* Alice. |
 | Append the file name to every claim | Degrades embeddings and duplicates provenance (§5). |
 | Let E3 resolve file names as entities | Same-named files would merge (§6). |
+
+**Cleanup, not a precondition.** The D18-era `documents.document_entity_id`
+column is unused by any writer and contradicts this decision; it is removed
+in a separate cleanup (its views and graph function are redefined there).
+Nothing in this design reads or writes it.
 
 ## 8. Tests
 
