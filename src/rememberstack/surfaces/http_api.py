@@ -1258,7 +1258,7 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
             required = operation_scope(
                 mutates=descriptor.mutates if descriptor is not None else None
             )
-            if not context.scope.covers(required=required):
+            if not context.may(required=required):
                 raise HTTPException(
                     status_code=403, detail="credential may not perform this operation"
                 )
@@ -1466,7 +1466,7 @@ def _mount_ingest(
         # full WRITE authority may make the immutable attribution assertion.
         context = getattr(request.state, "perimeter_context", None)
         may_assert_principal = not attribution_requires_write or (
-            context is not None and context.scope.covers(required=PerimeterScope.WRITE)
+            context is not None and context.may(required=PerimeterScope.WRITE)
         )
         if not trusted_principal_source or not may_assert_principal:
             principal_kind, principal_ref = None, None
@@ -1624,7 +1624,7 @@ def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
         # ``None`` means the route decides for itself, because its authority is
         # a property of registry data rather than of the path. Today that is
         # only ``POST /operations/{name}``, whose handler asks the descriptor.
-        if required is not None and not context.scope.covers(required=required):
+        if required is not None and not context.may(required=required):
             raise HTTPException(
                 status_code=403, detail="credential may not perform this operation"
             )

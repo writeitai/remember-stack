@@ -353,14 +353,16 @@ def test_auth_fake_returns_only_single_deployment_context() -> None:
     #
     # `subject` names the person a credential was issued to, so an audit can
     # say who caused a read instead of impersonating them; `scope` is the
-    # perimeter's own read/write, not a role over content. Neither introduces
-    # tenancy, and both are pinned here so a third addition has to argue for
-    # itself.
+    # perimeter's own read/write, not a role over content. `source` names the
+    # host that derived a signed session credential (D136 §7.2), for audit
+    # only. None introduces tenancy, and all are pinned here so another
+    # addition has to argue for itself.
     assert set(AuthenticatedContext.model_fields) == {
         "deployment_id",
         "principal",
         "subject",
         "credential_id",
         "credential_kind",
+        "source",
         "scope",
     }

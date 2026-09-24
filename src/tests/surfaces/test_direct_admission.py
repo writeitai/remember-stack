@@ -23,6 +23,8 @@ from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
+from rememberstack.model.auth import CredentialKind
+from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionLimits
 from rememberstack.surfaces.direct_admission import AdmissionRefused
 from rememberstack.surfaces.direct_admission import DirectPathAdmission
@@ -116,6 +118,24 @@ def test_credentials_are_limited_separately() -> None:
     admission.admit(key="jti-a")
     assert _refusal(admission, key="jti-a").code == "rate_limited"
     admission.admit(key="jti-b")
+
+
+def test_the_admission_key_is_the_credential_identity() -> None:
+    """Limits count per credential kind and ``jti``; the shared secret has none."""
+
+    def context(kind: CredentialKind | None, jti: str | None) -> AuthenticatedContext:
+        return AuthenticatedContext(
+            deployment_id=_DEPLOYMENT_ID,
+            principal="signed-bearer",
+            credential_id=jti,
+            credential_kind=kind,
+        )
+
+    assert admission_key(context(CredentialKind.KEY, "j1")) == "keycred:j1"
+    assert admission_key(context(CredentialKind.BROWSER, "j1")) == "browsercred:j1"
+    assert admission_key(context(CredentialKind.DEPLOYMENT, "j1")) == "dpcred:j1"
+    assert admission_key(context(None, None)) is None
+    assert admission_key(None) is None
 
 
 def test_the_deployment_rate_bounds_every_credential_together() -> None:
@@ -273,6 +293,7 @@ class _Auth:
                 deployment_id=_DEPLOYMENT_ID,
                 principal="signed-bearer",
                 credential_id=value.removeprefix("key-"),
+                credential_kind=CredentialKind.KEY,
             )
         raise ValueError("unknown credential")
 

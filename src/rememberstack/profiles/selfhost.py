@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
 import json
 import logging
@@ -12,6 +14,7 @@ import time
 from typing import Annotated
 from typing import Self
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 from uuid import UUID
 
 from alembic import command
@@ -69,6 +72,8 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterStateStore
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterTrust
     from rememberstack.adapters.selfhost import SelfHostWorkerLoop
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
@@ -174,12 +179,23 @@ class SelfHostSettings(BaseSettings):
     worker_fallback_poll_s: float = Field(default=5.0, gt=0)
     worker_session_s: float = Field(default=3_600.0, gt=0)
     api_bearer_bind: str | None = None
-    #: A JWKS document of public keys that verify signed credentials (D59).
-    #: Absent for self-host, which has no issuer to trust.
-    api_signing_keys: str | None = None
-    #: Credential ids refused despite a good signature. Comma-separated,
-    #: bounded by revocation rate times credential lifetime.
-    api_revoked_credential_ids: str | None = None
+    #: Signed keys (D136 §7.1). Setting the issuer enables them; the tenant id
+    #: and both URLs are then required. Absent for a self-host deployment that
+    #: has no issuer to trust.
+    api_key_issuer: str | None = None
+    #: The issuer tenant this deployment belongs to (remember.dev: the
+    #: organisation id); keys carry ``aud = org:<this>`` and ``org = <this>``.
+    api_key_tenant_id: str | None = None
+    #: The issuer's project id for this deployment; default: the deployment id.
+    api_key_project_id: str | None = None
+    #: Where the issuer's JWKS (Ed25519 public keys) is fetched.
+    api_signing_keys_url: str | None = None
+    #: Where the issuer's signed revocation document for this deployment is fetched.
+    api_revocation_url: str | None = None
+    #: R: how often both are fetched (starting value).
+    api_key_refresh_s: float = Field(default=60.0, gt=0)
+    #: S: the maximum age of an accepted revocation document (starting value).
+    api_revocation_max_age_s: float = Field(default=3_600.0, gt=0)
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
     #: Direct-path admission limits (D136 §7.6), counted in this API process.
@@ -262,6 +278,53 @@ class SelfHostSettings(BaseSettings):
             raise ValueError("meter_identity_key must be a high-entropy umc_mik_ key")
         return self
 
+    @field_validator(
+        "api_key_issuer",
+        "api_key_tenant_id",
+        "api_key_project_id",
+        "api_signing_keys_url",
+        "api_revocation_url",
+        mode="before",
+    )
+    @classmethod
+    def _blank_signed_key_setting_is_unset(cls, value: object) -> object:
+        """Treat an empty Compose interpolation as an unset signed-key setting."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def signed_keys_are_complete(self) -> Self:
+        """An issuer needs its tenant and both URLs; the others need an issuer."""
+        if self.api_key_issuer is None:
+            if any(
+                value is not None
+                for value in (
+                    self.api_key_tenant_id,
+                    self.api_key_project_id,
+                    self.api_signing_keys_url,
+                    self.api_revocation_url,
+                )
+            ):
+                raise ValueError(
+                    "signed-key settings are set but REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is not"
+                )
+            return self
+        if self.api_key_tenant_id is None:
+            raise ValueError("REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID is required")
+        for name, url in (
+            ("API_SIGNING_KEYS_URL", self.api_signing_keys_url),
+            ("API_REVOCATION_URL", self.api_revocation_url),
+        ):
+            if url is None:
+                raise ValueError(f"REMEMBERSTACK_SELFHOST_{name} is required")
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    f"REMEMBERSTACK_SELFHOST_{name} must be an absolute http(s) URL"
+                )
+        return self
+
     @field_validator("ingest_body_max_bytes", mode="before")
     @classmethod
     def _blank_body_max_is_unset(cls, value: object) -> object:
@@ -338,20 +401,39 @@ def _browser_origins(configured: str) -> tuple[str, ...]:
     return tuple(origin.strip() for origin in configured.split(","))
 
 
+def resolve_selfhost_perimeter_trust(
+    *, settings: SelfHostSettings, store: PerimeterStateStore
+) -> PerimeterTrust | None:
+    """The signed-key trust source (D136 §7.5), or None without an issuer."""
+    if settings.api_key_issuer is None:
+        return None
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterTrust
+
+    assert settings.api_signing_keys_url is not None
+    assert settings.api_revocation_url is not None
+    return PerimeterTrust(
+        issuer=settings.api_key_issuer,
+        deployment_id=settings.deployment_id,
+        signing_keys_url=settings.api_signing_keys_url,
+        revocation_url=settings.api_revocation_url,
+        refresh_s=settings.api_key_refresh_s,
+        max_age_s=settings.api_revocation_max_age_s,
+        store=store,
+    )
+
+
 def resolve_selfhost_api_auth(
-    *, settings: SelfHostSettings
+    *, settings: SelfHostSettings, trust: PerimeterTrust | None = None
 ) -> AuthPerimeterPort | None:
     """Return the perimeter adapter, or None for the open quickstart.
 
-    A deployment may be reached by a shared secret, by signed credentials, or
-    by both; when both are configured they are composed rather than chosen
-    between, because they serve different callers on the same routes.
+    A deployment may be reached by a shared secret, by signed keys, or by
+    both; when both are configured they are composed rather than chosen
+    between, because they serve different callers on the same routes. Signed
+    keys need ``trust`` (from :func:`resolve_selfhost_perimeter_trust`).
 
-    ``require_api_auth`` refuses to start when **no** adapter has usable
-    material, so a managed host cannot silently serve memory routes open. It
-    asks whether there is a perimeter at all, not whether there is a particular
-    one — a host configured with signing keys and no shared secret is properly
-    protected.
+    ``require_api_auth`` refuses to start when **no** adapter is configured, so
+    a managed host cannot silently serve memory routes open.
     """
     from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
     from rememberstack.adapters.selfhost.hashed_bearer_auth import parse_bearer_bind
@@ -362,13 +444,13 @@ def resolve_selfhost_api_auth(
         raw = settings.api_bearer_token.get_secret_value().strip()
         token_value = raw or None
 
-    signed = _resolve_signed_auth(settings=settings)
+    signed = _resolve_signed_auth(settings=settings, trust=trust)
 
     if settings.require_api_auth and not bind_text and signed is None:
         raise RuntimeError(
             "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but neither "
             "REMEMBERSTACK_SELFHOST_API_BEARER_BIND nor "
-            "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is usable"
+            "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set"
         )
     if bind_text is None and token_value is None:
         return signed
@@ -394,32 +476,59 @@ def resolve_selfhost_api_auth(
     return _compose(digest=bind_auth, signed=signed)
 
 
-def _resolve_signed_auth(*, settings: SelfHostSettings) -> AuthPerimeterPort | None:
-    """Build a verifier for explicit JWKS, including an empty deny-only key set."""
-    jwks = (settings.api_signing_keys or "").strip()
-    if not jwks:
+def _resolve_signed_auth(
+    *, settings: SelfHostSettings, trust: PerimeterTrust | None
+) -> AuthPerimeterPort | None:
+    """Build the signed-key verifier when an issuer is configured."""
+    if settings.api_key_issuer is None:
         return None
-
-    from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
+    if trust is None:
+        raise RuntimeError(
+            "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set but no perimeter trust "
+            "source was composed"
+        )
     from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
 
-    try:
-        keys = load_verification_keys(jwks=jwks)
-    except ValueError as error:
-        # Refuse to start rather than run with a key set that half loaded: a
-        # deployment that silently drops a key is a rotation that half works.
-        raise RuntimeError(
-            f"REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is unusable: {error}"
-        ) from error
-
-    revoked = [
-        item.strip()
-        for item in (settings.api_revoked_credential_ids or "").split(",")
-        if item.strip()
-    ]
+    assert settings.api_key_tenant_id is not None
     return SignedTokenAuth(
-        deployment_id=settings.deployment_id, keys=keys, revoked_ids=revoked
+        deployment_id=settings.deployment_id,
+        issuer=settings.api_key_issuer,
+        tenant_id=settings.api_key_tenant_id,
+        project_id=settings.api_key_project_id or str(settings.deployment_id),
+        trust=trust,
     )
+
+
+def attach_perimeter_trust_refresh(*, app: FastAPI, trust: PerimeterTrust) -> None:
+    """Load the persisted document and refresh every R for the app's lifetime.
+
+    The persisted document is loaded when the app starts, then a daemon thread
+    refreshes immediately and every R until shutdown. Nothing signed is
+    accepted until a fresh document is.
+    """
+    import threading
+
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(host: FastAPI) -> AsyncIterator[None]:
+        trust.load()
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=trust.run,
+            kwargs={"stop": stop},
+            name="rememberstack-perimeter-trust",
+            daemon=True,
+        )
+        thread.start()
+        try:
+            async with original(host):
+                yield
+        finally:
+            stop.set()
+            thread.join(timeout=5.0)
+
+    app.router.lifespan_context = lifespan
 
 
 def _compose(
@@ -441,7 +550,6 @@ def resolve_selfhost_spend_lease(
     ``require_api_auth`` without a well-formed lease URL refuses to start so a
     managed BIND-only process cannot serve unpaid writes.
     """
-    from urllib.parse import urlparse
 
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
@@ -876,6 +984,7 @@ class SelfHostProfile:
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
@@ -892,6 +1001,9 @@ class SelfHostProfile:
         from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
+        trust = resolve_selfhost_perimeter_trust(
+            settings=self._settings, store=PerimeterStateCatalog(engine=self._engine)
+        )
         # D94 has one active vector space across every P1 target.
         p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
@@ -961,7 +1073,7 @@ class SelfHostProfile:
             trusted_principal_source=self._settings.trusted_principal_source,
             browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
-            auth=resolve_selfhost_api_auth(settings=self._settings),
+            auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
             direct_admission=DirectPathAdmission(
                 limits=AdmissionLimits(
                     key_per_minute=self._settings.api_admission_key_per_minute,
@@ -1015,6 +1127,9 @@ class SelfHostProfile:
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
+
+        if trust is not None:
+            attach_perimeter_trust_refresh(app=app, trust=trust)
 
         @app.get("/healthz", include_in_schema=False)
         def healthz() -> dict[str, str]:

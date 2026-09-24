@@ -90,7 +90,7 @@ remember.dev always requires the header.
 A self-hosted deployment requires it only when you configure a credential
 (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`,
 `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` or
-`REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`). With none of them set, the API is
+`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER`). With none of them set, the API is
 open and ignores the header; protecting it is then the job of your network.
 See [Authentication and scopes](/docs/self-hosting/authentication).
 
@@ -107,6 +107,17 @@ A valid credential issued for a different deployment is `403` with
 | Credential | Where it comes from | Scope it carries |
 |---|---|---|
 | Shared secret (self-hosted) | You choose it; the engine keeps only its SHA-256 digest (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` is `{deployment-uuid}:{sha256-hex}`). | `write` (unrestricted) |
+| Signed key, `kind: key` | A long-lived key a person created at a key issuer. It can cover several projects. | From its permissions |
+| Signed key, `kind: session` | A short-lived key an issuer derives for this one deployment, for example for a browser. | From its permissions |
+| Signed key, `kind: service` | A short-lived machine credential for this one deployment. | From its permissions |
+
+A deployment verifies signed keys when it is given a key issuer
+(`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` and the settings beside it). It
+fetches the issuer's public keys and a signed revocation document, and
+refuses every signed key while it has no fresh revocation document. A
+signed key's `memory:read`, `memory:write` or `memory:ingest` permission
+becomes the `read`, `write` or `ingest` scope. The claims each kind must
+carry are in [Signed keys](/docs/self-hosting/authentication#signed-keys).
 
 <Cloud>
 
@@ -120,12 +131,6 @@ remember.dev issues three more:
 
 </Cloud>
 
-A self-hosted deployment can also verify signed credentials if you give it a
-key set (`REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`, a JWKS of Ed25519 public
-keys). Signed credentials must carry `aud` (this deployment's id), `exp`,
-`iat`, `nbf`, `jti`, `sub` and `scope`; the engine allows 30 seconds of clock
-skew and refuses any id listed in `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS`.
-
 ## Scopes
 
 A credential carries exactly one of three scopes:
@@ -135,6 +140,9 @@ A credential carries exactly one of three scopes:
 | `read` | Every route marked `read` below. Nothing that changes memory. |
 | `ingest` | `POST /ingest` only. It cannot read. |
 | `write` | Everything. |
+
+A signed key with no `memory:` permission carries none of them and gets `403`
+on every route.
 
 `read` and `ingest` do not overlap. A credential with too narrow a scope gets
 `403` with `{"detail": "credential may not perform this operation"}`. Scopes
