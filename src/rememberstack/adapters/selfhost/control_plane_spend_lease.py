@@ -7,6 +7,7 @@ from uuid import UUID
 
 import httpx
 
+from rememberstack.model import ReadEmbeddingCost
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 
@@ -50,13 +51,24 @@ class ControlPlaneSpendLease:
                 "spend lease reserve returned no reservation"
             ) from error
 
-    def commit(self, *, authorization: str, reservation_id: UUID) -> None:
-        """Commit a hold after successful work."""
-        self._post(
-            path="/commit",
-            authorization=authorization,
-            json={"reservation_id": str(reservation_id)},
-        )
+    def commit(
+        self,
+        *,
+        authorization: str,
+        reservation_id: UUID,
+        read_cost: ReadEmbeddingCost | None,
+    ) -> None:
+        """Commit a hold after successful work.
+
+        A read reports what it cost in embeddings (0 when it made no embedding
+        call) so the control plane can charge it; an ingest commit reports
+        nothing. The cost is a plain decimal string, never an exponent form.
+        """
+        payload: dict[str, Any] = {"reservation_id": str(reservation_id)}
+        if read_cost is not None:
+            payload["embedding_cost_usd"] = format(read_cost.cost_usd, "f")
+            payload["embedding_tokens"] = read_cost.tokens
+        self._post(path="/commit", authorization=authorization, json=payload)
 
     def release(self, *, authorization: str, reservation_id: UUID) -> None:
         """Release a hold after failed or refused work."""

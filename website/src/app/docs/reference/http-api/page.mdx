@@ -241,16 +241,25 @@ do about it.
 
 ### Spend refusals (remember.dev)
 
-On remember.dev, some routes place a spend hold with the control plane before
-the work runs, and release or commit it afterwards. The hold is metadata only:
-it never carries your content. The gated routes are:
+On remember.dev, ingest and every route that reads memory place a spend hold
+with the control plane before the work runs, and release or commit it
+afterwards. The hold is metadata only: it never carries your content. A read's
+commit also reports what the read cost in embeddings (the provider's reported
+cost and token count, 0 for a read that embeds nothing, such as SQL). The
+gated routes are:
 
 | Routes | Hold |
 |---|---|
 | `POST /ingest` | `ingest` |
 | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` | `search` |
-| `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `POST /query/saved/{namespace}/{name}/run` | `search` |
+| `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` | `search` |
+| `POST /graph/neighborhood`, `POST /graph/path`, `POST /graph/citation-path` | `search` |
+| `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` | `search` |
+| `GET /documents` | `search` |
 | `POST /operations/{name}` | operation, named |
+
+`GET /healthz`, `GET /deployment`, `POST /readiness`, `GET /operations`,
+connector management and document deletion take no hold.
 
 When the hold is refused, the route returns before doing any work:
 
