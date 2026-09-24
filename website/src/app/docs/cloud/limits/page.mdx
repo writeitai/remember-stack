@@ -49,7 +49,10 @@ A deployment runs at most 2 live-graph queries and 4 retrieval queries at a
 time. A graph request that cannot start within about a second is refused
 with `503` and `live graph is busy`; retry it with backoff.
 
-remember.dev does not apply a per-token request rate on the deployment.
+Each deployment limits the request rate and the number of requests running
+at once, per token and across all tokens. Over a limit it answers `429`
+(`rate_limited` or `concurrency_limited`) with `Retry-After`; see
+[Admission limits](/docs/reference/http-api#admission-limits).
 Reading is also subject to the provider-cost safeguard described in
 [Spend caps and auto top-up](/docs/cloud/spend-controls#provider-cost-safeguard).
 

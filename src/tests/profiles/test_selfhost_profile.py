@@ -122,6 +122,10 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE", "120"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT", "8"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE", "600"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT", "32"),
     ):
         assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (

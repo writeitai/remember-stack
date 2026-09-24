@@ -12,10 +12,14 @@ infrastructure's job and the app is open (the self-host default). The surface
 itself never touches adapters.
 """
 
+from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from datetime import timedelta
+import functools
+import inspect
 import json
 import logging
 from typing import Annotated
@@ -36,6 +40,7 @@ from fastapi import Query
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.security import HTTPBearer
 from pydantic import AfterValidator
 from pydantic import BaseModel
@@ -45,6 +50,12 @@ from pydantic import model_validator
 from pydantic import SecretBytes
 from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp
+from starlette.types import Receive
+from starlette.types import Scope
+from starlette.types import Send
 
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
@@ -84,6 +95,10 @@ from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.surfaces.direct_admission import admission_key
+from rememberstack.surfaces.direct_admission import AdmissionRefused
+from rememberstack.surfaces.direct_admission import DirectPathAdmission
+from rememberstack.surfaces.direct_admission import RequestHold
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -379,6 +394,7 @@ def build_api(
     surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
+    direct_admission: DirectPathAdmission | None = None,
     spend_lease: SpendLeasePort | None = None,
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
@@ -396,8 +412,11 @@ def build_api(
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `auth` gates every endpoint
-    on one perimeter credential; and `spend_lease` holds estimate on the
+    `DELETE /documents/{doc_id}` (D135); `auth` gates every request
+    on one perimeter credential; `direct_admission` enforces the per-credential
+    and per-deployment rate and in-flight limits after authentication and
+    before the spend lease and routing (D136 §7.6); and `spend_lease` holds
+    estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
 
@@ -430,7 +449,7 @@ def build_api(
     # One perimeter dependency instance so app-level gating and open-query
     # principal injection share the same authenticate call per request.
     perimeter_dep = (
-        _perimeter(auth=auth, deployment_id=deployment_id) if auth is not None else None
+        _perimeter(deployment_id=deployment_id) if auth is not None else None
     )
     dependencies = [
         *([Depends(perimeter_dep)] if perimeter_dep is not None else []),
@@ -449,6 +468,9 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
+    if direct_admission is not None:
+        # Before any route is declared, so every one is built held.
+        app.router.route_class = _HeldRoute
 
     @app.exception_handler(ProviderCallError)
     def model_provider_unavailable(
@@ -634,6 +656,16 @@ def build_api(
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
+    if auth is not None or direct_admission is not None:
+        # Added after the spend lease, so it runs before it: a request is
+        # authenticated and admitted before any hold is placed, and before
+        # routing, so an unknown path is counted like any other.
+        app.add_middleware(
+            _PerimeterGate,
+            auth=auth,
+            deployment_id=deployment_id,
+            admission=direct_admission,
+        )
 
     # Last, so it is outermost. Starlette runs middleware in reverse order of
     # addition, and a CORS layer installed early sits *inside* everything
@@ -1523,42 +1555,64 @@ def _mount_connectors(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
-    """A FastAPI dependency that authenticates the perimeter credential.
+def _authenticate(
+    *, auth: AuthPerimeterPort, deployment_id: UUID, authorization: str | None
+) -> AuthenticatedContext:
+    """Authenticate the perimeter credential, or raise a 401/403.
 
     The `Authorization: <scheme> <value>` header is handed to the configured
     port; a failure, a missing header, or a credential for another deployment
-    is a 401/403 before any read runs. ``GET /healthz`` is the Compose
-    liveness probe and is the only path exempt from the Bearer check. This
-    is the single enforcement point (retrieval §9) — inside, it is one trust
-    domain.
+    is refused before routing. This is the single enforcement point
+    (retrieval §9) — inside, it is one trust domain.
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=401, detail="a perimeter credential is required"
+        )
+    scheme, _, value = authorization.partition(" ")
+    try:
+        context = auth.authenticate(
+            credential=PerimeterCredential(
+                scheme=scheme, value=SecretBytes(value.encode("utf-8"))
+            )
+        )
+    except Exception as error:  # any auth failure is an opaque 401
+        raise HTTPException(
+            status_code=401, detail="perimeter authentication failed"
+        ) from error
+    if context.deployment_id != deployment_id:
+        raise HTTPException(
+            status_code=403, detail="credential is for another deployment"
+        )
+    return context
+
+
+def _is_healthz(*, method: str, path: str) -> bool:
+    """``GET /healthz``, the Compose liveness probe: exempt from the perimeter."""
+    return method == "GET" and path.rstrip("/") == "/healthz"
+
+
+def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
+    """A FastAPI dependency that checks the authenticated credential's scope.
+
+    :class:`_PerimeterGate` has already authenticated the request before
+    routing and published its context; this runs per matched route because
+    the scope a route needs is a property of the route.
     """
 
-    def dependency(
-        request: Request, authorization: str | None = Header(default=None)
-    ) -> AuthenticatedContext:
-        if request.method == "GET" and request.url.path.rstrip("/") == "/healthz":
-            return AuthenticatedContext(
-                deployment_id=deployment_id, principal="healthz"
-            )
-        if not authorization:
+    def dependency(request: Request) -> AuthenticatedContext:
+        context: AuthenticatedContext | None = getattr(
+            request.state, "perimeter_context", None
+        )
+        if context is None:
+            if _is_healthz(method=request.method, path=request.url.path):
+                return AuthenticatedContext(
+                    deployment_id=deployment_id, principal="healthz"
+                )
+            # The gate is composed whenever `auth` is; reaching here without a
+            # context is a wiring fault, refused rather than let through.
             raise HTTPException(
                 status_code=401, detail="a perimeter credential is required"
-            )
-        scheme, _, value = authorization.partition(" ")
-        try:
-            context = auth.authenticate(
-                credential=PerimeterCredential(
-                    scheme=scheme, value=SecretBytes(value.encode("utf-8"))
-                )
-            )
-        except Exception as error:  # any auth failure is an opaque 401
-            raise HTTPException(
-                status_code=401, detail="perimeter authentication failed"
-            ) from error
-        if context.deployment_id != deployment_id:
-            raise HTTPException(
-                status_code=403, detail="credential is for another deployment"
             )
 
         # Authentication answered "who"; this answers "may they". It lives here
@@ -1574,9 +1628,6 @@ def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
             raise HTTPException(
                 status_code=403, detail="credential may not perform this operation"
             )
-        # Published for the one route the table cannot classify statically:
-        # ``POST /operations/{name}`` asks the descriptor instead.
-        request.state.perimeter_context = context
         return context
 
     return dependency
@@ -1595,6 +1646,157 @@ def _admission(*, admission: AdmissionPort, deployment_id: UUID):  # noqa: ANN20
             ) from error
 
     return dependency
+
+
+_ADMISSION_MESSAGES: Final = {
+    "rate_limited": "request rate limit reached; retry after Retry-After seconds",
+    "concurrency_limited": "too many requests in flight; retry after Retry-After seconds",
+}
+
+#: The admission hold of the request being served. Context variables are
+#: copied into the worker thread that runs a synchronous handler, so the
+#: handler wrapper finds the hold of the request that started it.
+_CURRENT_HOLD: ContextVar[RequestHold | None] = ContextVar(
+    "rememberstack_admission_hold", default=None
+)
+
+
+class _PerimeterGate:
+    """Authenticate and admit every request before routing (D136 §7.6).
+
+    Pure ASGI and installed outside the spend lease, so the order is
+    authentication, then admission, then the spend hold, then routing. Running
+    before routing means an unknown path is authenticated and counted like any
+    other. ``GET /healthz`` passes untouched. Without ``auth`` (no perimeter)
+    only admission runs, against the deployment limits; the shared secret
+    likewise has no credential id and meets the deployment limits only.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        auth: AuthPerimeterPort | None,
+        deployment_id: UUID,
+        admission: DirectPathAdmission | None,
+    ) -> None:
+        """Wrap the inner ASGI app."""
+        self._app = app
+        self._auth = auth
+        self._deployment_id = deployment_id
+        self._admission = admission
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Refuse, or run the request holding its admission slot."""
+        if scope["type"] != "http" or _is_healthz(
+            method=scope["method"], path=scope["path"]
+        ):
+            await self._app(scope, receive, send)
+            return
+        context: AuthenticatedContext | None = None
+        try:
+            if self._auth is not None:
+                authorization = Headers(scope=scope).get("authorization")
+                # The port may do I/O (a key or revocation lookup); keep it off
+                # the event loop, as the dependency it replaces was.
+                context = await run_in_threadpool(
+                    _authenticate,
+                    auth=self._auth,
+                    deployment_id=self._deployment_id,
+                    authorization=authorization,
+                )
+                # `request.state` reads this dict; the scope dependency and
+                # the ingest attribution check find the context there.
+                scope.setdefault("state", {})["perimeter_context"] = context
+            if self._admission is None:
+                await self._app(scope, receive, send)
+                return
+            slot = self._admission.admit(key=admission_key(context))
+        except HTTPException as error:
+            refusal = JSONResponse(
+                status_code=error.status_code,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+            await refusal(scope, receive, send)
+            return
+        except AdmissionRefused as error:
+            refusal = JSONResponse(
+                status_code=429,
+                content={
+                    "detail": {
+                        "code": error.code,
+                        "message": _ADMISSION_MESSAGES[error.code],
+                    }
+                },
+                headers={"Retry-After": str(error.retry_after)},
+            )
+            await refusal(scope, receive, send)
+            return
+        hold = RequestHold(admission=self._admission, slot=slot)
+        token = _CURRENT_HOLD.set(hold)
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            _CURRENT_HOLD.reset(token)
+            hold.request_finished()
+
+
+class _HeldRoute(APIRoute):
+    """A route whose synchronous work keeps its request's admission slot.
+
+    FastAPI runs every ``def`` handler and ``def`` dependency (the D74
+    barrier's database check among them) on a worker thread. A disconnect
+    cancels the request's coroutine but not the thread, which goes on
+    working; each such callable is wrapped so the request's
+    :class:`RequestHold` sees the thread start and end, and the slot is
+    released only when the work really stops. Coroutines are cancelled with
+    their request, and generator dependencies are left as they are, so both
+    need nothing.
+    """
+
+    def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
+        """Build the route, then hold every synchronous callable it runs."""
+        super().__init__(path, endpoint, **kwargs)
+        # One wrapper per callable, so a dependency used twice keeps one
+        # identity and FastAPI's per-request dependency cache still applies.
+        wrappers: dict[int, Callable[..., Any]] = {}
+        pending = [self.dependant]
+        while pending:
+            dependant = pending.pop()
+            pending.extend(dependant.dependencies)
+            call = dependant.call
+            if (
+                call is None
+                or inspect.isclass(call)
+                or dependant.is_coroutine_callable
+                or dependant.is_gen_callable
+                or dependant.is_async_gen_callable
+            ):
+                continue
+            wrapper = wrappers.get(id(call))
+            if wrapper is None:
+                wrapper = wrappers[id(call)] = _held_handler(call)
+            # The wrapper is sync like the original (and FastAPI inspects the
+            # unwrapped callable), so it is still run on a worker thread.
+            dependant.call = wrapper
+
+
+def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a synchronous handler or dependency so its request's hold sees it run."""
+
+    @functools.wraps(call)
+    def held(*args: Any, **kwargs: Any) -> Any:
+        hold = _CURRENT_HOLD.get()
+        if hold is None:
+            return call(*args, **kwargs)
+        hold.handler_started()
+        try:
+            return call(*args, **kwargs)
+        finally:
+            hold.handler_finished()
+
+    return held
 
 
 def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | None:

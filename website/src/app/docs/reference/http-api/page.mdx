@@ -191,15 +191,15 @@ A failed request returns a non-2xx status and a JSON body with a single
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph, spend. |
 | Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
-| Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`) and argument errors on `POST /operations/{name}`. |
+| Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
 Branch on the status and on `code` (or the short string), never on `message`.
 Messages are written for people and can change.
 
 The `remember` client raises `remember.MemoryApiError` for every failure, with
-`status_code`, `detail` and, on the `/query/*` routes, `code`. A network
-failure has `status_code` `0`.
+`status_code`, `detail` and, on the `/query/*` routes and on a `429`, `code`
+(plus `retry_after` on a `429`). A network failure has `status_code` `0`.
 
 [Errors and status codes](/docs/reference/errors) lists every status, code and what to
 do about it.
@@ -210,9 +210,10 @@ do about it.
 |---|---|---|
 | `401` | `a perimeter credential is required` / `perimeter authentication failed` | Missing or unaccepted credential (authentication on). |
 | `403` | `credential is for another deployment` / `credential may not perform this operation` | Wrong deployment, or scope too narrow. |
-| `404` | `Not Found` | Unknown path. |
+| `404` | `Not Found` | Unknown path. The credential is checked first, so an unauthenticated request gets `401`. |
 | `405` | `Method Not Allowed` | Known path, wrong method. |
 | `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
+| `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
 
@@ -242,6 +243,43 @@ When the hold is refused, the route returns before doing any work:
 A self-hosted deployment has no spend hold unless you configure one
 (`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL`). See
 [Spend caps and auto top-up](/docs/cloud/spend-controls).
+
+## Admission limits
+
+After the credential check, and before any spend hold or routing, every
+request except `GET /healthz` is counted against two sets of limits: one for
+its credential and one for the whole deployment. A request to an unknown path
+counts too.
+
+| Limit | Default | Setting |
+|---|---|---|
+| Requests per credential | 120 per minute, bursts of 30 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
+| Requests running at once, per credential | 8 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
+| Requests per deployment | 600 per minute, bursts of 150 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
+| Requests running at once, per deployment | 32 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
+
+The request rate works as a bucket of tokens that refills continuously at the
+per-minute rate, up to a burst of a quarter of it; each request takes one. A
+signed credential is counted by its id (`jti`). The shared secret, and every
+caller when authentication is off, is counted against the deployment limits
+only. A refused request counts against nothing.
+
+Over a limit the deployment answers `429` with a `Retry-After` header in whole
+seconds:
+
+| `code` | Meaning | `Retry-After` |
+|---|---|---|
+| `rate_limited` | No request token is left for this credential or the deployment. | Seconds until the next token. |
+| `concurrency_limited` | Too many requests of this credential, or of the deployment, are still running. | `1` |
+
+```json
+{"detail": {"code": "rate_limited", "message": "request rate limit reached; retry after Retry-After seconds"}}
+```
+
+The counters live in the memory of each API process: they start empty when
+the process starts, and with several API processes each has its own, so the
+effective limits are that many times larger. A request whose client
+disconnects stays counted as running until its handler has actually stopped.
 
 ## Idempotency
 

@@ -182,6 +182,14 @@ class SelfHostSettings(BaseSettings):
     api_revoked_credential_ids: str | None = None
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
+    #: Direct-path admission limits (D136 §7.6), counted in this API process.
+    #: Per credential (a signed token's ``jti``) and for the whole deployment;
+    #: the shared secret is bounded by the deployment limits only. With N API
+    #: replicas the effective ceilings are N times these numbers.
+    api_admission_key_per_minute: int = Field(default=120, ge=1)
+    api_admission_key_in_flight: int = Field(default=8, ge=1)
+    api_admission_deployment_per_minute: int = Field(default=600, ge=1)
+    api_admission_deployment_in_flight: int = Field(default=32, ge=1)
     spend_lease_url: str | None = None
     meter_ingest_url: str | None = None
     meter_ingest_token: SecretStr | None = None
@@ -875,6 +883,8 @@ class SelfHostProfile:
         from rememberstack.surfaces import OperationExecutor
         from rememberstack.surfaces import OperationSurface
         from rememberstack.surfaces import QueryEngine
+        from rememberstack.surfaces.direct_admission import AdmissionLimits
+        from rememberstack.surfaces.direct_admission import DirectPathAdmission
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
         from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -952,6 +962,18 @@ class SelfHostProfile:
             browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings),
+            direct_admission=DirectPathAdmission(
+                limits=AdmissionLimits(
+                    key_per_minute=self._settings.api_admission_key_per_minute,
+                    key_in_flight=self._settings.api_admission_key_in_flight,
+                    deployment_per_minute=(
+                        self._settings.api_admission_deployment_per_minute
+                    ),
+                    deployment_in_flight=(
+                        self._settings.api_admission_deployment_in_flight
+                    ),
+                )
+            ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
             readiness=_FreshDeploymentReadiness(
                 store=LocalFSForgetManifestStore(

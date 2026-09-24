@@ -93,6 +93,7 @@ class MemoryApiError(RuntimeError):
         detail: str | None = None,
         code: str | None = None,
         response: object | None = None,
+        retry_after: float | None = None,
     ) -> None:
         eff_detail = detail if detail is not None else (message or "")
         msg = (
@@ -105,6 +106,9 @@ class MemoryApiError(RuntimeError):
         self.detail = eff_detail
         self.code = code
         self.response = response
+        #: Seconds from ``Retry-After`` on a ``429`` admission refusal
+        #: (``rate_limited`` / ``concurrency_limited``), when the server sent it.
+        self.retry_after = retry_after
 
 
 class ConnectorNotFoundError(Exception):

@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Scaling",
-  description: "The bounds a self-hosted RememberStack runs within \u2014 worker claim rates, replicas per stage, connection pools for retrieval and graph queries, and SQL query limits.",
+  description: "The bounds a self-hosted RememberStack runs within \u2014 worker claim rates, replicas per stage, connection pools for retrieval and graph queries, API admission limits, and SQL query limits.",
 };
 
 # Scaling
@@ -90,6 +90,27 @@ request fails; that failure is not yet mapped to a specific status code.
 Raise the pool, the concurrency and `work_mem` together, and only as far as
 PostgreSQL's memory allows: each running graph query may use up to
 `GRAPH_WORK_MEM_KIB` for each sort or hash step it performs.
+
+## API admission limits
+
+The API counts every request (except `GET /healthz`) against a rate and a
+number running at once, per credential and for the whole deployment. Over a
+limit it answers `429` with `Retry-After`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | Requests per minute per signed credential, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | Requests running at once per signed credential |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | Requests per minute for the deployment, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | Requests running at once for the deployment |
+
+`compose.yaml` passes all four. The shared secret, and every caller when
+authentication is off, meets the deployment limits only. A script that
+ingests many files in parallel should keep its concurrency under the
+in-flight limit and wait `Retry-After` on a `429`; the `remember` client does
+not retry by itself. The counters live in the API process, so running more
+API processes multiplies the effective limits. See
+[Admission limits](/docs/reference/http-api#admission-limits).
 
 ## SQL queries
 

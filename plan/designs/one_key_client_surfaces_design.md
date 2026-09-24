@@ -528,24 +528,33 @@ denies every signed credential.
 
 SDK and CLI traffic reaches the engine directly, not through a host that could
 meter it, so the perimeter bounds what one key and one deployment can ask for.
-After authentication and before the route runs:
+After authentication and before the spend lease and routing, for every
+request including one to an unknown path:
 
 | Limit | Starting value |
 | --- | --- |
 | Requests per credential (`jti`) | 120 per minute, burst 30 |
 | In flight per credential | 8 |
-| Requests per deployment | 600 per minute |
+| Requests per deployment | 600 per minute, burst 150 |
 | In flight per deployment | 32 |
 
-The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_*`);
-nothing else about admission is configurable.
+The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
+`…_KEY_IN_FLIGHT`, `…_DEPLOYMENT_PER_MINUTE`, `…_DEPLOYMENT_IN_FLIGHT`);
+nothing else about admission is configurable. Each burst is derived, not set:
+a quarter of its per-minute rate (15 seconds of traffic), which gives the 30
+and 150 above.
 
 - **Mechanism.** A token bucket per credential and one per deployment (a
   counter refilled at the rate up to the burst; each request takes one token),
   and a counting semaphore for in-flight requests. The shared-secret bearer
-  has no `jti` and is bounded by the deployment limits only. `GET /healthz` is
-  exempt. A slot is released when the response finishes, fails, or the client
-  disconnects.
+  has no `jti` and is bounded by the deployment limits only, as is every
+  request to a deployment with no auth perimeter. `GET /healthz` is
+  exempt. A request is admitted only when every check passes, and a refused
+  request consumes no token. A slot is released when the response finishes,
+  fails, or the client disconnects, but not before any synchronous handler
+  or dependency (such as the D74 barrier check) already running on a worker
+  thread returns: a disconnect cannot stop that thread, so its work still
+  counts as in flight.
 - **Refusal.** `429`, error code `rate_limited` or `concurrency_limited`, and
   `Retry-After` in whole seconds (time until a token is available; 1 for an
   in-flight refusal). The SDK raises `RateLimited` with `retry_after` and does
@@ -556,7 +565,9 @@ nothing else about admission is configurable.
   API replicas the effective ceilings are N times the numbers; an operator
   running N replicas divides by N. The self-host profile runs one replica.
 - Spend metering (D91), the spend lease and the D74 admission barrier are
-  unchanged and apply after this check.
+  unchanged and apply after this check: authentication, then admission, then
+  the spend hold, then routing. An unauthenticated or refused request never
+  places a hold.
 
 ### 7.7 Failure responses
 
@@ -810,7 +821,9 @@ Perimeter (`signed_token_auth.py`):
   documents advance `seq`;
 - admission: per-key and per-deployment rate and in-flight limits return
   `429` with a correct `Retry-After`; in-flight slots are released on
-  success, error and client disconnect; `/healthz` is exempt;
+  success, error and client disconnect (not before the handler thread
+  returns); unknown paths are counted; `/healthz` is exempt; no spend hold
+  is placed for an unauthenticated or refused request;
 - permission mapping table, including ignored `account:*` and refused unknown
   `memory:*`; no memory permission → `403`;
 - revocation documents: lower `seq`, equal `seq` with different content,
