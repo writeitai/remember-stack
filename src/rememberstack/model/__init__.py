@@ -369,8 +369,11 @@ from rememberstack.model.sections import SkeletonStats
 from rememberstack.model.sections import SkeletonVerdict
 from rememberstack.model.sections import SnappedSection
 from rememberstack.model.sections import StructureRouteTag
+from rememberstack.model.spend_lease import ReadEmbeddingCost
+from rememberstack.model.spend_lease import record_embedding_usage
 from rememberstack.model.spend_lease import SpendLeaseRefused
 from rememberstack.model.spend_lease import SpendLeaseUnavailable
+from rememberstack.model.spend_lease import track_read_embedding_cost
 from rememberstack.model.telemetry import TelemetryAttribute
 from rememberstack.model.telemetry import TelemetryEvent
 
@@ -500,8 +503,11 @@ __all__ = (
     "ForgetRedactionRequiredError",
     "ForgetTargetNotFoundError",
     "ForgottenSourceError",
+    "ReadEmbeddingCost",
+    "record_embedding_usage",
     "SpendLeaseRefused",
     "SpendLeaseUnavailable",
+    "track_read_embedding_cost",
     "Freshness",
     "Grain",
     "IdentityRegime",
