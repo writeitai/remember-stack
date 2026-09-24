@@ -1,4 +1,5 @@
 src/tests/adapters/test_mount_provisioning.py
+src/tests/adapters/test_postgres_p1_document_filters.py
 src/tests/adapters/test_selfhost_queue.py
 src/tests/eval/test_harness_skeleton.py
 src/tests/eval/test_s58_consumption.py
