@@ -78,8 +78,9 @@ def test_unknown_extensions_fall_back_to_the_host_database() -> None:
 class _IngestRecorder:
     """Mock data plane that records every ingest's query parameters."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, parked: str | None = None) -> None:
         self.params: list[dict[str, str]] = []
+        self.parked = parked
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/ingest"
@@ -95,6 +96,7 @@ class _IngestRecorder:
                 "mime": "text/markdown",
                 "title": None,
                 "versioning_mode": "snapshot",
+                "parked": self.parked,
             },
         )
 
@@ -185,6 +187,32 @@ def test_cli_ingest_sends_markdown_without_mime_flag(
     code = main(["ingest", str(source), "--api-url", "http://127.0.0.1:8000"])
     assert code == 0, capsys.readouterr().err
     assert recorder.params[0]["mime"] == "text/markdown"
+
+
+def test_cli_ingest_warns_when_the_engine_parks_the_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unrouted type is reported on stderr at once, with the JSON on stdout."""
+    from remember.cli import main
+
+    recorder = _IngestRecorder(parked="no_route")
+    real_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = httpx.MockTransport(recorder)
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", mock_client)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "config"))
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"%PDF-1.7")
+    code = main(["ingest", str(source), "--api-url", "http://127.0.0.1:8000"])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert '"parked":"no_route"' in captured.out
+    assert "parked waiting for a conversion route" in captured.err
+    assert "parked: no_route" in captured.err
+    assert "remember ops resume-no-route" in captured.err
 
 
 class _McpBackend:

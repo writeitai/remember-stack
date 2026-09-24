@@ -95,6 +95,9 @@ _INGEST_DESCRIPTION: Final = (
     " a maximum body size (oversized or empty bodies map to structured"
     " body_too_large / empty_body errors). source_kind and source_ref must be"
     " supplied together when either is set (stable lineage)."
+    ' If the result has parked="no_route", the original is stored but its'
+    " conversion is parked waiting for a conversion route for its MIME type."
+    " Tell the user now instead of polling readiness."
 )
 
 _PIPELINE_READINESS_DESCRIPTION: Final = (
@@ -1321,6 +1324,30 @@ def _parse_source_modified_at(value: object) -> datetime | None:
 def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
     """IngestedVersion JSON plus async pipeline guidance for the agent."""
     version_id = str(ingested.version_id)
+    identity: dict[str, object] = {
+        "deployment_id": str(ingested.deployment_id),
+        "doc_id": str(ingested.doc_id),
+        "version_id": version_id,
+        "content_hash": ingested.content_hash,
+        "created": ingested.created,
+        "parked": ingested.parked,
+    }
+    if ingested.parked == "no_route":
+        return {
+            **identity,
+            "pipeline": {
+                "status": "parked_no_route",
+                "guidance": (
+                    "The original is stored, but its conversion is parked"
+                    " waiting for a conversion route for its MIME type; until"
+                    " it is released it is not converted, searched or"
+                    " extracted. Do not poll pipeline_readiness. Tell the user"
+                    " now: an operator adds a route for this type if needed"
+                    " (for example an OCR route for PDFs and images), then runs"
+                    " `remember ops resume-no-route`. Report the version_id."
+                ),
+            },
+        }
     if ingested.created:
         guidance = (
             "Ingest accepted. Wait until pipeline_readiness.ready is true before"
@@ -1345,11 +1372,7 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
             " a failed stage is retrying."
         )
     return {
-        "deployment_id": str(ingested.deployment_id),
-        "doc_id": str(ingested.doc_id),
-        "version_id": version_id,
-        "content_hash": ingested.content_hash,
-        "created": ingested.created,
+        **identity,
         "pipeline": {
             "status": "accepted_not_ready",
             "next_tool": PIPELINE_READINESS_TOOL_NAME,

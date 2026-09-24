@@ -1958,6 +1958,18 @@
             ],
             "title": "Mime"
           },
+          "parked": {
+            "anyOf": [
+              {
+                "const": "no_route",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked"
+          },
           "title": {
             "anyOf": [
               {

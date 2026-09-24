@@ -394,6 +394,13 @@ class IngestedVersion(BaseModel):
     """The document's title. Set by the first ingest of the lineage."""
     versioning_mode: Literal["snapshot", "living"] | None = None
     """The lineage's versioning mode. Set by the first ingest of the lineage."""
+    parked: Literal["no_route"] | None = None
+    """``no_route`` when conversion is parked waiting for a route for this MIME type.
+
+    The original is stored, but it is not converted, searched or extracted
+    until an operator adds a conversion route and releases the parked work.
+    ``None`` means only that it is not parked for ``no_route``; processing
+    state comes from readiness."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )

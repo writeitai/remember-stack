@@ -32,8 +32,6 @@ from sqlalchemy.engine import RowMapping
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CostBudget
-from rememberstack.model import CostBudgetStatus
-from rememberstack.model import CostTierSpend
 from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
@@ -174,60 +172,6 @@ class WorkLedger:
                 .one()
             )
             return _claimed_work(row=started)
-
-    def budget_status(self, *, deployment_id: UUID) -> tuple[CostBudgetStatus, ...]:
-        """Return current spend and parked work for every configured deployment budget."""
-        statuses: list[CostBudgetStatus] = []
-        with self._engine.connect() as connection:
-            for budget in self._settings.budgets:
-                if budget.deployment_id != deployment_id:
-                    continue
-                spend = _budget_window_spend(connection=connection, budget=budget)
-                tier_rows = connection.execute(
-                    _BUDGET_TIER_SPEND,
-                    {
-                        "deployment_id": budget.deployment_id,
-                        "stage": budget.stage,
-                        "lane": budget.lane,
-                        "window_started_at": spend.started_at,
-                        "window_ends_at": spend.ends_at,
-                    },
-                ).mappings()
-                tiers = tuple(
-                    CostTierSpend(
-                        tier=cast(str | None, row["tier"]),
-                        cost_usd=_decimal(row["cost_usd"]),
-                    )
-                    for row in tier_rows
-                )
-                parked_work = int(
-                    connection.execute(
-                        _BUDGET_PARKED_COUNT,
-                        {
-                            "deployment_id": budget.deployment_id,
-                            "stage": budget.stage,
-                            "lane": budget.lane,
-                        },
-                    ).scalar_one()
-                )
-                remaining = max(Decimal(0), budget.ceiling_usd - spend.spent_usd)
-                statuses.append(
-                    CostBudgetStatus(
-                        deployment_id=budget.deployment_id,
-                        stage=budget.stage,
-                        lane=budget.lane,
-                        window_seconds=budget.window_seconds,
-                        window_started_at=spend.started_at,
-                        window_ends_at=spend.ends_at,
-                        ceiling_usd=budget.ceiling_usd,
-                        spent_usd=spend.spent_usd,
-                        remaining_usd=remaining,
-                        exhausted=spend.spent_usd >= budget.ceiling_usd,
-                        parked_work=parked_work,
-                        tiers=tiers,
-                    )
-                )
-        return tuple(statuses)
 
     def complete(
         self, *, processing_id: UUID, follow_up: tuple[EnqueueWork, ...] = ()
@@ -1792,32 +1736,6 @@ _BUDGET_WINDOW_SPEND = text(
      AND cost_ledger.occurred_at >= bounds.window_started_at
      AND cost_ledger.occurred_at < bounds.window_ends_at
     GROUP BY bounds.window_started_at, bounds.window_ends_at
-    """
-)
-
-_BUDGET_TIER_SPEND = text(
-    """
-    SELECT tier, COALESCE(sum(cost_usd), 0) AS cost_usd
-    FROM cost_ledger
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND occurred_at >= :window_started_at
-      AND occurred_at < :window_ends_at
-    GROUP BY tier
-    ORDER BY tier NULLS FIRST
-    """
-)
-
-_BUDGET_PARKED_COUNT = text(
-    """
-    SELECT count(*)
-    FROM processing_state
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND status = 'pending'
-      AND defer_reason = 'budget'
     """
 )
 

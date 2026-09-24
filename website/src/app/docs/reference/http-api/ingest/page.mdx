@@ -67,7 +67,8 @@ longer makes stop being current testimony. See
 [Updating a source](/docs/concepts/updating-sources).
 
 A MIME type the deployment has no converter for is still accepted. Its
-conversion waits until a converter route for that type exists. See
+conversion waits until a converter route for that type exists, and the
+response says so with `"parked": "no_route"`. See
 [File formats and converters](/docs/self-hosting/converters).
 
 ### What the first ingest fixes
@@ -115,12 +116,18 @@ does not change it.
   "created": true,
   "mime": "text/markdown",
   "title": "Q3 plan",
-  "versioning_mode": "snapshot"
+  "versioning_mode": "snapshot",
+  "parked": null
 }
 ```
 
-`200` means the version is stored and its processing is queued. It is not yet
-queryable. Poll [`POST /readiness`](#post-readiness) with the `version_id`.
+`200` means the version is stored. `"parked": null` means only
+that it is not parked for `no_route`; poll [`POST /readiness`](#post-readiness)
+with the `version_id` for its processing state. `"parked": "no_route"` means
+its conversion is parked waiting for a conversion route for the `mime`: the
+bytes are kept, but nothing reads them until an operator adds a route if
+needed and runs `remember ops resume-no-route`. Do not wait on readiness
+for it; it will not become ready on its own.
 
 ### Errors
 

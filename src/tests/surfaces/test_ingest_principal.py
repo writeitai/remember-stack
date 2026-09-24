@@ -270,8 +270,8 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
     assert legacy.calls == 1
 
 
-def test_receipt_never_carries_the_admission_hint() -> None:
-    """The internal admission hint never reaches an extra-forbid client."""
+def test_receipt_never_serializes_the_internal_admission_hint() -> None:
+    """The internal admission hint stays out of the extra-forbid receipt."""
     receipt = IngestedVersion(
         deployment_id=_DEPLOYMENT_ID,
         doc_id=uuid4(),
@@ -292,6 +292,7 @@ def test_receipt_never_carries_the_admission_hint() -> None:
         "mime",
         "title",
         "versioning_mode",
+        "parked",
     }
 
 

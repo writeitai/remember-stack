@@ -19,10 +19,11 @@ self-hosted deployment.
 | Markdown (`.md`) | Yes | Yes | Yes |
 | Plain text (`.txt`) | Yes | Yes | Yes |
 | Chat logs and transcripts, as Markdown or text | Yes | Yes | Yes |
-| HTML | No | No | Yes, with `markitdown` |
+| HTML | No | Yes | Yes |
+| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | No | Yes | Yes |
 | PDF, including scanned PDFs | No | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
 | PNG and JPEG images | No | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Word, PowerPoint, Excel | No | No | No: the bundled converter lacks the packages these need |
+| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
 | Audio and video | No | No | No |
 | Web addresses (URLs) | No | No | No: download the page and send the HTML |
 
@@ -40,13 +41,13 @@ to Markdown first and send the Markdown.
 
 ## Self-hosted
 
-A new self-hosted deployment converts Markdown and plain text only. Other
-formats are accepted and stored, but they wait unprocessed until you add a
-converter for their type. Nothing tells you at upload time, so check
-[readiness](/docs/guides/wait-for-readiness) after your first upload of a
-new format.
+A new self-hosted deployment converts Markdown, plain text, HTML, Word,
+PowerPoint and Excel files locally, with no API key. Other formats are
+accepted and stored, but they wait unprocessed until you add a converter
+for their type. The upload response tells you: its `parked` field is
+`"no_route"`, and `remember ingest` prints a warning.
 
-To read HTML, PDFs and images, map each file type to a converter in
+To read PDFs and images, map each file type to a converter in
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
 converters](/docs/self-hosting/converters) shows the setting, what each
 converter does and costs, and how to release files that were stored before

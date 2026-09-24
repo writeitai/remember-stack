@@ -74,6 +74,8 @@ from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("60000000-0000-0000-0000-000000000001")
+_FIXTURES = _ROOT / "src" / "tests" / "core" / "fixtures"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _MARKDOWN_SOURCE = "# Quarterly report\n\nRevenue grew nine percent.\n\n- steady\n"
 
@@ -274,10 +276,12 @@ class _E0Rig:
         # One table feeds both the D117 scheduling table and the router, the
         # way a real deployment's `conversion_routes` does. Duplicating it
         # would let the harness prove a divergence production cannot have.
+        markitdown = MarkitdownConverter()
         routes: dict[str, Converter] = {
             "text/markdown": MarkdownPassthroughConverter(),
             "text/plain": MarkdownPassthroughConverter(),
-            "text/html": MarkitdownConverter(),
+            "text/html": markitdown,
+            _DOCX: markitdown,
             "application/x-fake-scan": _FakeScanConverter(),
             "application/x-unlabeled": _UnlabeledConverter(),
             "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
@@ -459,6 +463,7 @@ def test_html_document_converts_through_markitdown(rig: _E0Rig) -> None:
             content=b"<html><body><h1>Atlas kickoff</h1><p>Notes body.</p></body></html>",
         ),
     )
+    assert ingested.parked is None
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
     assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
 
@@ -602,6 +607,34 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
     assert "convert terminated" in str(version["error"])
 
 
+def test_docx_document_converts_through_markitdown(rig: _E0Rig) -> None:
+    """A Word file converts locally: the image ships markitdown's docx extra."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="plan.docx",
+            mime=_DOCX,
+            content=(_FIXTURES / "tiny.docx").read_bytes(),
+        ),
+    )
+    assert ingested.parked is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
+    version = rig.row(
+        sql="SELECT * FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    representation = rig.row(
+        sql="SELECT * FROM document_representations WHERE representation_id = :rid",
+        params={"rid": version["current_representation_id"]},
+    )
+    assert representation["route"] == "markitdown"
+    markdown = rig.artifact_store.read_bytes(
+        key=ObjectKey(str(representation["markdown_uri"]))
+    ).decode("utf-8")
+    assert "Quarterly plan" in markdown
+
+
 def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -> None:
     """D117: the document lands, its convert work parks, the DLQ stays empty."""
     ingested = rig.ingestor.ingest(
@@ -610,6 +643,8 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
             filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
         ),
     )
+    # the ingest response says so at once, so a client can tell its user
+    assert ingested.parked == "no_route"
     work = rig.row(
         sql="""
         SELECT status, defer_reason, attempts, last_error FROM processing_state
@@ -645,6 +680,45 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     )
     assert work_count["count"] == 1
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
+
+
+def _ingestor_with_routes(rig: _E0Rig, routable: frozenset[str]) -> UploadIngestor:
+    """An ingestor for the same spine whose route table differs from the rig's."""
+    return UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=routable,
+    )
+
+
+def test_parked_reports_the_work_row_after_a_route_is_added(rig: _E0Rig) -> None:
+    """A route added but not yet resumed: an identical re-ingest is still parked."""
+    upload = DocumentUpload(filename="late.txt", mime="text/plain", content=b"late")
+    first = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert first.parked == "no_route"
+    again = _ingestor_with_routes(rig, frozenset({"text/plain"})).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked == "no_route"
+
+
+def test_parked_is_null_for_converted_work_after_a_route_is_removed(
+    rig: _E0Rig,
+) -> None:
+    """Already-converted bytes stay unparked even if their route is gone now."""
+    upload = DocumentUpload(filename="done.txt", mime="text/plain", content=b"done")
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert first.parked is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    again = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked is None
 
 
 def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
