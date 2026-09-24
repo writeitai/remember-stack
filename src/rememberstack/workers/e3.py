@@ -22,13 +22,16 @@ from rememberstack.core.context_references import attempted_context_refs
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import EnqueueWork
+from rememberstack.model import EntityRef
 from rememberstack.model import ModelRequest
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
+from rememberstack.model import ObservationCandidate
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import RelationCandidate
 from rememberstack.model.fact_application import AssertionKind
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -37,6 +40,7 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.entity_eligibility import is_bare_head_noun
+from rememberstack.spine.entity_eligibility import own_document_name_slot
 from rememberstack.spine.entity_registry import EntityRegistry
 from rememberstack.spine.fact_adjudication import active_adjudicator_versions
 from rememberstack.spine.fact_adjudication import active_flush_version
@@ -358,10 +362,19 @@ class NormalizeRelationsHandler:
                     name=relation.object.name
                 ):
                     continue
+                if _own_document_name_anchor(
+                    claim=claim, kind="relation", ordinal=ordinal, output=relation
+                ):
+                    continue
                 accepted.append(("relation", ordinal))
             for ordinal, observation in enumerate(response.observations):
-                if not is_bare_head_noun(name=observation.subject.name):
-                    accepted.append(("observation", ordinal))
+                if is_bare_head_noun(name=observation.subject.name):
+                    continue
+                if _own_document_name_anchor(
+                    claim=claim, kind="observation", ordinal=ordinal, output=observation
+                ):
+                    continue
+                accepted.append(("observation", ordinal))
             published = catalog.publish_normalization(
                 deployment_id=deployment_id,
                 claim_id=claim.claim_id,
@@ -400,6 +413,9 @@ class NormalizeRelationsHandler:
             exclude = {subject.entity_id}
             if object_id is not None:
                 exclude.add(object_id)
+            own_name_ordinal = _own_document_name_context_ordinal(
+                claim=claim, kind=kind, output=output
+            )
             attempted, truncated = attempted_context_refs(refs=output.context_refs)
             if truncated:
                 _logger.warning(
@@ -411,6 +427,9 @@ class NormalizeRelationsHandler:
             context_bindings: list[tuple[int, UUID, UUID]] = []
             seen_entities: set[UUID] = set()
             for bind_ordinal, ref in attempted:
+                if bind_ordinal == own_name_ordinal:
+                    # D134: the document's own name is not an entity.
+                    continue
                 resolved = self._resolver.resolve(
                     deployment_id=deployment_id,
                     reference=ref,
@@ -479,6 +498,72 @@ class NormalizeRelationsHandler:
             raise
         meter.record(call_key=call_key, tier="normalize", usage=response_call.usage)
         return response_call.output
+
+
+def _own_document_name_anchor(
+    *,
+    claim: ClaimForNormalization,
+    kind: AssertionKind,
+    ordinal: int,
+    output: RelationCandidate | ObservationCandidate,
+) -> bool:
+    """Whether the assertion is anchored on the claim's own document name (D134).
+
+    The subject (or a relation's object) whose surface is the name at the
+    claim's recorded span is the document itself, not an entity: the
+    assertion is dropped rather than minting a name entity for the file.
+    Several references sharing that text are ambiguous; none is skipped and
+    the ambiguity is logged as a diagnostic.
+    """
+    slot, ambiguous = own_document_name_slot(
+        refs=_assertion_refs(output=output), own_document_name=claim.own_document_name()
+    )
+    if ambiguous:
+        _logger.info(
+            "own document name ambiguous in claim %s %s %s: resolving every reference",
+            claim.claim_id,
+            kind,
+            ordinal,
+        )
+    anchors = 2 if kind == "relation" else 1
+    if slot is not None and slot < anchors:
+        _logger.info(
+            "own document name skipped in claim %s %s %s: assertion dropped",
+            claim.claim_id,
+            kind,
+            ordinal,
+        )
+        return True
+    return False
+
+
+def _own_document_name_context_ordinal(
+    *,
+    claim: ClaimForNormalization,
+    kind: AssertionKind,
+    output: RelationCandidate | ObservationCandidate,
+) -> int | None:
+    """The context-reference ordinal that is the claim's own document name.
+
+    Recomputed from the frozen output and the claim's span, so the omission
+    is replay-stable. None when no context reference is that name.
+    """
+    slot, _ = own_document_name_slot(
+        refs=_assertion_refs(output=output), own_document_name=claim.own_document_name()
+    )
+    anchors = 2 if kind == "relation" else 1
+    if slot is None or slot < anchors:
+        return None
+    return slot - anchors
+
+
+def _assertion_refs(
+    *, output: RelationCandidate | ObservationCandidate
+) -> tuple[EntityRef, ...]:
+    """One assertion's references in slot order: anchors, then context refs."""
+    if isinstance(output, RelationCandidate):
+        return (output.subject, output.object, *output.context_refs)
+    return (output.subject, *output.context_refs)
 
 
 def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:

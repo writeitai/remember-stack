@@ -69,7 +69,7 @@ _E2_EXTRACTOR_GENERATION: Final = (
     "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
-    "assertion-clarity-4:d122-source-references-1:d131-anaphora-1"
+    "assertion-clarity-4:d122-source-references-1:d131-anaphora-1:d134-selfref-1"
 )
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {

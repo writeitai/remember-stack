@@ -108,6 +108,7 @@ src/tests/workers/test_d79_summary_consumption.py
 src/tests/workers/test_e3_bare_head_noun.py
 src/tests/workers/test_e3_claim_normalize_fanout.py
 src/tests/workers/test_e3_context_references.py
+src/tests/workers/test_e3_own_document_name.py
 src/tests/workers/test_e3_entity_obs_flush_fanout.py
 src/tests/workers/test_extraction_temperature.py
 src/tests/workers/test_hard_forget_handler.py
@@ -122,3 +123,4 @@ src/tests/surfaces/test_direct_admission.py
 src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
 src/tests/adapters/test_perimeter_trust.py
+src/tests/workers/test_self_reference_naming.py

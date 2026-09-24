@@ -44,6 +44,7 @@ from rememberstack.model.document_metadata import DocumentPerson
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.document_metadata import merge_converter_metadata_on
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ConvertHandler
@@ -629,3 +630,47 @@ def test_observation_and_conversion_share_one_lock_order(rig: _Rig) -> None:
             {"v": ingested.version_id},
         ).scalar_one()
     assert cursor == "rev-2"
+
+
+def _representation_id(rig: _Rig, *, version_id: UUID) -> UUID:
+    with rig.engine.connect() as connection:
+        return connection.execute(
+            text(
+                "SELECT representation_id FROM document_representations"
+                " WHERE version_id = :v"
+            ),
+            {"v": version_id},
+        ).scalar_one()
+
+
+def test_extraction_source_reads_the_version_file_name_and_title(rig: _Rig) -> None:
+    """D134: the E2 header names the file and title recorded for this version."""
+    undeclared = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=_upload(filename="Audit_2025.md", title=None, source_path=None),
+    )
+    rig.convert(ingested=undeclared)
+    source = ChunkCatalog(engine=rig.engine).chunk_source(
+        representation_id=_representation_id(rig, version_id=undeclared.version_id)
+    )
+    assert source.title == "Audit_2025"  # the lineage title keeps its meaning
+    assert source.file_name == "Audit_2025.md"
+    assert source.version_title is None
+    # the stem fallback is the lineage's, not this version's declared title
+    assert source.header_title() is None
+
+    declared = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=_upload(
+            filename="board.md",
+            title="Board minutes",
+            source_path=None,
+            content=b"# Minutes\n\nThe board met.\n",
+        ),
+    )
+    rig.convert(ingested=declared)
+    declared_source = ChunkCatalog(engine=rig.engine).chunk_source(
+        representation_id=_representation_id(rig, version_id=declared.version_id)
+    )
+    assert declared_source.file_name == "board.md"
+    assert declared_source.header_title() == "Board minutes"

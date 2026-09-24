@@ -65,7 +65,7 @@ E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-4:d122-source-references-1:"
-    f"d131-anaphora-1"
+    f"d131-anaphora-1:d134-selfref-1"
 )
 """Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
 coherent claims cite engine-labeled source passages; occurrence rows store
@@ -74,7 +74,9 @@ windows whose previous/next slots keep side identity. 08a: D80 typed
 location elements replace free-form context_prefix in the bundle/grounding
 union. temporal-anchor-4: a resolved relative date is written into
 claim_text as its ISO value and grounded by the claim's own valid-time
-fields (D41/D32 amendments of 2026-09-11)."""
+fields (D41/D32 amendments of 2026-09-11). d134-selfref-1: the header
+carries the version's file name and title, and a claim about its own
+document names it (the gate records the inserted name's span)."""
 
 _EMBED_BATCH_SIZE: Final = 64
 """Default provider batch size for chunk embeddings (capability starting point)."""
@@ -592,12 +594,15 @@ def _chunk_record(
         else ""
     )
     neighbor_hashes = (previous_hash, next_hash)
+    # D134: the file name is a header fact — a self-referencing claim names
+    # the file, so a renamed version must never reuse claims naming the old one.
     header_facts = (
-        source.title or "",
+        source.header_title() or "",
         source.source_kind,
         _isoformat_or_empty(value=source.source_modified_at),
         _isoformat_or_empty(value=source.published_at),
         source.language or "",
+        source.file_name or "",
     )
     return ChunkRecord(
         chunk_id=uuid4(),
