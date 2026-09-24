@@ -120,6 +120,14 @@ object is never silently replaced. Only SeaweedFS is exercised by the
 project's checks. Another S3-compatible store has to support path-style
 requests, conditional writes and user metadata on objects.
 
+SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
+of them, so the bundled store holds up to about 100 GiB before writes fail
+(each bucket also reserves 7 volumes on its first write). Volumes are not
+preallocated, so unused capacity takes no disk. To store more, raise
+`-volume.max` on the `object-store` service in `compose.yaml`. The engine
+sets no S3 lifecycle (expiry) rules and does not need them: it deletes
+objects itself, during a hard forget.
+
 ## Model provider keys
 
 | Key | Required | Used for |

@@ -163,6 +163,8 @@ services:
   # Compose network and is not published on the host.
   # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY become the single admin identity
   # and switch S3 authentication on, so both are required.
+  # The engine sets no S3 lifecycle rules, which `weed server` would store
+  # without enforcing; deletion is explicit (hard forget purges objects).
   object-store:
     image: chrislusf/seaweedfs:4.44@sha256:e67e8c385484120b78bff47ba5f4debbca47fbd27ed1a39f016f47e8baea615b
     command:
@@ -175,6 +177,11 @@ services:
       - -s3.port.iceberg=0
       - -s3.port.lance=0
       - -master.telemetry=false
+      # Each bucket is a SeaweedFS collection that claims 7 volume slots on
+      # its first write, so the engine's three buckets need at least 21.
+      # Volumes are sparse (no preallocation) and capped at 1 GiB each.
+      - -volume.max=100
+      - -master.volumeSizeLimitMB=1024
     environment:
       AWS_ACCESS_KEY_ID: ${REMEMBERSTACK_MINIO_ACCESS_KEY:?set REMEMBERSTACK_MINIO_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${REMEMBERSTACK_MINIO_SECRET_KEY:?set REMEMBERSTACK_MINIO_SECRET_KEY}
