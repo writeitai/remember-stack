@@ -6034,30 +6034,20 @@ on a current GitHub Actions Ubuntu runner.
 
 ## Image architectures
 
-Two images make up the stack:
+Two images from this project make up the stack. Both are published for
+`linux/amd64` and `linux/arm64`, so an arm64 machine (Apple Silicon,
+Graviton, Ampere) runs them natively, without emulation:
 
-| Image | Where it comes from | Architectures |
-|---|---|---|
-| `ghcr.io/writeitai/remember-stack:0.17.1` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
-| `rememberstack-postgres:19beta3` | Built locally by Compose from `Dockerfile.postgres` on first start | Whatever your machine builds |
+| Image | Used by |
+|---|---|
+| `ghcr.io/writeitai/remember-stack:0.17.1` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1` | PostgreSQL |
 
-The release workflow publishes the API/worker image for `linux/amd64`
-only. On an arm64 machine (Apple Silicon, Graviton, Ampere) you have two
-choices:
-
-- Build the image from source for your own architecture:
-  `docker compose build api`. All the app services share that image. The
-  release workflow does not build or test this image on arm64.
-- Run the published amd64 image under emulation, for example by exporting
-  `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `docker compose up`. Docker
-  Desktop on Apple Silicon emulates amd64. It works more slowly than a
-  native image.
-
-The release workflow also publishes a multi-architecture PostgreSQL image,
-`ghcr.io/writeitai/remember-stack-postgres:19beta3-<version>`, for
-`linux/amd64` and `linux/arm64`. The shipped `compose.yaml` does not use it:
-it builds `rememberstack-postgres:19beta3` locally from `Dockerfile.postgres`.
-That first build compiles one extension from source and takes a few minutes.
+Compose pulls both from GitHub Container Registry. It builds an image from
+source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
+when you pass `--build`. Building PostgreSQL compiles one extension and
+takes a few minutes. The third image, SeaweedFS, is also published for both
+architectures.
 
 ## PostgreSQL 19 (beta)
 
@@ -6182,8 +6172,7 @@ Source: https://remember.dev/docs/self-hosting/install
 
 This page takes you from an empty machine to a running RememberStack that
 has read its first document. It uses the `compose.yaml` and `.env.example`
-that ship in the repository. Check [Requirements](https://remember.dev/docs/self-hosting/requirements) first,
-in particular the note on arm64 machines.
+that ship in the repository. Check [Requirements](https://remember.dev/docs/self-hosting/requirements) first.
 
 ## 1. Get the files
 
@@ -7623,9 +7612,6 @@ Configuration mistakes that stop a container at start:
 | `worker-convert` names an unknown converter | A route in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` names a converter that does not exist, or needs a key that is not set. | See [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | A migration error in `setup` that says the store already holds claims | The new release cannot convert the existing data. | See [setup refuses an existing database](#setup-refuses-an-existing-database). |
 
-On an arm64 machine, also check that the image runs at all; see
-[Requirements](https://remember.dev/docs/self-hosting/requirements).
-
 ## Wrong port or wrong address
 
 Compose publishes the API on the host port in
@@ -8276,14 +8262,11 @@ documents again. Keep your source files for this reason. See
 5. **Get the new images:**
 
     ```bash
-    docker compose pull api
-    docker compose build postgres
+    docker compose pull api postgres
     ```
 
-    All app services share the image `pull api` fetches. `build postgres`
-    rebuilds the PostgreSQL image in case `Dockerfile.postgres` changed; it
-    reuses the cache when nothing did. On arm64, build the app image
-    instead of pulling it: `docker compose build api`.
+    All app services share the image `pull api` fetches. Each release also
+    publishes its own PostgreSQL image, so `postgres` is pulled too.
 
 6. **Start:**
 
