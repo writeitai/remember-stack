@@ -19,6 +19,7 @@ from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import status_error_result
@@ -128,6 +129,7 @@ class RemoteOperationMcpServer:
                 "name": descriptor.name,
                 "description": descriptor.description,
                 "inputSchema": descriptor.input_schema,
+                "annotations": _operation_annotations(descriptor),
             }
             for descriptor in self._assured_operation_descriptors()
         )
@@ -225,6 +227,17 @@ class RemoteOperationMcpServer:
         except MemoryApiError:
             return False
         return _is_authoritative_open_query_discovery(payload)
+
+
+def _operation_annotations(descriptor: ToolDescriptor) -> dict[str, bool]:
+    """The catalogue's annotations for an operation the deployment lists.
+
+    An operation the catalogue does not know is marked read-only only when the
+    deployment declares it non-mutating, so an unclassified one never looks safe.
+    """
+    if descriptor.name in OPERATION_TOOL_NAMES:
+        return tool(descriptor.name).annotations
+    return {"readOnlyHint": descriptor.mutates is False, "destructiveHint": False}
 
 
 def _memory_api_error_result(*, error: MemoryApiError) -> dict[str, object]:

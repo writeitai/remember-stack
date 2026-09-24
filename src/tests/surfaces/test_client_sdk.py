@@ -608,6 +608,18 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
         "delete_document",
         "resolve_entity",
     ]
+    # Every tool carries the catalogue's annotations, operations included.
+    annotations = {
+        tool["name"]: tool["annotations"] for tool in responses[1]["result"]["tools"]
+    }
+    assert annotations["resolve_entity"] == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    }
+    assert annotations["delete_document"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    }
     assert responses[2]["result"]["isError"] is False
 
 

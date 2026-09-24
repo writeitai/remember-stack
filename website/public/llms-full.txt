@@ -17317,7 +17317,7 @@ this order:
 
 A full server therefore lists 14 tools: 3 + 4 + 7.
 
-Every tool from groups 1 and 3 carries MCP tool annotations:
+Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
 `ingest` and `delete_document`, and `destructiveHint` is `true` only for
 `delete_document`.
