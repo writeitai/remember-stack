@@ -2,30 +2,34 @@
 
 Results are document lineages, each **judged by one version**:
 
-- ``versions="current"`` (default) judges a lineage by its current version —
-  or, while a lineage has no current version yet (its first upload is still
-  processing), by its newest live version, so a file is findable by name as
-  soon as it is stored; the result's ``status`` says how far it got.
+- ``versions="current"`` (default). A ranked search (with ``query``) judges a
+  lineage by its current version — or, while it has none yet (its first
+  upload is still processing), by its newest live version, so a file is
+  findable by name as soon as it is stored. A filter-only search, which pages,
+  judges each lineage by its newest live version ingested at or before the
+  pinned as-of instant (below), so promotion to current between pages cannot
+  move a row.
 - ``versions="all"`` lets any live version match; the result is the newest
-  matching version and lists the other matching version ids.
+  matching version and lists every other matching version id.
 
 Filters and name matching always use the judged version's own metadata, so a
 result never shows metadata that did not match. Only live versions of live
 lineages are considered: a deleted document never matches, and a forgotten
 one has no metadata rows left to match.
 
-**Ranking.** A ``query`` is matched on three document-level rankings fused by
-reciprocal rank (D9): observed names by BM25, observed names by trigram word
-similarity (partial and misspelled names), and content by the document's best
-BM25 ``chunk_search`` hit in the judged version. Content uses the lexical
-channel only — no embedding call on this path.
+**Ranking.** A ``query`` is matched on two channels, fused by reciprocal rank
+(D9): **names** — every observed name, by BM25 and by trigram word similarity
+(partial and misspelled names), fused into one ranking first — and
+**content** — the document's best BM25 ``chunk_search`` hit in the judged
+version. Each channel ranks *documents* by their best hit in SQL, so one
+document with many matching rows cannot crowd others out of the candidate
+list. Content uses the lexical channel only: no embedding call on this path.
 
-**Paging.** Without a query, results are ordered by the judged version's
-declared ``created_at`` (newest first, undated last), then ``doc_id``. That
-key moves when a new version becomes current, so the cursor pins the first
-call's **as-of instant**: every page judges versions as they had arrived by
-then — a current version that arrived later is replaced by the newest live
-version that had arrived — and later arrivals wait for a new search.
+**Paging.** Without a query, results are ordered newest first by when the
+judged version was ingested (immutable per version), then ``doc_id``. The
+cursor pins the first call's as-of instant; every page judges versions as
+they had arrived by then, so neither a later version nor metadata filled in
+by conversion moves a row across pages.
 """
 
 from __future__ import annotations
@@ -58,10 +62,13 @@ TRIGRAM_MIN_SIMILARITY: Final = 0.3
 PEOPLE_MATCHED_LIMIT: Final = 50
 """Most distinct people one response discloses for a people filter."""
 
-MatchChannel = Literal["name", "content"]
+CHANNEL_MIN_CANDIDATES: Final = 100
+"""Fewest documents each channel nominates before fusion; a starting value."""
 
-_CHANNEL_MIN_CANDIDATES: Final = 100
-_CHANNEL_MAX_CANDIDATES: Final = 1000
+CHANNEL_MAX_CANDIDATES: Final = 1000
+"""Most documents each channel nominates before fusion."""
+
+MatchChannel = Literal["name", "content"]
 
 
 class DocumentSearch:
@@ -76,6 +83,8 @@ class DocumentSearch:
     ) -> DocumentSearchPage:
         """Run one search; raises ``ValueError`` for a malformed cursor."""
         cursor = _decode_cursor(request.cursor)
+        ranked = request.query is not None
+        # One transaction: the trigram threshold below is transaction-local.
         with self._engine.connect() as connection:
             as_of = (
                 cursor.as_of
@@ -85,7 +94,11 @@ class DocumentSearch:
             scope = _Scope(
                 deployment_id=deployment_id,
                 filters=request.filters,
-                all_versions=request.versions == "all",
+                judging=(
+                    "all"
+                    if request.versions == "all"
+                    else ("current" if ranked else "newest_as_of")
+                ),
                 as_of=as_of,
             )
             if request.query is None:
@@ -107,11 +120,9 @@ class DocumentSearch:
 class _Cursor:
     """A decoded keyset position plus the pinned as-of instant."""
 
-    def __init__(
-        self, *, as_of: datetime, created_at: datetime | None, doc_id: UUID
-    ) -> None:
+    def __init__(self, *, as_of: datetime, ingested_at: datetime, doc_id: UUID) -> None:
         self.as_of = as_of
-        self.created_at = created_at
+        self.ingested_at = ingested_at
         self.doc_id = doc_id
 
 
@@ -134,6 +145,9 @@ class _Pick:
         self.score = score
 
 
+Judging = Literal["current", "newest_as_of", "all"]
+
+
 class _Scope:
     """The judged, filtered version set as a reusable SQL prefix."""
 
@@ -142,7 +156,7 @@ class _Scope:
         *,
         deployment_id: UUID,
         filters: DocumentSearchFilters,
-        all_versions: bool,
+        judging: Judging,
         as_of: datetime,
     ) -> None:
         self.parameters: dict[str, Any] = {
@@ -186,11 +200,15 @@ class _Scope:
                     f" AND {_person_matches(parameter=f'{role}_terms')})"
                 )
                 self.parameters[f"{role}_terms"] = list(terms)
-        judged = "" if all_versions else _CURRENT_VERSION_ONLY
+        judged = {
+            "all": "",
+            "current": _CURRENT_VERSION,
+            "newest_as_of": _NEWEST_VERSION_AS_OF,
+        }[judging]
         where = "".join(f"\n      AND {predicate}" for predicate in predicates)
         self.ctes = f"""
     WITH judged AS (
-      SELECT d.doc_id, v.version_id, v.version_no
+      SELECT d.doc_id, v.version_id, v.version_no, v.ingested_at
       FROM documents d
       JOIN document_versions v
         ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id
@@ -200,7 +218,7 @@ class _Scope:
         AND v.ingested_at <= :as_of{judged}
     ),
     matching AS (
-      SELECT j.doc_id, j.version_id, j.version_no, m.created_at
+      SELECT j.doc_id, j.version_id, j.version_no, j.ingested_at
       FROM judged j
       JOIN document_metadata m
         ON m.deployment_id = :deployment_id AND m.version_id = j.version_id
@@ -209,23 +227,30 @@ class _Scope:
 """
 
 
-# A lineage's judged version: its current version when that had arrived by
-# the as-of instant, otherwise its newest live version that had.
-_CURRENT_VERSION_ONLY: Final = """
-        AND v.version_id = COALESCE(
-          (SELECT cv.version_id FROM document_versions cv
-           WHERE cv.deployment_id = d.deployment_id
-             AND cv.version_id = d.current_version_id
-             AND cv.deleted_at IS NULL
-             AND cv.ingested_at <= :as_of),
+_NEWEST_LIVE: Final = """
           (SELECT nv.version_id FROM document_versions nv
            WHERE nv.deployment_id = d.deployment_id
              AND nv.doc_id = d.doc_id
              AND nv.deleted_at IS NULL
              AND nv.ingested_at <= :as_of
            ORDER BY nv.version_no DESC
-           LIMIT 1)
+           LIMIT 1)"""
+
+# Ranked searches: the current version, or the newest live one before any
+# version is current.
+_CURRENT_VERSION: Final = f"""
+        AND v.version_id = COALESCE(
+          (SELECT cv.version_id FROM document_versions cv
+           WHERE cv.deployment_id = d.deployment_id
+             AND cv.version_id = d.current_version_id
+             AND cv.deleted_at IS NULL
+             AND cv.ingested_at <= :as_of),{_NEWEST_LIVE}
         )"""
+
+# Paged searches: the newest live version that had arrived by the pinned
+# instant — immutable while paging, unlike the current pointer.
+_NEWEST_VERSION_AS_OF: Final = f"""
+        AND v.version_id ={_NEWEST_LIVE}"""
 
 
 def _person_matches(*, parameter: str) -> str:
@@ -247,38 +272,34 @@ def _terms(values: Sequence[str]) -> tuple[str, ...]:
 def _filtered_page(
     *, connection: Connection, scope: _Scope, k: int, cursor: _Cursor | None
 ) -> tuple[list[_Pick], str | None]:
-    """Filter-only results: newest declared creation first, keyset-paged."""
+    """Filter-only results: newest ingested judged version first, keyset-paged."""
     parameters = dict(scope.parameters)
     parameters["limit"] = k + 1
     keyset = "TRUE"
     if cursor is not None:
+        parameters["cursor_at"] = cursor.ingested_at
         parameters["cursor_doc"] = cursor.doc_id
-        if cursor.created_at is None:
-            keyset = "pd.created_at IS NULL AND pd.doc_id > :cursor_doc"
-        else:
-            parameters["cursor_at"] = cursor.created_at
-            keyset = (
-                "(pd.created_at < :cursor_at"
-                " OR (pd.created_at = :cursor_at AND pd.doc_id > :cursor_doc)"
-                " OR pd.created_at IS NULL)"
-            )
+        keyset = (
+            "(pd.ingested_at < :cursor_at"
+            " OR (pd.ingested_at = :cursor_at AND pd.doc_id > :cursor_doc))"
+        )
     rows = (
         connection.execute(
             text(
                 scope.ctes
                 + f"""
     , per_doc AS (
-      SELECT DISTINCT ON (mt.doc_id) mt.doc_id, mt.version_id, mt.created_at
+      SELECT DISTINCT ON (mt.doc_id) mt.doc_id, mt.version_id, mt.ingested_at
       FROM matching mt
       ORDER BY mt.doc_id, mt.version_no DESC
     )
-    SELECT pd.doc_id, pd.version_id, pd.created_at,
+    SELECT pd.doc_id, pd.version_id, pd.ingested_at,
            ARRAY(SELECT o.version_id FROM matching o
                  WHERE o.doc_id = pd.doc_id AND o.version_id <> pd.version_id
                  ORDER BY o.version_no DESC) AS others
     FROM per_doc pd
     WHERE {keyset}
-    ORDER BY pd.created_at DESC NULLS LAST, pd.doc_id
+    ORDER BY pd.ingested_at DESC, pd.doc_id
     LIMIT :limit
 """
             ),
@@ -291,7 +312,7 @@ def _filtered_page(
     next_cursor = (
         _encode_cursor(
             as_of=scope.parameters["as_of"],
-            created_at=page[-1]["created_at"],
+            ingested_at=page[-1]["ingested_at"],
             doc_id=page[-1]["doc_id"],
         )
         if len(rows) > k and page
@@ -313,84 +334,96 @@ def _filtered_page(
 def _ranked(
     *, connection: Connection, scope: _Scope, query: str, k: int
 ) -> list[_Pick]:
-    """Fuse the name and content rankings; the newest hit version is returned."""
+    """Fuse the name and content channels, then resolve each pick's versions."""
+    # Transaction-local, so the indexable `%>` operator uses this floor.
+    connection.execute(
+        text("SELECT set_config('pg_trgm.word_similarity_threshold', :floor, true)"),
+        {"floor": str(TRIGRAM_MIN_SIMILARITY)},
+    )
     parameters = dict(scope.parameters)
     parameters.update(
         {
             "query": query,
-            "min_similarity": TRIGRAM_MIN_SIMILARITY,
-            "limit": max(_CHANNEL_MIN_CANDIDATES, min(k * 10, _CHANNEL_MAX_CANDIDATES)),
+            "limit": max(CHANNEL_MIN_CANDIDATES, min(k * 10, CHANNEL_MAX_CANDIDATES)),
         }
     )
-    channels: tuple[tuple[MatchChannel, tuple[str, ...]], ...] = (
-        ("name", (_NAMES_BM25, _NAMES_TRIGRAM)),
-        ("content", (_CONTENT_BM25,)),
-    )
-    rankings: list[list[UUID]] = []
-    hits: dict[UUID, dict[UUID, int]] = {}
-    matched_by: dict[UUID, set[MatchChannel]] = {}
-    for label, statements in channels:
-        for statement in statements:
-            ranking: list[UUID] = []
-            for row in connection.execute(
-                text(scope.ctes + statement), parameters
-            ).mappings():
-                doc_id = row["doc_id"]
-                if doc_id not in ranking:
-                    ranking.append(doc_id)
-                hits.setdefault(doc_id, {})[row["version_id"]] = row["version_no"]
-                matched_by.setdefault(doc_id, set()).add(label)
-            rankings.append(ranking)
-    fused = reciprocal_rank_fusion(rankings=rankings)[:k]
+
+    def documents(statement: str) -> list[UUID]:
+        return list(
+            connection.execute(text(scope.ctes + statement), parameters).scalars()
+        )
+
+    names = [
+        item.item_id
+        for item in reciprocal_rank_fusion(
+            rankings=[documents(NAMES_BM25), documents(NAMES_TRIGRAM)]
+        )
+    ]
+    content = documents(CONTENT_BM25)
+    fused = reciprocal_rank_fusion(rankings=[names, content])[:k]
+    if not fused:
+        return []
+    named, contented = set(names), set(content)
+    versions: dict[UUID, list[UUID]] = {}
+    for row in connection.execute(
+        text(scope.ctes + _MATCHING_VERSIONS),
+        {**parameters, "picked": [str(item.item_id) for item in fused]},
+    ).mappings():
+        versions.setdefault(row["doc_id"], []).append(row["version_id"])
     picks: list[_Pick] = []
     for item in fused:
-        versions = sorted(
-            hits[item.item_id].items(), key=lambda pair: pair[1], reverse=True
-        )
+        matched = versions.get(item.item_id)
+        if not matched:
+            continue  # its only hit was deleted between the two statements
+        channels: list[MatchChannel] = []
+        if item.item_id in named:
+            channels.append("name")
+        if item.item_id in contented:
+            channels.append("content")
         picks.append(
             _Pick(
                 doc_id=item.item_id,
-                version_id=versions[0][0],
-                others=tuple(version_id for version_id, _ in versions[1:]),
-                matched_by=tuple(
-                    label
-                    for label in ("name", "content")
-                    if label in matched_by[item.item_id]
-                ),
+                version_id=matched[0],
+                others=tuple(matched[1:]),
+                matched_by=tuple(channels),
                 score=item.score,
             )
         )
     return picks
 
 
-# BM25 scores from pg_textsearch are negated: a match is below zero and the
+# Each channel ranks DOCUMENTS by their best hit and limits documents, not
+# rows. pg_textsearch BM25 scores are negated: a match is below zero and the
 # best match is the lowest value.
-_NAMES_BM25: Final = """
-    SELECT mt.doc_id, mt.version_id, mt.version_no
+NAMES_BM25: Final = """
+    SELECT mt.doc_id
     FROM matching mt
     JOIN document_names n
       ON n.deployment_id = :deployment_id AND n.version_id = mt.version_id
     WHERE n.observed_at <= :as_of
       AND n.name_text <@> to_bm25query(:query, 'ix_document_names_bm25') < 0
-    ORDER BY n.name_text <@> to_bm25query(:query, 'ix_document_names_bm25'),
-             mt.doc_id, mt.version_no DESC
+    GROUP BY mt.doc_id
+    ORDER BY min(n.name_text <@> to_bm25query(:query, 'ix_document_names_bm25')),
+             mt.doc_id
     LIMIT :limit
 """
 
-_NAMES_TRIGRAM: Final = """
-    SELECT mt.doc_id, mt.version_id, mt.version_no
+# `%>` is the GIN-indexable form of word_similarity(query, name) >= the
+# transaction's pg_trgm.word_similarity_threshold.
+NAMES_TRIGRAM: Final = """
+    SELECT mt.doc_id
     FROM matching mt
     JOIN document_names n
       ON n.deployment_id = :deployment_id AND n.version_id = mt.version_id
     WHERE n.observed_at <= :as_of
-      AND word_similarity(:query, n.name_text) >= :min_similarity
-    ORDER BY word_similarity(:query, n.name_text) DESC, mt.doc_id,
-             mt.version_no DESC
+      AND n.name_text %> :query
+    GROUP BY mt.doc_id
+    ORDER BY max(word_similarity(:query, n.name_text)) DESC, mt.doc_id
     LIMIT :limit
 """
 
-_CONTENT_BM25: Final = """
-    SELECT mt.doc_id, mt.version_id, mt.version_no
+CONTENT_BM25: Final = """
+    SELECT mt.doc_id
     FROM matching mt
     JOIN document_versions v
       ON v.deployment_id = :deployment_id AND v.version_id = mt.version_id
@@ -401,10 +434,53 @@ _CONTENT_BM25: Final = """
     JOIN chunk_search s
       ON s.deployment_id = :deployment_id AND s.chunk_id = c.chunk_id
     WHERE s.search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25') < 0
-    ORDER BY s.search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25'),
-             mt.doc_id, mt.version_no DESC
+    GROUP BY mt.doc_id
+    ORDER BY min(s.search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25')),
+             mt.doc_id
     LIMIT :limit
 """
+
+# Every judged version of the chosen documents that matches the query on any
+# channel, newest first: the first is returned, the rest are the other
+# matching versions. Evaluated after choosing, never from channel-limited rows.
+_MATCHING_VERSIONS: Final = """
+    SELECT mt.doc_id, mt.version_id
+    FROM matching mt
+    WHERE mt.doc_id = ANY(CAST(:picked AS uuid[]))
+      AND (
+        EXISTS (
+          SELECT 1 FROM document_names n
+          WHERE n.deployment_id = :deployment_id
+            AND n.version_id = mt.version_id
+            AND n.observed_at <= :as_of
+            AND (n.name_text <@> to_bm25query(:query, 'ix_document_names_bm25') < 0
+                 OR n.name_text %> :query)
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM document_versions v
+          JOIN chunks c
+            ON c.deployment_id = v.deployment_id
+           AND c.version_id = v.version_id
+           AND c.representation_id = v.current_representation_id
+          JOIN chunk_search s
+            ON s.deployment_id = c.deployment_id AND s.chunk_id = c.chunk_id
+          WHERE v.deployment_id = :deployment_id
+            AND v.version_id = mt.version_id
+            AND s.search_text <@> to_bm25query(:query, 'ix_chunk_search_bm25') < 0
+        )
+      )
+    ORDER BY mt.doc_id, mt.version_no DESC
+"""
+
+
+def p3_path(*, doc_id: UUID) -> str:
+    """The document's canonical Tier-1 P3 path, relative to the corpus root.
+
+    Stable across rebuilds and versions (``workers/p3.py``); it exists in a
+    published corpus snapshot only where the deployment builds P3.
+    """
+    return f"documents/{doc_id}"
 
 
 def _describe(
@@ -440,6 +516,7 @@ def _describe(
                 file_name=row["file_name"],
                 title=row["title"],
                 source_path=row["source_path"],
+                p3_path=p3_path(doc_id=pick.doc_id),
                 family=row["family"],
                 created_at=row["created_at"],
                 modified_at=row["modified_at"],
@@ -542,14 +619,12 @@ def _people_matched(
     )
 
 
-def _encode_cursor(
-    *, as_of: datetime, created_at: datetime | None, doc_id: UUID
-) -> str:
+def _encode_cursor(*, as_of: datetime, ingested_at: datetime, doc_id: UUID) -> str:
     """Opaque keyset position plus the pinned as-of instant."""
     raw = json.dumps(
         {
             "as_of": as_of.isoformat(),
-            "created_at": None if created_at is None else created_at.isoformat(),
+            "ingested_at": ingested_at.isoformat(),
             "doc_id": str(doc_id),
         }
     ).encode()
@@ -563,14 +638,12 @@ def _decode_cursor(cursor: str | None) -> _Cursor | None:
     padding = "=" * (-len(cursor) % 4)
     try:
         payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode())
-        created = payload["created_at"]
         as_of = datetime.fromisoformat(payload["as_of"])
-        if as_of.tzinfo is None:
-            raise ValueError("as_of must carry a timezone")
+        ingested_at = datetime.fromisoformat(payload["ingested_at"])
+        if as_of.tzinfo is None or ingested_at.tzinfo is None:
+            raise ValueError("cursor instants must carry a timezone")
         return _Cursor(
-            as_of=as_of,
-            created_at=None if created is None else datetime.fromisoformat(created),
-            doc_id=UUID(payload["doc_id"]),
+            as_of=as_of, ingested_at=ingested_at, doc_id=UUID(payload["doc_id"])
         )
     except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
         raise ValueError("cursor is malformed") from error

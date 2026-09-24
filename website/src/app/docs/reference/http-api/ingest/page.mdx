@@ -434,12 +434,19 @@ Unknown fields are rejected (`422`).
 ### What matches
 
 **Documents, judged by one version.** Each result is a document. With
-`versions: current` a document is judged by its current version, or, while
-it has none yet because its first upload is still processing, by its newest
-version. With `versions: all` any version may match, and the result is the
+`versions: current` and a `query`, a document is judged by its current
+version, or, while it has none yet because its first upload is still
+processing, by its newest version. Without a `query` (paged results), it is
+judged by its newest version that had arrived when the search started (see
+[Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
 newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
+
+Each result's `p3_path` is the document's stable path in the
+[filesystem view](/docs/self-hosting/filesystem-views), relative to its root:
+`documents/<doc_id>`. It exists there only when the deployment publishes the
+filesystem view; `source_path` is where the file came from instead.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -447,7 +454,9 @@ each later ingest of the same bytes under another name (see
 [File names, titles and paths](#file-names-titles-and-paths)). So a renamed
 file is found by its new and old names, and a partial or misspelled name
 still finds it. It also matches the document's text, by its best-matching
-passage. The two are combined by rank, and `matched_by` says which matched.
+passage. Names (matched by whole words and by similar spelling) and text are two
+equal channels combined by rank; each document counts once per channel, by
+its best match. `matched_by` says which matched.
 Text matching is by words; there is no semantic matching on this route.
 
 **People.** A term matches a person when it equals their address, or when
@@ -466,12 +475,14 @@ example to an address) instead of guessing.
 With `query`, results are ranked, and there is no next page: `cursor` is
 `null`. Raise `k` for more.
 
-Without `query`, results are every document the filters match, newest
-declared creation date first, documents without a date last, then by
-`doc_id`. Pass `cursor` back for the next page. The first page fixes an
-instant, returned as `as_of`, and every later page judges documents as they
-were then, so documents added while you page do not shift the pages. Start a
-new search to see them.
+Without `query`, results are every document the filters match, newest first
+by when the judged version was ingested, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `cursor` back for the next page. The
+first page fixes an instant, returned as `as_of`, and every later page judges
+each document by its newest version ingested by then. A document added, a
+version promoted to current, or a date filled in by processing while you
+page therefore neither moves nor repeats a row. Start a new search to see
+what arrived since.
 
 ### Response
 
@@ -489,6 +500,7 @@ new search to see them.
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
+      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
       "family": "office",
       "created_at": null,
       "modified_at": null,

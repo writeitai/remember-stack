@@ -219,8 +219,8 @@ remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.t
 JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
-there is no next page; without one they are newest first and `--cursor` reads
-the next page. `--limit` is 1 to 200 (default 20). See
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash

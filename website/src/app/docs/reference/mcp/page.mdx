@@ -63,8 +63,11 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+1. `ingest`, `pipeline_readiness` and `delete_document`, then
+   `search_documents` when the deployment's `GET /deployment` lists it
    (only `pipeline_readiness` and `search_documents` with `--read-only`).
+   A deployment that does not answer `GET /deployment` gets no
+   `search_documents`.
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -255,7 +258,8 @@ Alice") rather than asking about its content.
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
-`family`, `status`, `authors`, `recipients`, dates and `overview`),
+`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
+`overview`),
 `cursor`, `as_of` and `people_matched`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The

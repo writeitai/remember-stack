@@ -697,7 +697,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 
 | Field | Type | Contents |
 |---|---|---|
-| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest declared creation date first without one. |
+| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
 | `cursor` | string, nullable | The next page; always `null` with a query. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
@@ -714,6 +714,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
+| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
 | `family` | string | The format family. |
 | `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
 | `language` | string, nullable | |

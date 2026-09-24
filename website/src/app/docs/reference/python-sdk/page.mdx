@@ -531,7 +531,7 @@ and their text, and returns a
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
 and `doc_ids`. With a `query` the results are ranked and not paged; without
-one they are newest first and `cursor` pages them. Passing `cursor` with a
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
 `query`, a date without a timezone, or `k` outside 1 to 200 raises
 `pydantic.ValidationError` before any request. A malformed cursor raises
 `MemoryApiError` with `status_code` 400. What matches, and how, is in

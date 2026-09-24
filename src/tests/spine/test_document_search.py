@@ -36,7 +36,9 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine.document_metadata import merge_converter_metadata_on
+from rememberstack.spine.document_search import CHANNEL_MIN_CANDIDATES
 from rememberstack.spine.document_search import DocumentSearch
+from rememberstack.spine.document_search import NAMES_TRIGRAM
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import UploadIngestor
 from tests.database_reset import reset_database
@@ -112,9 +114,9 @@ class _Rig:
                 mapping_version="test@1",
             )
 
-    def add_content(self, *, ingested: IngestedVersion, body: str) -> None:
-        """Seed the version's live reading with one searchable chunk."""
-        representation_id, chunk_id = uuid4(), uuid4()
+    def add_content(self, *, ingested: IngestedVersion, bodies: list[str]) -> None:
+        """Seed the version's live reading with searchable chunks."""
+        representation_id = uuid4()
         with self.engine.begin() as connection:
             connection.execute(
                 text(
@@ -132,30 +134,34 @@ class _Rig:
                 ),
                 {"r": representation_id, "v": ingested.version_id},
             )
-            connection.execute(
-                text(
-                    "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
-                    " representation_id, ordinal, block_start, block_end,"
-                    " chunk_content_hash, extraction_input_hash, char_start, char_end,"
-                    " context_prefix, created_at) VALUES (:c, :d, :doc, :v, :r, 0, 0,"
-                    " 0, :hash, :hash, 0, 10, '', now())"
-                ),
-                {
-                    "c": chunk_id,
-                    "d": _DEPLOYMENT_ID,
-                    "doc": ingested.doc_id,
-                    "v": ingested.version_id,
-                    "r": representation_id,
-                    "hash": f"hash-{chunk_id}",
-                },
-            )
-            connection.execute(
-                text(
-                    "INSERT INTO chunk_search (deployment_id, chunk_id, search_text)"
-                    " VALUES (:d, :c, :body)"
-                ),
-                {"d": _DEPLOYMENT_ID, "c": chunk_id, "body": body},
-            )
+            for ordinal, body in enumerate(bodies):
+                chunk_id = uuid4()
+                connection.execute(
+                    text(
+                        "INSERT INTO chunks (chunk_id, deployment_id, doc_id,"
+                        " version_id, representation_id, ordinal, block_start,"
+                        " block_end, chunk_content_hash, extraction_input_hash,"
+                        " char_start, char_end, context_prefix, created_at) VALUES"
+                        " (:c, :d, :doc, :v, :r, :ordinal, 0, 0, :hash, :hash, 0, 10,"
+                        " '', now())"
+                    ),
+                    {
+                        "c": chunk_id,
+                        "d": _DEPLOYMENT_ID,
+                        "doc": ingested.doc_id,
+                        "v": ingested.version_id,
+                        "r": representation_id,
+                        "ordinal": ordinal,
+                        "hash": f"hash-{chunk_id}",
+                    },
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO chunk_search (deployment_id, chunk_id,"
+                        " search_text) VALUES (:d, :c, :body)"
+                    ),
+                    {"d": _DEPLOYMENT_ID, "c": chunk_id, "body": body},
+                )
 
     def search(
         self,
@@ -239,7 +245,7 @@ def test_a_renamed_file_is_found_by_its_new_and_old_names(rig: _Rig) -> None:
 
 def test_content_matches_by_the_best_chunk(rig: _Rig) -> None:
     notes = rig.ingest(filename="notes.md", content="# Notes\n")
-    rig.add_content(ingested=notes, body="the zanzibar partnership renewal terms")
+    rig.add_content(ingested=notes, bodies=["the zanzibar partnership renewal terms"])
     rig.ingest(filename="other.md", content="# Other\n")
 
     page = rig.search("zanzibar partnership")
@@ -248,40 +254,82 @@ def test_content_matches_by_the_best_chunk(rig: _Rig) -> None:
     assert page.documents[0].score is not None
 
 
-def test_filters_only_order_newest_first_and_cursor_pins_as_of(rig: _Rig) -> None:
-    dated = {}
-    for name, created in (
-        ("march.md", datetime(2025, 3, 1, tzinfo=UTC)),
-        ("january.md", datetime(2025, 1, 1, tzinfo=UTC)),
-        ("undated.md", None),
-    ):
-        ingested = rig.ingest(filename=name, content=f"# {name}\n")
-        if created is not None:
-            rig.merge(
-                version_id=ingested.version_id,
-                metadata=DocumentMetadata(created_at=created),
-            )
-        dated[name] = ingested.doc_id
+def test_filters_only_order_by_ingestion_and_cursor_pins_as_of(rig: _Rig) -> None:
+    first = rig.ingest(filename="first.md", content="# first\n")
+    second = rig.ingest(filename="second.md", content="# second\n")
+    third = rig.ingest(filename="third.md", content="# third\n")
 
-    first = rig.search(k=2)
-    assert _doc_ids(first) == [dated["march.md"], dated["january.md"]]
-    assert first.cursor is not None
+    page_one = rig.search(k=2)
+    assert _doc_ids(page_one) == [third.doc_id, second.doc_id]
+    assert page_one.cursor is not None
+    assert page_one.documents[0].p3_path == f"documents/{third.doc_id}"
 
-    # a document arriving between pages is not considered by this search
-    newest = rig.ingest(filename="newest.md", content="# newest\n")
+    # between pages: a new document arrives, the unseen document's version is
+    # promoted to current, and conversion fills its declared date
+    rig.ingest(filename="later.md", content="# later\n")
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :d"),
+            {"v": first.version_id, "d": first.doc_id},
+        )
     rig.merge(
-        version_id=newest.version_id,
-        metadata=DocumentMetadata(created_at=datetime(2026, 1, 1, tzinfo=UTC)),
+        version_id=first.version_id,
+        metadata=DocumentMetadata(created_at=datetime(2030, 1, 1, tzinfo=UTC)),
     )
-    second = rig.search(k=2, cursor=first.cursor)
-    assert _doc_ids(second) == [dated["undated.md"]]
-    assert second.cursor is None
-    assert second.as_of == first.as_of
-    assert _doc_ids(rig.search(k=1))[0] == newest.doc_id
 
-    # a date range excludes documents that declare no date
+    page_two = rig.search(k=2, cursor=page_one.cursor)
+    assert _doc_ids(page_two) == [first.doc_id]
+    assert page_two.cursor is None
+    assert page_two.as_of == page_one.as_of
+    # a new search sees what arrived since
+    assert len(rig.search(k=20).documents) == 4
+
+
+def test_a_version_arriving_while_paging_neither_moves_nor_repeats_a_row(
+    rig: _Rig,
+) -> None:
+    older = rig.ingest(filename="plan.md", content="# plan v1\n", source_ref="plan")
+    rig.ingest(filename="notes.md", content="# notes\n")
+    rig.ingest(filename="minutes.md", content="# minutes\n")
+
+    page_one = rig.search(k=2)
+    seen = _doc_ids(page_one)
+    assert older.doc_id not in seen
+
+    # the paged-over lineage gains a newer version, which becomes current
+    newer = rig.ingest(filename="plan.md", content="# plan v2\n", source_ref="plan")
+    assert newer.doc_id == older.doc_id
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :d"),
+            {"v": newer.version_id, "d": newer.doc_id},
+        )
+
+    page_two = rig.search(k=2, cursor=page_one.cursor)
+    assert _doc_ids(page_two) == [older.doc_id]
+    # judged as it was at the pinned instant: the older version
+    assert page_two.documents[0].version_id == older.version_id
+    assert set(seen).isdisjoint(_doc_ids(page_two))
+
+
+def test_date_ranges_are_filters_that_exclude_undated_documents(rig: _Rig) -> None:
+    dated = rig.ingest(filename="march.md", content="# march\n")
+    rig.merge(
+        version_id=dated.version_id,
+        metadata=DocumentMetadata(created_at=datetime(2025, 3, 1, tzinfo=UTC)),
+    )
+    early = rig.ingest(filename="january.md", content="# january\n")
+    rig.merge(
+        version_id=early.version_id,
+        metadata=DocumentMetadata(created_at=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+    rig.ingest(filename="undated.md", content="# undated\n")
+
     ranged = rig.search(created_from=datetime(2025, 2, 1, tzinfo=UTC))
-    assert set(_doc_ids(ranged)) == {dated["march.md"], newest.doc_id}
+    assert _doc_ids(ranged) == [dated.doc_id]
+    assert _doc_ids(rig.search(created_to=datetime(2025, 2, 1, tzinfo=UTC))) == [
+        early.doc_id
+    ]
 
 
 def test_people_filters_match_names_and_addresses_and_disclose_people(
@@ -337,6 +385,7 @@ def test_versions_all_matches_any_live_version(rig: _Rig) -> None:
 
     # judged by the newest version while nothing is current yet
     assert rig.search(authors=["alice"]).documents == ()
+    assert rig.search("spec", authors=["alice"]).documents == ()
     old = rig.search(authors=["alice"], versions="all").documents
     assert [(r.doc_id, r.version_id) for r in old] == [(first.doc_id, first.version_id)]
     assert old[0].authors[0].name == "Alice Novak"
@@ -345,14 +394,16 @@ def test_versions_all_matches_any_live_version(rig: _Rig) -> None:
     assert [r.version_id for r in both] == [second.version_id]
     assert both[0].other_matching_version_ids == (first.version_id,)
 
-    # once the first version is current, the default judges by it
+    # once the first version is current, a ranked search judges by it; a
+    # paged filter-only search still judges by the newest arrived version
     with rig.engine.begin() as connection:
         connection.execute(
             text("UPDATE documents SET current_version_id = :v WHERE doc_id = :d"),
             {"v": first.version_id, "d": first.doc_id},
         )
-    assert _doc_ids(rig.search(authors=["alice"])) == [first.doc_id]
-    assert rig.search(authors=["bob"]).documents == ()
+    assert _doc_ids(rig.search("spec", authors=["alice"])) == [first.doc_id]
+    assert rig.search("spec", authors=["bob"]).documents == ()
+    assert _doc_ids(rig.search(authors=["bob"])) == [first.doc_id]
 
 
 def test_deleted_and_forgotten_documents_never_match(rig: _Rig) -> None:
@@ -396,3 +447,50 @@ def test_family_language_and_doc_id_filters(rig: _Rig) -> None:
     assert _doc_ids(rig.search("costs", doc_ids=[str(notes.doc_id)])) == [notes.doc_id]
     with pytest.raises(ValueError, match="cursor is malformed"):
         rig.search(cursor="not-a-cursor")
+
+
+def test_one_document_with_many_matching_chunks_cannot_crowd_out_others(
+    rig: _Rig,
+) -> None:
+    """Channels limit documents, not rows: more hits than the limit in one file."""
+    crowded = rig.ingest(filename="crowded.md", content="# crowded\n")
+    rig.add_content(
+        ingested=crowded,
+        bodies=["zanzibar zanzibar zanzibar"] * (CHANNEL_MIN_CANDIDATES + 20),
+    )
+    others = []
+    for index in range(3):
+        other = rig.ingest(filename=f"other-{index}.md", content=f"# other {index}\n")
+        rig.add_content(
+            ingested=other,
+            bodies=[f"a long passage that mentions zanzibar once, number {index}"],
+        )
+        others.append(other.doc_id)
+
+    page = rig.search("zanzibar", k=10)
+    assert set(_doc_ids(page)) == {crowded.doc_id, *others}
+    assert all(result.matched_by == ("content",) for result in page.documents)
+
+
+def test_the_trigram_name_channel_uses_the_indexable_operator(
+    rig: _Rig, database_engine: Engine
+) -> None:
+    """`%>` is served by ix_document_names_trgm; `word_similarity() >=` is not."""
+    rig.ingest(filename="Q3_sales_2025.xlsx", content="sheet", mime=_XLSX)
+    assert "n.name_text %> :query" in NAMES_TRIGRAM
+    with database_engine.connect() as connection:
+        connection.execute(text("SET LOCAL enable_seqscan = off"))
+        connection.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.3"))
+        plan = "\n".join(
+            connection.execute(
+                text(
+                    "EXPLAIN SELECT version_id FROM document_names"
+                    " WHERE name_text %> 'q3 sales'"
+                )
+            ).scalars()
+        )
+        matched = connection.execute(
+            text("SELECT count(*) FROM document_names WHERE name_text %> 'q3 sales'")
+        ).scalar_one()
+    assert "ix_document_names_trgm" in plan
+    assert matched == 1

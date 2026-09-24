@@ -606,7 +606,6 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
         "ingest",
         "pipeline_readiness",
         "delete_document",
-        "search_documents",
         "resolve_entity",
     ]
     # Every tool carries the catalogue's annotations, operations included.
@@ -636,12 +635,7 @@ def test_remote_mcp_lists_write_tools_when_operations_is_404() -> None:
     )
     server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == [
-        "ingest",
-        "pipeline_readiness",
-        "delete_document",
-        "search_documents",
-    ]
+    assert names == ["ingest", "pipeline_readiness", "delete_document"]
 
 
 def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
@@ -665,8 +659,7 @@ def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
 
     # Inspecting readiness changes nothing, so a read-only server keeps it.
     assert [tool["name"] for tool in server.list_tools()["tools"]] == [  # type: ignore[index]
-        "pipeline_readiness",
-        "search_documents",
+        "pipeline_readiness"
     ]
     rejected = server.call_tool(
         name="ingest", arguments={"text": "forbidden", "filename": "x.md"}
@@ -713,14 +706,16 @@ def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
     assert [tool["name"] for tool in responses[1]["result"]["tools"]] == [
-        "pipeline_readiness",
-        "search_documents",
+        "pipeline_readiness"
     ]
     assert responses[2]["result"]["isError"] is True
     assert "disabled" in responses[2]["result"]["content"][0]["text"]
+    # Discovery reads only: the served-tools probe, operations, query space.
     assert requested_paths == [
+        "/deployment",
         "/operations",
         "/query/space",
+        "/deployment",
         "/operations",
         "/query/space",
     ]
@@ -793,7 +788,6 @@ def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
         "ingest",
         "pipeline_readiness",
         "delete_document",
-        "search_documents",
         *OPEN_QUERY_TOOL_NAMES,
     ]
 
@@ -853,7 +847,6 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
             "ingest",
             "pipeline_readiness",
             "delete_document",
-            "search_documents",
             "resolve_entity",
         ], f"unexpected tools for payload {payload!r}"
         assert not any(name in OPEN_QUERY_TOOL_NAMES for name in names)
@@ -898,7 +891,6 @@ def test_remote_mcp_survives_an_invalid_deployment_response() -> None:
         "ingest",
         "pipeline_readiness",
         "delete_document",
-        "search_documents",
     ]
 
 

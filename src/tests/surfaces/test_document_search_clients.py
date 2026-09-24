@@ -24,6 +24,7 @@ from remember import DocumentSearchRequest
 from remember import MemoryApiError
 from remember import MemoryClient
 from remember.cli import main as cli_main
+from remember.models import DeploymentBuildInfo
 from remember.models import DocumentSearchResult
 from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model.auth import PerimeterScope
@@ -71,6 +72,7 @@ class _Search:
                     version_no=1,
                     status="ready",
                     file_name="Q3_sales_2025.xlsx",
+                    p3_path=f"documents/{_DOC}",
                     family="office",
                 ),
             ),
@@ -208,14 +210,47 @@ def test_remote_mcp_searches_even_when_read_only(
 
 
 def test_cursor_round_trips_and_refuses_garbage() -> None:
-    encoded = _encode_cursor(as_of=_AT, created_at=None, doc_id=_DOC)
-    decoded = _decode_cursor(encoded)
+    earlier = datetime(2026, 9, 24, 11, 0, tzinfo=UTC)
+    decoded = _decode_cursor(
+        _encode_cursor(as_of=_AT, ingested_at=earlier, doc_id=_DOC)
+    )
     assert decoded is not None
     assert decoded.as_of == _AT
-    assert decoded.created_at is None
+    assert decoded.ingested_at == earlier
     assert decoded.doc_id == _DOC
-    dated = _decode_cursor(_encode_cursor(as_of=_AT, created_at=_AT, doc_id=_DOC))
-    assert dated is not None and dated.created_at == _AT
     for garbage in ("not-base64!", "e30", "bm9wZQ"):
         with pytest.raises(ValueError, match="cursor is malformed"):
             _decode_cursor(garbage)
+
+
+def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:
+    """What a remote MCP lists against an origin with or without the route."""
+    boundary = _Boundary()
+    build_info = _BuildInfo()
+    app = build_api(
+        engine=cast("QueryEngine", object()),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=boundary,
+        readiness=boundary,
+        build_info=build_info,
+        document_search=_Search() if document_search else None,
+    )
+    server = RemoteOperationMcpServer(
+        client=MemoryClient(client=TestClient(app)), read_only=read_only
+    )
+    tools = cast("list[dict[str, object]]", server.list_tools()["tools"])
+    return [cast(str, entry["name"]) for entry in tools]
+
+
+class _BuildInfo:
+    def build_info(self, *, deployment_id: UUID) -> DeploymentBuildInfo:
+        assert deployment_id == _DEPLOYMENT_ID
+        return DeploymentBuildInfo(build_revision="abc")
+
+
+def test_remote_mcp_lists_search_documents_only_when_the_origin_serves_it() -> None:
+    assert "search_documents" in _remote_names(document_search=True, read_only=False)
+    assert "search_documents" in _remote_names(document_search=True, read_only=True)
+    assert "search_documents" not in _remote_names(
+        document_search=False, read_only=False
+    )

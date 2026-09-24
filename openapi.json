@@ -1070,6 +1070,10 @@
             ],
             "title": "Overview"
           },
+          "p3_path": {
+            "title": "P3 Path",
+            "type": "string"
+          },
           "recipients": {
             "default": [],
             "items": {
@@ -1149,6 +1153,7 @@
           "version_id",
           "version_no",
           "status",
+          "p3_path",
           "family"
         ],
         "title": "DocumentSearchResult",

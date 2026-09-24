@@ -177,7 +177,9 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
-    " recipients, dates and a short overview when one exists. When a people"
+    " recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem"
+    " view, where one is published) and a short overview when one exists."
+    " When a people"
     " filter matches several different people, people_matched lists each with"
     " a document count: narrow the filter (for example by address) instead of"
     " guessing. Without query, results are newest first and cursor pages them."

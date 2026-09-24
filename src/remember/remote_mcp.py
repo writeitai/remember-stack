@@ -113,22 +113,23 @@ class RemoteOperationMcpServer:
     def list_tools(self) -> dict[str, object]:
         """List remote write tools, assured operations, then open-query tools.
 
-        Order is stable: write/readiness tools, ``delete_document`` and
-        ``search_documents``, operations from ``GET /operations``, then the seven open-query tools
+        Order is stable: write/readiness tools, ``delete_document``, then
+        ``search_documents`` when the origin's ``GET /deployment`` reports
+        it (kept under ``--read-only``: it only reads), operations from
+        ``GET /operations``, then the seven open-query tools
         when the remote deployment mounts the open facade (same composition
         gate as local MCP and HTTP). ``--read-only`` omits every tool that
         changes memory (``ingest`` and ``delete_document``).
         """
+        names = [
+            INGEST_TOOL_NAME,
+            PIPELINE_READINESS_TOOL_NAME,
+            DELETE_DOCUMENT_TOOL_NAME,
+        ]
+        if self._origin_serves(name=SEARCH_DOCUMENTS_TOOL_NAME):
+            names.append(SEARCH_DOCUMENTS_TOOL_NAME)
         tools = render_tools_list(
-            [
-                tool(name)
-                for name in (
-                    INGEST_TOOL_NAME,
-                    PIPELINE_READINESS_TOOL_NAME,
-                    DELETE_DOCUMENT_TOOL_NAME,
-                    SEARCH_DOCUMENTS_TOOL_NAME,
-                )
-            ],
+            [tool(name) for name in names],
             project=False,
             path_ingest=True,
             read_only=self._read_only,
@@ -209,6 +210,20 @@ class RemoteOperationMcpServer:
             "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
         }
+
+    def _origin_serves(self, *, name: str) -> bool:
+        """Whether the origin's ``GET /deployment`` lists this catalogue tool.
+
+        A tool whose route the origin may not serve is advertised only when
+        the origin says it serves it. An origin that cannot answer (an older
+        engine, a proxy without the route, a transport failure) is taken as
+        not serving it: the tool is omitted, and nothing else fails.
+        """
+        try:
+            served = self._client.deployment_build_info().tools
+        except MemoryApiError:
+            return False
+        return name in served
 
     def _assured_operation_descriptors(self) -> tuple[ToolDescriptor, ...]:
         """Return remote assured-operation tools, or none if the origin has no registry.

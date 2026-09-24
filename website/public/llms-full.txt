@@ -9201,12 +9201,19 @@ Unknown fields are rejected (`422`).
 ### What matches
 
 **Documents, judged by one version.** Each result is a document. With
-`versions: current` a document is judged by its current version, or, while
-it has none yet because its first upload is still processing, by its newest
-version. With `versions: all` any version may match, and the result is the
+`versions: current` and a `query`, a document is judged by its current
+version, or, while it has none yet because its first upload is still
+processing, by its newest version. Without a `query` (paged results), it is
+judged by its newest version that had arrived when the search started (see
+[Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
 newest version that did, with the others in `other_matching_version_ids`.
 Filters and names always use the returned version's own metadata. Deleted
 documents and deleted versions never match.
+
+Each result's `p3_path` is the document's stable path in the
+[filesystem view](https://remember.dev/docs/self-hosting/filesystem-views), relative to its root:
+`documents/<doc_id>`. It exists there only when the deployment publishes the
+filesystem view; `source_path` is where the file came from instead.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -9214,7 +9221,9 @@ each later ingest of the same bytes under another name (see
 [File names, titles and paths](#file-names-titles-and-paths)). So a renamed
 file is found by its new and old names, and a partial or misspelled name
 still finds it. It also matches the document's text, by its best-matching
-passage. The two are combined by rank, and `matched_by` says which matched.
+passage. Names (matched by whole words and by similar spelling) and text are two
+equal channels combined by rank; each document counts once per channel, by
+its best match. `matched_by` says which matched.
 Text matching is by words; there is no semantic matching on this route.
 
 **People.** A term matches a person when it equals their address, or when
@@ -9233,12 +9242,14 @@ example to an address) instead of guessing.
 With `query`, results are ranked, and there is no next page: `cursor` is
 `null`. Raise `k` for more.
 
-Without `query`, results are every document the filters match, newest
-declared creation date first, documents without a date last, then by
-`doc_id`. Pass `cursor` back for the next page. The first page fixes an
-instant, returned as `as_of`, and every later page judges documents as they
-were then, so documents added while you page do not shift the pages. Start a
-new search to see them.
+Without `query`, results are every document the filters match, newest first
+by when the judged version was ingested, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `cursor` back for the next page. The
+first page fixes an instant, returned as `as_of`, and every later page judges
+each document by its newest version ingested by then. A document added, a
+version promoted to current, or a date filled in by processing while you
+page therefore neither moves nor repeats a row. Start a new search to see
+what arrived since.
 
 ### Response
 
@@ -9256,6 +9267,7 @@ new search to see them.
       "file_name": "Q3_sales_2025.xlsx",
       "title": null,
       "source_path": "finance/2025",
+      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
       "family": "office",
       "created_at": null,
       "modified_at": null,
@@ -12085,7 +12097,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 
 | Field | Type | Contents |
 |---|---|---|
-| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest declared creation date first without one. |
+| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
 | `cursor` | string, nullable | The next page; always `null` with a query. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
@@ -12102,6 +12114,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
+| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
 | `family` | string | The format family. |
 | `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
 | `language` | string, nullable | |
@@ -13950,7 +13963,7 @@ and their text, and returns a
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
 and `doc_ids`. With a `query` the results are ranked and not paged; without
-one they are newest first and `cursor` pages them. Passing `cursor` with a
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
 `query`, a date without a timezone, or `k` outside 1 to 200 raises
 `pydantic.ValidationError` before any request. A malformed cursor raises
 `MemoryApiError` with `status_code` 400. What matches, and how, is in
@@ -14734,8 +14747,8 @@ remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.t
 JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
-there is no next page; without one they are newest first and `--cursor` reads
-the next page. `--limit` is 1 to 200 (default 20). See
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash
@@ -15113,8 +15126,11 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+1. `ingest`, `pipeline_readiness` and `delete_document`, then
+   `search_documents` when the deployment's `GET /deployment` lists it
    (only `pipeline_readiness` and `search_documents` with `--read-only`).
+   A deployment that does not answer `GET /deployment` gets no
+   `search_documents`.
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -15304,7 +15320,8 @@ Alice") rather than asking about its content.
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
-`family`, `status`, `authors`, `recipients`, dates and `overview`),
+`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
+`overview`),
 `cursor`, `as_of` and `people_matched`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The

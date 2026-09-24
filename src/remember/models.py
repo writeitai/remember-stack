@@ -228,6 +228,10 @@ class DocumentSearchResult(BaseModel):
     file_name: str | None = None
     title: str | None = None
     source_path: str | None = None
+    p3_path: str
+    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
+    the corpus root; present in a published snapshot only where the
+    deployment builds the filesystem view."""
     family: str
     created_at: datetime | None = None
     modified_at: datetime | None = None
