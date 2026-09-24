@@ -30,8 +30,8 @@ operation forgets a source contribution, not every independently obtained copy o
 > inventory lists every lineage in the closure, admitted behind one barrier. Forgetting one
 > **member** writes a content-free `document_member_suppressions` key so re-expanding the
 > parent (including after restore) skips it. Private query assets and staged member bytes are
-> inventoried with their representation. D134's `document_metadata` and `document_people` rows
-> are source-bearing and scrubbed with the lineage. Authority:
+> inventoried with their representation. D134's `document_metadata`, `document_people` and
+> `document_names` rows are source-bearing and deleted with the lineage. Authority:
 > [`format_conversion_design.md`](format_conversion_design.md) §5.4,
 > [`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §2.
 

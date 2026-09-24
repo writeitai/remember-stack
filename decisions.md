@@ -2798,7 +2798,7 @@ D66.
 
 **Refined by D133 and D134.** Forgetting a container forgets its descendant closure under one
 manifest; forgetting one member records a content-free suppression so re-expansion skips it.
-D134's document metadata and people rows are scrubbed with their lineage.
+D134's document metadata, people and observed-name rows are deleted with their lineage.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -6204,7 +6204,9 @@ report.
 1. **General document metadata.** Every version gets the same fields whatever
    its format — `file_name`, `title`, `authors`, `recipients` (people as name
    plus address or handle), `created_at`, `modified_at`, `language`,
-   `thread_ref`, `family` — with per-field provenance (source or connector).
+   `thread_ref`, `family` — with per-field provenance (source or connector),
+   plus every name a version was observed under (`document_names`), so renames
+   are searchable.
    Each family design maps its native fields onto them (an email's From is
    `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
    `document_metadata` and `document_people`.

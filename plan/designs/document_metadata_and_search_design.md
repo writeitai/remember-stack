@@ -83,9 +83,10 @@ provide a field, the file's own value wins and the connector's is kept in
 email's `From` can be forged, and results say where the value came from.
 
 **Storage (D37).** These are compact, query-critical metadata, so they live
-in PostgreSQL: `document_metadata` (one row per version, with trigram and
-BM25 indexes on the name fields) and `document_people` (one row per person
-per role, indexed on the normalized name and address). Schema:
+in PostgreSQL: `document_metadata` (one row per version), `document_people`
+(one row per person per role, indexed on the normalized name and address)
+and `document_names` (every name a version was observed under, with the
+trigram and BM25 indexes the name channel uses). Schema:
 [`postgres_schema_design.md`](postgres_schema_design.md) §6. The mapping
 that produced them is versioned separately (`metadata_mapping_version`) from
 the E2 extractor.
@@ -99,7 +100,9 @@ keeps what conversion observed.
 **Deletion.** Normal delete soft-tombstones versions and keeps their rows for
 audit (schema §13.1), so the metadata rows stay too; every read in §3 and §4
 considers only **live** versions of live lineages, so a deleted document
-never matches. Hard forget scrubs both tables for the lineage (D74).
+never matches. Hard forget deletes the lineage's rows from all three tables
+(D74) — `document_names` holds file names and paths, so it is source-bearing
+like the others.
 
 ## 3. `search_documents`
 

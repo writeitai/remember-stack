@@ -2647,7 +2647,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
-  lineage's `document_members` rows, `document_metadata` and `document_people` rows (D134) and
+  lineage's `document_members` rows, `document_metadata`, `document_people` and `document_names`
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people) and
   private-store objects (D133), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
