@@ -235,6 +235,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
             f"[✓] Engine reachable and authenticated ({elapsed}ms, "
             f"build {info.build_revision or 'unknown'})"
         )
+        for line in _tool_version_mismatches(info.tools):
+            print(f"[!] {line}")
+            all_ok = False
     except (MemoryApiError, CredentialError, ValueError) as err:
         print(f"[!] Engine check failed: {err}")
         all_ok = False
@@ -727,6 +730,24 @@ def _run_connectors(args: argparse.Namespace) -> int:
             result = client.connector_status(connector_id=args.connector_id)
     print(result.model_dump_json())
     return 0
+
+
+def _tool_version_mismatches(served: dict[str, int]) -> list[str]:
+    """Catalogue tools the engine serves at another version (hidden by `remember mcp`)."""
+    from remember.mcp_tools import memory_tools
+
+    lines: list[str] = []
+    for definition in memory_tools():
+        version = served.get(definition.name)
+        if version is None or version == definition.tool_version:
+            continue
+        newer = "remember" if version > definition.tool_version else "the engine"
+        lines.append(
+            f"MCP tool {definition.name!r}: this remember has version"
+            f" {definition.tool_version}, the engine serves {version}; `remember mcp`"
+            f" leaves it out until you upgrade {newer}"
+        )
+    return lines
 
 
 def _run_mcp(args: argparse.Namespace) -> int:

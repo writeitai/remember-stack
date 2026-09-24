@@ -893,3 +893,14 @@ def test_http_transport_uses_the_engine_url_and_no_key(
     monkeypatch.setenv("REMEMBER_API_KEY", "ignored")
     assert main(["mcp", "--transport", "http", "--read-only"]) == 0
     assert recorded["http"] == ("127.0.0.1:8765", "http://127.0.0.1:8000", True)
+
+
+def test_doctor_names_a_tool_served_at_another_version() -> None:
+    from remember.cli import _tool_version_mismatches
+
+    newer_engine = tool("facts_context").tool_version + 1
+    lines = _tool_version_mismatches(
+        _served(facts_context=newer_engine, query_sql=None)
+    )
+    assert len(lines) == 1
+    assert "'facts_context'" in lines[0] and "upgrade remember" in lines[0]
