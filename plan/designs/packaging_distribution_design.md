@@ -68,8 +68,10 @@ published to PyPI (D108).
 
 - **Query**: the typed SDK + CLI + MCP server over the retrieval API (D48–D51, D87) —
   primitives, the four closed assured operations, D49 envelopes, open SQL with bounded live-graph helpers, and governed
-  saved queries. MCP renders the four platform-owned assured descriptors plus open-query
-  infrastructure; customer and `examples.*` saved queries do not become top-level intent tools.
+  saved queries. The four platform-owned assured operations are the only MCP intent tools;
+  MCP renders the full shared catalogue, whose other entries are infrastructure (`ingest`,
+  `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools);
+  customer and `examples.*` saved queries do not become top-level tools.
   Every memory tool's definition lives once in the public `remember.mcp_tools` catalogue,
   which every MCP host imports (D136,
   [one_key_client_surfaces_design.md](one_key_client_surfaces_design.md)).

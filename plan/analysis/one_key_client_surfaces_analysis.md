@@ -270,8 +270,10 @@ increasing sequence; the engine persists the last sequence it accepted, so
 neither a replayed older document nor a restart can roll revocation back. A
 maximum age measured from the document's issue time gives a true worst case
 (a revoked key stops within that age plus clock leeway, even if every fetch
-fails), and short-lived credentials whose whole lifetime is shorter than the
-bound do not depend on revocation. The document's `active_kids` list makes key
+fails). Until a fresh document is accepted — at first start, or after it goes
+stale — every signed credential is refused (fail closed); an exemption for
+short-lived credentials was considered and dropped as an extra rule with no
+need. The document's `active_kids` list makes key
 rotation an actual revocation: credentials signed by a retired generation are
 refused even while the old public key is still published.
 

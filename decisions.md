@@ -6253,7 +6253,9 @@ chose between deployment and control tokens against a hard-coded
    sequences rejected, last sequence persisted, the first validly signed
    document accepted, later ones signed by a key active in the previous one),
    with `exp = iat + S`, and whose `active_kids` list retires signing-key
-   generations; a revoked key stops working within S plus clock leeway.
+   generations. Without a fresh accepted document (at first start, or once
+   it is older than S) every signed credential is refused; a revoked key
+   stops working within S plus clock leeway.
    The `service` credential kind (`dpcred:` subject) remains part of the
    generic contract. The perimeter enforces per-key and per-deployment rate
    and in-flight limits on the direct path (`429` with `Retry-After`),

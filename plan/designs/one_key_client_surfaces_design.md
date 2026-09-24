@@ -180,11 +180,14 @@ equality (§10). No MCP host renders tools from `GET /operations`.
 The client package and the engine are released together but installed
 separately, so a host's catalogue and a deployment can differ.
 
-- A tool's `tool_version` rises when an existing call could fail or change
-  meaning: a removed or renamed argument, a newly required argument, a
-  narrowed type or bound, or a changed result shape. Adding an optional
-  argument or editing description wording does not raise it, so ordinary
-  additive releases never hide a tool.
+- A tool's `tool_version` rises whenever its input schema admits a call that
+  an engine serving the previous version cannot handle — a new argument,
+  optional ones included, a widened type or bound, a new enum value — and
+  whenever an existing call could fail or change meaning (a removed or renamed
+  argument, a newly required argument, a narrowed type or bound, a changed
+  result shape). Description-only edits need no bump. Because hosts render a
+  tool only at an equal version (below), an agent never sees an argument the
+  deployment would reject.
 - Each deployment reports what it serves in `GET /deployment` (readable with
   `memory:read`; PR #455 adds the route to the read table), in a new `tools`
   object mapping tool name to `tool_version`, e.g. `{"facts_context": 3, …}`.
@@ -393,6 +396,8 @@ The inline JWKS setting and the plain revoked-id list are removed.
 
 ### 7.2 Accepted credential
 
+- **Precondition**: a fresh revocation document has been accepted (§7.5);
+  without one every signed credential is refused.
 - **Form**: `<prefix>_<JWS>`, where the prefix is letters only (remember.dev
   uses `rmb_`), so secret scanners such as GitHub push protection can
   recognise leaked keys. When the bearer does not start with a JWS header
@@ -494,16 +499,19 @@ key of the fetched JWKS, header `typ` `revocation+jwt`, with claims:
   value). A failed fetch or a rejected document keeps the last accepted one.
   The issuer re-issues the document every R.
 
-**Outage bound.** An accepted document is valid until `min(exp, iat + S)`.
-After that — the issuer or the network is down — the engine refuses every
-credential whose own lifetime (`exp − iat`) exceeds S, and logs a structured
-error; shorter-lived credentials need no revocation and continue, and the
-shared secret is unaffected. A key revoked at time *r* therefore stops working
-at this deployment by **r + S** (plus the 30 s clock leeway) whatever happens
-to fetches: either a document listing it arrives sooner, or the last document
-without it was issued before *r* and expires by *r + S*. A deployment with
-`API_KEY_ISSUER` set but no accepted document yet accepts only credentials
-whose lifetime is at most S.
+**Fail closed without a fresh document** (identical in the cloud design). An
+accepted document is fresh until `min(exp, iat + S)`. The engine refuses
+**every** signed credential — `key`, `session` and `service` alike — until the
+first document is accepted, and again whenever the accepted document is no
+longer fresh (including one loaded from the spine at start-up that is already
+stale), and logs a structured error each time. Only the shared-secret bearer
+is unaffected. There is no exemption for short-lived credentials: one rule is
+simpler to verify and cannot be gamed by a credential's own `exp`. A key
+revoked at time *r* therefore stops working at this deployment by **r + S**
+(plus the 30 s clock leeway) whatever happens to fetches: either a document
+listing it arrives sooner, or the last document without it was issued before
+*r* and stops being fresh by *r + S*, after which nothing signed is accepted
+until a newer document arrives.
 
 **Key rotation.** Retiring a signing-key generation is done only by removing
 its `kid` from `active_kids`: every credential signed by it is refused from
@@ -739,7 +747,7 @@ The account API's operations and their permissions are defined by the issuer
 | HTTP transport: bad `Origin` | `403` |
 | Engine: wrong `aud`, not covering this deployment, wrong issuer, revoked | `401` |
 | Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After` |
-| Engine: revocation document older than `min(exp, iat + S)` | Credentials living longer than S `401`; shorter ones and the shared secret unaffected |
+| Engine: no revocation document accepted yet, or accepted one older than `min(exp, iat + S)` | Every signed credential `401`; shared secret unaffected |
 | Engine: valid key lacking permission | `403 insufficient_scope` |
 | Client: project resolution fails | `ProjectResolutionError` / exit 1; no localhost fallback |
 | Stored key with an explicit foreign URL | Key not attached; message says so |
@@ -800,8 +808,10 @@ Perimeter (`signed_token_auth.py`):
   `memory:*`; no memory permission → `403`;
 - revocation documents: lower `seq`, equal `seq` with different content,
   wrong `aud`, signer not in `active_kids` → rejected; persisted `seq`
-  survives restart; staleness bound refuses long-lived keys only and the
-  worst case `r + S + leeway` holds with fetches failing; a `kid` dropped from
+  survives restart; with no accepted document, or a stale one (including a
+  stale one loaded at start-up), every signed kind is refused and the shared
+  secret still works; the worst case `r + S + leeway` holds with fetches
+  failing; a `kid` dropped from
   `active_kids` is refused while still in the JWKS;
 - audit actor ids `keycred:`/`browsercred:`/`dpcred:`.
 
