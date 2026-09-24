@@ -511,8 +511,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.17.0](https://github.com/writeitai/remember-stack/releases/tag/v0.17.0)
-([on PyPI](https://pypi.org/project/remember/0.17.0/)).
+[v0.17.1](https://github.com/writeitai/remember-stack/releases/tag/v0.17.1)
+([on PyPI](https://pypi.org/project/remember/0.17.1/)).
 
 ## 3. Point the client at your endpoint
 
@@ -8010,7 +8010,7 @@ Two images make up the stack:
 
 | Image | Where it comes from | Architectures |
 |---|---|---|
-| `ghcr.io/writeitai/remember-stack:0.17.0` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
+| `ghcr.io/writeitai/remember-stack:0.17.1` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
 | `rememberstack-postgres:19beta3` | Built locally by Compose from `Dockerfile.postgres` on first start | Whatever your machine builds |
 
 The release workflow publishes the API/worker image for `linux/amd64`
@@ -8159,12 +8159,12 @@ in particular the note on arm64 machines.
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.17.0
+git checkout v0.17.1
 cp .env.example .env
 ```
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.17.0`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10485,7 +10485,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.0/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.1/openapi.json).
 
 ## Base URL
 
@@ -16513,7 +16513,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Applies to: remember.dev, self-hosted
 
-This page describes the `remember` CLI (v0.17.0), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.17.1), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions, connects
 coding agents and signs you in to remember.dev. It comes with the `remember`
