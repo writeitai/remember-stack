@@ -411,7 +411,7 @@ _FULL_V25 = LoCoMoProtocol(
     answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
     judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
-    chat_provider_only=("openai/flex",),
+    chat_provider_only=("openai/flex", "openai"),
 )
 
 _FULL_V25_LUNA_PRO = LoCoMoProtocol(
@@ -434,7 +434,7 @@ _FULL_V25_LUNA_PRO = LoCoMoProtocol(
     answer_agent_reasoning_effort="high",
     judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
-    chat_provider_only=("openai/flex",),
+    chat_provider_only=("openai/flex", "openai"),
 )
 
 _FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(

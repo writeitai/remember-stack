@@ -719,6 +719,56 @@ class OpenRouterModelProvider:
                     provider_host=slug,
                 )
             body = response.json()
+            body_error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(body_error, dict):
+                error_code = body_error.get("code")
+                error_msg = str(body_error.get("message", "Unknown OpenRouter error"))
+                if (
+                    error_code == 429
+                    or "rate" in error_msg.lower()
+                    or "overload" in error_msg.lower()
+                ):
+                    last_error = (
+                        f"OpenRouter /chat/completions returned 429 in body: {error_msg}"
+                    )
+                    if throttle_used >= settings.chat_throttle_retries:
+                        raise OpenRouterProviderError(last_error, provider_host=slug)
+                    self._record_generation(
+                        request=request,
+                        response_type_name=response_type.__name__,
+                        raw_content=None,
+                        outcome="transport_error",
+                        error=last_error,
+                        usage=None,
+                        latency_ms=attempt_ms,
+                        provider_host=slug,
+                    )
+                    wait_s = _throttle_wait_s(
+                        throttle_used=throttle_used,
+                        response=response,
+                        cap_s=settings.chat_upstream_overload_max_retry_after_s,
+                    )
+                    if len(remaining) > 1:
+                        _logger.warning(
+                            "OpenRouter %s overloaded (429 in body); rotating after %.1fs",
+                            slug,
+                            wait_s,
+                        )
+                        time.sleep(wait_s)
+                        remaining.pop(0)
+                    else:
+                        _logger.warning(
+                            "OpenRouter %s overloaded (429 in body); retrying last survivor after %.1fs",
+                            slug,
+                            wait_s,
+                        )
+                        time.sleep(wait_s)
+                    throttle_used += 1
+                    continue
+                raise OpenRouterProviderError(
+                    f"OpenRouter /chat/completions returned error in body: {error_msg}",
+                    provider_host=slug,
+                )
             usage = self._completion_usage(body=body, started_ns=started_ns)
             content = _completion_content(body=body)
             if content is None:
