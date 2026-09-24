@@ -4009,6 +4009,25 @@
             }
           },
           {
+            "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
+            "in": "query",
+            "name": "source_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
+              "title": "Source Path"
+            }
+          },
+          {
             "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and, where API authentication is configured, the presenting credential carries full write authority; malformed values are 422 only for a trusted assertion.",
             "in": "header",
             "name": "X-Ingest-Principal-Kind",
