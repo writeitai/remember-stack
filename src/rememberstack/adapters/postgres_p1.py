@@ -17,6 +17,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.models import DocumentSearchFilters
+from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_version_matches
+from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import P1ChunkRow
@@ -384,6 +388,7 @@ class PostgresP1Index:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic claim IDs."""
         return tuple(
@@ -393,17 +398,28 @@ class PostgresP1Index:
                 vector=vector,
                 k=k,
                 current_only=current_only,
+                documents=documents,
             )
         )
 
     def search_claims_lexical(
-        self, *, deployment_id: str, query: str, k: int, current_only: bool
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 claim IDs."""
         return tuple(
             item.item_id
             for item in self.search_claims_lexical_scored(
-                deployment_id=deployment_id, query=query, k=k, current_only=current_only
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                current_only=current_only,
+                documents=documents,
             )
         )
 
@@ -415,6 +431,7 @@ class PostgresP1Index:
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic chunk IDs."""
         return tuple(
@@ -425,6 +442,7 @@ class PostgresP1Index:
                 k=k,
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
+                documents=documents,
             )
         )
 
@@ -436,6 +454,7 @@ class PostgresP1Index:
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 chunk IDs."""
         return tuple(
@@ -446,6 +465,7 @@ class PostgresP1Index:
                 k=k,
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
+                documents=documents,
             )
         )
 
@@ -475,6 +495,7 @@ class PostgresP1Index:
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank semantic claims after authority and optional filters."""
         _require_vector(vector)
@@ -490,6 +511,9 @@ class PostgresP1Index:
             else "memory_v1.claims_visible_history"
         )
         predicates, parameters = _claim_filters(equality_filters)
+        _add_claim_documents(
+            documents=documents, predicates=predicates, parameters=parameters
+        )
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -551,6 +575,7 @@ class PostgresP1Index:
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank current claims through the one explicit partial BM25 index."""
         if not current_only:
@@ -559,6 +584,9 @@ class PostgresP1Index:
             deployment_id=deployment_id, target="claims", channel="bm25", policy=None
         )
         predicates, parameters = _claim_filters(equality_filters)
+        _add_claim_documents(
+            documents=documents, predicates=predicates, parameters=parameters
+        )
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -611,6 +639,7 @@ class PostgresP1Index:
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank semantic chunks with live-source filtering in the same statement."""
         _require_vector(vector)
@@ -624,6 +653,12 @@ class PostgresP1Index:
             model=model,
         )
         predicates, parameters = _chunk_filters(equality_filters)
+        if documents is not None and not is_empty(documents):
+            version_sql, document_parameters = live_version_matches(
+                filters=documents, version="published.version_id", prefix="documents_"
+            )
+            predicates.append(version_sql)
+            parameters.update(document_parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -688,12 +723,19 @@ class PostgresP1Index:
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank BM25 chunks with live-source filtering in the same statement."""
         self._require_channel(
             deployment_id=deployment_id, target="chunks", channel="bm25", policy=None
         )
         predicates, parameters = _chunk_filters(equality_filters)
+        if documents is not None and not is_empty(documents):
+            version_sql, document_parameters = live_version_matches(
+                filters=documents, version="published.version_id", prefix="documents_"
+            )
+            predicates.append(version_sql)
+            parameters.update(document_parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -912,8 +954,13 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank facts after applying identity, temporal, and entity authority."""
+        """Rank facts after applying identity, temporal, and entity authority.
+
+        ``documents`` keeps a fact only when at least one live supporting
+        claim has a live occurrence in a matching document version (D134).
+        """
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -937,6 +984,20 @@ class PostgresP1Index:
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
+        supporting_sql = ""
+        if documents is not None and not is_empty(documents):
+            occurrence_sql, document_parameters = matching_occurrence_exists(
+                filters=documents, claim="support.claim_id", prefix="documents_"
+            )
+            parameters.update(document_parameters)
+            supporting_sql = (
+                " AND EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live support"
+                " WHERE support.deployment_id = indexed.deployment_id"
+                " AND support.fact_kind = fact.fact_kind"
+                " AND support.fact_id = fact.fact_id"
+                " AND support.stance = 'supports'"
+                f" AND {occurrence_sql})"
+            )
         ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
         if not set(ranking_ids).issubset(entity_ids):
             raise ValueError(
@@ -1009,7 +1070,7 @@ class PostgresP1Index:
                    AND indexed.embedding IS NOT NULL
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
-                   {time_sql} {entity_sql} {key_sql} {filter_sql}
+                   {time_sql} {entity_sql} {key_sql} {filter_sql} {supporting_sql}
                  ORDER BY {branch_order}, indexed.{id_column}
                  LIMIT :branch_limit)
                 """
@@ -1395,6 +1456,22 @@ def _configure_p1_connection(
     connection.exec_driver_sql(
         f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
+
+
+def _add_claim_documents(
+    *,
+    documents: DocumentSearchFilters | None,
+    predicates: list[str],
+    parameters: dict[str, Any],
+) -> None:
+    """Keep a claim only when a live occurrence lies in a matching version (D134)."""
+    if documents is None or is_empty(documents):
+        return
+    occurrence_sql, document_parameters = matching_occurrence_exists(
+        filters=documents, claim="indexed.claim_id", prefix="documents_"
+    )
+    predicates.append(occurrence_sql)
+    parameters.update(document_parameters)
 
 
 def _claim_filters(

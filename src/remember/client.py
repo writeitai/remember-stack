@@ -60,6 +60,7 @@ from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import SearchRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
@@ -510,8 +511,26 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search source claims; the returned envelope remains evidence grain."""
+        """Search source claims; the returned envelope remains evidence grain.
+
+        ``documents`` (D134) keeps only evidence from documents matching the
+        same filters ``search_documents`` takes. The filter travels in a body,
+        so a filtered search uses ``POST /search/claims``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/claims",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/claims",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -528,8 +547,26 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source passages as separately typed evidence."""
+        """Search live source passages as separately typed evidence.
+
+        ``documents`` (D134) keeps only evidence from documents matching the
+        same filters ``search_documents`` takes. The filter travels in a body,
+        so a filtered search uses ``POST /search/chunks``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/chunks",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/chunks",
+            )
         return _validated(
             Envelope,
             self._json(

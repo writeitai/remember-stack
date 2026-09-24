@@ -271,6 +271,9 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4096)
     k: int = Field(default=10, ge=1, le=400)
     channel: Literal["semantic", "bm25"] = "semantic"
+    documents: DocumentSearchFilters | None = None
+    """D134: only evidence from documents matching these general-metadata
+    filters (the ``search_documents`` filters), applied before the top-k."""
 
 
 ADJACENT_CHUNKS_MIN_WINDOW: Final = 1

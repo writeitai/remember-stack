@@ -64,12 +64,19 @@ class _CountingClaimIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         self.semantic_calls += 1
         return self.claim_ids[:k]
 
     def search_claims_lexical(
-        self, *, deployment_id: str, query: str, k: int, current_only: bool
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         self.lexical_calls += 1
         return self.claim_ids[:k]

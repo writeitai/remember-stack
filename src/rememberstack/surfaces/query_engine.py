@@ -40,6 +40,8 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
@@ -87,6 +89,7 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.fact_windows import FactWindow
 from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -1410,23 +1413,32 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
         hydration re-reads each claim from the spine and drops what no longer
         confirms, counting the drops (D48 nominate-then-drop honesty).
+
+        ``documents`` (D134) keeps a claim only when a live occurrence lies in
+        a matching document version — applied inside the ranked statement,
+        before the top-k cut — and the returned evidence names that
+        occurrence's chunk and spans.
         """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_claim_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CLAIMS,
+            documents=documents,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id,
             claim_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1476,14 +1488,21 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source chunks without pretending they are claims."""
+        """Search live source chunks without pretending they are claims.
+
+        ``documents`` (D134) keeps a chunk only when its document version
+        matches, inside the ranked statement before the top-k cut.
+        """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_chunk_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CHUNKS,
+            documents=documents,
         )
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
@@ -1595,9 +1614,13 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        # Passed only when present, so an index without document filters is
+        # never handed an argument it does not take.
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_claims(
                 deployment_id=str(deployment_id),
@@ -1606,9 +1629,14 @@ class QueryEngine:
                 ),
                 k=k,
                 current_only=True,
+                **scope,
             )
         return self._search_index.search_claims_lexical(
-            deployment_id=str(deployment_id), query=query, k=k, current_only=True
+            deployment_id=str(deployment_id),
+            query=query,
+            k=k,
+            current_only=True,
+            **scope,
         )
 
     def _nominate_chunk_ids(
@@ -1619,9 +1647,11 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_chunks(
                 deployment_id=str(deployment_id),
@@ -1631,6 +1661,7 @@ class QueryEngine:
                 k=k,
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
+                **scope,
             )
         return self._search_index.search_chunks_lexical(
             deployment_id=str(deployment_id),
@@ -1638,6 +1669,7 @@ class QueryEngine:
             k=k,
             policy_generation=self._policy_generation,
             embedder_generation=self._embedder_generation,
+            **scope,
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
@@ -2951,12 +2983,37 @@ class QueryEngine:
         claim_ids: tuple[UUID, ...],
         current_only: bool = True,
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[EvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm claim content and any entity scope in one PostgreSQL read."""
+        """Confirm claim content and any entity scope in one PostgreSQL read.
+
+        With ``documents`` (D134) each claim is confirmed through a live
+        occurrence in a matching document version, and the evidence names
+        that occurrence rather than the claim's origin chunk.
+        """
         if not claim_ids:
             return (), 0, {}
         if entity_ids and not current_only:
             raise ValueError("entity-scoped historical claim hydration is unsupported")
+        if documents is not None and (entity_ids or not current_only):
+            raise ValueError(
+                "document-filtered claim hydration is current and unscoped only"
+            )
+        statement = (
+            _CONFIRM_CLAIMS_CURRENT_SCOPED
+            if entity_ids
+            else _CONFIRM_CLAIMS_CURRENT
+            if current_only
+            else _CONFIRM_CLAIMS_HISTORY
+        )
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            version_sql, extra = live_version_matches(
+                filters=documents,
+                version="occurrence_chunk.version_id",
+                prefix="documents_",
+            )
+            statement = text(_CONFIRM_CLAIMS_IN_DOCUMENTS.format(matches=version_sql))
         rows: list[RowMapping] = []
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
@@ -2966,17 +3023,12 @@ class QueryEngine:
             for batch in batched(claim_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        (
-                            _CONFIRM_CLAIMS_CURRENT_SCOPED
-                            if entity_ids
-                            else _CONFIRM_CLAIMS_CURRENT
-                            if current_only
-                            else _CONFIRM_CLAIMS_HISTORY
-                        ),
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "claim_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -4352,6 +4404,44 @@ _CONFIRM_CLAIMS_CURRENT = text(
       AND c.claim_id = ANY(:claim_ids)
     """
 )
+
+# D134: confirm a current claim through its newest live occurrence in a
+# matching document version; that occurrence's chunk and spans are returned.
+# `{matches}` is the shared document-filter predicate over the occurrence's
+# version (rememberstack.core.document_filters).
+_CONFIRM_CLAIMS_IN_DOCUMENTS = """
+    SELECT c.claim_id, c.doc_id, occ.chunk_id, c.claim_text, c.source_span,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
+           TRUE AS is_current_testimony,
+           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
+           c.claim_valid_precision, c.claim_valid_kind,
+           d.title AS document_title, d.source_kind
+    FROM memory_v1.claims_live c
+    JOIN memory_v1.documents_live d
+      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    JOIN LATERAL (
+        SELECT occurrence.chunk_id, occurrence.evidence_spans
+        FROM chunk_claims occurrence
+        JOIN chunks occurrence_chunk
+          ON occurrence_chunk.deployment_id = occurrence.deployment_id
+         AND occurrence_chunk.chunk_id = occurrence.chunk_id
+        JOIN document_versions occurrence_version
+          ON occurrence_version.deployment_id = occurrence_chunk.deployment_id
+         AND occurrence_version.version_id = occurrence_chunk.version_id
+         AND occurrence_version.current_representation_id
+             = occurrence_chunk.representation_id
+        WHERE occurrence.deployment_id = c.deployment_id
+          AND occurrence.claim_id = c.claim_id
+          AND {matches}
+        ORDER BY occurrence_version.version_no DESC, occurrence.created_at,
+                 occurrence.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true
+    WHERE c.deployment_id = :deployment_id
+      AND c.claim_id = ANY(:claim_ids)
+"""
 
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     """

@@ -97,6 +97,7 @@ from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.ports.auth import AuthPerimeterPort
@@ -586,22 +587,31 @@ def build_api(
     # for existing clients, which reach the deployment over a private path.
     @app.post("/search/claims", response_model=Envelope)
     def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Claim search — evidence grain, never current-fact truth."""
+        """Claim search — evidence grain, never current-fact truth.
+
+        ``documents`` keeps claims with a live occurrence in a matching
+        document (D134); the evidence names that occurrence.
+        """
         return engine.search_claims(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.post("/search/chunks", response_model=Envelope)
     def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Search live source chunks as separately typed evidence."""
+        """Search live source chunks as separately typed evidence.
+
+        ``documents`` keeps chunks whose document version matches (D134).
+        """
         return engine.search_chunks(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
@@ -1221,6 +1231,11 @@ def _mount_document_inventory(
             # A cursor that does not parse. 400 rather than a silent restart:
             # returning page one would look like the corpus repeating itself.
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _documents_scope(body: SearchRequest) -> dict[str, DocumentSearchFilters]:
+    """The D134 ``documents`` keyword, only when the request carries one."""
+    return {} if body.documents is None else {"documents": body.documents}
 
 
 def _mount_document_search(

@@ -35,7 +35,6 @@ by conversion moves a row across pages.
 from __future__ import annotations
 
 import base64
-from collections.abc import Sequence
 from datetime import datetime
 import json
 from typing import Any
@@ -47,7 +46,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
-from rememberstack.core.document_metadata import normalize_name
+from rememberstack.core.document_filters import metadata_predicates
+from rememberstack.core.document_filters import people_terms
+from rememberstack.core.document_filters import person_matches
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.model.client import DocumentPeopleMatch
 from rememberstack.model.client import DocumentSearchFilters
@@ -163,43 +164,16 @@ class _Scope:
             "deployment_id": deployment_id,
             "as_of": as_of,
         }
-        self.author_terms = _terms(filters.authors)
-        self.recipient_terms = _terms(filters.recipients)
-        predicates: list[str] = []
-        if filters.family:
-            predicates.append("m.family = ANY(CAST(:families AS text[]))")
-            self.parameters["families"] = list(filters.family)
-        for column, bound, operator in (
-            ("created_at", "created_from", ">="),
-            ("created_at", "created_to", "<="),
-            ("modified_at", "modified_from", ">="),
-            ("modified_at", "modified_to", "<="),
-        ):
-            value = getattr(filters, bound)
-            if value is not None:
-                predicates.append(f"m.{column} {operator} :{bound}")
-                self.parameters[bound] = value
-        for column in ("language", "thread_ref"):
-            value = getattr(filters, column)
-            if value is not None:
-                predicates.append(f"m.{column} = :{column}")
-                self.parameters[column] = value
-        if filters.doc_ids:
-            predicates.append("j.doc_id = ANY(CAST(:doc_ids AS uuid[]))")
-            self.parameters["doc_ids"] = [str(doc_id) for doc_id in filters.doc_ids]
-        for role, terms in (
-            ("author", self.author_terms),
-            ("recipient", self.recipient_terms),
-        ):
-            if terms:
-                predicates.append(
-                    "EXISTS (SELECT 1 FROM document_people p"
-                    " WHERE p.deployment_id = :deployment_id"
-                    " AND p.version_id = j.version_id"
-                    f" AND p.role = '{role}'"
-                    f" AND {_person_matches(parameter=f'{role}_terms')})"
-                )
-                self.parameters[f"{role}_terms"] = list(terms)
+        self.author_terms = people_terms(filters.authors)
+        self.recipient_terms = people_terms(filters.recipients)
+        predicates, filter_parameters = metadata_predicates(
+            filters=filters,
+            metadata="m",
+            version="j.version_id",
+            doc="j.doc_id",
+            prefix="",
+        )
+        self.parameters.update(filter_parameters)
         judged = {
             "all": "",
             "current": _CURRENT_VERSION,
@@ -251,22 +225,6 @@ _CURRENT_VERSION: Final = f"""
 # instant — immutable while paging, unlike the current pointer.
 _NEWEST_VERSION_AS_OF: Final = f"""
         AND v.version_id ={_NEWEST_LIVE}"""
-
-
-def _person_matches(*, parameter: str) -> str:
-    """A person matches a term by exact address or whole words of the name."""
-    return (
-        f"EXISTS (SELECT 1 FROM unnest(CAST(:{parameter} AS text[])) AS term(value)"
-        " WHERE p.normalized_address = term.value"
-        " OR position(' ' || term.value || ' ' IN"
-        " ' ' || coalesce(p.normalized_name, '') || ' ') > 0)"
-    )
-
-
-def _terms(values: Sequence[str]) -> tuple[str, ...]:
-    """Normalize people filter terms the way stored names and addresses are."""
-    normalized = (normalize_name(value=value) for value in values)
-    return tuple(dict.fromkeys(term for term in normalized if term))
 
 
 def _filtered_page(
@@ -585,7 +543,7 @@ def _people_matched(
     ):
         if terms:
             arms.append(
-                f"(p.role = '{role}' AND {_person_matches(parameter=f'{role}_terms')})"
+                f"(p.role = '{role}' AND {person_matches(parameter=f'{role}_terms')})"
             )
     if not arms:
         return ()
