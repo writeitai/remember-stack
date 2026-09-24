@@ -1103,20 +1103,17 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the lineage's current snapshot (real FK added after that table)
-  document_entity_id uuid,                      -- OPTIONAL bridge to the Document-typed entity (see note below); composite FK
   counting_lineage_id uuid NOT NULL,           -- D133/D54: write-once confirmation-counting identity — doc_id for a root, the root container's counting_lineage_id for a container member
   title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
-  UNIQUE (deployment_id, doc_id),               -- composite-FK target (tenancy isolation, §0)
-  FOREIGN KEY (deployment_id, document_entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE SET NULL (document_entity_id)
+  UNIQUE (deployment_id, doc_id)                -- composite-FK target (tenancy isolation, §0)
 );
 COMMENT ON TABLE documents IS
   'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. A forget soft-tombstones the lineage.';
 CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at IS NULL;
-CREATE INDEX ix_documents_entity   ON documents (document_entity_id) WHERE document_entity_id IS NOT NULL;
 
 -- D102 bounded same-document exact-name projection. Append-only decisions
 -- remain authority: replay validates the source pair against the exact monthly
@@ -1305,6 +1302,7 @@ CREATE TABLE document_metadata (
   doc_id          uuid NOT NULL,               -- denormalized lineage for filters
   family          text NOT NULL,               -- D133 format family
   file_name       text,                        -- as observed for this version
+  source_path     text,                        -- the source location as observed for this version (lineage source_uri is mutable)
   title           text,
   created_at      timestamptz,                 -- source-declared created/sent
   modified_at     timestamptz,                 -- source-declared last modified
@@ -1312,13 +1310,14 @@ CREATE TABLE document_metadata (
   thread_ref      text,                        -- opaque conversation/thread key
   provenance      jsonb NOT NULL DEFAULT '{}', -- field → source | connector
   extra           jsonb NOT NULL DEFAULT '{}', -- family-specific fields; returned, not a general filter
-  extractor_version text NOT NULL,             -- the converter/connector mapping that produced it
+  metadata_mapping_version text NOT NULL,      -- the family's metadata mapping (converter/connector), distinct from the E2 extractor version
   PRIMARY KEY (deployment_id, version_id),
   FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_document_metadata_family  ON document_metadata (deployment_id, family, created_at DESC);
 CREATE INDEX ix_document_metadata_thread  ON document_metadata (deployment_id, thread_ref) WHERE thread_ref IS NOT NULL;
-CREATE INDEX ix_document_metadata_names   ON document_metadata USING gin ((coalesce(file_name,'') || ' ' || coalesce(title,'')) gin_trgm_ops);
+CREATE INDEX ix_document_metadata_names   ON document_metadata USING gin ((coalesce(file_name,'') || ' ' || coalesce(title,'') || ' ' || coalesce(source_path,'')) gin_trgm_ops);
+-- plus a pg_textsearch BM25 index on the same expression (D94 BM25 channel on an authority row)
 
 -- D134: the people in authors/recipients, one row each, for filtering by name or address.
 CREATE TABLE document_people (
@@ -1337,29 +1336,14 @@ CREATE TABLE document_people (
 );
 CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
 CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
-
--- D134: one search row per live document for search_documents' content channel (D94 sidecar style:
--- derived, rebuildable, one current embedding).
-CREATE TABLE document_search (
-  deployment_id   uuid NOT NULL,
-  doc_id          uuid NOT NULL,
-  version_id      uuid NOT NULL,               -- the current version
-  overview_text   text NOT NULL,               -- profile overview (D133 §4.2) or top-level summary (D39)
-  embedding       vector,                      -- one current embedding of overview_text
-  PRIMARY KEY (deployment_id, doc_id)
-);
 ```
 
-> **Document ↔ entity bridge (D18, Codex review).** D18 makes `Document ⊂ CreativeWork` a core
-> *entity* type with predicates `authored: Person → Document` and `about: Document → any`, so
-> documents participate in relations as entities. The corpus's *ingested files* and the *registry's
-> Document entities* are distinct but linkable: `documents.document_entity_id` points an ingested
-> file at its registry entity **when one exists**. Policy: an ingested document gets a Document
-> entity when it is referenced as the subject/object of a relation (e.g. "Alice authored this
-> report") or by a deployment-configured default; a Document entity may also exist for a
-> *cited-but-not-ingested* paper (created from a `document_crossrefs` row with no `to_doc_id`),
-> which has a registry entity but no `documents` row. So the bridge is nullable in both directions
-> and neither side is mandatory.
+> **Documents are not entities (D134; replaces the D18-era Document-typed bridge).** Entity types
+> no longer exist (D96), and D134 finds, filters and names documents through `document_metadata`,
+> `document_people` and `search_documents`, not through the entity registry. There is no
+> document→entity column; a document's own name is never minted as an entity. A file *mentioned*
+> by another document is an ordinary name. Making documents entities is an unchosen proposal
+> (`plan/proposals/document_subject_entities.md`).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1582,6 +1566,7 @@ CREATE TABLE claims (
   added_context   jsonb NOT NULL DEFAULT '[]', -- [{text, source_kind: header|neighbour|prefix|hint, source_ref}] — each substring decontextualization ADDED (D32 layer 2)
   temporal_class  claim_temporal_class,        -- static | dynamic | atemporal — the "temporally classified" requirement (see reconciliation note)
   is_attributed   boolean NOT NULL DEFAULT false, -- preserves a "X said Y" attribution (entailment rule: entails "X said Y", not "Y" — D32)
+  names_own_document boolean NOT NULL DEFAULT false, -- D134: validated self-reference — Claimify replaced "this report" with the document's own name from the header
   -- grounding verdicts (D32). Deterministic layers 1-2 are an ACCEPTANCE GATE (must be true here);
   -- the LLM layers 3-4 are advisory/sampled and may be false on a kept-but-borderline claim:
   anchor_ok       boolean NOT NULL,            -- layer 1: source_span is a real in-bounds slice of the chunk (deterministic)
@@ -2793,7 +2778,7 @@ Labs."*
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D133 format registry, profiles, expansion | `document_members`, `document_member_suppressions`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
-| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version); `document_search` index; search filters join them |
+| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version, trigram + BM25 name indexes); `claims.names_own_document`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---

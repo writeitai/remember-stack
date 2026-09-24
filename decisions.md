@@ -4191,9 +4191,9 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
-**Refined by D134.** A document's own name (its title, file name, or file name without
-extension) is not minted or resolved as an entity; a claim naming its own document keeps the
-name as text only. No entity type is introduced.
+**Refined by D134.** In a claim marked as naming its own document, the reference equal to the
+document's own name (title, file name, or file name without extension) is not minted or resolved;
+the claim keeps the name as text. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -6210,20 +6210,25 @@ report.
    `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
    `document_metadata` and `document_people`.
 2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
-   MCP: filters on the general fields, a query matched on names (file name,
-   title, path) and content (profile overview or top-level summary plus best
-   chunk), and results carrying metadata and access handles. Ambiguous people
-   matches are listed, not guessed.
-3. **Document filters on `search`** for chunks, claims (joined through their
-   origin chunk, D80) and facts (through supporting claims), applied before
-   the top-k cut.
+   MCP: results are documents judged by their current version (or any live
+   version on request), filtered on the general fields, with a query matched
+   on names (file name, title, source path) and content (the document's best
+   `chunk_search` hit — no new search index), and carrying the judged
+   version's metadata and access handles. Ambiguous people matches are listed.
+3. **Document filters on `search`** for chunks, claims (through their live
+   occurrences, refining D80's origin-chunk join so reused claims are tested
+   per version) and facts (through supporting claims), applied before the
+   top-k cut. Only live versions match.
 4. **Self-references name the document.** When a passage refers to its own
    document, Claimify writes the title (else file name) from the extraction
-   header, which gains the file name; the words are header `added_context`.
-   Ordinary claims never get the name. Extractor version bumps.
-5. **A document's own name is not an entity.** E3 skips any reference equal to
-   the document's own names (refining D96's eligibility rule), so same-named
-   files never merge.
+   header, which gains the file name, and marks the claim
+   `names_own_document`; the gate keeps the mark only when the name came from
+   the header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** In claims marked
+   `names_own_document` only, E3 skips the reference equal to the document's
+   own names (refining D96's eligibility rule), so same-named files never
+   merge while a person who shares a document's title still resolves. The
+   D18-era `documents.document_entity_id` bridge is removed.
 
 **Alternatives and consequences.** Making documents entities bound to their
 lineage (the first D134 draft) was rejected as heavier than the questions

@@ -584,9 +584,12 @@ James’s Unity strategy game). Prefer dropping the relation or
 observation over inventing a referent. Protocol/boilerplate lines
 (adapter banners, “X is a participant”) are the same class.
 
-**The source document's own name (D134).** A reference whose normalized name
-equals the current document's title, file name, or file name without
-extension is not minted or resolved; the claim keeps the name as text. This
+**The source document's own name (D134).** In a claim marked
+`names_own_document` (Claimify replaced "this report" with the document's
+name), the reference whose normalized name equals the document's title, file
+name, or file name without extension is not minted or resolved; the claim
+keeps the name as text. Unmarked claims are unaffected, so a person who
+shares a document's title still resolves. This
 stops two same-named files from merging through a name entity. Mentions of
 *other* files by name resolve normally. Authority:
 [`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §6.

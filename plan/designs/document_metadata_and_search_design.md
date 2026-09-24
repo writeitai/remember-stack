@@ -41,6 +41,7 @@ chat exports.
 | Field | Type | Meaning |
 |---|---|---|
 | `file_name` | text | The file's name as observed for this version (upload name, connector name, archive member name) |
+| `source_path` | text | The source location as observed for this version (the lineage's `source_uri` changes on moves; this keeps each version's) |
 | `title` | text | The title the document declares |
 | `authors` | people | Who produced it |
 | `recipients` | people | Who it was addressed to |
@@ -82,10 +83,17 @@ provide a field, the file's own value wins and the connector's is kept in
 email's `From` can be forged, and results say where the value came from.
 
 **Storage (D37).** These are compact, query-critical metadata, so they live
-in PostgreSQL: `document_metadata` (one row per version) and
-`document_people` (one row per person per role, indexed on the normalized
-name and address). Schema: [`postgres_schema_design.md`](postgres_schema_design.md) §6.
-Normal delete removes them with the version; hard forget scrubs them (D74).
+in PostgreSQL: `document_metadata` (one row per version, with trigram and
+BM25 indexes on the name fields) and `document_people` (one row per person
+per role, indexed on the normalized name and address). Schema:
+[`postgres_schema_design.md`](postgres_schema_design.md) §6. The mapping
+that produced them is versioned separately (`metadata_mapping_version`) from
+the E2 extractor.
+
+**Deletion.** Normal delete soft-tombstones versions and keeps their rows for
+audit (schema §13.1), so the metadata rows stay too; every read in §3 and §4
+considers only **live** versions of live lineages, so a deleted document
+never matches. Hard forget scrubs both tables for the lineage (D74).
 
 ## 3. `search_documents`
 
@@ -98,14 +106,28 @@ search_documents(query?, filters?, k) → documents
 - **`filters`** use the general fields: `family`, `authors`, `recipients`
   (each matches a name or an address), `created` and `modified` ranges,
   `language`, `thread_ref`, and an explicit `doc_ids` set.
+- **Results are documents (lineages), judged by one version.** By default
+  each lineage is judged by its **current** version: filters and name
+  matching use that version's metadata, and the result returns it. With
+  `versions: all`, a lineage matches when **any** live version matches; the
+  result returns the newest matching version and lists the other matching
+  version IDs. Either way the returned metadata is that of the returned
+  version, so a result never shows metadata that did not match.
 - **`query`** is matched on two channels, fused by rank (the D9 fusion):
-  - **names** — `file_name`, `title` and the last segment of the source
-    path, for every live version, by trigram and BM25, so a partial or
-    misspelled name still finds the file;
-  - **content** — a per-document search row holding the profile overview
-    (D133 §4.2) or the document's top-level summary (D39), plus the best
-    matching chunk of the document from the existing chunk search.
-- With filters only, results are ordered by `created_at`, newest first.
+  - **names** — `file_name`, `title` and `source_path` of the judged
+    version(s), by the trigram and BM25 indexes on `document_metadata`, so a
+    partial or misspelled name still finds the file;
+  - **content** — the existing `chunk_search` (D94), grouped by document:
+    each document scores by its best-ranked chunk in the judged version.
+    A profiled file's overview and a document's top-level text are ordinary
+    chunks, so no second search index is needed.
+- With filters only, results are ordered by the judged version's
+  `created_at` descending, documents lacking a date last, then by `doc_id`.
+  That key moves when a new version becomes current, which would drop or
+  repeat rows under a keyset cursor (the `GET /documents` lesson), so the
+  cursor also pins the first call's **as-of instant**: every page judges
+  versions as they were at that instant, and versions arriving later are not
+  considered until a new search starts.
 - **Each result** carries the document and version, `file_name`, `title`,
   family and posture, processing status, the general metadata, the overview
   or summary, and how to reach it: its P3 path, `source_open`, and
@@ -125,9 +147,13 @@ intent an agent must be able to discover, like `source_open` (D115) and
 same fields as §3. It restricts results to evidence from matching documents:
 
 - **chunks** — the chunk's document version matches;
-- **claims** — the claim's origin chunk's document version matches (the
-  D80 rule: claims carry no copied filter values; they join through their
-  chunk);
+- **claims** — at least one live **occurrence** of the claim (a
+  `chunk_claims` row) is in a chunk whose document version matches. A claim
+  reused across versions (D56) has one occurrence per version, so each
+  version's metadata is tested on its own occurrence; the returned evidence
+  names the matching occurrence. Claims still carry no copied filter values
+  (D80); this refines D80's "join through the origin chunk" to "join through
+  occurrences" for document filters;
 - **relations and observations** — the fact has at least one live
   supporting claim from a matching document; the returned evidence is limited
   to those claims.
@@ -154,9 +180,17 @@ writes the document's name into the claim instead of the bare reference:
 
 - **The name used** is the document's title when it has one, otherwise its
   file name, as observed for that version. The extraction header already
-  carries the title; it gains the **file name**. Both are header facts, so
-  the added words are recorded as `added_context` with
-  `source_kind: header` and pass the existing D32 grounding check. Adding the
+  carries the title; it gains the **file name**. The added words pass the
+  existing D32 layer-2 check because their tokens appear in the header (the
+  check is token membership in the grounding context; the
+  `added_context.source_kind: header` tag Claimify records is advisory).
+- **The self-reference is marked, not inferred later.** Claimify sets a new
+  output field, `names_own_document: true`, on a claim where it replaced a
+  self-reference with the document's name. The grounding gate keeps the
+  field only when the claim text contains one of the document's names and
+  that name's tokens are not in the claim's source span (they came from the
+  header). The accepted value is persisted on the claim and survives D56
+  reuse with it. Adding the
   file name changes the header, a stable extraction input (D56), so it and
   the prompt change bump the extractor version: affected documents are
   re-extracted once.
@@ -176,11 +210,14 @@ writes the document's name into the claim instead of the bare reference:
 
 Left alone, E3 would treat "Audit_2025.pdf" in such a claim as a name and
 mint or resolve an entity for it — and could merge two different files that
-share a name. So E3 receives the document's own names (title, file name, and
-file name without extension). A subject, object or context reference whose
-normalized name equals one of them is **not minted or resolved**: the claim
-is kept, searchable by its text, and the skipped reference is counted in
-extraction diagnostics. This extends D96's eligibility rule ("do not mint
+share a name. So, **for claims with `names_own_document=true` only**, E3 receives the
+document's own names (title, file name, and file name without extension). A
+reference in such a claim whose normalized name equals one of them is **not
+minted or resolved**: the claim is kept, searchable by its text, and the
+skipped reference is counted in extraction diagnostics. Name equality alone
+never triggers this: in a document titled "Alice", a claim about Alice the
+person has no self-reference mark and resolves normally, and so does a
+mention of a different file that shares this file's name. This extends D96's eligibility rule ("do not mint
 filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
 *other* files by name are unaffected and resolve as ordinary names.
 
@@ -205,8 +242,13 @@ filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
 - Document filters on each `search` target, applied before the top-k cut
   (a matching document ranked below the unfiltered top-k is still returned).
 - Self-reference naming: "this report", "the attached spreadsheet", a
-  profile overview; a non-self claim gets no name; the title is preferred
+  profile overview; a non-self claim gets no name; `names_own_document` is
+  dropped when the name is in the source span or absent from the claim; the title is preferred
   over the file name; grounding accepts the header context.
 - E3: a claim naming its own file mints no entity; two same-named files
-  create no shared entity; a mention of another file resolves normally.
-- Delete and hard forget remove metadata and people rows.
+  create no shared entity; a mention of another file resolves normally; a
+  person whose name equals the document's title still resolves.
+- Deleted versions and lineages never match `search_documents` or
+  document filters; hard forget removes metadata and people rows.
+- `versions: all` returns the matching version's metadata, never the current
+  version's when only an older version matched.
