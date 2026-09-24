@@ -311,6 +311,13 @@ it does not belong in the design.
 
 ## 9. Independent review
 
+**Superseded forget details.** The review rounds below added member
+suppressions, a restructured v2 forget manifest and per-member refusal rules.
+The owner later chose the simplest rule (2026-09-24): delete and hard forget
+act on the uploaded document and cover every expanded member; members are
+never deleted or forgotten on their own. Those review resolutions are
+history, not the current design (D133 §5.4).
+
 Rounds 1–4 reviewed the first D134 draft (documents as entities). Their
 D134 rows describe that draft, which §5.1 records as not chosen; the current
 D134 is §5.2.
