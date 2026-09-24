@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
 import json
+import logging
 from typing import Any
 from typing import cast
 from typing import Literal
@@ -55,6 +56,8 @@ from rememberstack.surfaces.query_sandbox.discovery import (
 )
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
+
+logger = logging.getLogger(__name__)
 
 
 class _LocalMemoryWriteBackend:
@@ -258,6 +261,8 @@ class OperationMcpServer:
                 )
             except (SandboxRejection, ValueError) as error:
                 return error_result(map_error(error))
+            except Exception:  # noqa: BLE001 — the MCP wire boundary
+                return _internal_error(name=name)
             return {
                 "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
                 "isError": False,
@@ -276,10 +281,33 @@ class OperationMcpServer:
             )
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
+        except Exception:  # noqa: BLE001 — the MCP wire boundary
+            return _internal_error(name=name)
         return {
             "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
         }
+
+
+def _internal_error(*, name: str) -> dict[str, object]:
+    """Log an unexpected failure with its traceback; tell the agent nothing internal.
+
+    Called from inside an ``except`` block, so ``logger.exception`` records
+    the active exception.
+    """
+    logger.exception("MCP tool %s failed unexpectedly", name)
+    return error_result(
+        ToolError(
+            code="internal_error",
+            detail="Unexpected internal failure; the server logged the details.",
+            status_code=None,
+            retryable=False,
+            agent_action=(
+                "Do not busy-retry; report the failure to an operator or as a"
+                " product defect."
+            ),
+        )
+    )
 
 
 def _run_open_query(

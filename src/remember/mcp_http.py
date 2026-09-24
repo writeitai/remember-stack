@@ -17,15 +17,20 @@ One endpoint, ``/mcp``:
   the listener holds no credential. ``tools/list`` is therefore not filtered
   by the caller's permissions, and a call the engine refuses is a tool error.
 
-The listener binds to loopback by default. With a non-loopback address it
-first asks the engine for ``GET /deployment`` without a credential and refuses
-to start unless the engine refuses that read, so an unauthenticated engine is
-never exposed this way. TLS belongs to the operator's proxy.
+- After ``initialize`` a request may carry ``MCP-Protocol-Version``; any
+  version other than the one this server negotiates is ``400``.
+
+The listener binds to a loopback address only. To reach it from other
+machines, put an authenticated reverse proxy (which also terminates TLS) in
+front of it. It is bounded: at most :data:`MAX_CONCURRENT_REQUESTS` requests
+at once (more get ``503``), a :data:`READ_TIMEOUT_SECONDS` deadline on every
+socket read, and a :data:`MAX_BODY_BYTES` request body.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 import json
@@ -44,6 +49,7 @@ from remember.client import MemoryClient
 from remember.issuer import is_loopback
 from remember.mcp_engine import dispatch
 from remember.mcp_engine import EngineMcpServer
+from remember.mcp_engine import MCP_PROTOCOL_VERSION
 from remember.mcp_engine import rpc_error
 
 DEFAULT_BIND: Final = "127.0.0.1:8765"
@@ -52,8 +58,14 @@ MCP_PATH: Final = "/mcp"
 SESSION_IDLE_SECONDS: Final = 3600.0
 #: At most this many sessions are kept; the least recently used goes first.
 MAX_SESSIONS: Final = 1024
-#: The largest request body read (a base64 ingest body included).
-MAX_BODY_BYTES: Final = 256 * 1024 * 1024
+#: The largest request body read. Only an ``ingest`` body sent as
+#: ``content_base64`` is ever large (base64 adds a third), so this admits a
+#: document of about 24 MiB; larger files belong to ``remember ingest``.
+MAX_BODY_BYTES: Final = 32 * 1024 * 1024
+#: Requests handled at once; more are answered ``503`` straight away.
+MAX_CONCURRENT_REQUESTS: Final = 16
+#: Deadline for each read from a client socket (starting value).
+READ_TIMEOUT_SECONDS: Final = 30.0
 _ENGINE_TIMEOUT: Final = httpx.Timeout(300.0, connect=10.0)
 
 
@@ -62,11 +74,17 @@ class HttpTransportError(ValueError):
 
 
 def parse_bind(value: str) -> tuple[str, int]:
-    """``HOST:PORT`` (``[v6]:PORT`` for IPv6) as a host and a port."""
+    """``HOST:PORT`` (``[v6]:PORT`` for IPv6) on a loopback address."""
     host, separator, port = value.strip().rpartition(":")
     host = host.strip("[]")
     if not separator or not host or not port.isdigit() or int(port) > 65535:
         raise HttpTransportError(f"--bind must be HOST:PORT, got {value!r}")
+    if not is_loopback(host):
+        raise HttpTransportError(
+            f"--bind {value!r} is not a loopback address: the HTTP transport"
+            " listens on loopback only. To reach it from other machines, put an"
+            " authenticated reverse proxy in front of it"
+        )
     return host, int(port)
 
 
@@ -115,10 +133,14 @@ class McpHttpServer(ThreadingHTTPServer):
         self.engine_url = engine_url.rstrip("/")
         self.read_only = read_only
         self.sessions = _Sessions()
+        self.slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
         bound_port = self.server_address[1]
-        hosts = {f"[{host}]" if ":" in host else host}
-        if is_loopback(host):
-            hosts |= {"localhost", "127.0.0.1", "[::1]"}
+        hosts = {
+            f"[{host}]" if ":" in host else host,
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+        }
         self.origins = frozenset(f"http://{name}:{bound_port}" for name in hosts)
 
     @property
@@ -131,6 +153,8 @@ class McpHttpServer(ThreadingHTTPServer):
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    #: ``StreamRequestHandler`` applies this to the socket: every read has a deadline.
+    timeout = READ_TIMEOUT_SECONDS
 
     @property
     def listener(self) -> McpHttpServer:
@@ -140,22 +164,38 @@ class _Handler(BaseHTTPRequestHandler):
         """Request logging is off: headers carry the caller's key."""
 
     def do_GET(self) -> None:  # noqa: N802 — http.server naming
-        if self._refused():
-            return
-        self._reply(405, headers={"Allow": "POST, DELETE"})
+        self._bounded(self._get)
 
     def do_DELETE(self) -> None:  # noqa: N802
-        if self._refused():
+        self._bounded(self._delete)
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._bounded(self._post)
+
+    def _bounded(self, handle: Callable[[], None]) -> None:
+        """Run one request in a free slot, or answer ``503`` at once."""
+        if not self.listener.slots.acquire(blocking=False):
+            self._reply(503, headers={"Retry-After": "1"}, close=True)
             return
+        try:
+            if not self._refused():
+                handle()
+        except TimeoutError:
+            self.close_connection = True
+        finally:
+            self.listener.slots.release()
+
+    def _get(self) -> None:
+        self._reply(405, headers={"Allow": "POST, DELETE"})
+
+    def _delete(self) -> None:
         session_id = self.headers.get("Mcp-Session-Id")
         if not session_id:
             self._reply(400, body=_error_body("Mcp-Session-Id header is required"))
             return
         self._reply(204 if self.listener.sessions.close(session_id) else 404)
 
-    def do_POST(self) -> None:  # noqa: N802
-        if self._refused():
-            return
+    def _post(self) -> None:
         length_header = self.headers.get("Content-Length")
         if length_header is None or not length_header.isdigit():
             self._reply(411)
@@ -181,20 +221,32 @@ class _Handler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        headers: dict[str, str] = {}
-        if message.get("method") == "initialize":
-            headers["Mcp-Session-Id"] = self.listener.sessions.open()
-        else:
+        initialize = message.get("method") == "initialize"
+        if not initialize:
             session_id = self.headers.get("Mcp-Session-Id")
             if not session_id:
                 self._reply(400, body=_error_body("Mcp-Session-Id header is required"))
+                return
+            version = self.headers.get("MCP-Protocol-Version")
+            if version is not None and version != MCP_PROTOCOL_VERSION:
+                self._reply(
+                    400,
+                    body=_error_body(
+                        f"unsupported MCP-Protocol-Version {version!r};"
+                        f" this server speaks {MCP_PROTOCOL_VERSION}"
+                    ),
+                )
                 return
             if not self.listener.sessions.touch(session_id):
                 self._reply(404, body=_error_body("unknown or expired session"))
                 return
         response = self._answer(message)
+        headers: dict[str, str] = {}
+        if initialize and response is not None and "result" in response:
+            # A session exists only once initialize has succeeded.
+            headers["Mcp-Session-Id"] = self.listener.sessions.open()
         if response is None:
-            self._reply(202, headers=headers)
+            self._reply(202)
         else:
             self._reply(200, body=response, headers=headers)
 
@@ -254,30 +306,9 @@ def _error_body(message: str) -> dict[str, object]:
     return {"error": message}
 
 
-def check_exposure(*, host: str, engine_url: str, http: httpx.Client) -> None:
-    """Refuse a non-loopback bind unless the engine demands a credential."""
-    if is_loopback(host):
-        return
-    try:
-        status = http.get(engine_url.rstrip("/") + "/deployment").status_code
-    except httpx.HTTPError as error:
-        raise HttpTransportError(
-            f"cannot confirm that the engine at {engine_url} requires a"
-            f" credential ({error}); refusing to listen on {host}"
-        ) from error
-    if status not in (401, 403):
-        raise HttpTransportError(
-            f"the engine at {engine_url} answered a read without a credential"
-            f" (HTTP {status}); refusing to expose it on {host}. Configure the"
-            " engine's auth perimeter, or bind to a loopback address"
-        )
-
-
 def build_server(*, bind: str, engine_url: str, read_only: bool) -> McpHttpServer:
-    """Check the exposure rule and bind the listener (not yet serving)."""
+    """Bind the listener on a loopback address (not yet serving)."""
     host, port = parse_bind(bind)
-    with httpx.Client(timeout=10.0, follow_redirects=False) as http:
-        check_exposure(host=host, engine_url=engine_url, http=http)
     try:
         return McpHttpServer(
             host=host, port=port, engine_url=engine_url, read_only=read_only

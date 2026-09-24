@@ -1239,7 +1239,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp.add_argument(
         "--bind",
         default="127.0.0.1:8765",
-        help="HOST:PORT for --transport http (default 127.0.0.1:8765)",
+        help="loopback HOST:PORT for --transport http (default 127.0.0.1:8765)",
     )
     mcp.add_argument(
         "--remote-url",

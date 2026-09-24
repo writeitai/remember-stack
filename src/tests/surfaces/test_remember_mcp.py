@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from io import StringIO
 import json
+import socket
 import threading
 from typing import cast
 from uuid import uuid4
@@ -28,9 +29,10 @@ from remember.issuer import IssuerMetadata
 from remember.mcp_bridge import McpBridge
 from remember.mcp_engine import EngineMcpServer
 from remember.mcp_engine import serve_stdio
-from remember.mcp_http import check_exposure
 from remember.mcp_http import DEFAULT_BIND
 from remember.mcp_http import HttpTransportError
+from remember.mcp_http import MAX_BODY_BYTES
+from remember.mcp_http import MAX_CONCURRENT_REQUESTS
 from remember.mcp_http import McpHttpServer
 from remember.mcp_http import parse_bind
 from remember.mcp_tools import map_error
@@ -472,27 +474,79 @@ def test_http_binds_loopback_by_default() -> None:
     assert host == "127.0.0.1"
 
 
-@pytest.mark.parametrize(
-    ("answer", "allowed"),
-    [(200, False), (500, False), (401, True), (403, True), ("network", False)],
-)
-def test_non_loopback_bind_needs_an_engine_that_demands_a_key(
-    answer: int | str, allowed: bool
-) -> None:
-    def respond(request: httpx.Request) -> httpx.Response:
-        assert "Authorization" not in request.headers
-        if answer == "network":
-            raise httpx.ConnectError("refused", request=request)
-        return httpx.Response(cast(int, answer))
+@pytest.mark.parametrize("bind", ["0.0.0.0:8765", "192.168.1.5:8765", "[::]:8765"])
+def test_http_binds_loopback_only(bind: str) -> None:
+    with pytest.raises(HttpTransportError, match="loopback"):
+        parse_bind(bind)
+    assert parse_bind("[::1]:8765") == ("::1", 8765)
 
-    http = httpx.Client(transport=httpx.MockTransport(respond))
-    if allowed:
-        check_exposure(host="0.0.0.0", engine_url="http://engine.test", http=http)
-    else:
-        with pytest.raises(HttpTransportError):
-            check_exposure(host="0.0.0.0", engine_url="http://engine.test", http=http)
-    # Loopback never probes.
-    check_exposure(host="127.0.0.1", engine_url="http://engine.test", http=http)
+
+def test_http_opens_a_session_only_on_a_successful_initialize(
+    listener: tuple[McpHttpServer, _FakeEngine],
+) -> None:
+    server, _ = listener
+    bad = _post(server, {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+    assert "error" in bad.json()
+    assert "Mcp-Session-Id" not in bad.headers
+
+
+def test_http_refuses_an_unsupported_protocol_version(
+    listener: tuple[McpHttpServer, _FakeEngine],
+) -> None:
+    server, _ = listener
+    session = _post(server, _INITIALIZE).headers["Mcp-Session-Id"]
+    ping: dict[str, object] = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+    old = _post(
+        server, ping, session=session, headers={"MCP-Protocol-Version": "2024-11-05"}
+    )
+    assert old.status_code == 400
+    current = _post(
+        server, ping, session=session, headers={"MCP-Protocol-Version": "2025-11-25"}
+    )
+    assert current.status_code == 200
+
+
+def test_http_refuses_an_oversized_body(
+    listener: tuple[McpHttpServer, _FakeEngine],
+) -> None:
+    server, _ = listener
+    with socket.create_connection(("127.0.0.1", server.server_address[1])) as raw:
+        raw.sendall(
+            b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: "
+            + str(MAX_BODY_BYTES + 1).encode()
+            + b"\r\n\r\n"
+        )
+        assert raw.recv(64).startswith(b"HTTP/1.1 413")
+
+
+def test_http_bounds_concurrent_requests(
+    listener: tuple[McpHttpServer, _FakeEngine],
+) -> None:
+    server, _ = listener
+    for _ in range(MAX_CONCURRENT_REQUESTS):
+        assert server.slots.acquire(blocking=False)
+    try:
+        busy = _post(server, _INITIALIZE)
+        assert busy.status_code == 503
+    finally:
+        for _ in range(MAX_CONCURRENT_REQUESTS):
+            server.slots.release()
+    assert _post(server, _INITIALIZE).status_code == 200
+
+
+def test_http_a_stalled_body_frees_its_slot(
+    listener: tuple[McpHttpServer, _FakeEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client that stops sending is cut off at the read deadline."""
+    from remember import mcp_http
+
+    monkeypatch.setattr(mcp_http._Handler, "timeout", 0.2)  # noqa: SLF001
+    server, _ = listener
+    with socket.create_connection(("127.0.0.1", server.server_address[1])) as raw:
+        raw.sendall(b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{")
+        raw.settimeout(5)
+        assert raw.recv(64) == b""  # closed without an answer
+    assert _post(server, _INITIALIZE).status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -904,3 +958,81 @@ def test_doctor_names_a_tool_served_at_another_version() -> None:
     )
     assert len(lines) == 1
     assert "'facts_context'" in lines[0] and "upgrade remember" in lines[0]
+
+
+def test_read_only_approvals_follow_the_latest_complete_listing() -> None:
+    """A tool the remote stops marking read-only is refused from the next listing on."""
+    remote = _Remote()
+
+    def relabel(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content or b"{}")
+        if body.get("id") == 4:
+            remote.tools[0] = {
+                **remote.tools[0],
+                "annotations": {"readOnlyHint": False},
+            }
+        return remote.handle(request)
+
+    answers, _ = _bridge(
+        remote,
+        _INITIALIZE,
+        _LIST,
+        _call(3, "facts_context"),
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/list"},
+        _call(5, "facts_context"),
+        read_only=True,
+        handler=relabel,
+    )
+    by_id = {answer.get("id"): answer for answer in answers}
+    assert by_id[3]["result"]["isError"] is False
+    assert by_id[4]["result"]["tools"] == []
+    assert _error(by_id[5]["result"])["code"] == "read_only"
+
+
+def test_read_only_approvals_are_cleared_when_the_session_reopens() -> None:
+    remote = _Remote()
+    forgotten: list[bool] = []
+
+    def forgetful(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.content or b"{}").get("id") == 3 and not forgotten:
+            forgotten.append(True)
+            remote.sessions.clear()
+        return remote.handle(request)
+
+    answers, _ = _bridge(
+        remote,
+        _INITIALIZE,
+        _LIST,
+        _call(3, "facts_context"),
+        _call(4, "facts_context"),
+        read_only=True,
+        handler=forgetful,
+    )
+    by_id = {answer.get("id"): answer for answer in answers}
+    assert by_id[3]["result"]["isError"] is False  # approved before the reopen
+    assert _error(by_id[4]["result"])["code"] == "read_only"  # list again first
+
+
+def test_in_process_server_hides_unexpected_failures(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected exception is a logged internal_error with no internals."""
+    import logging
+
+    from rememberstack.surfaces import mcp as in_process
+
+    monkeypatch.setattr(in_process.logger, "disabled", False)
+
+    class _Exploding:
+        deployment_id = uuid4()
+
+        def run(self, **_: object) -> object:
+            raise RuntimeError("secret connection string postgres://u:p@h")
+
+    server = OperationMcpServer(surface=_Exploding())  # type: ignore[arg-type]
+    with caplog.at_level(logging.ERROR):
+        result = server.call_tool(name="resolve_entity", arguments={"name": "A"})
+    error = _error(result)
+    assert error["code"] == "internal_error"
+    assert "secret" not in json.dumps(error)
+    assert any(record.exc_info is not None for record in caplog.records)

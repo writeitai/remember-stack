@@ -134,8 +134,8 @@ def map_error(error: BaseException) -> ToolError:
     - ``ValidationError`` — the backend answered in an unexpected shape.
     - ``ValueError`` — a typed client-side contract failure.
     - ``ConnectionError`` / ``TimeoutError`` — retryable ``transport_error``.
-    - Anything else — non-retryable ``internal_error``; callers log the
-      traceback.
+    - Anything else — non-retryable ``internal_error`` with a generic
+      detail (no internals); callers log the traceback.
 
     Duck-typed on the attributes so an in-process port adapter can raise an
     ordinary exception that maps the same way.
@@ -194,7 +194,8 @@ def map_error(error: BaseException) -> ToolError:
         return _transport_error(detail=str(error) or error.__class__.__name__)
     return ToolError(
         code="internal_error",
-        detail=str(error) or error.__class__.__name__,
+        # Never the exception text: it may carry internals. Callers log it.
+        detail="Unexpected internal failure; the server logged the details.",
         status_code=None,
         retryable=False,
         agent_action=(

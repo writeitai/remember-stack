@@ -285,9 +285,11 @@ start-up error.
   - `POST /mcp` accepts one JSON-RPC message; responses are
     `application/json`. The server has no server-initiated messages, so
     `GET /mcp` returns `405`. `DELETE /mcp` ends a session.
-  - `initialize` returns an `Mcp-Session-Id`; later requests must carry it;
-    an unknown or expired session gets `404`, which tells the client to
-    initialize again. Sessions hold no memory state, only protocol state.
+  - A successful `initialize` returns an `Mcp-Session-Id`; later requests
+    must carry it; an unknown or expired session gets `404`, which tells the
+    client to initialize again. Sessions hold no memory state, only protocol
+    state. A later request whose `MCP-Protocol-Version` is not the negotiated
+    version gets `400`.
   - A request whose `Origin` header is present and is not the listener's own
     origin is refused with `403` (defence against DNS rebinding, where a web
     page reaches a loopback server through a hostname it controls).
@@ -295,10 +297,15 @@ start-up error.
     `Authorization` header to the engine unchanged and holds no credential of
     its own, so the engine perimeter decides every call and records the real
     caller (analysis §3.7). A call without a bearer is forwarded without one.
-  - It binds to loopback by default. With a non-loopback `--bind`, start-up
-    probes the engine without a credential and refuses to start if the engine
-    answers a read: an unauthenticated engine is never exposed this way. TLS
-    is terminated by the operator's proxy; the listener does not implement it.
+  - It binds to loopback only; a non-loopback `--bind` is refused. Reaching
+    it from other machines is the job of an operator's reverse proxy, which
+    authenticates callers and terminates TLS. (A start-up probe of the
+    engine's auth was rejected: the answer can change after start-up, and a
+    loopback-only rule needs no probe.)
+  - It is bounded: 16 requests at once (more get `503`), a 30-second deadline
+    on each socket read, and a 32 MiB body — only an `ingest` body sent as
+    `content_base64` is large, and bigger files go through `remember ingest`
+    (starting values).
   - Per-request `tools/list` is not filtered by the caller's permissions (the
     listener does not know them); a call the engine refuses returns
     `insufficient_permission`.
@@ -769,7 +776,7 @@ The account API's operations and their permissions are defined by the issuer
 | Engine: credential signed by a `kid` absent from `active_kids` | `401` |
 | Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve; retry once if the URL changed |
 | Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
-| HTTP transport: non-loopback bind in front of an unauthenticated engine | Refuses to start |
+| HTTP transport: non-loopback `--bind` | Refuses to start |
 | HTTP transport: bad `Origin` | `403` |
 | Engine: wrong `aud`, not covering this deployment, wrong issuer, revoked | `401` |
 | Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After`; MCP hosts return the tool error `rate_limited` / `concurrency_limited` with `retry_after` |
@@ -805,7 +812,7 @@ Engine consistency:
 - engine mode refuses `project`;
 - HTTP transport: session issuance and `404` on unknown session, `405` on
   `GET`, `Origin` refusal, bearer forwarded unchanged and never stored,
-  loopback default, non-loopback refusal against an unauthenticated engine;
+  loopback-only bind, the concurrency, read-deadline and body bounds;
 - bridge: verbatim relay of JSON and event-stream responses; unknown remote
   tools passed through; no `path` ingest; `404` session recovery; `401` message; cross-origin
   redirect refusal; `http` non-loopback refusal; key absent from all output;

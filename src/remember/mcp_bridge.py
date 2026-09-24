@@ -86,8 +86,10 @@ class McpBridge:
         self._session_id: str | None = None
         self._protocol_version: str | None = None
         self._initialize_params: object = None
-        #: Tool names the remote listed as read-only that the catalogue reads.
+        #: Tool names the last complete ``tools/list`` approved (read-only mode).
         self._readable: set[str] = set()
+        #: Approvals of a paginated ``tools/list`` still being read.
+        self._listing: set[str] = set()
 
     def run(self, input_stream: TextIO = sys.stdin) -> int:
         """Relay until stdin closes, then end the remote session."""
@@ -124,6 +126,7 @@ class McpBridge:
         request_id = message.get("id")
         if method == "initialize":
             self._initialize_params = message.get("params")
+            self._readable = set()
         if self._read_only and method == "tools/call":
             refusal = self._read_only_refusal(message)
             if refusal is not None:
@@ -131,9 +134,7 @@ class McpBridge:
                 return
         try:
             for answer in self._exchange(message, recover=True):
-                self._write(
-                    self._filtered(answer, method=method, request_id=request_id)
-                )
+                self._write(self._filtered(answer, request=message))
         except _Failure as failure:
             if not is_request:
                 print(f"remember mcp: {failure.message}", file=self._err)
@@ -175,13 +176,18 @@ class McpBridge:
         )
 
     def _filtered(
-        self, answer: dict[str, object], *, method: object, request_id: object
+        self, answer: dict[str, object], *, request: dict[str, object]
     ) -> dict[str, object]:
-        """Keep only readable tools in a ``tools/list`` answer when read-only."""
+        """Keep only readable tools in a ``tools/list`` answer when read-only.
+
+        Each complete listing (its last page has no ``nextCursor``) replaces
+        the approved set, so a tool the remote stops marking read-only is
+        refused from then on.
+        """
         if (
             not self._read_only
-            or method != "tools/list"
-            or answer.get("id") != request_id
+            or request.get("method") != "tools/list"
+            or answer.get("id") != request.get("id")
         ):
             return answer
         result = answer.get("result")
@@ -189,7 +195,12 @@ class McpBridge:
         if not isinstance(result, dict) or not isinstance(tools, list):
             return answer
         kept = [entry for entry in tools if _readable(entry)]
-        self._readable.update(str(entry["name"]) for entry in kept)
+        params = request.get("params")
+        if not (isinstance(params, dict) and params.get("cursor")):
+            self._listing = set()
+        self._listing |= {str(entry["name"]) for entry in kept}
+        if not result.get("nextCursor"):
+            self._readable = self._listing
         return {**answer, "result": {**result, "tools": kept}}
 
     # -- HTTP --------------------------------------------------------------
@@ -289,6 +300,7 @@ class McpBridge:
     def _reinitialize(self) -> None:
         """Open a new remote session with the agent's original parameters."""
         self._session_id = None
+        self._readable = set()
         request = {
             "jsonrpc": "2.0",
             "id": _REINIT_ID,

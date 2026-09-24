@@ -108,12 +108,16 @@ the address.
 | Request | Behaviour |
 |---|---|
 | `POST /mcp` | One JSON-RPC message per request, answered with `application/json`; a notification gets `202` and no body. |
-| `initialize` | Opens a session: the answer carries an `Mcp-Session-Id` header. Every later request must send it back. |
+| `initialize` | A successful one opens a session: the answer carries an `Mcp-Session-Id` header. Every later request must send it back. |
 | Missing `Mcp-Session-Id` | `400`. |
+| `MCP-Protocol-Version` other than `2025-11-25` | `400`. The header is optional. |
 | Unknown or expired session | `404`: initialize again. A session unused for an hour expires. |
 | `DELETE /mcp` with `Mcp-Session-Id` | Ends the session (`204`). |
 | `GET /mcp` | `405`: the server never sends messages of its own. |
 | `Origin` header that is not the server's own address | `403`. This stops a web page from reaching the server through a hostname it controls. |
+| More than 16 requests at once | `503` with `Retry-After: 1`. |
+| Body over 32 MiB | `413`. Only an `ingest` body sent as `content_base64` gets this big; use `remember ingest` for larger files. |
+| A client that stops sending for 30 seconds | The connection is closed. |
 
 The HTTP server holds no key. It passes each caller's `Authorization`
 header to the engine unchanged with every call, so the engine decides what
@@ -125,11 +129,9 @@ the caller's key may not make returns `insufficient_permission`.
 `ingest` does not offer the `path` body over HTTP: the caller may be on
 another machine.
 
-It listens on the loopback address unless you bind it elsewhere. With any
-other address, it first asks the engine for `GET /deployment` without a key
-and refuses to start unless the engine refuses: it never exposes an engine
-that answers without a key. It does not do TLS; put a reverse proxy in
-front of it when agents connect from other machines.
+It listens on a loopback address only; `--bind` with any other address is
+refused. To let agents on other machines reach it, put a reverse proxy in
+front of it that authenticates callers and terminates TLS.
 
 ### Results
 

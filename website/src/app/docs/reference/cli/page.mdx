@@ -346,7 +346,7 @@ Runs an MCP server for a coding agent. By default it speaks on standard input
 and output and finds the deployment the same way as every other
 command<Cloud>, so after `remember login` it needs no flags</Cloud>.
 `--transport http` serves the same tools over HTTP at
-`http://127.0.0.1:8765/mcp` instead (`--bind` changes the address).
+`http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
 `--read-only` removes the tools that change memory, `ingest` and
 `delete_document`.
 
