@@ -420,7 +420,8 @@ ingest ──► convert ──► expand ──► structure ──► crossref
 - `convert` returns the parent's own reading plus **member descriptors**
   (`ConversionResult.members`): for each member its member key (§5.2),
   member path, relation (`archive_member`, `attachment`, `message`,
-  `conversation`, `embedded_image`), its locator in the parent, its own
+  `conversation`, `embedded_image`), its locators in the parent (one per
+  occurrence), its own
   timestamp when the container records one, and its bytes staged in the private store (§4.6) keyed by the parent's
   content hash and the member key.
 - `expand` reads the descriptors and, for each member, performs one E0
@@ -429,7 +430,8 @@ ingest ──► convert ──► expand ──► structure ──► crossref
   no-op.
 - **Member records** (schema: `document_members`) link parent version →
   child document version: `(parent_version_id, member_key)` primary key,
-  member path, relation, child `doc_id` and `version_id`, parent locator,
+  member path, relation, child `doc_id` and `version_id`, its locators in
+  the parent (a list: a repeated figure has one per occurrence),
   and a per-member status (`ingested`, `skipped` with reason, `failed`).
 - **Two records, two lifetimes.** The parent's representation is immutable
   once written (D65). Its `coverage.gaps` names only what *conversion* left

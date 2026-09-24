@@ -1276,7 +1276,7 @@ CREATE TABLE document_members (
   relation          text NOT NULL CHECK (relation IN ('archive_member','attachment','message','conversation','embedded_image')),
   child_doc_id      uuid,                      -- NULL while pending or when skipped/failed
   child_version_id  uuid,
-  parent_locator    jsonb,                     -- SourceLocator of the member inside the parent (e.g. page + region of a figure)
+  parent_locators   jsonb NOT NULL DEFAULT '[]', -- SourceLocator[]: every place the member occurs in the parent (a figure repeated on two pages has two)
   canonical_serialization boolean NOT NULL DEFAULT false, -- bytes are a canonical serialization, not an exact byte slice
   status            text NOT NULL CHECK (status IN ('pending','ingested','skipped','failed')),
   reason            text,                      -- skip/failure reason; mutable state here only — never written into the parent's immutable coverage.gaps (D133 §5.1)
