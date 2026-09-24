@@ -317,8 +317,6 @@ from rememberstack.model.processing import BackfillSeedResult
 from rememberstack.model.processing import BudgetParked
 from rememberstack.model.processing import ClaimedWork
 from rememberstack.model.processing import CostBudget
-from rememberstack.model.processing import CostBudgetStatus
-from rememberstack.model.processing import CostTierSpend
 from rememberstack.model.processing import DeferReason
 from rememberstack.model.processing import EnqueueOutcome
 from rememberstack.model.processing import EnqueueWork
@@ -418,8 +416,6 @@ __all__ = (
     "ConnectorCreate",
     "ConnectorDescriptor",
     "CostBudget",
-    "CostBudgetStatus",
-    "CostTierSpend",
     "CurrencyLedgerAudit",
     "CurrencyMismatch",
     "ConnectorNotFoundError",

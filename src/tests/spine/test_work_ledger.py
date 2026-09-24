@@ -370,16 +370,6 @@ def test_configured_budget_parks_reports_and_resumes_without_losing_work(
     assert parked["last_error"] is None
     assert announcement.not_before_snapshot == parked["not_before"]
 
-    (status,) = budgeted.budget_status(deployment_id=_DEPLOYMENT_ID)
-    assert status.spent_usd == Decimal("1.250000")
-    assert status.remaining_usd == Decimal(0)
-    assert status.exhausted
-    assert status.parked_work == 1
-    assert {tier.tier: tier.cost_usd for tier in status.tiers} == {
-        "frontier": Decimal("0.500000"),
-        "selection": Decimal("0.750000"),
-    }
-
     with database_engine.begin() as connection:
         connection.execute(
             text("UPDATE cost_ledger SET occurred_at = occurred_at - interval '2 days'")
