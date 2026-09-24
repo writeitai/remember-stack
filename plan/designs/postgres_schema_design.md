@@ -1316,8 +1316,24 @@ CREATE TABLE document_metadata (
 );
 CREATE INDEX ix_document_metadata_family  ON document_metadata (deployment_id, family, created_at DESC);
 CREATE INDEX ix_document_metadata_thread  ON document_metadata (deployment_id, thread_ref) WHERE thread_ref IS NOT NULL;
-CREATE INDEX ix_document_metadata_names   ON document_metadata USING gin ((coalesce(file_name,'') || ' ' || coalesce(title,'') || ' ' || coalesce(source_path,'')) gin_trgm_ops);
--- plus a pg_textsearch BM25 index on the same expression (D94 BM25 channel on an authority row)
+
+-- D134: every name a version was observed under — the name at conversion, then one row per
+-- metadata observation (identical bytes arriving under a new file name, title or path, which
+-- creates no version). search_documents' name channel reads this table, so a renamed file is
+-- found by its new name and its old ones.
+CREATE TABLE document_names (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  observed_at     timestamptz NOT NULL,
+  file_name       text,
+  title           text,
+  source_path     text,
+  name_text       text NOT NULL,              -- file_name + title + source_path, space-joined; the indexed search text
+  PRIMARY KEY (deployment_id, version_id, observed_at),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_names_trgm ON document_names USING gin (name_text gin_trgm_ops);
+CREATE INDEX ix_document_names_bm25 ON document_names USING bm25 (name_text) WITH (text_config='simple');
 
 -- D134: the people in authors/recipients, one row each, for filtering by name or address.
 CREATE TABLE document_people (
@@ -1435,7 +1451,7 @@ CREATE TABLE chunks (
   block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
   chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, source_kind, source_modified_at/published_at, language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, source_modified_at/published_at, language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
@@ -1566,7 +1582,7 @@ CREATE TABLE claims (
   added_context   jsonb NOT NULL DEFAULT '[]', -- [{text, source_kind: header|neighbour|prefix|hint, source_ref}] — each substring decontextualization ADDED (D32 layer 2)
   temporal_class  claim_temporal_class,        -- static | dynamic | atemporal — the "temporally classified" requirement (see reconciliation note)
   is_attributed   boolean NOT NULL DEFAULT false, -- preserves a "X said Y" attribution (entailment rule: entails "X said Y", not "Y" — D32)
-  names_own_document boolean NOT NULL DEFAULT false, -- D134: validated self-reference — Claimify replaced "this report" with the document's own name from the header
+  own_document_name_span int4range,            -- D134: validated self-reference — the [start, end) span of claim_text where Claimify wrote the document's own name in place of "this report"; NULL otherwise
   -- grounding verdicts (D32). Deterministic layers 1-2 are an ACCEPTANCE GATE (must be true here);
   -- the LLM layers 3-4 are advisory/sampled and may be false on a kept-but-borderline claim:
   anchor_ok       boolean NOT NULL,            -- layer 1: source_span is a real in-bounds slice of the chunk (deterministic)
@@ -2778,7 +2794,7 @@ Labs."*
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D133 format registry, profiles, expansion | `document_members`, `document_member_suppressions`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
-| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version, trigram + BM25 name indexes); `claims.names_own_document`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
+| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version), `document_names` (every observed name, trigram + BM25 indexes); `claims.own_document_name_span`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---

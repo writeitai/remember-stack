@@ -90,6 +90,12 @@ per role, indexed on the normalized name and address). Schema:
 that produced them is versioned separately (`metadata_mapping_version`) from
 the E2 extractor.
 
+**Renames.** Identical bytes arriving under a new file name, title or path
+create no version (E0's metadata observation). They append a row to
+`document_names` for the current version, which `search_documents` reads, and
+update the lineage's `title`/`source_uri`. The version's `document_metadata`
+keeps what conversion observed.
+
 **Deletion.** Normal delete soft-tombstones versions and keeps their rows for
 audit (schema §13.1), so the metadata rows stay too; every read in §3 and §4
 considers only **live** versions of live lineages, so a deleted document
@@ -114,9 +120,10 @@ search_documents(query?, filters?, k) → documents
   version IDs. Either way the returned metadata is that of the returned
   version, so a result never shows metadata that did not match.
 - **`query`** is matched on two channels, fused by rank (the D9 fusion):
-  - **names** — `file_name`, `title` and `source_path` of the judged
-    version(s), by the trigram and BM25 indexes on `document_metadata`, so a
-    partial or misspelled name still finds the file;
+  - **names** — every name the judged version(s) were observed under
+    (`document_names`: the name at conversion plus each later metadata
+    observation), by trigram and BM25, so a renamed file is found by its new
+    and old names, and a partial or misspelled name still finds it;
   - **content** — the existing `chunk_search` (D94), grouped by document:
     each document scores by its best-ranked chunk in the judged version.
     A profiled file's overview and a document's top-level text are ordinary
@@ -184,13 +191,18 @@ writes the document's name into the claim instead of the bare reference:
   existing D32 layer-2 check because their tokens appear in the header (the
   check is token membership in the grounding context; the
   `added_context.source_kind: header` tag Claimify records is advisory).
-- **The self-reference is marked, not inferred later.** Claimify sets a new
-  output field, `names_own_document: true`, on a claim where it replaced a
-  self-reference with the document's name. The grounding gate keeps the
-  field only when the claim text contains one of the document's names and
-  that name's tokens are not in the claim's source span (they came from the
-  header). The accepted value is persisted on the claim and survives D56
-  reuse with it. Adding the
+- **The self-reference is marked at the exact words, not inferred later.**
+  Claimify returns a new output field, `own_document_name`: the exact text it
+  wrote in place of the self-reference (e.g. `Audit_2025.pdf`). The grounding
+  gate keeps it only when that text equals one of the document's names, occurs
+  **exactly once** in the claim, and its tokens are not in the claim's source
+  span (they came from the header); it then persists the character span as
+  `claims.own_document_name_span`. Otherwise the field is dropped with a
+  diagnostic and the claim is kept. The span is part of the claim and
+  survives D56 reuse with it.
+- **Renames re-extract.** The file name is part of the extraction reuse key
+  (`e1_chunks_design.md` §7), so a new version with a different file name
+  never reuses claims naming the old one. Adding the
   file name changes the header, a stable extraction input (D56), so it and
   the prompt change bump the extractor version: affected documents are
   re-extracted once.
@@ -210,14 +222,18 @@ writes the document's name into the claim instead of the bare reference:
 
 Left alone, E3 would treat "Audit_2025.pdf" in such a claim as a name and
 mint or resolve an entity for it — and could merge two different files that
-share a name. So, **for claims with `names_own_document=true` only**, E3 receives the
-document's own names (title, file name, and file name without extension). A
-reference in such a claim whose normalized name equals one of them is **not
-minted or resolved**: the claim is kept, searchable by its text, and the
-skipped reference is counted in extraction diagnostics. Name equality alone
-never triggers this: in a document titled "Alice", a claim about Alice the
-person has no self-reference mark and resolves normally, and so does a
-mention of a different file that shares this file's name. This extends D96's eligibility rule ("do not mint
+share a name. So E3 uses the claim's `own_document_name_span`. A reference whose surface
+text is exactly the text at that span is **not minted or resolved**; the
+claim is kept, searchable by its text, and the skipped reference is counted
+in extraction diagnostics. Only that one reference is skipped:
+- a claim without the span is unaffected, so in a document titled "Alice" a
+  claim about Alice the person resolves normally;
+- if E3 emits more than one reference with that same surface text (e.g.
+  "Alice wrote the report Alice"), it cannot tell which one is the document,
+  so it skips none, resolves all normally and records a diagnostic — the
+  rare cost is a name entity for that file, never a lost person;
+- a mention of a different file that shares this file's name has no span
+  and resolves normally. This extends D96's eligibility rule ("do not mint
 filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
 *other* files by name are unaffected and resolve as ordinary names.
 
@@ -242,12 +258,16 @@ filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
 - Document filters on each `search` target, applied before the top-k cut
   (a matching document ranked below the unfiltered top-k is still returned).
 - Self-reference naming: "this report", "the attached spreadsheet", a
-  profile overview; a non-self claim gets no name; `names_own_document` is
-  dropped when the name is in the source span or absent from the claim; the title is preferred
+  profile overview; a non-self claim gets no name; `own_document_name` is
+  dropped when it is not one of the document's names, occurs twice, or its
+  tokens are in the source span; a renamed new version does not reuse old
+  self-referencing claims; the title is preferred
   over the file name; grounding accepts the header context.
 - E3: a claim naming its own file mints no entity; two same-named files
   create no shared entity; a mention of another file resolves normally; a
-  person whose name equals the document's title still resolves.
+  person whose name equals the document's title still resolves; "Alice wrote
+  the report Alice" skips nothing.
+- A same-byte rename is found by `search_documents` under the new name.
 - Deleted versions and lineages never match `search_documents` or
   document filters; hard forget removes metadata and people rows.
 - `versions: all` returns the matching version's metadata, never the current

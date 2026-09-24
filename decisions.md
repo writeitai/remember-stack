@@ -4191,9 +4191,8 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
-**Refined by D134.** In a claim marked as naming its own document, the reference equal to the
-document's own name (title, file name, or file name without extension) is not minted or resolved;
-the claim keeps the name as text. No entity type is introduced.
+**Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
+one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -6221,12 +6220,12 @@ report.
    top-k cut. Only live versions match.
 4. **Self-references name the document.** When a passage refers to its own
    document, Claimify writes the title (else file name) from the extraction
-   header, which gains the file name, and marks the claim
-   `names_own_document`; the gate keeps the mark only when the name came from
-   the header. Ordinary claims never get the name. Extractor version bumps.
-5. **A document's own name is not an entity.** In claims marked
-   `names_own_document` only, E3 skips the reference equal to the document's
-   own names (refining D96's eligibility rule), so same-named files never
+   header, which gains the file name (and the extraction reuse key with it),
+   and returns the exact inserted name; the gate stores its span on the claim
+   only when it is one of the document's names, occurs once, and came from the
+   header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips only the reference
+   whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
    merge while a person who shares a document's title still resolves. The
    D18-era `documents.document_entity_id` bridge is removed.
 

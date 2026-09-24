@@ -336,9 +336,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
   facts + extractor_version + structurer_version)` — where **stable header facts** are the
-  deterministic document metadata the E2 bundle feeds the extractor: title, source kind,
-  source-modified/published date, language (from `documents`/`document_versions`; never
-  LLM-derived) — **no LLM *output* participates in the
+  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
+  (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
+  the old one), source kind, source-modified/published date, language (from
+  `documents`/`document_versions`/`document_metadata`; never LLM-derived) — **no LLM *output* participates in the
   key** (refines D56's original sketch, which had let the section path and prefix in — a key
   no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
   `structurer_version` — a stable config string, not LLM output — closes the context-drift
