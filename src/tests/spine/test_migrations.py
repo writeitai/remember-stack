@@ -1,5 +1,7 @@
 """Real-PostgreSQL lifecycle tests for the Phase 0 Alembic schema chain."""
 
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,6 +13,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 
+from rememberstack.core.document_metadata import family_for_mime
 from rememberstack.spine.catalog_contract import CatalogInventory
 from rememberstack.spine.catalog_contract import SchemaContractError
 from rememberstack.spine.catalog_contract import verify_schema
@@ -134,6 +137,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_31_0052",
         "p9_32_0053",
         "p9_33_0054",
+        "p9_34_0055",
     )
     assert len(script.get_heads()) == 1
 
@@ -156,6 +160,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p1_04_0019_d79_structure_generations.py": 1,
         "p9_22_0043_document_entity_bindings.py": 1,
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
+        "p9_34_0055_document_metadata.py": 2,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -650,7 +655,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 75
+    assert len(fresh_inventory.tables) == 78
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)
@@ -672,7 +677,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_33_0054"
+    assert head_before_noop == head_after_noop == "p9_34_0055"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1260,7 +1265,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_33_0054"
+    assert _head_revision(database_url=database_url) == "p9_34_0055"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1304,4 +1309,149 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_33_0054"
+    assert _head_revision(database_url=database_url) == "p9_34_0055"
+
+
+_BACKFILL_MIMES = (
+    "text/markdown",
+    "text/x-markdown",
+    "text/html",
+    "application/xhtml+xml",
+    "application/pdf",
+    "image/png",
+    "audio/mpeg",
+    "video/mp4",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.oasis.opendocument.text",
+    "application/msword",
+    "application/rtf",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "text/plain",
+    "text/csv",
+    "application/json",
+    "application/octet-stream",
+    "message/rfc822",
+    "application/vnd.ms-outlook",
+    "Text/HTML; charset=utf-8",
+)
+
+
+def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
+    """One metadata row per live-able version, family by the Python mapping."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_33_0054")
+    engine = create_engine(database_url)
+    deployment_id = uuid4()
+    versions: dict[str, tuple[object, object]] = {}
+    forgotten_version = uuid4()
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:deployment, 'd134-backfill', 'D134 backfill', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"deployment": deployment_id},
+            )
+            for index, mime in enumerate((*_BACKFILL_MIMES, "text/plain")):
+                doc_id, version_id = uuid4(), uuid4()
+                forgotten = index == len(_BACKFILL_MIMES)
+                content_hash = f"hash-{index}"
+                connection.execute(
+                    text(
+                        "INSERT INTO content_objects (deployment_id, content_hash,"
+                        " mime, raw_uri) VALUES (:d, :h, :mime, 'raw')"
+                    ),
+                    {"d": deployment_id, "h": content_hash, "mime": mime},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                        " source_ref, title) VALUES (:doc, :d, 'upload', :ref, :title)"
+                    ),
+                    {
+                        "doc": doc_id,
+                        "d": deployment_id,
+                        "ref": content_hash,
+                        # one lineage without a title gets no name row
+                        "title": None if index == 1 else f"Doc {index}",
+                    },
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO document_versions (version_id, deployment_id,"
+                        " doc_id, content_hash, version_no, language, thread_ref,"
+                        " published_at, source_modified_at) VALUES (:v, :d, :doc,"
+                        " :h, 1, 'en', 'thread-1', '2025-01-02T00:00:00Z',"
+                        " '2025-02-03T00:00:00Z')"
+                    ),
+                    {
+                        "v": version_id,
+                        "d": deployment_id,
+                        "doc": doc_id,
+                        "h": content_hash,
+                    },
+                )
+                if forgotten:
+                    forgotten_version = version_id
+                    connection.execute(
+                        text(
+                            "INSERT INTO forget_manifests (forget_id, deployment_id,"
+                            " doc_id, schema_version) VALUES (:f, :d, :doc, 1)"
+                        ),
+                        {"f": uuid4(), "d": deployment_id, "doc": doc_id},
+                    )
+                else:
+                    versions[mime] = (version_id, doc_id)
+
+        command.upgrade(config=config, revision="p9_34_0055")
+        with engine.connect() as connection:
+            rows = {
+                row["version_id"]: row
+                for row in connection.execute(
+                    text("SELECT * FROM document_metadata")
+                ).mappings()
+            }
+            names = {
+                row["version_id"]: (row["title"], row["name_text"], row["file_name"])
+                for row in connection.execute(
+                    text("SELECT * FROM document_names")
+                ).mappings()
+            }
+        assert forgotten_version not in rows
+        assert len(rows) == len(_BACKFILL_MIMES)
+        for mime, (version_id, doc_id) in versions.items():
+            row = rows[version_id]
+            assert row["family"] == family_for_mime(mime=mime), mime
+            assert row["doc_id"] == doc_id
+            assert row["language"] == "en"
+            assert row["thread_ref"] == "thread-1"
+            assert row["created_at"] == datetime(2025, 1, 2, tzinfo=timezone.utc)
+            assert row["modified_at"] == datetime(2025, 2, 3, tzinfo=timezone.utc)
+            assert row["file_name"] is None and row["source_path"] is None
+            assert row["metadata_mapping_version"] == "backfill-p9_34"
+        untitled = versions[_BACKFILL_MIMES[1]][0]
+        assert rows[untitled]["title"] is None
+        assert untitled not in names
+        titled = versions[_BACKFILL_MIMES[0]][0]
+        assert names[titled] == ("Doc 0", "Doc 0", None)
+        assert len(names) == len(_BACKFILL_MIMES) - 1
+
+        command.downgrade(config=config, revision="p9_33_0054")
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT to_regclass('public.document_metadata')")
+                ).scalar_one()
+                is None
+            )
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_34_0055"
