@@ -49,7 +49,7 @@ chat exports.
 | `modified_at` | timestamp | When the source says it was last modified |
 | `language` | text | Detected primary language |
 | `thread_ref` | text | The conversation or thread it belongs to, as an opaque key |
-| `family` | text | The D133 format family |
+| `family` | text | The D133 format family (until the D133 registry ships, a coarse class derived from the stored MIME: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`) |
 
 A **people** value is a list of `{name, address}`: `name` is a display name
 ("Alice Novak"), `address` is an email address or handle
@@ -77,9 +77,12 @@ families is promoted to a general field by a design change.
 **Where values come from.** The converter reads them from the file and
 returns them with its result (`ConversionResult.metadata`); a connector may
 add what its source knows (a Drive file's owner, a Slack workspace's user
-names). Each field records its provenance, `source` or `connector`; when both
-provide a field, the file's own value wins and the connector's is kept in
-`extra`. Values are what the source *declares*, not verified facts: an
+names). Each field records its provenance, `source` or `connector`. A title
+the caller declares at ingest is kept as the version's `title`; a title the
+file itself declares fills `title` only when the caller gave none, and is
+always recorded as a `document_names` row, so it stays searchable either way.
+A field the caller leaves out is not a change: re-sending a file without a
+name records no new name. Values are what the source *declares*, not verified facts: an
 email's `From` can be forged, and results say where the value came from.
 
 **Storage (D37).** These are compact, query-critical metadata, so they live
