@@ -989,6 +989,21 @@ class MemoryClient:
                 body = None
             if isinstance(body, dict) and set(body) == {"detail"}:
                 public_detail = body["detail"]
+                if (
+                    response.status_code == 429
+                    and isinstance(public_detail, dict)
+                    and isinstance(public_detail.get("code"), str)
+                ):
+                    # Direct-path admission (D136 §7.6): not retried here; the
+                    # caller gets the code and the server's Retry-After.
+                    raise MemoryApiError(
+                        status_code=429,
+                        detail=str(
+                            public_detail.get("message") or public_detail["code"]
+                        ),
+                        code=public_detail["code"],
+                        retry_after=_retry_after(response),
+                    )
                 if isinstance(public_detail, dict):
                     structured = (
                         _structured_query_error(

@@ -534,18 +534,23 @@ After authentication and before the route runs:
 | --- | --- |
 | Requests per credential (`jti`) | 120 per minute, burst 30 |
 | In flight per credential | 8 |
-| Requests per deployment | 600 per minute |
+| Requests per deployment | 600 per minute, burst 150 |
 | In flight per deployment | 32 |
 
-The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_*`);
-nothing else about admission is configurable.
+The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
+`…_KEY_IN_FLIGHT`, `…_DEPLOYMENT_PER_MINUTE`, `…_DEPLOYMENT_IN_FLIGHT`);
+nothing else about admission is configurable. Each burst is derived, not set:
+a quarter of its per-minute rate (15 seconds of traffic), which gives the 30
+and 150 above.
 
 - **Mechanism.** A token bucket per credential and one per deployment (a
   counter refilled at the rate up to the burst; each request takes one token),
   and a counting semaphore for in-flight requests. The shared-secret bearer
-  has no `jti` and is bounded by the deployment limits only. `GET /healthz` is
-  exempt. A slot is released when the response finishes, fails, or the client
-  disconnects.
+  has no `jti` and is bounded by the deployment limits only, as is every
+  request to a deployment with no auth perimeter. `GET /healthz` is
+  exempt. A request is admitted only when every check passes, and a refused
+  request consumes no token. A slot is released when the response finishes,
+  fails, or the client disconnects.
 - **Refusal.** `429`, error code `rate_limited` or `concurrency_limited`, and
   `Retry-After` in whole seconds (time until a token is available; 1 for an
   in-flight refusal). The SDK raises `RateLimited` with `retry_after` and does

@@ -72,6 +72,10 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | passed | Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | passed | Requests running at once for the whole deployment. |
 
 ## Storage
 

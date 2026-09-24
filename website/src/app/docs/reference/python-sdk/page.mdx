@@ -1127,7 +1127,8 @@ Raised by every memory-client method when a request fails.
 |---|---|
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`); otherwise `None`. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` admission refusal (`rate_limited` or `concurrency_limited`); otherwise `None`. |
+| `retry_after` | On a `429`, the `Retry-After` seconds the deployment sent (a `float`); otherwise `None`. The client does not retry by itself. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.

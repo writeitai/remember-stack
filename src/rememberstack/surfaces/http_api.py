@@ -72,6 +72,10 @@ from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.surfaces.direct_admission import admission_key
+from rememberstack.surfaces.direct_admission import AdmissionRefused
+from rememberstack.surfaces.direct_admission import AdmissionSlot
+from rememberstack.surfaces.direct_admission import DirectPathAdmission
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -348,6 +352,7 @@ def build_api(
     surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
+    direct_admission: DirectPathAdmission | None = None,
     spend_lease: SpendLeasePort | None = None,
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
@@ -366,7 +371,9 @@ def build_api(
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
     `DELETE /documents/{doc_id}` (D135); `auth` gates every endpoint
-    on one perimeter credential; and `spend_lease` holds estimate on the
+    on one perimeter credential; `direct_admission` enforces the per-credential
+    and per-deployment rate and in-flight limits after authentication (D136
+    §7.6); and `spend_lease` holds estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
 
@@ -408,6 +415,13 @@ def build_api(
         # raises: `perimeter_dep` above stays the sole enforcement point and
         # keeps answering 401, so documenting the contract cannot change it.
         *([Depends(HTTPBearer(auto_error=False))] if perimeter_dep is not None else []),
+        # After the perimeter (it counts per authenticated credential) and
+        # before the D74 barrier and the route.
+        *(
+            [Depends(_direct_admission(admission=direct_admission))]
+            if direct_admission is not None
+            else []
+        ),
         Depends(_admission(admission=admission, deployment_id=deployment_id)),
     ]
     app = FastAPI(
@@ -418,6 +432,8 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
+    if direct_admission is not None:
+        app.add_middleware(_ReleaseAdmissionSlots, admission=direct_admission)
 
     @app.get("/resolve", response_model=Envelope)
     def resolve(
@@ -1493,6 +1509,74 @@ def _admission(*, admission: AdmissionPort, deployment_id: UUID):  # noqa: ANN20
             ) from error
 
     return dependency
+
+
+#: ASGI scope key under which a request's admission slots are collected.
+_ADMISSION_SLOTS: Final = "rememberstack.admission_slots"
+
+_ADMISSION_MESSAGES: Final = {
+    "rate_limited": "request rate limit reached; retry after Retry-After seconds",
+    "concurrency_limited": "too many requests in flight; retry after Retry-After seconds",
+}
+
+
+def _direct_admission(*, admission: DirectPathAdmission):  # noqa: ANN202
+    """Admit the request against the D136 §7.6 limits, or refuse it with 429.
+
+    Runs after the perimeter dependency, whose authenticated context names the
+    credential; without one (no perimeter, or the shared secret) only the
+    deployment limits apply. The slot is released by
+    :class:`_ReleaseAdmissionSlots` once the whole response is over.
+    """
+
+    def dependency(request: Request) -> None:
+        if request.method == "GET" and request.url.path.rstrip("/") == "/healthz":
+            return
+        # Looked up before admitting, so a missing release middleware fails
+        # the request rather than leaking a slot for ever.
+        slots: list[AdmissionSlot] = request.scope[_ADMISSION_SLOTS]
+        context = getattr(request.state, "perimeter_context", None)
+        try:
+            slots.append(admission.admit(key=admission_key(context)))
+        except AdmissionRefused as refusal:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": refusal.code,
+                    "message": _ADMISSION_MESSAGES[refusal.code],
+                },
+                headers={"Retry-After": str(refusal.retry_after)},
+            ) from refusal
+
+    return dependency
+
+
+class _ReleaseAdmissionSlots:
+    """ASGI wrapper that gives admission slots back when a request is over.
+
+    The inner app returns only after the response has been sent, the handler
+    has failed, or a disconnect has cancelled it; ``finally`` covers all
+    three. A synchronous handler still running on its thread keeps the call
+    from returning, so a slot is held exactly while work is running.
+    """
+
+    def __init__(self, app: object, *, admission: DirectPathAdmission) -> None:
+        """Wrap the inner ASGI app."""
+        self._app = app
+        self._admission = admission
+
+    async def __call__(self, scope: dict, receive: object, send: object) -> None:
+        """Collect this request's slots and release them however it ends."""
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)  # type: ignore[operator]
+            return
+        slots: list[AdmissionSlot] = []
+        scope[_ADMISSION_SLOTS] = slots
+        try:
+            await self._app(scope, receive, send)  # type: ignore[operator]
+        finally:
+            for slot in slots:
+                self._admission.release(slot)
 
 
 def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | None:

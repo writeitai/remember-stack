@@ -48,7 +48,8 @@ Three rules follow from this:
 service gets a fixed `environment:` list, and only variables on that list
 reach the engine. The list covers the deployment identity, storage, the
 OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret, the graph and retrieval pools, Sentry, and
+authentication by shared secret, the graph and retrieval pools, the API
+admission limits, Sentry, and
 the remember.dev-only billing settings.
 
 Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,

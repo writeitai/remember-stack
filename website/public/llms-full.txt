@@ -7344,7 +7344,10 @@ A deployment runs at most 2 live-graph queries and 4 retrieval queries at a
 time. A graph request that cannot start within about a second is refused
 with `503` and `live graph is busy`; retry it with backoff.
 
-remember.dev does not apply a per-token request rate on the deployment.
+Each deployment limits the request rate and the number of requests running
+at once, per token and across all tokens. Over a limit it answers `429`
+(`rate_limited` or `concurrency_limited`) with `Retry-After`; see
+[Admission limits](https://remember.dev/docs/reference/http-api#admission-limits).
 Reading is also subject to the provider-cost safeguard described in
 [Spend caps and auto top-up](https://remember.dev/docs/cloud/spend-controls#provider-cost-safeguard).
 
@@ -8383,7 +8386,8 @@ Three rules follow from this:
 service gets a fixed `environment:` list, and only variables on that list
 reach the engine. The list covers the deployment identity, storage, the
 OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret, the graph and retrieval pools, Sentry, and
+authentication by shared secret, the graph and retrieval pools, the API
+admission limits, Sentry, and
 the remember.dev-only billing settings.
 
 Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
@@ -9173,6 +9177,27 @@ request fails; that failure is not yet mapped to a specific status code.
 Raise the pool, the concurrency and `work_mem` together, and only as far as
 PostgreSQL's memory allows: each running graph query may use up to
 `GRAPH_WORK_MEM_KIB` for each sort or hash step it performs.
+
+## API admission limits
+
+The API counts every request (except `GET /healthz`) against a rate and a
+number running at once, per credential and for the whole deployment. Over a
+limit it answers `429` with `Retry-After`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | Requests per minute per signed credential, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | Requests running at once per signed credential |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | Requests per minute for the deployment, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | Requests running at once for the deployment |
+
+`compose.yaml` passes all four. The shared secret, and every caller when
+authentication is off, meets the deployment limits only. A script that
+ingests many files in parallel should keep its concurrency under the
+in-flight limit and wait `Retry-After` on a `429`; the `remember` client does
+not retry by itself. The counters live in the API process, so running more
+API processes multiplies the effective limits. See
+[Admission limits](https://remember.dev/docs/reference/http-api#admission-limits).
 
 ## SQL queries
 
@@ -10615,15 +10640,15 @@ A failed request returns a non-2xx status and a JSON body with a single
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph, spend. |
 | Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
-| Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`) and argument errors on `POST /operations/{name}`. |
+| Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
 Branch on the status and on `code` (or the short string), never on `message`.
 Messages are written for people and can change.
 
 The `remember` client raises `remember.MemoryApiError` for every failure, with
-`status_code`, `detail` and, on the `/query/*` routes, `code`. A network
-failure has `status_code` `0`.
+`status_code`, `detail` and, on the `/query/*` routes and on a `429`, `code`
+(plus `retry_after` on a `429`). A network failure has `status_code` `0`.
 
 [Errors and status codes](https://remember.dev/docs/reference/errors) lists every status, code and what to
 do about it.
@@ -10637,6 +10662,7 @@ do about it.
 | `404` | `Not Found` | Unknown path. |
 | `405` | `Method Not Allowed` | Known path, wrong method. |
 | `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
+| `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
 | `500` | `Internal Server Error` | An unhandled failure. Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
 
@@ -10666,6 +10692,41 @@ When the hold is refused, the route returns before doing any work:
 A self-hosted deployment has no spend hold unless you configure one
 (`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL`). See
 [Spend caps and auto top-up](https://remember.dev/docs/cloud/spend-controls).
+
+## Admission limits
+
+After the credential check and before the route runs, every request except
+`GET /healthz` is counted against two sets of limits: one for its credential
+and one for the whole deployment.
+
+| Limit | Default | Setting |
+|---|---|---|
+| Requests per credential | 120 per minute, bursts of 30 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
+| Requests running at once, per credential | 8 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
+| Requests per deployment | 600 per minute, bursts of 150 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
+| Requests running at once, per deployment | 32 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
+
+The request rate works as a bucket of tokens that refills continuously at the
+per-minute rate, up to a burst of a quarter of it; each request takes one. A
+signed credential is counted by its id (`jti`). The shared secret, and every
+caller when authentication is off, is counted against the deployment limits
+only. A refused request counts against nothing.
+
+Over a limit the deployment answers `429` with a `Retry-After` header in whole
+seconds:
+
+| `code` | Meaning | `Retry-After` |
+|---|---|---|
+| `rate_limited` | No request token is left for this credential or the deployment. | Seconds until the next token. |
+| `concurrency_limited` | Too many requests of this credential, or of the deployment, are still running. | `1` |
+
+```json
+{"detail": {"code": "rate_limited", "message": "request rate limit reached; retry after Retry-After seconds"}}
+```
+
+The counters live in the memory of each API process: they start empty when
+the process starts, and with several API processes each has its own, so the
+effective limits are that many times larger.
 
 ## Idempotency
 
@@ -16340,7 +16401,8 @@ Raised by every memory-client method when a request fails.
 |---|---|
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`); otherwise `None`. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` admission refusal (`rate_limited` or `concurrency_limited`); otherwise `None`. |
+| `retry_after` | On a `429`, the `Retry-After` seconds the deployment sent (a `float`); otherwise `None`. The client does not retry by itself. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.
@@ -17845,6 +17907,10 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | passed | Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | passed | Requests running at once for the whole deployment. |
 
 ## Storage
 
@@ -18072,7 +18138,8 @@ Branch on the status and the code or string, not on `message`.
 The `remember` Python client raises `remember.MemoryApiError` for all of
 them, with `status_code` (`0` for a network failure), `detail` (the string, or
 the message) and `code` (set on `/query/*` routes when the body carries a
-known code at its expected status). `wait_for_readiness` raises
+known code at its expected status, and on a `429`, which also sets
+`retry_after`). `wait_for_readiness` raises
 `remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
 ([Python SDK](https://remember.dev/docs/reference/python-sdk#pipelinedeadlettered)).
 
@@ -18104,6 +18171,8 @@ known code at its expected status). `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
+| `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](https://remember.dev/docs/reference/http-api#admission-limits)). | Wait the `Retry-After` seconds, then retry. |
+| `429` | `{"code": "concurrency_limited", …}` | Too many requests of the credential or the deployment are running at once. | Wait for your other requests to finish (`Retry-After` is `1`), then retry. |
 | `500` | `Internal Server Error` | An unhandled failure. Known causes in this release: a non-UTC `valid_at` or `believed_at` on lookups and graph routes; an embedding failure on search and lookup routes; an unknown `status` on `GET /query/saved`; re-ingesting content that was forgotten; a graph statement timeout. | Check the request against those causes; otherwise report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
 | `503` | `model provider unavailable` | An assured operation could not embed its query. | Retry with back-off. |
