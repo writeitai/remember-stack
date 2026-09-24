@@ -2086,7 +2086,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 
 | Port | Self-host adapter | Reference adapter |
 |---|---|---|
-| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. MinIO); local FS for dev | GCS |
+| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. SeaweedFS, which the Compose profile bundles); local FS for dev | GCS |
 | Task queue / scheduler (at-least-once announcement, scheduled delivery, rate limits) | Postgres-backed queue (`SKIP LOCKED`; application retry/DLQ state is the row, D12/D67) | Cloud Tasks + Cloud Run jobs |
 | Mount publication (P3 + artifact/raw/K mounts, D51) | local directory trees | GCS + gcsfuse |
 | K git remote | any git remote | hosted per-deployment repo |
@@ -2149,6 +2149,16 @@ never permission to skip a separately restored store or database.
 > `plan/designs/packaging_distribution_design.md`.
 
 ## D62. Delivery artifacts, delivery-only task execution, and the enforced code architecture
+
+> **Amended 2026-09-24 (bundled object store):** the Compose self-host profile
+> runs **SeaweedFS** (`chrislusf/seaweedfs`, Apache-2.0) as its S3-compatible
+> object store instead of MinIO. The pinned MinIO image became unpullable
+> (quay.io answers 401 for `minio/minio`, and Docker Hub has no matching
+> tag). SeaweedFS covers everything the self-host object-store adapter uses
+> (path-style SigV4, bucket create, conditional create with
+> `If-None-Match: *`, user metadata, list/delete) and is the store the
+> commercial cloud already runs. "Postgres + MinIO + api + worker" below
+> reads "Postgres + SeaweedFS + api + worker"; the rest of D62 is unchanged.
 
 **Decision.** The library ships as **three artifacts**: the GitHub repo (source + the design
 corpus), **one PyPI package positioned as the client** (base install = typed SDK + CLI + MCP
@@ -5330,7 +5340,7 @@ D32, D43's untyped statement, D98, D100–D105.
 
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
 1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
-2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
+2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, an S3-compatible object store, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
 3. Early D24 review-queue tooling (`remember review`) and spend inspection (`remember budget`) remained in the CLI entry point despite the production engine evolving to fully autonomous bitemporal adjudication (D3/D43/D107), with zero human review queues in managed cloud or public documentation.
 
 **Decision.**
