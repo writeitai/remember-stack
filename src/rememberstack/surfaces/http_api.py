@@ -590,7 +590,8 @@ def build_api(
         """Claim search — evidence grain, never current-fact truth.
 
         ``documents`` keeps claims with a live occurrence in a matching
-        document (D134); the evidence names that occurrence.
+        document (D134); the returned evidence is the claim's origin, as
+        without a filter.
         """
         return engine.search_claims(
             deployment_id=deployment_id,

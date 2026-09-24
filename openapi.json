@@ -5666,7 +5666,7 @@
         "summary": "Search Claims"
       },
       "post": {
-        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the evidence names that occurrence.",
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter.",
         "operationId": "post_search_claims_search_claims_post",
         "requestBody": {
           "content": {
