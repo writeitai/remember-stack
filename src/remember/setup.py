@@ -529,7 +529,13 @@ def configure_codex(
         ) from error
     block = codex_block(entry)
     kept = _CODEX_TABLE.sub("", existing).rstrip()
-    if SERVER_NAME in tomllib.loads(kept).get("mcp_servers", {}):
+    servers = tomllib.loads(kept).get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        raise RuntimeError(
+            f"Existing {config_file} has invalid structure: 'mcp_servers' must be "
+            f"a table, got {type(servers).__name__}."
+        )
+    if SERVER_NAME in servers:
         # Spelled some other way (a quoted name, an inline or dotted table):
         # appending would define it twice.
         raise RuntimeError(
@@ -754,6 +760,7 @@ def _hosted_plan(
     """Find the issuer's MCP endpoint, signing in first when there is no key."""
     import httpx
 
+    from remember.connection import environment_issuer
     from remember.connection import resolve_connection
     from remember.issuer import DEFAULT_ISSUER
     from remember.issuer import fetch_issuer_metadata
@@ -765,8 +772,12 @@ def _hosted_plan(
             "--api-key is for --self-hosted; for remember.dev run `remember login`, "
             f"or set {KEY_VARIABLE} in the agent's environment"
         )
-    connection = resolve_connection(issuer=getattr(args, "issuer", None))
-    issuer = normalize_issuer(connection.issuer or DEFAULT_ISSUER)
+    # The issuer is chosen before looking at any key, so a stored key from
+    # another issuer cannot redirect setup to that issuer.
+    issuer = normalize_issuer(
+        getattr(args, "issuer", None) or environment_issuer() or DEFAULT_ISSUER
+    )
+    connection = resolve_connection(issuer=issuer)
     print(f"Backend: {issuer}")
     claims = connection.claims
     has_key = claims is not None and claims.iss.strip().rstrip("/") == issuer
@@ -834,7 +845,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     for harness in harnesses:
         try:
             ok = _configure(harness, target_dir=target_dir, plan=plan, dry_run=dry_run)
-        except (RuntimeError, OSError, ValueError) as error:
+        except (RuntimeError, OSError, ValueError, TypeError) as error:
             # ValueError covers unreadable text (UnicodeDecodeError) and
             # TOML/JSON parse errors.
             print(f"error: {_LABELS[harness]}: {error}", file=sys.stderr)

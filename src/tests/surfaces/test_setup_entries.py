@@ -44,8 +44,10 @@ STORED_KEY = make_key(jti="key-stored")
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A fixed launcher, no CI marker, and Claude Desktop's file under tmp."""
+    """A fixed launcher, no CI marker, Claude Desktop's file under tmp, and no
+    real ``claude``/``codex`` on PATH (tests that need them add fakes)."""
     monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setattr("remember.setup.resolve_launcher", lambda: (LAUNCHER, ["mcp"]))
     monkeypatch.setattr(
         "remember.setup.get_claude_desktop_config_path",
@@ -55,7 +57,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 @pytest.fixture()
 def issuer(monkeypatch: pytest.MonkeyPatch) -> FakeIssuer:
-    """Route every ``httpx.Client`` to the fake issuer; make polling instant."""
+    """Route every ``httpx.Client`` to the fake issuer (selected through
+    ``REMEMBER_ISSUER``); make polling instant."""
+    monkeypatch.setenv("REMEMBER_ISSUER", ISSUER)
     fake = FakeIssuer()
     real_client = httpx.Client
 
@@ -593,3 +597,50 @@ def test_codex_table_in_another_spelling_is_not_duplicated(
     assert main(argv) == 1
     assert "edit [mcp_servers.remember] manually" in capsys.readouterr().err
     assert config.read_text(encoding="utf-8") == original
+
+
+def test_cloud_chooses_the_issuer_before_looking_at_the_stored_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stored key from another issuer never selects that issuer: --cloud
+    goes to the default issuer and signs in there."""
+    default = FakeIssuer(base="https://remember.dev")
+    default.issued_key = make_key(jti="key-dev", iss="https://remember.dev")
+    real_client = httpx.Client
+
+    def patched(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = default.transport()
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", patched)
+    monkeypatch.setattr("remember.issuer.time.sleep", lambda _seconds: None)
+    write_credentials(
+        credentials=StoredCredentials(
+            version=2,
+            issuer="https://other.test",
+            key=SecretStr(make_key(iss="https://other.test")),
+        )
+    )
+    argv = ["setup", "--cloud", "--agent", "cursor", "--dir", str(tmp_path)]
+    assert main(argv) == 0
+    assert "Backend: https://remember.dev" in capsys.readouterr().out
+    assert default.calls("/oauth/device")
+    stored = load_credentials()
+    assert stored is not None and stored.issuer == "https://remember.dev"
+    cursor = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+    assert cursor["mcpServers"]["remember"] == {"url": "https://remember.dev/mcp"}
+
+
+def test_codex_non_table_mcp_servers_fails_only_codex(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / ".codex" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("mcp_servers = 123\n", encoding="utf-8")
+    (tmp_path / ".cursor").mkdir()
+    argv = ["setup", "--self-hosted", "--dir", str(tmp_path)]
+    assert main(argv) == 1
+    err = capsys.readouterr().err
+    assert "'mcp_servers' must be a table" in err and "Traceback" not in err
+    assert config.read_text(encoding="utf-8") == "mcp_servers = 123\n"
+    assert (tmp_path / ".cursor" / "mcp.json").is_file()
