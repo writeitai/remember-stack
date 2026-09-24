@@ -480,7 +480,7 @@ def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None
     assert protocol.name == "RS-LoCoMo-Full-v38"
     assert protocol.answer_agent_model == "openai/gpt-6-luna-pro"
     assert protocol.answer_agent_reasoning_effort == "high"
-    assert protocol.judge_model == "openai/gpt-6-luna-pro"
+    assert protocol.judge_model == "openai/gpt-6-sol"
     assert protocol.judge_reasoning_effort == "high"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None

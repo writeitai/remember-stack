@@ -22,3 +22,4 @@ htmlcov/
 .eval-banana/results/
 .benchmark-runs/
 .codex/
+benchmarks/locomo/cache/

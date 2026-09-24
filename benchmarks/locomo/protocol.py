@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from collections import Counter
 from dataclasses import dataclass
 import hashlib
@@ -131,7 +133,7 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
 )
 ANSWER_AGENT_MODEL: Final = "openai/gpt-6-luna-pro"
 ANSWER_AGENT_REASONING_EFFORT: Final = "high"
-JUDGE_MODEL: Final = "openai/gpt-6-luna-pro"
+JUDGE_MODEL: Final = "openai/gpt-6-sol"
 JUDGE_REASONING_EFFORT: Final = "high"
 TEMPERATURE: Final = 0.0
 LUNA_PRO_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-LunaPro"
@@ -544,7 +546,12 @@ class SessionQuestionDiagnostic:
     malformed_fields: int
 
 
-def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
+def render_session(
+    *,
+    sample: LoCoMoSample,
+    session: LoCoMoSession,
+    image_cache_dir: Path | None = None,
+) -> str:
     """Render one session without fetching images or leaking annotations."""
     lines = [
         f"# LoCoMo {sample.sample_id} — session {session.session_id}",
@@ -554,6 +561,8 @@ def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
         f"Dataset timestamp: {session.timestamp} "
         "(source timezone absent; adapter assumes UTC)",
     ]
+    cache_base = image_cache_dir or Path("benchmarks/locomo/cache")
+    sample_converted = cache_base / sample.sample_id / "converted"
     for turn in session.turns:
         lines.extend(
             (
@@ -562,11 +571,23 @@ def render_session(*, sample: LoCoMoSample, session: LoCoMoSession) -> str:
                 f"{turn.speaker}: {turn.text}",
             )
         )
-        if turn.blip_caption is not None:
-            lines.append(
-                "Dataset-provided derived image caption for "
-                f"{turn.dia_id}: {turn.blip_caption}"
+        clean_id = turn.dia_id.replace(":", "_")
+        converted_path = sample_converted / f"{clean_id}.md"
+        if converted_path.exists():
+            converted_md = converted_path.read_text(encoding="utf-8").strip()
+            lines.extend(
+                (
+                    "",
+                    f"[Attached image for {turn.dia_id} (Mistral OCR + GPT-6 Luna)]:",
+                    converted_md,
+                )
             )
+        else:
+            if turn.blip_caption is not None:
+                lines.append(
+                    "Dataset-provided derived image caption for "
+                    f"{turn.dia_id}: {turn.blip_caption}"
+                )
         if turn.image_query is not None:
             lines.append(
                 "Dataset-provided derived image search query for "

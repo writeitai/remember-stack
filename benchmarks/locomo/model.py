@@ -53,7 +53,7 @@ AnswerAgentModel = Literal[
     "google/gemma-4-26b-a4b-it-maas",
     "gpt-5.6-luna",
 ]
-JudgeModel = Literal["openai/gpt-5.6-luna", "openai/gpt-6-luna-pro", "gpt-5.6-luna"]
+JudgeModel = Literal["openai/gpt-5.6-luna", "openai/gpt-6-luna-pro", "openai/gpt-6-sol", "gpt-5.6-luna"]
 ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
 """Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
 or the local keyless Codex ChatGPT-subscription bridge."""
