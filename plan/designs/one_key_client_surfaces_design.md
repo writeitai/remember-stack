@@ -551,9 +551,10 @@ and 150 above.
   request to a deployment with no auth perimeter. `GET /healthz` is
   exempt. A request is admitted only when every check passes, and a refused
   request consumes no token. A slot is released when the response finishes,
-  fails, or the client disconnects, but not before a synchronous handler
-  already running on a worker thread returns: a disconnect cannot stop that
-  thread, so its work still counts as in flight.
+  fails, or the client disconnects, but not before any synchronous handler
+  or dependency (such as the D74 barrier check) already running on a worker
+  thread returns: a disconnect cannot stop that thread, so its work still
+  counts as in flight.
 - **Refusal.** `429`, error code `rate_limited` or `concurrency_limited`, and
   `Retry-After` in whole seconds (time until a token is available; 1 for an
   in-flight refusal). The SDK raises `RateLimited` with `retry_after` and does

@@ -1689,24 +1689,47 @@ class _PerimeterGate:
 
 
 class _HeldRoute(APIRoute):
-    """A route whose synchronous handler keeps its request's admission slot.
+    """A route whose synchronous work keeps its request's admission slot.
 
-    FastAPI runs a ``def`` handler on a worker thread. A disconnect cancels
-    the request's coroutine but not the thread, which goes on working; the
-    wrapper tells the request's :class:`RequestHold` when the thread starts
-    and ends, so the slot is released only when the work really stops.
-    Asynchronous handlers are cancelled with their request and need nothing.
+    FastAPI runs every ``def`` handler and ``def`` dependency (the D74
+    barrier's database check among them) on a worker thread. A disconnect
+    cancels the request's coroutine but not the thread, which goes on
+    working; each such callable is wrapped so the request's
+    :class:`RequestHold` sees the thread start and end, and the slot is
+    released only when the work really stops. Coroutines are cancelled with
+    their request, and generator dependencies are left as they are, so both
+    need nothing.
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
-        """Build the route around a held handler."""
-        if not inspect.iscoroutinefunction(endpoint):
-            endpoint = _held_handler(endpoint)
+        """Build the route, then hold every synchronous callable it runs."""
         super().__init__(path, endpoint, **kwargs)
+        # One wrapper per callable, so a dependency used twice keeps one
+        # identity and FastAPI's per-request dependency cache still applies.
+        wrappers: dict[int, Callable[..., Any]] = {}
+        pending = [self.dependant]
+        while pending:
+            dependant = pending.pop()
+            pending.extend(dependant.dependencies)
+            call = dependant.call
+            if (
+                call is None
+                or inspect.isclass(call)
+                or dependant.is_coroutine_callable
+                or dependant.is_gen_callable
+                or dependant.is_async_gen_callable
+            ):
+                continue
+            wrapper = wrappers.get(id(call))
+            if wrapper is None:
+                wrapper = wrappers[id(call)] = _held_handler(call)
+            # The wrapper is sync like the original (and FastAPI inspects the
+            # unwrapped callable), so it is still run on a worker thread.
+            dependant.call = wrapper
 
 
 def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:
-    """Wrap a synchronous handler so its request's hold sees it run."""
+    """Wrap a synchronous handler or dependency so its request's hold sees it run."""
 
     @functools.wraps(call)
     def held(*args: Any, **kwargs: Any) -> Any:

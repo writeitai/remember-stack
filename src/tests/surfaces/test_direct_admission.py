@@ -242,8 +242,16 @@ def test_a_limit_below_one_is_refused(field: str) -> None:
 
 
 class _Open:
+    """The D74 barrier: open, unless told to block like a slow database."""
+
+    def __init__(self) -> None:
+        self.gate = threading.Event()
+        self.gate.set()
+        self.entered = 0
+
     def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
+        self.entered += 1
+        assert self.gate.wait(timeout=10)
 
 
 class _Ready:
@@ -307,12 +315,16 @@ class _Probe:
 
 
 def _app(
-    admission: DirectPathAdmission, *, auth: bool = True, lease: _Lease | None = None
+    admission: DirectPathAdmission,
+    *,
+    auth: bool = True,
+    lease: _Lease | None = None,
+    barrier: _Open | None = None,
 ) -> tuple[FastAPI, _Probe]:
     app = build_api(
         engine=cast(QueryEngine, object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=_Open(),
+        admission=barrier or _Open(),
         readiness=_Ready(),
         auth=_Auth() if auth else None,
         spend_lease=(lease or _Lease()) if auth else None,  # type: ignore[arg-type]
@@ -450,6 +462,35 @@ async def test_a_disconnect_keeps_the_slot_until_the_handler_thread_ends(
         assert probe.entered == 1
 
         probe.gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await _until(lambda: admission._deployment.in_flight == 0)
+        assert (await client.get("/probe", headers=headers)).status_code == 200
+
+
+@pytest.mark.parametrize("auth", [True, False])
+async def test_a_disconnect_keeps_the_slot_while_a_sync_dependency_runs(
+    auth: bool,
+) -> None:
+    """The D74 barrier check is a ``def`` dependency on a worker thread; a
+    cancelled request keeps its slot until that thread returns too."""
+    admission = _admission(key_in_flight=1, deployment_in_flight=1)
+    barrier = _Open()
+    app, _ = _app(admission, auth=auth, barrier=barrier)
+    headers = _bearer("key-a") if auth else {}
+    barrier.gate.clear()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
+        first = asyncio.create_task(client.get("/probe", headers=headers))
+        await _until(lambda: barrier.entered == 1)
+        first.cancel()
+        await asyncio.sleep(0.05)
+
+        refused = await client.get("/probe", headers=headers)
+        assert refused.status_code == 429
+        assert refused.json()["detail"]["code"] == "concurrency_limited"
+
+        barrier.gate.set()
         with pytest.raises(asyncio.CancelledError):
             await first
         await _until(lambda: admission._deployment.in_flight == 0)
