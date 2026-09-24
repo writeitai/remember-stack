@@ -150,9 +150,6 @@ jobs:
             if [ -f "${venv}/bin/rememberstack" ]; then
               "${venv}/bin/rememberstack" --version
             fi
-            if [ -f "${venv}/bin/remember-status" ]; then
-              "${venv}/bin/remember-status" --help > /dev/null
-            fi
             echo "::endgroup::"
           done
 

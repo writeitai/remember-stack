@@ -61,7 +61,6 @@ observability = [
 
 [project.scripts]
 remember = "remember.cli:main"
-remember-status = "remember.cli:main_status"
 
 [project.urls]
 Homepage = "https://remember.dev"

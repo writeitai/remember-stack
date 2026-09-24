@@ -76,21 +76,18 @@ src/tests/surfaces/test_cli_platform.py
 src/tests/surfaces/test_client_first_run.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py
-src/tests/surfaces/test_device_login_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
 src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py
 src/tests/surfaces/test_graph_http_api.py
 src/tests/surfaces/test_http_api_robustness.py
-src/tests/surfaces/test_login.py
 src/tests/surfaces/test_mcp_tool_catalogue.py
 src/tests/surfaces/test_mcp_write_tools.py
 src/tests/surfaces/test_openapi_export.py
 src/tests/surfaces/test_post_search.py
 src/tests/surfaces/test_postgres_graph_sql.py
 src/tests/surfaces/test_query_sandbox_graph_d98.py
-src/tests/surfaces/test_remember_cloud_client.py
 src/tests/surfaces/test_remember_facade.py
 src/tests/surfaces/test_route_scope.py
 src/tests/test_d98_removal_audit.py
@@ -121,3 +118,5 @@ src/tests/adapters/test_image_ocr_description.py
 src/tests/model/test_occurrence_provenance.py
 src/tests/workers/test_e2_occurrence_provenance.py
 src/tests/surfaces/test_direct_admission.py
+src/tests/surfaces/test_client_connection.py
+src/tests/surfaces/test_client_login.py

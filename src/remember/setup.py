@@ -18,8 +18,6 @@ from typing import Any
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
-from remember.credentials import DEFAULT_CONTROL_PLANE_URL
-
 
 class _DesktopSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
@@ -432,15 +430,15 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     is_self_hosted: bool = target_env == "self_hosted" or getattr(
         args, "self_hosted", False
     )
-    target_url: str | None = getattr(args, "url", None)
-    target_token: str | None = getattr(args, "token", None)
+    target_url: str | None = getattr(args, "api_url", None)
+    target_key: str | None = getattr(args, "api_key", None)
 
     # Interactive choice if neither is specified on a TTY
     if target_env is None and not is_cloud and not is_self_hosted:
         if sys.stdin.isatty() and not dry_run:
             print("Choose your Remember backend:")
             print("  1) Remember Cloud [default]")
-            print("  2) Self-Hosted Engine (http://localhost:8000)")
+            print("  2) Self-Hosted Engine (http://127.0.0.1:8000)")
             try:
                 choice = input("Select [1/2, default 1]: ").strip()
                 if choice == "2":
@@ -452,185 +450,62 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
         else:
             is_cloud = True
 
-    from remember.credentials import load_credentials
+    from pydantic import SecretStr
 
-    stored = load_credentials()
+    from remember.connection import normalize_key
+    from remember.credentials import CredentialError
+    from remember.credentials import load_credentials
+    from remember.credentials import StoredCredentials
+    from remember.credentials import write_credentials
+
+    try:
+        stored = load_credentials()
+    except CredentialError:
+        stored = None
 
     env: dict[str, str] = {}
     if is_self_hosted:
-        url = target_url or "http://localhost:8000"
-        env["REMEMBER_DATA_PLANE_URL"] = url
+        url = target_url or "http://127.0.0.1:8000"
+        env["REMEMBER_API_URL"] = url
         print("Backend: Self-Hosted Engine")
-        print(f"  Data Plane URL: {url}")
-    else:
-        print("Backend: Remember Cloud")
-        if target_url:
-            env["REMEMBER_DATA_PLANE_URL"] = target_url
-            print(f"  Data Plane URL (explicit override): {target_url}")
-        else:
-            dp_url = stored.active_data_plane_url if stored else None
-            if dp_url:
-                print(f"  Active Project Data Plane: {dp_url}")
-                print(
-                    "  Harness configuration: Using ambient credentials (dynamically follows `remember switch`)"
-                )
-            else:
-                print(
-                    "  [!] Notice: No Remember Cloud data-plane URL or credentials configured.\n"
-                    "      Run 'remember login' to authenticate and bind your active project,\n"
-                    "      or pass --url https://<project>.dp.remember.dev with --token.\n"
-                    "      (Your AI coding agents will connect once 'remember login' completes.)"
-                )
-
-    if target_token or target_env == "self_hosted":
-        # Securely persist token/endpoint to user's credential file (~/.config/remember/credentials.json, mode 0600)
-        # NEVER leak bearer secrets into repository configuration files (D92/D108)!
-        if (
-            is_cloud
-            and not target_url
-            and not (stored and stored.active_data_plane_url)
-        ):
+        print(f"  Engine URL: {url}")
+        if stored is not None and stored.issuer:
             print(
-                "error: When passing an explicit token with --token for Remember Cloud, "
-                "you must also pass --url https://<project-id>.dp.remember.dev",
+                f"error: a key from {stored.issuer} is stored; run `remember logout` "
+                "before configuring a self-hosted engine",
                 file=sys.stderr,
             )
             return 1
-
-        from pydantic import SecretStr
-
-        from remember.credentials import CredentialFile
-        from remember.credentials import ProjectCredentials
-        from remember.credentials import write_credentials
-
-        effective_url: str = (
-            target_url
-            or (
-                stored.active_data_plane_url
-                if stored and stored.active_data_plane_url
-                else None
-            )
-            or "http://localhost:8000"
-        )
-        token_str: str = target_token or ""
         if not dry_run:
-            is_local = (
-                target_env == "self_hosted"
-                or "localhost" in effective_url
-                or "127.0.0.1" in effective_url
+            # The key goes to the owner-only credential file, never into a
+            # harness configuration file.
+            write_credentials(
+                credentials=StoredCredentials(
+                    version=2,
+                    api_url=url,
+                    key=SecretStr(normalize_key(target_key)) if target_key else None,
+                )
             )
-            token_host = effective_url if is_local else DEFAULT_CONTROL_PLANE_URL
-            if stored is not None:
-                updated_projects = (
-                    dict(stored.projects) if stored.projects is not None else {}
-                )
-                active_id = (
-                    "self_hosted"
-                    if target_env == "self_hosted"
-                    else (stored.active_project_id or "default")
-                )
-                old_p = updated_projects.get(active_id)
-                old_token = (
-                    old_p.data_plane_token.get_secret_value()
-                    if (old_p and old_p.data_plane_token)
-                    else (
-                        stored.access_token.get_secret_value()
-                        if stored.access_token
-                        else None
-                    )
-                )
-                from uuid import uuid4
-
-                old_token_id = old_p.token_id if old_p else None
-                # Only borrow stored.token_id if proven to describe the same active project and token
-                if (
-                    old_token_id is None
-                    and stored.active_project_id == active_id
-                    and stored.access_token
-                    and old_token
-                    and stored.access_token.get_secret_value() == old_token
-                ):
-                    old_token_id = stored.token_id
-                old_host = (
-                    (old_p.token_host if old_p else None)
-                    or stored.token_host
-                    or token_host
-                )
-                if (
-                    old_token
-                    and target_token
-                    and old_token != target_token
-                    and not is_local
-                    and "remember.dev" in old_host
-                ):
-                    from remember.credentials import append_pending_revocation
-                    from remember.credentials import PendingRevocation
-
-                    append_pending_revocation(
-                        pending=PendingRevocation(
-                            version=1,
-                            token_host=old_host,
-                            access_token=SecretStr(old_token),
-                            token_id=old_token_id or uuid4(),
-                        )
-                    )
-
-                new_token_id = uuid4()
-                proj_name = (
-                    "self_hosted"
-                    if target_env == "self_hosted"
-                    else (old_p.name if old_p else "default")
-                )
-                updated_projects[active_id] = ProjectCredentials(
-                    name=proj_name,
-                    data_plane_url=effective_url,
-                    data_plane_token=SecretStr(token_str),
-                    token_host=token_host,
-                    token_id=new_token_id,
-                )
-
-                new_stored = stored.model_copy(
-                    update={
-                        "projects": updated_projects,
-                        "active_project_id": active_id,
-                        "api_url": effective_url,
-                        "token_host": token_host,
-                        "access_token": SecretStr(token_str),
-                        "token_id": new_token_id,
-                    }
-                )
-                write_credentials(credential=new_stored)
-            else:
-                from uuid import uuid4
-
-                new_token_id = uuid4()
-                proj_id = "self_hosted" if target_env == "self_hosted" else "default"
-                cred = CredentialFile(
-                    version=1,
-                    api_url=effective_url,
-                    token_host=token_host,
-                    access_token=SecretStr(token_str),
-                    token_id=new_token_id,
-                    active_project_id=proj_id,
-                    projects={
-                        proj_id: ProjectCredentials(
-                            name=proj_id,
-                            data_plane_url=effective_url,
-                            data_plane_token=SecretStr(token_str),
-                            token_host=token_host,
-                            token_id=new_token_id,
-                        )
-                    },
-                )
-                write_credentials(credential=cred)
-            if target_token:
-                print(
-                    "[✓] Stored access token securely in ~/.config/remember/credentials.json (mode 0600)"
-                )
-            elif target_env == "self_hosted":
-                print(
-                    f"[✓] Configured self-hosted endpoint ({effective_url}) in ~/.config/remember/credentials.json (mode 0600)"
-                )
+            print(
+                "[✓] Stored the engine URL (and key) in the owner-only credential file"
+            )
+    else:
+        print("Backend: Remember Cloud")
+        if target_key:
+            print(
+                "error: --api-key is for --self-hosted; for Remember Cloud run "
+                "`remember login`, or set REMEMBER_API_KEY in the harness environment",
+                file=sys.stderr,
+            )
+            return 1
+        if target_url:
+            env["REMEMBER_API_URL"] = target_url
+            print(f"  Engine URL (explicit override): {target_url}")
+        elif stored is None or not stored.issuer:
+            print(
+                "  [!] Not signed in. Run `remember login`; your agents connect "
+                "once it completes."
+            )
 
     print("Configuring AI coding harnesses for Remember:")
     print(f"  Launcher command: {launcher_cmd} {' '.join(launcher_args)}")

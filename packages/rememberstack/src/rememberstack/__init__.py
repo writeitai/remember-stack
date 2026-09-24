@@ -14,7 +14,6 @@ warnings.warn(
 import remember
 from remember import (
     Client,
-    CloudClient,
     Envelope,
     MemoryClient,
     PipelineReadinessReport,
@@ -25,7 +24,6 @@ from remember import (
 
 __all__ = [
     "Client",
-    "CloudClient",
     "Envelope",
     "MemoryClient",
     "PipelineReadinessReport",

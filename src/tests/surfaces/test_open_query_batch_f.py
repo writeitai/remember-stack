@@ -886,24 +886,14 @@ def test_cli_open_query_parse_and_dispatch(
     """CLI parser accepts positional SQL/saved-query forms and dispatches them."""
     import json
 
+    from remember.cli import main
     from rememberstack.client import MemoryClient
-    from rememberstack.surfaces.cli import main
 
     app = _open_api(migrated)
     real_client = MemoryClient(client=TestClient(app))
 
-    class _Factory:
-        """Stand-in for MemoryClient.from_settings() used by the CLI."""
-
-        @classmethod
-        def from_settings(cls, *args: object, **kwargs: object) -> MemoryClient:
-            return real_client
-
-        def __call__(self, *args: object, **kwargs: object) -> MemoryClient:
-            return real_client
-
-    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
-    monkeypatch.setattr("rememberstack.surfaces.cli.MemoryClient", _Factory)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: real_client)
 
     assert main(["query", "sql", "SELECT 1 AS n"]) == 0
     sql_out = json.loads(capsys.readouterr().out)

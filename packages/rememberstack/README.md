@@ -17,7 +17,7 @@ uv add remember
 
 Import interfaces remain fully compatible:
 ```python
-from remember import RememberClient, MemoryClient, Client, CloudClient
+from remember import RememberClient, MemoryClient, Client
 ```
 
 ### 2. Self-Hosted Server Deployments

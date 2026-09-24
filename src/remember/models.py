@@ -1,18 +1,15 @@
-"""Typed models for remember: control plane and data plane (D49/D53/D65).
+"""Typed models for the remember memory client (D62/D65).
 
 Dependency-light: standard library and Pydantic only.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from enum import StrEnum
 from typing import Annotated
-from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Self
@@ -41,138 +38,6 @@ def _require_utc(value: datetime) -> datetime:
 UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
-
-
-def _text(payload: Mapping[str, Any], key: str) -> str | None:
-    value = payload.get(key)
-    return value if isinstance(value, str) and value else None
-
-
-def _money(payload: Mapping[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return str(value)
-    return None
-
-
-def _moment(payload: Mapping[str, Any], key: str) -> datetime | None:
-    raw = _text(payload, key)
-    if raw is None:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Control Plane Models (D53)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Deployment:
-    """One deployment's identity and where a client reaches it."""
-
-    id: str
-    state: str
-    hostname: str | None
-    hostname_live: bool
-    created_at: datetime | None
-
-    @property
-    def is_ready(self) -> bool:
-        return self.state.lower() == "active" and self.hostname_live
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> Deployment:
-        return cls(
-            id=_text(payload, "id") or "",
-            state=_text(payload, "state") or "unknown",
-            hostname=_text(payload, "data_plane_hostname"),
-            hostname_live=bool(payload.get("data_plane_hostname_live", False)),
-            created_at=_moment(payload, "created_at"),
-        )
-
-
-@dataclass(frozen=True)
-class BillingStatus:
-    """Whether this organisation may incur chargeable work, and what it has."""
-
-    state: str
-    balance: str | None
-    cap: str | None
-
-    @property
-    def can_spend(self) -> bool:
-        return self.state.upper() == "ACTIVE"
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> BillingStatus:
-        return cls(
-            state=_text(payload, "billing_state") or "unknown",
-            balance=_money(payload, "balance_credits"),
-            cap=_money(payload, "monthly_cap_credits"),
-        )
-
-
-@dataclass(frozen=True)
-class SpendGate:
-    """The pre-dispatch decision: may work run right now, and if not, why."""
-
-    decision: str
-    reason_code: str | None
-    spent_usd: str | None
-    ceiling_usd: str | None
-    parked: bool
-
-    @property
-    def allows_work(self) -> bool:
-        return self.decision.lower() == "allow"
-
-    @property
-    def is_parked(self) -> bool:
-        return self.parked
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> SpendGate:
-        decision = _text(payload, "decision") or "unknown"
-        return cls(
-            decision=decision,
-            reason_code=_text(payload, "reason_code"),
-            spent_usd=_money(payload, "estimate_spent_usd", "spent_usd"),
-            ceiling_usd=_money(payload, "ceiling_usd"),
-            parked=bool(payload.get("is_parked", decision.lower() == "park")),
-        )
-
-
-@dataclass(frozen=True)
-class LedgerEntry:
-    """One append-only credit-ledger line: what was charged, and what remained."""
-
-    entry_id: str
-    position: int | None
-    entry_type: str
-    amount: str | None
-    balance_after: str | None
-    description: str | None
-    created_at: datetime | None
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> LedgerEntry:
-        position = payload.get("ledger_position")
-        return cls(
-            entry_id=_text(payload, "credit_entry_id") or "",
-            position=position if isinstance(position, int) else None,
-            entry_type=_text(payload, "entry_type") or "unknown",
-            amount=_money(payload, "amount"),
-            balance_after=_money(payload, "balance_after"),
-            description=_text(payload, "description"),
-            created_at=_moment(payload, "created_at"),
-        )
 
 
 # ---------------------------------------------------------------------------

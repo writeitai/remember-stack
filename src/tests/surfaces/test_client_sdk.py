@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
+from remember.cli import main as cli_main
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
 from rememberstack.client import CapabilityReadiness
@@ -34,7 +35,6 @@ from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.surfaces import build_api
-from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 
@@ -899,8 +899,8 @@ def test_cli_ingest_and_connector_commands_use_the_remote_client(
 ) -> None:
     """The new CLI grammar delegates to the same SDK contracts."""
     client, ingest, _ = client_surface
-    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
-    monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
     source = tmp_path / "cli.md"
     source.write_text("from cli")
 
@@ -951,8 +951,8 @@ def test_cli_reports_invalid_client_input_without_a_traceback(
 ) -> None:
     """Lineage and credential mistakes are controlled CLI usage errors."""
     client, _, _ = client_surface
-    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
-    monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
     source = tmp_path / "invalid.md"
     source.write_text("invalid input")
 

@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from remember.client import MemoryClient
-from remember.errors import MemoryApiError
+from remember.errors import RateLimited
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
 from rememberstack.surfaces.direct_admission import AdmissionLimits
@@ -542,7 +542,7 @@ def test_the_sdk_reports_the_code_and_retry_after_without_retrying() -> None:
     raw = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    with pytest.raises(MemoryApiError) as caught:
+    with pytest.raises(RateLimited) as caught:
         MemoryClient(client=raw).query_sql(sql="SELECT 1")
     assert caught.value.status_code == 429
     assert caught.value.code == "rate_limited"

@@ -26,6 +26,8 @@ from benchmarks.locomo.runner import prepare_run
 from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from rememberstack.adapters import build_generation_recorder
 from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import GenerationRecorder
@@ -36,8 +38,6 @@ from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters import VertexModelProvider
 from rememberstack.adapters import VertexSettings
 from rememberstack.ports import ModelProviderPort
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 
 def main(argv: list[str] | None = None) -> int:

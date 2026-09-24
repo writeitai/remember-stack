@@ -64,6 +64,8 @@ from benchmarks.locomo.runner import summarize_runs
 import httpx
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
@@ -81,8 +83,6 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 

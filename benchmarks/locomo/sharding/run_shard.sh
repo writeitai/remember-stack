@@ -225,7 +225,7 @@ bind_benchmark_api() {
   port=${published##*:}
   [[ "$port" =~ ^[1-9][0-9]*$ ]] && ((port <= 65535)) ||
     die "could not resolve the Compose API host port: $published"
-  export REMEMBERSTACK_API_URL="http://127.0.0.1:$port"
+  export REMEMBER_API_URL="http://127.0.0.1:$port"
   log "benchmark-api status=bound port=$port"
 }
 

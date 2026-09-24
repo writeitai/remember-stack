@@ -135,14 +135,12 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
                 "import remember.client; "
                 "import remember.models; "
                 "import remember.errors; "
-                "from remember import Client, CloudClient, RememberClient, MemoryClient as RememberMemoryClient; "
-                "from remember.models import BillingStatus, Deployment; "
-                "from remember.errors import CloudError, Unauthenticated; "
-                "from remember import MemoryClient, PipelineReadinessReport; "
-                "c = Client(api_key='umc_dp_test', base_url='https://dp.example.com'); "
-                "assert c._client.headers.get('Authorization') == 'Bearer umc_dp_test'; "
-                "assert hasattr(Client, 'from_env'); "
-                "assert hasattr(CloudClient, 'from_env'); "
+                "from remember import Client, RememberClient, MemoryClient as RememberMemoryClient; "
+                "from remember.errors import RateLimited, StoredKeyRefused; "
+                "from remember import MemoryClient, PipelineReadinessReport, resolve_connection; "
+                "c = Client(api_key='self-hosted-secret', base_url='https://dp.example.com'); "
+                "assert c._route.target() == ('https://dp.example.com', 'Bearer self-hosted-secret'); "
+                "assert hasattr(c, 'account'); "
                 "assert RememberClient.__name__ == 'Client'; "
                 "assert issubclass(RememberClient, MemoryClient); "
                 "assert RememberMemoryClient.__name__ == 'MemoryClient'; "
@@ -159,15 +157,9 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
 
     executable = environment / "bin" / "remember"
     compat_launcher = environment / "bin" / "rememberstack"
-    status_launcher = environment / "bin" / "remember-status"
     assert executable.exists()
     assert not compat_launcher.exists()
-    assert status_launcher.exists()
-
-    status_run = subprocess.run(
-        [str(status_launcher), "--help"], check=True, capture_output=True, text=True
-    )
-    assert "remember-status" in status_run.stdout
+    assert not (environment / "bin" / "remember-status").exists()
     source = tmp_path / "fresh-wheel.md"
     source.write_bytes(b"fresh wheel push\n")
     _DeploymentHandler.ingested = []
@@ -176,9 +168,7 @@ def test_fresh_base_wheel_queries_and_ingests_over_http(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        monkeypatch.setenv(
-            "REMEMBERSTACK_API_URL", f"http://127.0.0.1:{server.server_port}"
-        )
+        monkeypatch.setenv("REMEMBER_API_URL", f"http://127.0.0.1:{server.server_port}")
         version = subprocess.run(
             [str(executable), "--version"], check=True, capture_output=True, text=True
         )
@@ -373,7 +363,7 @@ def test_terminal_rememberstack_migration_and_coexistence(tmp_path: Path) -> Non
                 "assert remember.Envelope is Envelope, 'Envelope identity mismatch'; "
                 "assert remember.MemoryClient is MemoryClient, 'MemoryClient mismatch'; "
                 "assert hasattr(rememberstack, 'Client'); "
-                "assert hasattr(rememberstack, 'CloudClient')"
+                "assert not hasattr(rememberstack, 'CloudClient')"
             ),
         ],
         check=True,
