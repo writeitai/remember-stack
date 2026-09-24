@@ -241,15 +241,33 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           test "$elapsed_seconds" -le "$QUICKSTART_TARGET_SECONDS"
 
-      - name: Prove object-store conditional create
+      - name: Prove object-store round trip and conditional create
         run: |
           docker compose --env-file .env.example exec -T api python - <<'PY'
+          from uuid import uuid4
+
           from rememberstack.adapters.selfhost import MinIOObjectStore, MinIOSettings
           from rememberstack.model import ObjectAlreadyExistsError, ObjectKey
+          from rememberstack.profiles.selfhost import SelfHostSettings
 
-          store = MinIOObjectStore(
-              bucket="remember-raw", settings=MinIOSettings.model_validate({})
-          )
+          profile = SelfHostSettings.model_validate({})
+          s3 = MinIOSettings.model_validate({})
+          # Each bucket is its own SeaweedFS collection and needs its own
+          # volume slots on first write; all three must accept a write.
+          for bucket in (
+              profile.raw_bucket_name,
+              profile.artifacts_bucket_name,
+              profile.corpusfs_bucket_name,
+          ):
+              store = MinIOObjectStore(bucket=bucket, settings=s3)
+              key = ObjectKey(f"ci/round-trip-{uuid4().hex}")
+              content = f"round trip {bucket}".encode()
+              store.write_bytes(key=key, content=content)
+              if store.read_bytes(key=key) != content:
+                  raise RuntimeError(f"{bucket} returned different bytes")
+              print(f"{bucket}: write and read back ok")
+
+          store = MinIOObjectStore(bucket=profile.raw_bucket_name, settings=s3)
           key = ObjectKey("ci/immutable-object")
           store.write_bytes(key=key, content=b"first")
           try:
