@@ -135,13 +135,13 @@ search_documents(query?, filters?, k) → documents
     each document scores by its best-ranked chunk in the judged version.
     A profiled file's overview and a document's top-level text are ordinary
     chunks, so no second search index is needed.
-- With filters only, results are ordered by the judged version's
-  `created_at` descending, documents lacking a date last, then by `doc_id`.
-  That key moves when a new version becomes current, which would drop or
-  repeat rows under a keyset cursor (the `GET /documents` lesson), so the
-  cursor also pins the first call's **as-of instant**: every page judges
-  versions as they were at that instant, and versions arriving later are not
-  considered until a new search starts.
+- With filters only, results are ordered newest first by when the judged
+  version was **ingested** (immutable per version), then by `doc_id`; the
+  `created` range remains a filter. The keyset cursor pins the first call's
+  **as-of instant**, and while paging each document is judged by its newest
+  live version ingested at or before that instant, so neither a later
+  version nor metadata filled in by conversion moves a row across pages.
+  Ranked queries (with `query`) return one page of `k` results.
 - **Each result** carries the document and version, `file_name`, `title`,
   family and posture, processing status, the general metadata, the overview
   or summary, and how to reach it: its P3 path, `source_open`, and
