@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Errors and status codes",
-  description: "Every HTTP status, error code and status value RememberStack and remember.dev return, what each means, and what to do about it.",
+  description: "Every HTTP status, error code and status value a RememberStack deployment and the remember client return, what each means, and what to do about it.",
 };
 
 # Errors and status codes
@@ -8,9 +8,9 @@ export const metadata = {
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
 This page collects every error a client can meet: HTTP statuses from a
-deployment, the codes SQL queries report, spend refusals on remember.dev,
-the structured errors the MCP tools return, `remember login` failures, the
-remember.dev account API's error shape, and the status values that appear in
+deployment, the codes SQL queries report,<Cloud> spend refusals on remember.dev,</Cloud>
+the structured errors the MCP tools return,<Cloud> `remember login` failures, the
+remember.dev account API's error shape,</Cloud> and the status values that appear in
 results.
 
 A "no" that is an answer — nothing matched, the entity is unknown, a limit
@@ -45,7 +45,7 @@ known code at its expected status, and on a `429`, which also sets
 |---|---|---|---|
 | `400` | `cursor is malformed` | `GET /documents` got a cursor it cannot read. | Restart paging without a cursor. |
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
-| `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
+| `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, create one in the console or run `remember login`.</Cloud> |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
@@ -53,16 +53,12 @@ known code at its expected status, and on a `429`, which also sets
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
-| `409` | `rate_class_unavailable` | Text metering (remember.dev): the file is a binary format. | Send plain text or Markdown. |
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
-| `413` | `body_too_large` | The ingest body is over the cap (100,000,000 bytes on remember.dev). | Split the document. |
-| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
+| `413` | `body_too_large` | The ingest body is over the cap<Cloud> (100,000,000 bytes on remember.dev)</Cloud>. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
-| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
-| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
@@ -77,6 +73,21 @@ known code at its expected status, and on a `429`, which also sets
 | `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
 | `503` | `live graph timed out` | A traversal ran past its time limit, or its database connection failed. | Retry with back-off; narrow `hops`, `max_hops` or `predicates` if it persists. |
 | `503` | `{"code": "…_unavailable", …}` | A store needed by a SQL query was unavailable. See [SQL query codes](#sql-query-codes). | Retry with back-off. |
+
+<Cloud>
+
+remember.dev meters processed text and adds these:
+
+| Status | `detail` | Meaning | What to do |
+|---|---|---|---|
+| `409` | `rate_class_unavailable` | Text metering: the file is a binary format. | Send plain text or Markdown. |
+| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
+| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
+| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
+
+</Cloud>
+
+<Cloud>
 
 ### Spend refusals (remember.dev)
 
@@ -102,6 +113,8 @@ runs. See [HTTP API conventions](/docs/reference/http-api#spend-refusals-remembe
 | `403` | `dispatch_refused:measurement_failed` | Spend could not be measured, so work is refused. | Retry later; contact support if it persists. |
 | `423` | `dispatch_parked:<reason>` | The project's work is parked for the recorded reason. | Fix the cause (for example buy credits); parked work resumes. Do not retry in a loop. |
 | `503` | `spend_lease_unavailable` | The control plane could not be reached or failed. | Retry with back-off. |
+
+</Cloud>
 
 ## SQL query codes
 
@@ -187,9 +200,6 @@ structured error:
 | `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
-| `spend_safety` | the HTTP status, else 403 | no | Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation. |
-| `dispatch_refused` | 403 | no | Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt. |
-| `dispatch_parked` | 423 | no | Stop automated retries and notify a human; park is policy, not a transient blip. |
 | `unauthorized` | 401 | no | Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if the token was revoked. |
 | `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
@@ -199,8 +209,24 @@ structured error:
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
 
+<Cloud>
+
+A remember.dev deployment can also refuse work to stay within its spend controls:
+
+| `code` | `http_status` | `retryable` | `agent_action` |
+|---|---|---|---|
+| `spend_safety` | the HTTP status, else 403 | no | Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation. |
+| `dispatch_refused` | 403 | no | Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt. |
+| `dispatch_parked` | 423 | no | Stop automated retries and notify a human; park is policy, not a transient blip. |
+
+</Cloud>
+
+<Cloud>
+
 For `dispatch_refused` and `dispatch_parked`, `reason_code` holds the part
 after the colon (for example `org_usd_ceiling_exhausted`).
+
+</Cloud>
 
 ### Assured operation and SQL query tools
 
@@ -229,6 +255,8 @@ On a read-only MCP server, calling `ingest` returns the text
 | `-32603` | the error text | An API or argument error while listing or calling tools. |
 
 See [MCP tools](/docs/reference/mcp).
+
+<Cloud>
 
 ## remember login (device grant)
 
@@ -284,6 +312,8 @@ The `remember` client raises:
 
 The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 
+</Cloud>
+
 ## Status values
 
 ### Document version status
@@ -333,6 +363,8 @@ See [Ingest](/docs/reference/http-api/ingest#post-readiness).
 `active`, `paused`, `error`. The connector routes are not served by a stock
 deployment in this release.
 
+<Cloud>
+
 ### Spend gate decision (remember.dev)
 
 | Value | Meaning |
@@ -343,3 +375,5 @@ deployment in this release.
 
 `remember.CloudClient.spend_gate(deployment_id=...)` returns this decision
 with its `reason_code`.
+
+</Cloud>

@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Glossary",
-  description: "Every term the RememberStack and remember.dev documentation uses, in one or two plain sentences, with a link to where it is explained.",
+  description: "Every term the RememberStack documentation uses, in one or two plain sentences, with a link to where it is explained.",
 };
 
 # Glossary
@@ -19,23 +19,29 @@ has a field or value in the API, it is shown in code.
 
 **`remember` package**
 : The Python client, CLI and MCP server for RememberStack (`pip install
-  remember`). The same code talks to remember.dev and to a self-hosted
-  engine.
+  remember`).<Cloud> The same code talks to remember.dev and to a self-hosted
+  engine.</Cloud>
+
+<Cloud>
 
 **remember.dev**
 : The managed service that runs RememberStack for you. See
   [What remember.dev runs for you](/docs/cloud/overview).
 
+</Cloud>
+
 **Self-hosted**
 : Running the RememberStack engine yourself, with Docker Compose. See
   [Install](/docs/self-hosting/install).
 
-## Accounts and deployments
+## Deployments
 
 **Deployment**
 : One running RememberStack memory: its own database, storage and
   credentials. Everything you ingest and query lives in exactly one
   deployment.
+
+<Cloud>
 
 **Organisation** (remember.dev only)
 : The remember.dev account that holds billing and the team. See
@@ -45,6 +51,8 @@ has a field or value in the API, it is shown in code.
 : A unit of work inside an organisation. Each project gets one isolated
   deployment. See
   [Organisations, projects and members](/docs/cloud/organisations-and-projects).
+
+</Cloud>
 
 ## Sources and documents
 

@@ -120,8 +120,13 @@ What the API accepts:
   `dpcred:<jti>` and marks a machine credential; any other `sub` marks a
   credential held by a person, named by that value.
 - **Clock skew:** 30 seconds of leeway on `exp` and `nbf`.
+
+<Cloud>
+
 - An optional `umc_dp_` prefix in front of the token is removed before
   checking.
+
+</Cloud>
 
 A signature cannot be withdrawn: a token is valid until it expires unless
 its `jti` is on the revocation list. Keep lifetimes short. An empty key set,
@@ -195,6 +200,8 @@ declare it (`mutates: false`), so a `read` token can run them.
 | `401` | No `Authorization` header, or the credential did not verify |
 | `403` | The credential is for another deployment, or its scope does not cover the route |
 
+<Cloud>
+
 ## `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH`
 
 Leave this `false` on a self-hosted deployment. The perimeter is enforced
@@ -204,6 +211,8 @@ to start unless a bind or signing keys are configured **and**
 `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` points at a billing service. A
 shared token alone (`API_BEARER_TOKEN` without `API_BEARER_BIND`) does not
 satisfy it either.
+
+</Cloud>
 
 ## Browser origins (CORS)
 
@@ -241,5 +250,9 @@ headers count only on requests with a `write` credential; with a narrower
 credential they are ignored and the upload still succeeds. A malformed
 pair on a trusted request is rejected with `422`.
 
+<Cloud>
+
 remember.dev issues deployment tokens from its console instead; see
 [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+
+</Cloud>

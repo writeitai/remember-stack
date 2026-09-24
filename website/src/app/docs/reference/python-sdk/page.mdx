@@ -9,8 +9,8 @@ export const metadata = {
 
 The `remember` package is the Python client for RememberStack. You use it to
 store documents, wait until they are processed, and ask the memory what it
-knows. The same code runs against remember.dev and against an engine you host
-yourself; only the address and the token differ.
+knows.<Cloud> The same code runs against remember.dev and against an engine you host
+yourself; only the address and the token differ.</Cloud>
 
 This page lists every public name the package exports. For the fields inside
 a result (facts, claims, validity windows, negatives), see
@@ -34,7 +34,7 @@ The client is synchronous. There is no async client yet
 
 ## Public names
 
-`remember.__all__` contains exactly these names:
+`remember.__all__` contains these names:
 
 | Name | Kind | Section |
 |---|---|---|
@@ -42,41 +42,50 @@ The client is synchronous. There is no async client yet
 | `RememberClient` | alias of `Client` | [Client](#client) |
 | `MemoryClient` | class | [MemoryClient](#memoryclient) |
 | `ClientSettings` | settings class | [ClientSettings](#clientsettings) |
-| `CloudClient` | class | [CloudClient](#cloudclient) |
 | `MemoryApiError` | exception | [Errors](#errors) |
-| `CloudError` | exception | [Errors](#errors) |
-| `Unauthenticated` | exception | [Errors](#errors) |
-| `NotPermitted` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
-| `RateLimited` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
-| `BillingStatus` | model | [Models](#models) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimValidPrecision` | enum | [Models](#models) |
 | `ConnectorCreate` | model | [Models](#models) |
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
-| `Deployment` | model | [Models](#models) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
-| `LedgerEntry` | model | [Models](#models) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
 | `ReadinessRequirements` | model | [Models](#models) |
-| `SpendGate` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
 | `__version__` | string | The installed package version, for example `"0.17.0"`. |
 
-Two more exceptions are raised by the CLI helpers and live outside
-`__all__`: `remember.credentials.CredentialError` and
-`remember.device_login.DeviceGrantError`. See [Errors](#errors).
+<Cloud>
+
+It also exports the remember.dev account client and its types:
+
+| Name | Kind | Section |
+|---|---|---|
+| `CloudClient` | class | [CloudClient](#cloudclient) |
+| `CloudError` | exception | [Errors](#errors) |
+| `Unauthenticated` | exception | [Errors](#errors) |
+| `NotPermitted` | exception | [Errors](#errors) |
+| `RateLimited` | exception | [Errors](#errors) |
+| `BillingStatus` | model | [Models](#models) |
+| `Deployment` | model | [Models](#models) |
+| `LedgerEntry` | model | [Models](#models) |
+| `SpendGate` | model | [Models](#models) |
+
+</Cloud>
+
+`remember.credentials.CredentialError`, raised by the CLI helpers, lives
+outside `__all__`<Cloud>, and so does `remember.device_login.DeviceGrantError`</Cloud>.
+See [Errors](#errors).
 
 ## Which client to use
 
@@ -84,7 +93,13 @@ Two more exceptions are raised by the CLI helpers and live outside
 |---|---|
 | Store and retrieve memory (the usual case) | `Client` (same as `RememberClient`) |
 | The same, with only the base constructor and no `api_key` shortcut | `MemoryClient` |
-| Read your remember.dev organisation's balance, deployment and spend state | `CloudClient` |
+
+<Cloud>
+
+To read your remember.dev organisation's balance, deployment and spend
+state, use [`CloudClient`](#cloudclient).
+
+</Cloud>
 
 `Client` is a subclass of `MemoryClient`. Every method listed under
 [MemoryClient](#memoryclient) is available on `Client`.
@@ -97,7 +112,7 @@ remember.RememberClient = remember.Client
 ```
 
 The client for one deployment. It talks directly to the deployment's own
-address; remember.dev never proxies your queries through its console.
+address<Cloud>; remember.dev never proxies your queries through its console</Cloud>.
 
 ### Constructor
 
@@ -119,7 +134,7 @@ All parameters are keyword-only.
 
 | Parameter | Meaning |
 |---|---|
-| `api_key` | The deployment token. A bare secret (`umc_dp_…`) or a full `Bearer …` value; the client adds `Bearer ` when it is missing. |
+| `api_key` | The deployment token. A bare secret<Cloud> (`umc_dp_…`)</Cloud> or a full `Bearer …` value; the client adds `Bearer ` when it is missing. |
 | `base_url`, `api_url`, `data_plane_url` | The deployment address. Three names for the same thing. If you pass more than one, `data_plane_url` wins, then `base_url`, then `api_url`. |
 | `authorization` | A complete `Authorization` header value. Used only when `api_key` is not given. |
 | `client` | An `httpx.Client` you built yourself. It cannot be combined with any other parameter. The SDK does not close a client you pass in. |
@@ -156,7 +171,7 @@ How the token is chosen, first match wins:
 
 <Callout type="note">
 
-The client never reads the credential file that `remember login` writes.
+The client never reads the CLI's credential file<Cloud>, the one `remember login` writes</Cloud>.
 A script that should use the same deployment as your CLI needs
 `REMEMBER_API_URL` and `REMEMBER_API_KEY` set, or explicit arguments.
 
@@ -166,7 +181,7 @@ Example, with the address and token in the environment:
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 ```bash
 export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
@@ -1027,6 +1042,8 @@ memory = remember.MemoryClient(settings=settings)
 The full list of client variables is in
 [Configuration variables](/docs/reference/configuration).
 
+<Cloud>
+
 ## CloudClient
 
 ```python
@@ -1104,6 +1121,8 @@ with remember.CloudClient.from_env() as cloud:
 
 The same checks are available as a command: [`remember-status`](/docs/reference/cli#remember-status).
 
+</Cloud>
+
 ## Errors
 
 ```text
@@ -1111,16 +1130,26 @@ RuntimeError
 ├── MemoryApiError                 memory clients (Client, MemoryClient)
 └── PipelineDeadLettered           wait_for_readiness
 Exception
-├── CloudError                     CloudClient
-│   ├── Unauthenticated            401
-│   ├── NotPermitted               403
-│   └── RateLimited                429
 └── ConnectorNotFoundError         exported, not raised today
 ValueError
 └── CredentialError                remember.credentials (CLI credential file)
+```
+
+<Cloud>
+
+The remember.dev account client and `remember login` add:
+
+```text
+Exception
+└── CloudError                     CloudClient
+    ├── Unauthenticated            401
+    ├── NotPermitted               403
+    └── RateLimited                429
 RuntimeError
 └── DeviceGrantError               remember.device_login (remember login)
 ```
+
+</Cloud>
 
 ### MemoryApiError
 
@@ -1157,9 +1186,11 @@ waiting.
 | `report` | The `PipelineReadinessReport` that showed them. |
 
 `str(error)` names each version and stage. On a self-hosted deployment the
-operator can replay the work after fixing the cause; on remember.dev,
-report the `version_id` and stage to support. See
+operator can replay the work after fixing the cause<Cloud>; on remember.dev,
+report the `version_id` and stage to support</Cloud>. See
 [When a version fails](/docs/guides/wait-for-readiness#when-a-version-fails).
+
+<Cloud>
 
 ### CloudError and subclasses
 
@@ -1188,6 +1219,8 @@ except remember.RateLimited as error:
     time.sleep(error.retry_after or 5)
 ```
 
+</Cloud>
+
 ### CredentialError
 
 `remember.credentials.CredentialError` (a `ValueError`) is raised when the
@@ -1195,12 +1228,16 @@ CLI credential file cannot be read or written safely: it is a symlink, it is
 readable by group or others, it is malformed, or the lock cannot be taken.
 The memory clients never raise it.
 
+<Cloud>
+
 ### DeviceGrantError
 
 `remember.device_login.DeviceGrantError` (a `RuntimeError`) is raised when
 `remember login` fails: the sign-in was denied or expired, the token host
 answered badly, or the deployment's address is not live yet. It carries
 `exit_code`, the process exit status the CLI uses.
+
+</Cloud>
 
 ### ConnectorNotFoundError
 
@@ -1230,10 +1267,19 @@ models below are Pydantic models (frozen) unless noted.
 | `ClaimValidPrecision` | String enum: how narrow a stated validity window is. `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
 | `TemporalMatch` | String enum: whether a fact `confirmed` or only `possible` overlapped the query window. |
 | `ConnectorCreate`, `ConnectorDescriptor` | Connector configuration models. No deployment serves connectors today. `ConnectorCreate` refuses a `configuration` key that looks like a secret (`token`, `password`, `api_key` …) and asks for `credential_ref` instead. |
+
+<Cloud>
+
+The remember.dev account client returns these dataclasses:
+
+| Name | What it is |
+|---|---|
 | `Deployment` | Dataclass from `CloudClient`: `id`, `state`, `hostname`, `hostname_live`, `created_at`; property `is_ready` (`state` is `active` and the hostname is live). |
 | `BillingStatus` | Dataclass: `state`, `balance`, `cap` (money as strings, or `None`); property `can_spend` (`state` is `ACTIVE`). |
 | `SpendGate` | Dataclass: `decision`, `reason_code`, `spent_usd`, `ceiling_usd`, `parked`; properties `allows_work` (`decision` is `allow`) and `is_parked`. |
 | `LedgerEntry` | Dataclass: `entry_id`, `position`, `entry_type`, `amount`, `balance_after`, `description`, `created_at`. |
+
+</Cloud>
 
 <Callout type="note">
 

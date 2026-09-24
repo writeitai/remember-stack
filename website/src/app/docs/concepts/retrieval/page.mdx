@@ -35,8 +35,15 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](/docs/reference/mcp) (`remember mcp`, or the hosted server on remember.dev) | A coding agent such as Claude Code or Codex. | Ingest, readiness and the four operations; `remember mcp` also has the seven SQL query tools. No primitives. |
+| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, the four operations and the seven SQL query tools. No primitives. |
 | [HTTP API](/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
+
+<Cloud>
+
+remember.dev also runs a hosted MCP server. It has ingest, readiness and
+the four operations, but not the SQL query tools.
+
+</Cloud>
 
 ## The four assured operations
 
@@ -174,7 +181,7 @@ Each row is a list of values in the order of `result.columns`.
 You can explore the query space (`describe_query_space`,
 `search_query_space`), check a statement without running it (`explain_query`),
 and store reviewed statements as **saved queries** that agents run by name
-with parameters. SQL queries work the same on remember.dev and self-hosted.
+with parameters.<Cloud> SQL queries work the same on remember.dev and self-hosted.</Cloud>
 See [Explore memory with SQL](/docs/guides/sql),
 [Saved queries](/docs/guides/saved-queries) and
 [Query space](/docs/reference/query-space).

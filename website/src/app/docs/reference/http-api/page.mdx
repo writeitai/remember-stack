@@ -25,8 +25,8 @@ The API has 28 documented operations:
 | SQL queries | [SQL queries](/docs/reference/http-api/query) | `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` |
 | Deployment | [Deployment](/docs/reference/http-api/deployment) | `GET /deployment` |
 
-All of them are served on both remember.dev and a self-hosted deployment,
-including the SQL query routes (`/query/*`). SQL queries run over the query
+Every deployment serves all of them<Cloud>, on remember.dev and self-hosted
+alike</Cloud>, including the SQL query routes (`/query/*`). SQL queries run over the query
 space, `memory_v1`: a fixed set of prepared, read-only views and functions.
 Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
@@ -41,7 +41,7 @@ front of the memory routes: requests go straight to the deployment.
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 ```bash
 export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
@@ -81,15 +81,18 @@ curl -s "$REMEMBER_API_URL/operations" \
 The `remember` client adds the `Bearer ` prefix for you when you pass a bare
 secret (`Client(api_key=...)` or `REMEMBER_API_KEY`).
 
-Whether the header is required depends on the deployment:
+<Cloud>
 
-- **remember.dev** always requires it.
-- **Self-hosted** requires it only when you configure a credential
-  (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`,
-  `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` or
-  `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`). With none of them set, the API is
-  open and ignores the header; protecting it is then the job of your network.
-  See [Authentication and scopes](/docs/self-hosting/authentication).
+remember.dev always requires the header.
+
+</Cloud>
+
+A self-hosted deployment requires it only when you configure a credential
+(`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`,
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` or
+`REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`). With none of them set, the API is
+open and ignores the header; protecting it is then the job of your network.
+See [Authentication and scopes](/docs/self-hosting/authentication).
 
 When authentication is on, a request without the header is refused with
 `401` and `{"detail": "a perimeter credential is required"}`. A credential the
@@ -104,9 +107,18 @@ A valid credential issued for a different deployment is `403` with
 | Credential | Where it comes from | Scope it carries |
 |---|---|---|
 | Shared secret (self-hosted) | You choose it; the engine keeps only its SHA-256 digest (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` is `{deployment-uuid}:{sha256-hex}`). | `write` (unrestricted) |
+
+<Cloud>
+
+remember.dev issues three more:
+
+| Credential | Where it comes from | Scope it carries |
+|---|---|---|
 | Deployment API token, `umc_dp_…` (remember.dev) | Console, Settings → API Tokens, or `remember login`. A signed credential the deployment verifies with published public keys. | `write` |
 | Browser read credential (remember.dev console) | Issued to the console for a signed-in member; lives 10 minutes. | `read` |
 | Browser ingest credential (remember.dev console) | Issued to the console for one upload; lives 3 minutes. | `ingest` |
+
+</Cloud>
 
 A self-hosted deployment can also verify signed credentials if you give it a
 key set (`REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`, a JWKS of Ed25519 public
@@ -189,7 +201,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 
 | Form | Example | Where |
 |---|---|---|
-| Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph, spend. |
+| Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph<Cloud>, spend</Cloud>. |
 | Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
@@ -216,6 +228,8 @@ do about it.
 | `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
+
+<Cloud>
 
 ### Spend refusals (remember.dev)
 
@@ -244,9 +258,11 @@ A self-hosted deployment has no spend hold unless you configure one
 (`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL`). See
 [Spend caps and auto top-up](/docs/cloud/spend-controls).
 
+</Cloud>
+
 ## Admission limits
 
-After the credential check, and before any spend hold or routing, every
+After the credential check, and before<Cloud> any spend hold or</Cloud> routing, every
 request except `GET /healthz` is counted against two sets of limits: one for
 its credential and one for the whole deployment. A request to an unknown path
 counts too.
@@ -311,20 +327,23 @@ See [Result types](/docs/reference/result-types).
 
 ## Size limits
 
-`POST /ingest` bodies can be capped per deployment:
+`POST /ingest` bodies can be capped per deployment. A self-hosted deployment
+has no cap by default; set `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` to
+add one. With a cap set, a body over it gets `413` `body_too_large` and a
+request without `Content-Length` gets `411` `length_required`.
 
-| Deployment | Cap | Over the cap | No `Content-Length` |
-|---|---|---|---|
-| remember.dev | 100,000,000 bytes | `413` `body_too_large` | `411` `length_required` |
-| Self-hosted | none by default; set `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | `413` `body_too_large` | `411` `length_required` (only when a cap is set) |
+<Cloud>
 
-On remember.dev an over-cap body can instead be answered `503`
+remember.dev caps bodies at 100,000,000 bytes and always requires
+`Content-Length`. There an over-cap body can instead be answered `503`
 `spend_lease_unavailable`, because the spend hold is checked first; see
 [Ingest](/docs/reference/http-api/ingest#errors).
 
 A deployment that meters processed text (remember.dev) also refuses a text
 document over 10,000,000 bytes with `413` `source_bytes_limit_exceeded`; see
 [Ingest](/docs/reference/http-api/ingest#errors).
+
+</Cloud>
 
 Other bounds are per route: search and lookup `k` up to 400, search query up to 4,096
 characters in the `POST` form, operation queries up to 8,192 characters, SQL
@@ -342,8 +361,8 @@ exact `https` origins; empty by default). For those origins it allows:
 - preflight caching for 600 seconds.
 
 Wildcards are refused at startup, and so is an origin with a path, a user,
-port `443` written out, or upper-case letters. remember.dev deployments allow
-the remember.dev console's origin.
+port `443` written out, or upper-case letters.<Cloud> remember.dev deployments allow
+the remember.dev console's origin.</Cloud>
 
 ## Routes outside the documented API
 
