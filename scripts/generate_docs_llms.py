@@ -38,7 +38,7 @@ AGENT_NOTE = (
 )
 
 
-_CLOUD_BLOCK = re.compile(r"<Cloud>.*?</Cloud>\n?", re.S)
+_CLOUD_BLOCK = re.compile(r"<Cloud>.*?</Cloud>", re.S)
 _CLOUD_TAB = re.compile(r"^<Tab cloud [^>]*>\n.*?^</Tab>\n\s*", re.S | re.M)
 _SINGLE_TAB = re.compile(
     r"^<Tabs>\n\s*<Tab [^>]*>\n((?:(?!^</Tab>).)*)^</Tab>\n\s*</Tabs>\n", re.S | re.M

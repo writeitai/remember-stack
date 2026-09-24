@@ -51,7 +51,7 @@ Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
 | `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | Share of error events sent, from 0.0 to 1.0. |
 
 `compose.yaml` passes all three. Set them in `.env` and run
-`docker compose up -d`. The `setup`, `api`, worker and `meter-receipts`
+`docker compose up -d`. The `setup`, `api` and worker<Cloud> and `meter-receipts`</Cloud>
 processes report errors; the projection and mount commands do not.
 
 Events are stripped to metadata before they leave the process: the

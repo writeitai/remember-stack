@@ -53,16 +53,12 @@ known code at its expected status, and on a `429`, which also sets
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
-| `409` | `rate_class_unavailable` | Text metering: the file is a binary format. | Send plain text or Markdown. |
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `body_too_large` | The ingest body is over the cap<Cloud> (100,000,000 bytes on remember.dev)</Cloud>. | Split the document. |
-| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
-| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
-| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
@@ -77,6 +73,19 @@ known code at its expected status, and on a `429`, which also sets
 | `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
 | `503` | `live graph timed out` | A traversal ran past its time limit, or its database connection failed. | Retry with back-off; narrow `hops`, `max_hops` or `predicates` if it persists. |
 | `503` | `{"code": "…_unavailable", …}` | A store needed by a SQL query was unavailable. See [SQL query codes](#sql-query-codes). | Retry with back-off. |
+
+<Cloud>
+
+remember.dev meters processed text and adds these:
+
+| Status | `detail` | Meaning | What to do |
+|---|---|---|---|
+| `409` | `rate_class_unavailable` | Text metering: the file is a binary format. | Send plain text or Markdown. |
+| `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
+| `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
+| `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
+
+</Cloud>
 
 <Cloud>
 
@@ -191,9 +200,6 @@ structured error:
 | `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
-| `spend_safety` | the HTTP status, else 403 | no | Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation. |
-| `dispatch_refused` | 403 | no | Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt. |
-| `dispatch_parked` | 423 | no | Stop automated retries and notify a human; park is policy, not a transient blip. |
 | `unauthorized` | 401 | no | Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if the token was revoked. |
 | `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
@@ -203,8 +209,24 @@ structured error:
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
 
+<Cloud>
+
+A remember.dev deployment can also refuse work to stay within its spend controls:
+
+| `code` | `http_status` | `retryable` | `agent_action` |
+|---|---|---|---|
+| `spend_safety` | the HTTP status, else 403 | no | Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation. |
+| `dispatch_refused` | 403 | no | Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt. |
+| `dispatch_parked` | 423 | no | Stop automated retries and notify a human; park is policy, not a transient blip. |
+
+</Cloud>
+
+<Cloud>
+
 For `dispatch_refused` and `dispatch_parked`, `reason_code` holds the part
 after the colon (for example `org_usd_ceiling_exhausted`).
+
+</Cloud>
 
 ### Assured operation and SQL query tools
 

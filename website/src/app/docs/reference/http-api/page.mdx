@@ -201,7 +201,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 
 | Form | Example | Where |
 |---|---|---|
-| Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph, spend. |
+| Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph<Cloud>, spend</Cloud>. |
 | Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |

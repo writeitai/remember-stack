@@ -358,9 +358,6 @@ the agent what to do next.
 | `path_not_regular_file` | 400 | no | Directory, pipe, device or other special file. | Point at a regular file. |
 | `path_too_large` | 413 | no | Larger than the read limit. | Split the file or raise the limit. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. | Split or shorten the document. |
-| `spend_safety` | as sent, else 403 | no | The deployment refused the work to stay within a spend cap. | Tell the user; do not retry. |
-| `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). | Tell the user; do not retry. |
-| `dispatch_parked` | 423 | no | The work is parked until someone acts. | Stop retrying; notify a person. |
 | `unauthorized` | 401 | no | The token is missing, wrong or revoked. | Replace the token. |
 | `forbidden` | 403 | no | The token may not do this. | Use a token for this deployment with the right scope. |
 | `transport_error` | 0 | yes | No answer from the deployment. | Retry with back-off; check the address and network. |
@@ -368,6 +365,18 @@ the agent what to do next.
 | `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. | Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
 | `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
 | `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
+
+<Cloud>
+
+A remember.dev deployment can also refuse work to stay within its spend controls:
+
+| `code` | `http_status` | `retryable` | When | `agent_action` in short |
+|---|---|---|---|---|
+| `spend_safety` | as sent, else 403 | no | The deployment refused the work to stay within a spend cap. | Tell the user; do not retry. |
+| `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). | Tell the user; do not retry. |
+| `dispatch_parked` | 423 | no | The work is parked until someone acts. | Stop retrying; notify a person. |
+
+</Cloud>
 
 With `--read-only`, a call to `ingest` returns `isError: true` with the
 plain text

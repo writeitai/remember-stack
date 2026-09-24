@@ -115,7 +115,6 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
 | `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | unset | JWKS JSON | — | Ed25519 public keys that verify signed tokens. |
 | `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | unset | comma-separated strings | — | `jti` values refused despite a valid signature. |
-| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Leave unset. Refuses to start without a bind or signing keys and a spend lease URL. |
 
 See [Authentication and scopes](/docs/self-hosting/authentication).
 
@@ -128,6 +127,7 @@ without the rest stops the API at start.
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Leave unset. Refuses to start without a bind or signing keys and a spend lease URL. |
 | `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` | unset | URL | passed | Billing service asked before paid work. |
 | `REMEMBERSTACK_SELFHOST_METER_INGEST_URL` | unset | URL | passed | Metering receipt endpoint. |
 | `REMEMBERSTACK_SELFHOST_METER_INGEST_TOKEN` | unset | secret (`umc_mi_…`) | passed | Metering token. |

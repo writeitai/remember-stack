@@ -100,7 +100,6 @@ RememberStack image, and starts everything in dependency order:
 | `worker-embed-claim` | `worker --stage embed_claim` | Embeds claims for semantic search. |
 | `worker-reconcile` | `worker --stage reconcile` | Settles the version's lifecycle once the other stages are done. |
 | `worker-label-relation` | `worker --stage label_relation` | Writes the searchable label of each relation and embeds facts for semantic search. |
-| `meter-receipts` | `meter-receipts` | Profile `managed` only. Not part of a self-hosted install; do not start it. |
 | `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](/docs/self-hosting/filesystem-views) snapshot on demand. |
 
 Each worker handles one stage and wakes when new work for that stage is

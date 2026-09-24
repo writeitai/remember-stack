@@ -135,11 +135,7 @@ for it; it will not become ready on its own.
 |---|---|---|
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
-| `413` | `source_bytes_limit_exceeded` | Text metering is on and the file is over 10,000,000 bytes. |
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
-| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
-| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
-| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | `source_modified_at`, `source_version_ref` or `versioning_mode=living` without a source identity. |
 | `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
@@ -147,6 +143,19 @@ for it; it will not become ready on its own.
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
+
+<Cloud>
+
+Text metering on remember.dev adds these:
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `413` | `source_bytes_limit_exceeded` | Text metering is on and the file is over 10,000,000 bytes. |
+| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
+| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
+| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
+
+</Cloud>
 
 <Cloud>
 
@@ -163,8 +172,8 @@ Markdown only.
 </Cloud>
 
 A self-hosted deployment has no body cap unless you set
-`REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`, has no text metering, and
-accepts any file its converters handle.
+`REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`, and accepts any file its
+converters handle.
 
 <Cloud>
 

@@ -672,9 +672,16 @@ orchestration.
 | `setup` | Applies database migrations and prepares the deployment. Runs once; the other services start after it succeeds. |
 | `api` | The HTTP API. Listens on `REMEMBERSTACK_SELFHOST_API_HOST` (default `0.0.0.0`) and `REMEMBERSTACK_SELFHOST_API_PORT` (default `8000`). This is the image's default command. |
 | `worker --stage STAGE` | One pipeline worker. `STAGE` is one of `convert`, `structure`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `embed_claim`, `reconcile`, `label_relation`. Run one process per stage. |
-| `meter-receipts [--once] [--limit N]` | Sends ingest usage receipts to a metering service. `--limit` defaults to 100. In `compose.yaml` it belongs to the `managed` profile; a self-hosted engine does not need it. |
 | `project --plane p3` | Builds the filesystem view snapshot once. In `compose.yaml` it belongs to the `operations` profile. |
 | `mounts --root PATH [--raw-root PATH] [--artifacts-root PATH]` | Publishes the latest snapshot under a local directory. |
+
+<Cloud>
+
+| Command | What it runs |
+|---|---|
+| `meter-receipts [--once] [--limit N]` | Sends ingest usage receipts to a metering service. `--limit` defaults to 100. In `compose.yaml` it belongs to the `managed` profile; a self-hosted engine does not need it. |
+
+</Cloud>
 
 The pipeline stages are explained in
 [The pipeline and readiness](/docs/concepts/pipeline); configuration in
