@@ -619,6 +619,7 @@ def test_docx_document_converts_through_markitdown(rig: _E0Rig) -> None:
     )
     assert ingested.parked is None
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
     version = rig.row(
         sql="SELECT * FROM document_versions WHERE version_id = :version_id",
         params={"version_id": ingested.version_id},
