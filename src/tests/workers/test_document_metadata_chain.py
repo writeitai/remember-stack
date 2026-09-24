@@ -633,11 +633,13 @@ def test_observation_and_conversion_share_one_lock_order(rig: _Rig) -> None:
 
 
 def _representation_id(rig: _Rig, *, version_id: UUID) -> UUID:
-    with rig.engine.connect() as connection:
+    """The converted representation, stamped as structured (no structure run)."""
+    with rig.engine.begin() as connection:
         return connection.execute(
             text(
-                "SELECT representation_id FROM document_representations"
-                " WHERE version_id = :v"
+                "UPDATE document_representations"
+                " SET structurer_version = coalesce(structurer_version, 'test')"
+                " WHERE version_id = :v RETURNING representation_id"
             ),
             {"v": version_id},
         ).scalar_one()
