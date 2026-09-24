@@ -88,7 +88,12 @@ where a step says so.
 1. **Binary signatures (D132's classes, extended).** PDF; images, audio and
    video by signature and ISO BMFF brand (D132); SQLite (`SQLite format 3\0`
    header); Parquet (`PAR1` at both ends); Arrow IPC (`ARROW1`); 7z; gzip
-   (then a TAR test on the decompressed head); TAR (`ustar` at offset 257).
+   (then a TAR test on the decompressed head); TAR (`ustar` at offset 257);
+   and the **card** formats: DWG (`AC10` version header), fonts (TrueType
+   `00 01 00 00` or `true`, OpenType `OTTO`, WOFF `wOFF`, WOFF2 `wOF2`),
+   disk images (ISO 9660 `CD001` at offset 32769, VMDK `KDMV`, VHD
+   `conectix`), and executables (ELF `7F 45 4C 46`, PE `MZ` with a `PE\0\0`
+   header at the offset it names, Mach-O magic numbers).
 2. **ZIP packages by member names**, most specific first: EPUB and ODF
    (a stored `mimetype` member naming the type); OOXML (`[Content_Types].xml`
    plus `word/`, `ppt/` or `xl/` members, D132); message-export ZIP shapes
@@ -108,6 +113,11 @@ where a step says so.
    3. **Captions** — WebVTT (`WEBVTT` first line) or SRT (numbered cues with
       `-->` timestamps in the first cue).
    4. **Calendar / contacts** — `BEGIN:VCALENDAR` or `BEGIN:VCARD`.
+   4a. **Line-shaped message exports** — each shape's declared line grammar
+      (for WhatsApp: `[date, time] Name: text`, with continuation lines),
+      matched by at least 80% of non-empty lines.
+   4b. **DXF (card)** — the text CAD exchange format: a `0` group code line
+      followed by `SECTION` at the start of the file.
    5. **JSON** — the whole file parses as one JSON value; **NDJSON** — every
       non-empty line parses as a JSON value and there are at least two. A
       JSON value with `nbformat` and `cells` keys is a **notebook**; a
@@ -190,7 +200,7 @@ the canonical types above; the shipped table is: `application/x-zip-compressed` 
 
 The three message-export shapes are the shipped set. Each export converter
 declares its detection test (§2.2 step 4.5 for JSON shapes, step 2 for ZIP
-shapes, a line grammar tested after step 4.4 for line shapes); adding a shape
+shapes, step 4a for line shapes); adding a shape
 is a registry entry. Where the table lists a type in `vnd.remember.*`, no
 registered media type exists and the engine uses its own.
 

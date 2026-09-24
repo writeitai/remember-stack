@@ -198,8 +198,10 @@ writes the document's name into the claim instead of the bare reference:
   Claimify returns a new output field, `own_document_name`: the exact text it
   wrote in place of the self-reference (e.g. `Audit_2025.pdf`). The grounding
   gate keeps it only when that text equals one of the document's names, occurs
-  **exactly once** in the claim, and its tokens are not in the claim's source
-  span (they came from the header); it then persists the character span as
+  **exactly once** in the claim, and does **not** occur as a whole in the
+  claim's source span, so the name came from the header rather than the
+  passage. Individual words may overlap: in a document titled "Annual
+  Report", "this report" shares the word *report* and is still accepted; it then persists the character span as
   `claims.own_document_name_span`. Otherwise the field is dropped with a
   diagnostic and the claim is kept. The span is part of the claim and
   survives D56 reuse with it.
@@ -262,8 +264,9 @@ filler nouns", `entity_identity_and_retrieval_design.md` §4.3). Mentions of
   (a matching document ranked below the unfiltered top-k is still returned).
 - Self-reference naming: "this report", "the attached spreadsheet", a
   profile overview; a non-self claim gets no name; `own_document_name` is
-  dropped when it is not one of the document's names, occurs twice, or its
-  tokens are in the source span; a renamed new version does not reuse old
+  dropped when it is not one of the document's names, occurs twice, or the
+  whole name is already in the source span (a shared word such as "report"
+  in "Annual Report" is accepted); a renamed new version does not reuse old
   self-referencing claims; the title is preferred
   over the file name; grounding accepts the header context.
 - E3: a claim naming its own file mints no entity; two same-named files
