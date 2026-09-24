@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/rememberstack/spine/fact_application_inputs.py: 91.6%</title>
+    <title>Coverage for src/rememberstack/spine/fact_application_inputs.py: 90.3%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>rememberstack<span class="sep">/</span>spine<span class="sep">/</span>fact_application_inputs.py</b>:
-            <span class="pc_cov">91.6%</span>
+            <span class="pc_cov">90.3%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,10 +56,10 @@
         </aside>
         <h2>
             <span class="text">119 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">113<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">112<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">7<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">7<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">8<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_f78672e8a2243142_fact_adjudication_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f78672e8a2243142_fact_applications_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-23 10:18 +0000
+            created at 2026-09-24 10:20 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -266,8 +266,8 @@
     <p class="run run2"><span class="n"><a id="t182" href="#t182">182</a></span><span class="t">                <span class="nam">params</span><span class="op">=</span><span class="op">{</span><span class="op">**</span><span class="nam">params</span><span class="op">,</span> <span class="str">&quot;baseline_ids&quot;</span><span class="op">:</span> <span class="op">[</span><span class="nam">row</span><span class="op">[</span><span class="str">&quot;fact_id&quot;</span><span class="op">]</span> <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">baseline</span><span class="op">]</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t183" href="#t183">183</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t184" href="#t184">184</a></span><span class="t">        <span class="nam">by_id</span> <span class="op">=</span> <span class="op">{</span><span class="nam">row</span><span class="op">[</span><span class="str">&quot;fact_id&quot;</span><span class="op">]</span><span class="op">:</span> <span class="nam">row</span> <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">baseline</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">        <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">extra</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t">            <span class="nam">by_id</span><span class="op">.</span><span class="nam">setdefault</span><span class="op">(</span><span class="nam">row</span><span class="op">[</span><span class="str">&quot;fact_id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">row</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">        <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">extra</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">185&#x202F;&#x219B;&#x202F;186</span><span class="annotate long">line 185 didn't jump to line 186 because the loop on line 185 never started</span></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t">            <span class="nam">by_id</span><span class="op">.</span><span class="nam">setdefault</span><span class="op">(</span><span class="nam">row</span><span class="op">[</span><span class="str">&quot;fact_id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">row</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t">        <span class="nam">shared_ids</span> <span class="op">=</span> <span class="op">{</span><span class="nam">row</span><span class="op">[</span><span class="str">&quot;fact_id&quot;</span><span class="op">]</span> <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">extra</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">        <span class="key">if</span> <span class="nam">context_members</span> <span class="key">and</span> <span class="nam">baseline</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">            <span class="nam">shared_ids</span><span class="op">.</span><span class="nam">update</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -617,7 +617,7 @@
             <a class="nav" href="z_f78672e8a2243142_fact_applications_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-23 10:18 +0000
+            created at 2026-09-24 10:20 +0000
         </p>
     </div>
 </footer>
