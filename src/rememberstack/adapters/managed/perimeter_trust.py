@@ -85,7 +85,10 @@ REVOCATION_TYPE = "revocation+jwt"
 #: A fetched document larger than this is refused rather than read into memory.
 _MAX_FETCH_BYTES = 4 * 1024 * 1024
 
-_FETCH_TIMEOUT_SECONDS = 10.0
+#: Per-phase httpx timeout (connect, each read, write, pool). Short, because
+#: the whole-fetch deadline is checked between reads: a fetch ends by at most
+#: the deadline plus one of these.
+_FETCH_PHASE_TIMEOUT_SECONDS = 2.0
 
 #: Whole-fetch deadline: a server dripping bytes cannot hold a refresh open.
 _FETCH_DEADLINE_SECONDS = 10.0
@@ -219,10 +222,20 @@ class PerimeterStateStore(Protocol):
         ...
 
 
-def fetch_bounded(url: str, *, deadline_s: float = _FETCH_DEADLINE_SECONDS) -> bytes:
-    """GET ``url`` without following redirects, within a total deadline and size."""
+def fetch_bounded(
+    url: str,
+    *,
+    deadline_s: float = _FETCH_DEADLINE_SECONDS,
+    phase_timeout_s: float = _FETCH_PHASE_TIMEOUT_SECONDS,
+) -> bytes:
+    """GET ``url`` without following redirects, within a total deadline and size.
+
+    The deadline is checked between reads, and every connect, read, write and
+    pool wait is bounded by ``phase_timeout_s``, so a fetch returns or fails
+    within ``deadline_s + phase_timeout_s`` (12 s with the defaults).
+    """
     deadline = time.monotonic() + deadline_s
-    timeout = min(_FETCH_TIMEOUT_SECONDS, deadline_s)
+    timeout = min(phase_timeout_s, deadline_s)
     with httpx.stream("GET", url, timeout=timeout, follow_redirects=False) as response:
         if response.status_code != 200:
             raise ValueError(f"fetch returned HTTP {response.status_code}")

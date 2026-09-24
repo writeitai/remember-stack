@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+import httpx
 from jwt.algorithms import OKPAlgorithm
 import pytest
 
@@ -513,6 +514,40 @@ def test_a_slow_drip_fetch_is_cut_off_by_the_total_deadline() -> None:
         with pytest.raises(TimeoutError):
             fetch_bounded(f"http://127.0.0.1:{server.server_port}/", deadline_s=0.3)
         assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_read_that_stalls_near_the_deadline_ends_within_one_phase_timeout() -> None:
+    """The deadline is checked between reads; a stalled read is cut by its timeout."""
+    deadline_s, phase_timeout_s = 0.5, 0.5
+
+    class Stall(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            time.sleep(deadline_s - 0.1)
+            self.wfile.write(b"x")
+            self.wfile.flush()
+            time.sleep(5)  # stall past the deadline, mid-body
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Stall)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        started = time.monotonic()
+        with pytest.raises((TimeoutError, httpx.TimeoutException)):
+            fetch_bounded(
+                f"http://127.0.0.1:{server.server_port}/",
+                deadline_s=deadline_s,
+                phase_timeout_s=phase_timeout_s,
+            )
+        assert time.monotonic() - started < deadline_s + phase_timeout_s + 0.5
     finally:
         server.shutdown()
         server.server_close()
