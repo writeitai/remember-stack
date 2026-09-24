@@ -88,11 +88,13 @@ from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ReadEmbeddingCost
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
+from rememberstack.model import track_read_embedding_cost
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
@@ -178,7 +180,15 @@ class SpendLeasePort(Protocol):
         operation_name: str | None = None,
     ) -> UUID: ...
 
-    def commit(self, *, authorization: str, reservation_id: UUID) -> None: ...
+    def commit(
+        self,
+        *,
+        authorization: str,
+        reservation_id: UUID,
+        read_cost: ReadEmbeddingCost | None,
+    ) -> None:
+        """Commit the hold; a read reports its embedding cost, ingest ``None``."""
+        ...
 
     def release(self, *, authorization: str, reservation_id: UUID) -> None: ...
 
@@ -1799,42 +1809,57 @@ def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:
     return held
 
 
+# D46/D109 reads. Every route that reads memory takes a lease, so a parked or
+# unfunded deployment answers none of them; each commit reports the embedding
+# cost the read incurred (0 for pure SQL or inventory reads). Service status
+# (`/readiness`, `/deployment`, `/healthz`), the tool catalogue, connector
+# management and deletion are not memory reads and stay outside the lease.
+_READ_ROUTES: Final = frozenset(
+    {
+        ("GET", "/search/claims"),
+        ("GET", "/search/chunks"),
+        ("POST", "/search/claims"),
+        ("POST", "/search/chunks"),
+        ("POST", "/chunks/adjacent"),
+        ("GET", "/resolve"),
+        ("GET", "/lookup/relations"),
+        ("GET", "/lookup/observations"),
+        ("POST", "/graph/neighborhood"),
+        ("POST", "/graph/path"),
+        ("POST", "/graph/citation-path"),
+        ("POST", "/query/sql"),
+        ("POST", "/query/sql/explain"),
+        ("GET", "/query/space"),
+        ("GET", "/query/space/search"),
+        ("GET", "/query/saved"),
+        ("GET", "/documents"),
+    }
+)
+
+
 def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | None:
     """Return ``(path_id, operation_name)`` for D46 spend-gated engine routes."""
     normalized = path.rstrip("/") or "/"
     if method == "POST" and normalized == "/ingest":
         return ("ingest", None)
-    # Both methods. A POST search costs exactly what the GET does, and a new
-    # route missing from this map would be a search nobody is charged for and
-    # no ceiling can stop.
-    if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
+    if (method, normalized) in _READ_ROUTES:
         return ("search", None)
-    if method == "POST" and normalized == "/chunks/adjacent":
-        return ("search", None)
-    if method == "GET":
-        parts = normalized.split("/")
-        if (
-            len(parts) == 4
-            and parts[1] == "chunks"
-            and parts[3] == "adjacent"
-            and parts[2]
-        ):
+    parts = normalized.split("/")[1:]
+    if method == "POST" and len(parts) == 2 and parts[0] == "operations" and parts[1]:
+        return ("recipe", parts[1])
+    if not all(parts):
+        return None
+    if method == "GET" and len(parts) == 3:
+        # /chunks/{id}/adjacent, /hydrate/relation/{id}, /transcript/relation/{id}
+        if parts[0] == "chunks" and parts[2] == "adjacent":
             return ("search", None)
-    if method == "POST" and normalized.startswith("/operations/"):
-        name = normalized.removeprefix("/operations/")
-        if name and "/" not in name:
-            return ("recipe", name)
-    # D109: Open-query space spend gating. SQL execution, plan inspection,
-    # and query-space schema discovery are gated under path_id="search".
-    if method == "POST" and normalized in {"/query/sql", "/query/sql/explain"}:
+        if parts[0] in {"hydrate", "transcript"} and parts[1] == "relation":
+            return ("search", None)
+    # /query/saved/{namespace}/{name} and its /run
+    saved = parts[:2] == ["query", "saved"]
+    if method == "GET" and len(parts) == 4 and saved:
         return ("search", None)
-    if method == "GET" and normalized in {"/query/space", "/query/space/search"}:
-        return ("search", None)
-    if (
-        method == "POST"
-        and normalized.startswith("/query/saved/")
-        and normalized.endswith("/run")
-    ):
+    if method == "POST" and len(parts) == 5 and saved and parts[4] == "run":
         return ("search", None)
     return None
 
@@ -1879,7 +1904,8 @@ def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
                 status_code=503, content={"detail": "spend_lease_unavailable"}
             )
         try:
-            response = await call_next(request)
+            with track_read_embedding_cost() as read_cost:
+                response = await call_next(request)
         except Exception:
             spend_lease.release(
                 authorization=authorization, reservation_id=reservation_id
@@ -1888,7 +1914,9 @@ def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
         if 200 <= response.status_code < 300:
             try:
                 spend_lease.commit(
-                    authorization=authorization, reservation_id=reservation_id
+                    authorization=authorization,
+                    reservation_id=reservation_id,
+                    read_cost=None if path_id == "ingest" else read_cost,
                 )
             except (SpendLeaseRefused, SpendLeaseUnavailable):
                 pass
