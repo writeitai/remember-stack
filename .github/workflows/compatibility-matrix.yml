@@ -52,7 +52,7 @@ jobs:
         run: |
           uv run pytest src/tests/packaging/test_client_wheel.py -v
           uv run pytest src/tests/surfaces/test_remember_facade.py -v
-          uv run pytest src/tests/surfaces/test_remember_cloud_client.py -v
+          uv run pytest src/tests/surfaces/test_client_connection.py -v
 
       - name: Start PostgreSQL 19 with required extensions
         run: .github/ci/start-postgres.sh
