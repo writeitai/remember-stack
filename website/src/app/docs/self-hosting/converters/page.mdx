@@ -145,7 +145,7 @@ parked with the reason `no_route`. It uses no attempts and makes no model
 calls.
 
 The ingest response says so immediately: its `parked` field is
-`"no_route"` (it is `null` when conversion was scheduled). `remember ingest`
+`"no_route"` (it is `null` when the version is not parked). `remember ingest`
 also prints a warning, and the MCP `ingest` tool tells the agent not to
 wait for readiness. [Readiness](/docs/guides/wait-for-readiness) shows the
 version's `convert` stage as `pending`.

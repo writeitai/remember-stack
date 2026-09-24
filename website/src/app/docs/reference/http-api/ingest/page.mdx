@@ -97,11 +97,12 @@ does not change it.
 }
 ```
 
-`200` means the version is stored. With `"parked": null` its processing is
-queued; it is not yet queryable, so poll [`POST /readiness`](#post-readiness)
-with the `version_id`. With `"parked": "no_route"` the deployment has no
-converter for the `mime`: the bytes are kept, but nothing reads them until an
-operator adds a route and releases the parked work. Do not wait on readiness
+`200` means the version is stored. With `"parked": null` it is not parked:
+its processing is queued, running or, for a no-op re-ingest, already done.
+Poll [`POST /readiness`](#post-readiness) with the `version_id` to know when
+it is queryable. With `"parked": "no_route"` the deployment has no converter
+for the `mime`: the bytes are kept, but nothing reads them until an operator
+adds a route and runs `remember ops resume-no-route`. Do not wait on readiness
 for it; it will not become ready on its own.
 
 ### Errors

@@ -44,7 +44,7 @@ The call returns as soon as the bytes are stored. The result
 | `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
 | `content_hash` | SHA-256 of the bytes, in hex. |
 | `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
-| `parked` | `"no_route"` when the deployment has no converter for the file's MIME type: the bytes are stored but will not be read until an operator adds one. `None` when processing was scheduled. |
+| `parked` | `"no_route"` when the deployment has no converter for the file's MIME type: the bytes are stored but will not be read until an operator adds one. `None` when it is not parked: processing is queued, running or already done. |
 
 Processing (reading, structuring, extracting claims, adjudicating facts)
 happens afterwards and takes minutes. The document is not queryable until

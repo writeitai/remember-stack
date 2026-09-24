@@ -865,7 +865,12 @@ the split cost are under-researched — registry SYNTHESIS G5.)*
 
 ## 8. Review tooling (D24)
 
-**Build** a thin CLI cluster-review queue over Postgres (no OSS tool offers cluster-queue +
+> **Amended by D108 (2026-09-24, PR #460).** The `remember review` CLI is
+> deleted; no command exposes the queue to humans. The Postgres review-queue
+> store and its append-only verdict records below remain the engine's
+> contract; adjudication is autonomous (D3/D43/D107).
+
+**Build** a thin cluster-review queue over Postgres (no OSS tool offers cluster-queue +
 append-only reversible verdicts + provenance + blast-radius gating). Review **clusters, not
 pairs**; route only the `expected_impact = blast_radius × (1 − confidence)` middle band to
 humans; hub merges never auto-accept. Evidence panel borrows Splink's waterfall; 3-way verdict

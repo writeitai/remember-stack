@@ -150,8 +150,9 @@ class DocumentCatalog:
                         "source_version_ref": record.source_version_ref,
                     },
                 )
+            parked = False
             if metering is None:
-                enqueue_on(
+                convert = enqueue_on(
                     connection=connection,
                     work=EnqueueWork(
                         deployment_id=record.deployment_id,
@@ -168,6 +169,11 @@ class DocumentCatalog:
                         defer_reason=convert_defer_reason,
                     ),
                 )
+                # Read the work row, not today's route table: an identical
+                # re-ingest must report what its existing convert row does.
+                parked = connection.execute(
+                    _CONVERT_PARKED_NO_ROUTE, {"processing_id": convert.processing_id}
+                ).scalar_one()
             else:
                 record_managed_measurement_on(
                     connection=connection,
@@ -185,11 +191,7 @@ class DocumentCatalog:
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
-                parked=(
-                    "no_route"
-                    if metering is None and convert_defer_reason is DeferReason.NO_ROUTE
-                    else None
-                ),
+                parked="no_route" if parked else None,
                 processing_admission=(
                     "pending" if metering is not None else "not_required"
                 ),
@@ -648,6 +650,16 @@ _SELECT_CONTENT_MIME = text(
     """
     SELECT mime FROM content_objects
     WHERE deployment_id = :deployment_id AND content_hash = :content_hash
+    """
+)
+
+_CONVERT_PARKED_NO_ROUTE = text(
+    """
+    SELECT status = 'pending'
+       AND defer_reason IS NOT NULL
+       AND defer_reason::text = 'no_route'
+    FROM processing_state
+    WHERE processing_id = :processing_id
     """
 )
 

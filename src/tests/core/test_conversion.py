@@ -1,5 +1,6 @@
 """The D38 conversion router and passthrough route: pure behavior proofs."""
 
+import io
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
+from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import DerivationRange
 from rememberstack.model import DerivedAsset
@@ -95,6 +97,48 @@ def test_stock_markitdown_route_converts_a_docx() -> None:
     assert "Quarterly plan" in result.document_md
     assert "Ship the converter." in result.document_md
     assert result.manifest.components[0].name == "markitdown"
+
+
+def test_stock_markitdown_route_converts_a_pptx() -> None:
+    """The bundled markitdown carries its PowerPoint extra."""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    for top, line in ((0, "Roadmap review"), (1, "Launch in October.")):
+        box = slide.shapes.add_textbox(Inches(0), Inches(top), Inches(5), Inches(1))
+        box.text_frame.text = line
+    buffer = io.BytesIO()
+    deck.save(buffer)
+    result = _stock_convert(content=buffer.getvalue(), mime=_PPTX)
+    assert "Roadmap review" in result.document_md
+    assert "Launch in October." in result.document_md
+
+
+def test_stock_markitdown_route_converts_an_xlsx() -> None:
+    """The bundled markitdown carries its Excel extra."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.append(["Region", "Revenue"])
+    sheet.append(["North", 1200])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    result = _stock_convert(content=buffer.getvalue(), mime=_XLSX)
+    assert "Region" in result.document_md
+    assert "North" in result.document_md
+    assert "1200" in result.document_md
+
+
+def _stock_convert(*, content: bytes, mime: str) -> ConversionResult:
+    """Convert through the stock route table, as a default deployment would."""
+    router = ConversionRouter(
+        routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
+    )
+    return router.converter_for(mime=mime).convert(content=content, mime=mime)
 
 
 def test_passthrough_labels_its_entire_output_as_source_expression() -> None:

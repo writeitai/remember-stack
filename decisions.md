@@ -658,6 +658,12 @@ neighbouring slice; a closed end is never reopened) and replayed
 idempotently after caps and retractions. Full contract:
 `plan/designs/temporal_clocks_design.md` §4.3.
 
+**Amendment (2026-09-24, D108, PR #460).** The `remember review` CLI
+(`review list`, `review decide`) is deleted, including its internal-ops
+path; no command exposes the queue to humans. The engine's review-queue
+store and its append-only, reversible verdict records remain; adjudication
+is autonomous (D3/D43/D107).
+
 ## D25. No pre-extraction value/salience gate — junk-control is in-call at E2 Selection + D2
 
 **Decision.** There is **no E1.5 stage and no value/salience gate**. Plane E is `E0 → E1 → E2 → E3`;

@@ -209,6 +209,7 @@ def test_cli_ingest_warns_when_the_engine_parks_the_file(
     assert '"parked":"no_route"' in captured.out
     assert "stored but not processed" in captured.err
     assert "parked: no_route" in captured.err
+    assert "remember ops resume-no-route" in captured.err
 
 
 class _McpBackend:

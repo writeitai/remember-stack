@@ -682,6 +682,45 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
 
 
+def _ingestor_with_routes(rig: _E0Rig, routable: frozenset[str]) -> UploadIngestor:
+    """An ingestor for the same spine whose route table differs from the rig's."""
+    return UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=routable,
+    )
+
+
+def test_parked_reports_the_work_row_after_a_route_is_added(rig: _E0Rig) -> None:
+    """A route added but not yet resumed: an identical re-ingest is still parked."""
+    upload = DocumentUpload(filename="late.txt", mime="text/plain", content=b"late")
+    first = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert first.parked == "no_route"
+    again = _ingestor_with_routes(rig, frozenset({"text/plain"})).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked == "no_route"
+
+
+def test_parked_is_null_for_converted_work_after_a_route_is_removed(
+    rig: _E0Rig,
+) -> None:
+    """Already-converted bytes stay unparked even if their route is gone now."""
+    upload = DocumentUpload(filename="done.txt", mime="text/plain", content=b"done")
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert first.parked is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    again = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked is None
+
+
 def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
     rig: _E0Rig,
 ) -> None:

@@ -3540,7 +3540,7 @@ The call returns as soon as the bytes are stored. The result
 | `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
 | `content_hash` | SHA-256 of the bytes, in hex. |
 | `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
-| `parked` | `"no_route"` when the deployment has no converter for the file's MIME type: the bytes are stored but will not be read until an operator adds one. `None` when processing was scheduled. |
+| `parked` | `"no_route"` when the deployment has no converter for the file's MIME type: the bytes are stored but will not be read until an operator adds one. `None` when it is not parked: processing is queued, running or already done. |
 
 Processing (reading, structuring, extracting claims, adjudicating facts)
 happens afterwards and takes minutes. The document is not queryable until
@@ -8732,7 +8732,7 @@ parked with the reason `no_route`. It uses no attempts and makes no model
 calls.
 
 The ingest response says so immediately: its `parked` field is
-`"no_route"` (it is `null` when conversion was scheduled). `remember ingest`
+`"no_route"` (it is `null` when the version is not parked). `remember ingest`
 also prints a warning, and the MCP `ingest` tool tells the agent not to
 wait for readiness. [Readiness](https://remember.dev/docs/guides/wait-for-readiness) shows the
 version's `convert` stage as `pending`.
@@ -10764,11 +10764,12 @@ does not change it.
 }
 ```
 
-`200` means the version is stored. With `"parked": null` its processing is
-queued; it is not yet queryable, so poll [`POST /readiness`](#post-readiness)
-with the `version_id`. With `"parked": "no_route"` the deployment has no
-converter for the `mime`: the bytes are kept, but nothing reads them until an
-operator adds a route and releases the parked work. Do not wait on readiness
+`200` means the version is stored. With `"parked": null` it is not parked:
+its processing is queued, running or, for a no-op re-ingest, already done.
+Poll [`POST /readiness`](#post-readiness) with the `version_id` to know when
+it is queryable. With `"parked": "no_route"` the deployment has no converter
+for the `mime`: the bytes are kept, but nothing reads them until an operator
+adds a route and runs `remember ops resume-no-route`. Do not wait on readiness
 for it; it will not become ready on its own.
 
 ### Errors
@@ -13560,7 +13561,7 @@ Returned by `POST /ingest`.
 | `version_id` | UUID | The version; pass it to `POST /readiness`. |
 | `content_hash` | string | SHA-256 of the bytes, hex. |
 | `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
-| `parked` | `"no_route"` or `null` | `"no_route"` when the deployment has no converter for the upload's MIME type: the bytes are stored, but conversion waits until an operator adds a route. `null` when conversion was scheduled. |
+| `parked` | `"no_route"` or `null` | `"no_route"` when the deployment has no converter for the upload's MIME type: the bytes are stored, but conversion waits until an operator adds a route. `null` when it is not parked: conversion is queued, running or already done. |
 
 ## Readiness
 
