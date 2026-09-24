@@ -199,8 +199,9 @@ It needs no token, and Compose uses it as the API's health check.
 `GET /deployment` reports `build_revision` (the source commit the image
 was built from, empty for a local build), `model_bindings` (the model on
 each pipeline seat and the OpenRouter routing settings) and
-`document_binding_generation`. It needs a `write` credential when
-authentication is on.
+`document_binding_generation`, and the MCP memory tools it serves
+(`tools`). It needs a `read` or `write` credential when authentication is
+on.
 
 remember.dev collects diagnostic traces by default, with an opt-out in
 Settings; see [Data handling and security](/docs/cloud/data-and-security).

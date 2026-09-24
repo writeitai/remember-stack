@@ -94,7 +94,7 @@ With the self-hosted server the agent gets these tools:
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-three write tools (`ingest`, `pipeline_readiness`, `delete_document`).
+two tools that change memory (`ingest` and `delete_document`).
 
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.

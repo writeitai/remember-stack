@@ -1,24 +1,20 @@
-"""Shared MCP tools for store/write and pipeline readiness (Layer 1 memory verbs).
+"""Argument parsing and execution of the memory write tools.
 
-Both MCP servers advertise and dispatch the same two static tools — ``ingest``
-and ``pipeline_readiness`` — from this module so schemas, argument parsing, and
-structured error envelopes cannot drift. Assured-operation and open-query tools stay in
-their own modules; this is only the write/readiness pair D37 requires on every
-general-purpose memory surface, plus ``delete_document`` (D135), which a server
-advertises only when it composes a deletion backend and is not read-only.
+``ingest``, ``pipeline_readiness`` and ``delete_document`` share one parser
+each and one structured error envelope (:mod:`._errors`), whichever host runs
+them.
 
 Size preflight uses limits from a served capability document when the backend
 exposes one. When no capability document is available, the client does not
 invent a body-size ceiling for wire payloads — the server rejects and the mapped
 error is returned (client-access design §3.1; design-owner ruling O1).
 
-Path bodies are a separate local concern: they are accepted only when the
-operator configures allowlisted roots (``REMEMBERSTACK_MCP_INGEST_ROOTS``).
-Reading a path always applies a process-local resource guard so a hostile or
-accidental path cannot hang or OOM the MCP process; that guard is **not** a
-cloud body ceiling.
-
-Dependency-light: safe for the base client wheel that hosts remote MCP.
+Path bodies are a separate local concern: a host offers the ``path`` argument
+only when it runs on the caller's machine (``path_ingest``), and it is accepted
+only when the operator configures allowlisted roots
+(``REMEMBERSTACK_MCP_INGEST_ROOTS``). Reading a path always applies a
+process-local resource guard so a hostile or accidental path cannot hang or OOM
+the MCP process; that guard is **not** a cloud body ceiling.
 """
 
 from __future__ import annotations
@@ -47,6 +43,22 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import FILENAME_MAX_LEN
+from remember.mcp_tools._definitions import INGEST_TOOL_NAME
+from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
+from remember.mcp_tools._definitions import MIME_MAX_LEN
+from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools._definitions import SOURCE_KIND_MAX_LEN
+from remember.mcp_tools._definitions import SOURCE_REF_MAX_LEN
+from remember.mcp_tools._definitions import SOURCE_VERSION_REF_MAX_LEN
+from remember.mcp_tools._definitions import TITLE_MAX_LEN
+from remember.mcp_tools._definitions import VERSION_IDS_MAX
+from remember.mcp_tools._errors import error_result
+from remember.mcp_tools._errors import invalid_arguments
+from remember.mcp_tools._errors import map_error
+from remember.mcp_tools._errors import ToolArgumentError
+from remember.mcp_tools._errors import ToolError
 from remember.mime import infer_upload_mime
 from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
@@ -55,258 +67,10 @@ from remember.models import ReadinessRequirements
 
 logger = logging.getLogger(__name__)
 
-INGEST_TOOL_NAME: Final = "ingest"
-PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
-MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
-    {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
-)
-DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
-
-_FILENAME_MAX_LEN: Final = 512
-_MIME_MAX_LEN: Final = 255
-_TITLE_MAX_LEN: Final = 512
-_SOURCE_KIND_MAX_LEN: Final = 128
-_SOURCE_REF_MAX_LEN: Final = 512
-_SOURCE_VERSION_REF_MAX_LEN: Final = 512
-_VERSION_IDS_MAX: Final = 1000
-
 # Default LOCAL RESOURCE GUARD for path bodies when no served capability limit
 # is available. This is process safety for the MCP host — not a cloud/O1 body
 # ceiling. Override via REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES.
 _DEFAULT_PATH_READ_MAX_BYTES: Final = 256 * 1024 * 1024
-
-_INGEST_DESCRIPTION: Final = (
-    "Store a document into this deployment's memory (E0 write). Returns a"
-    " version_id immediately; the indexing pipeline is asynchronous and may"
-    " take many minutes (structure alone has been measured at ~11 minutes on a"
-    " ~2.5KB file). Do NOT call assured recall operations expecting this content until"
-    " pipeline_readiness reports ready=true for the version_id."
-    " Prefer source_kind plus a stable source_ref for durable agent memory so"
-    " later writes become new versions of the same document; omit both only for"
-    " intentionally anonymous one-shot ingest."
-    " Body sources (exactly one): text for short UTF-8 notes already in context;"
-    " content_base64 for binary; path only when the operator has configured"
-    " REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host —"
-    " with no roots configured, path is rejected (use text/content_base64 or ask"
-    " the operator to set roots). Path reads resolve fully, must stay inside a"
-    " configured root after symlink resolution, must be regular files, and are"
-    " size-bounded (served capability limit when present, otherwise a local"
-    " process resource guard). Bodies must be non-empty; deployments may enforce"
-    " a maximum body size (oversized or empty bodies map to structured"
-    " body_too_large / empty_body errors). source_kind and source_ref must be"
-    " supplied together when either is set (stable lineage)."
-    ' If the result has parked="no_route", the original is stored but its'
-    " conversion is parked waiting for a conversion route for its MIME type."
-    " Tell the user now instead of polling readiness."
-)
-
-_PIPELINE_READINESS_DESCRIPTION: Final = (
-    "Inspect whether one or more document version_ids have finished the"
-    " requested pipeline and serving capabilities and are safe to recall."
-    " Call after ingest with the returned version_id."
-    " ready=true means assured recall operations may see the content (subject to retrieval"
-    " relevance)."
-    " require must explicitly name all four capabilities: pipeline, p1,"
-    " live_graph, and p3. For ordinary recall polling require pipeline, p1, and"
-    " live_graph, but set p3=false unless a published CorpusFS snapshot is part"
-    " of the caller's contract. The live graph is PostgreSQL state and never"
-    " waits for a projection build."
-    " Terminal stop: if any stages[].status is dead_letter, STOP polling and"
-    " report the version_id and that stage to the user — a dead-lettered stage"
-    " has used all its retries and never becomes ready by waiting."
-    " status=failed is NOT terminal: the last attempt failed and a retry is"
-    " scheduled with back-off, so keep polling and describe it as retrying."
-    " Bounded poll: wait ~30s after ingest, then poll every 30–60s with mild"
-    " back-off (floor ~15s). After ~20–30 minutes without ready=true and without"
-    " a dead_letter stage, stop and escalate to the operator (include"
-    " version_id and last stages[])."
-    " An ingest that returned created=false started no new run, but an earlier"
-    " run of the same bytes may still be processing: poll that version_id the"
-    " same way."
-)
-
-_DELETE_DOCUMENT_DESCRIPTION: Final = (
-    "Remove one document from this deployment's memory. Use only when the user"
-    " asks to delete or forget a specific document, or it is plainly wrong or"
-    " unwanted — never to tidy up, and never to change a fact (ingest a"
-    " correcting document instead). Takes the doc_id that ingest returned or"
-    " that a claim or source cites. The effect is immediate: the document leaves"
-    " search, facts and the document list; its claims stop counting as"
-    " evidence; facts that no other document supports are closed. Facts other"
-    " documents also support stay. The claims and stored original are kept as"
-    " history, so this is not an erasure. Ingesting the same document again later"
-    " adds it back as a new version. Returns claims_retired, relations_closed and"
-    " observations_closed. A document_not_found error means the id is unknown or"
-    " the document is already deleted: do not retry it."
-)
-
-_DELETE_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["doc_id"],
-    "properties": {
-        "doc_id": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The document's UUID (doc_id), as ingest returned it.",
-        }
-    },
-}
-
-_INGEST_INPUT_SCHEMA: Final[dict[str, object]] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "path": {
-            "type": "string",
-            "minLength": 1,
-            "description": (
-                "Local filesystem path readable by this MCP process, only when"
-                " REMEMBERSTACK_MCP_INGEST_ROOTS is configured. Mutually exclusive"
-                " with text and content_base64. Path is resolved fully; symlink"
-                " escape outside a configured root is rejected. Must be a regular"
-                " file (not a directory, FIFO, or device). Size is checked before"
-                " read. Filename defaults to the path basename; mime is inferred"
-                " from the real path name unless mime is supplied (SDK parity)."
-            ),
-        },
-        "text": {
-            "type": "string",
-            "minLength": 1,
-            "description": (
-                "UTF-8 document body. Mutually exclusive with path and"
-                " content_base64. Requires filename."
-            ),
-        },
-        "content_base64": {
-            "type": "string",
-            "minLength": 1,
-            "description": (
-                "Standard base64-encoded bytes (no data: URL prefix). Mutually"
-                " exclusive with path and text. Requires filename. Use for"
-                " binary; for plain text prefer text."
-            ),
-        },
-        "filename": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": _FILENAME_MAX_LEN,
-            "description": (
-                "Required when text or content_base64 is used. Optional with"
-                " path (defaults to the path basename). Does not change mime"
-                " inference for path mode — mime follows the real path name"
-                " unless mime is set."
-            ),
-        },
-        "mime": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": _MIME_MAX_LEN,
-            "description": (
-                "Optional; an explicit value always wins. Default: for path,"
-                " inferred from the real path name; for content_base64, inferred"
-                " from filename (.md → text/markdown, .pdf → application/pdf,"
-                " .png → image/png, …), else application/octet-stream; for text,"
-                " a text/* type inferred from filename, else text/plain."
-            ),
-        },
-        "title": {
-            "type": "string",
-            "maxLength": _TITLE_MAX_LEN,
-            "description": "Optional human title forwarded to the engine.",
-        },
-        "source_kind": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": _SOURCE_KIND_MAX_LEN,
-            "description": (
-                "Lineage class (e.g. agent, cli, feeder). Must be paired with"
-                " source_ref. Prefer setting this for durable agent memory."
-            ),
-        },
-        "source_ref": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": _SOURCE_REF_MAX_LEN,
-            "description": (
-                "Stable id within source_kind. Reuse creates a new version of"
-                " the same document when bytes change (engine D55 / SDK"
-                " contract)."
-            ),
-        },
-        "versioning_mode": {
-            "type": "string",
-            "enum": ["snapshot", "living"],
-            "default": "snapshot",
-            "description": "Requires source_kind/source_ref when not snapshot.",
-        },
-        "source_modified_at": {
-            "type": "string",
-            "description": (
-                "Optional ISO-8601 UTC timestamp (timezone-aware). Requires"
-                " source_kind/source_ref."
-            ),
-        },
-        "source_version_ref": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": _SOURCE_VERSION_REF_MAX_LEN,
-            "description": (
-                "Optional upstream revision label. Requires source_kind/source_ref."
-            ),
-        },
-    },
-    # Each branch requires its mode keys and forbids the other body properties
-    # so hosts validating against this schema reject multi-mode payloads.
-    "oneOf": [
-        {
-            "required": ["path"],
-            "not": {
-                "anyOf": [{"required": ["text"]}, {"required": ["content_base64"]}]
-            },
-        },
-        {
-            "required": ["text", "filename"],
-            "not": {
-                "anyOf": [{"required": ["path"]}, {"required": ["content_base64"]}]
-            },
-        },
-        {
-            "required": ["content_base64", "filename"],
-            "not": {"anyOf": [{"required": ["path"]}, {"required": ["text"]}]},
-        },
-    ],
-}
-
-_PIPELINE_READINESS_INPUT_SCHEMA: Final[dict[str, object]] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["version_ids", "require"],
-    "properties": {
-        "version_ids": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": _VERSION_IDS_MAX,
-            "items": {"type": "string", "minLength": 1},
-            "description": "Document version UUIDs from ingest.",
-        },
-        "require": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["pipeline", "p1", "live_graph", "p3"],
-            "properties": {
-                "pipeline": {"type": "boolean"},
-                "p1": {"type": "boolean"},
-                "live_graph": {"type": "boolean"},
-                "p3": {"type": "boolean"},
-            },
-            "description": (
-                "Exhaustive capability request. Ordinary recall polling uses"
-                " pipeline=true, p1=true, live_graph=true, p3=false."
-            ),
-        },
-    },
-}
 
 
 class McpMemorySettings(BaseSettings):
@@ -395,70 +159,20 @@ class DocumentDeleteBackend(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True)
-class ToolError:
-    """Structured MCP tool error for write/readiness tools."""
-
-    code: str
-    message: str
-    http_status: int
-    retryable: bool
-    agent_action: str
-    reason_code: str | None = None
-    request_id: str | None = None
-
-    def as_dict(self) -> dict[str, object]:
-        """JSON-serializable envelope fields (omit unset optionals)."""
-        payload: dict[str, object] = {
-            "code": self.code,
-            "message": self.message,
-            "http_status": self.http_status,
-            "retryable": self.retryable,
-            "agent_action": self.agent_action,
-        }
-        if self.reason_code is not None:
-            payload["reason_code"] = self.reason_code
-        if self.request_id is not None:
-            payload["request_id"] = self.request_id
-        return payload
-
-
-class MemoryToolArgumentError(Exception):
-    """Client-side argument or body resolution failed before a backend call."""
-
-    def __init__(self, *, error: ToolError) -> None:
-        super().__init__(error.message)
-        self.error = error
-
-
-def memory_write_tool_descriptors() -> list[dict[str, object]]:
-    """MCP ``tools/list`` entries for ``ingest`` and ``pipeline_readiness``."""
-    return [
-        {
-            "name": INGEST_TOOL_NAME,
-            "description": _INGEST_DESCRIPTION,
-            "inputSchema": _INGEST_INPUT_SCHEMA,
-        },
-        {
-            "name": PIPELINE_READINESS_TOOL_NAME,
-            "description": _PIPELINE_READINESS_DESCRIPTION,
-            "inputSchema": _PIPELINE_READINESS_INPUT_SCHEMA,
-        },
-    ]
-
-
 def handle_memory_write_tool(
     *,
     name: str,
     arguments: Mapping[str, object],
     backend: MemoryWriteBackend | None,
+    path_ingest: bool,
     settings: McpMemorySettings | None = None,
 ) -> dict[str, object]:
     """Dispatch one write/readiness tool to a success or structured error result.
 
     When ``backend`` is ``None`` the tools are not composed (operation-only local
     MCP). Unknown names are the caller's responsibility — this function only
-    handles ``MEMORY_WRITE_TOOL_NAMES``.
+    handles ``MEMORY_WRITE_TOOL_NAMES``. ``path_ingest`` must match what the
+    host rendered: without it, ``path`` is an unknown argument.
 
     ``settings`` is optional so tests can inject roots without mutating the
     process environment; production callers leave it unset and load from env.
@@ -466,7 +180,7 @@ def handle_memory_write_tool(
     if name not in MEMORY_WRITE_TOOL_NAMES:
         raise ValueError(f"not a memory write tool: {name!r}")
     if backend is None:
-        return _error_result(
+        return error_result(
             ToolError(
                 code="tool_not_composed",
                 message=(
@@ -486,31 +200,25 @@ def handle_memory_write_tool(
     try:
         if name == INGEST_TOOL_NAME:
             payload = _run_ingest(
-                arguments=arguments, backend=backend, settings=resolved_settings
+                arguments=arguments,
+                backend=backend,
+                path_ingest=path_ingest,
+                settings=resolved_settings,
             )
         else:
             payload = _run_pipeline_readiness(arguments=arguments, backend=backend)
-    except MemoryToolArgumentError as error:
-        return _error_result(error.error)
+    except ToolArgumentError as error:
+        return error_result(error.error)
     except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
-        mapped = map_backend_error(error)
+        mapped = map_error(error)
         # Failures never disappear: unexpected / local-backend defects keep a
         # full traceback at the MCP wire boundary (core value 6).
         if mapped.code in {"internal_error", "local_backend_error"}:
             logger.exception("MCP memory tool %s failed with %s", name, mapped.code)
-        return _error_result(mapped)
+        return error_result(mapped)
     return {
         "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
         "isError": False,
-    }
-
-
-def delete_document_tool_descriptor() -> dict[str, object]:
-    """MCP ``tools/list`` entry for ``delete_document``."""
-    return {
-        "name": DELETE_DOCUMENT_TOOL_NAME,
-        "description": _DELETE_DOCUMENT_DESCRIPTION,
-        "inputSchema": _DELETE_DOCUMENT_INPUT_SCHEMA,
     }
 
 
@@ -519,7 +227,7 @@ def handle_delete_document_tool(
 ) -> dict[str, object]:
     """Dispatch ``delete_document`` to a success or structured error result."""
     if backend is None:
-        return _error_result(
+        return error_result(
             ToolError(
                 code="tool_not_composed",
                 message=(
@@ -535,27 +243,16 @@ def handle_delete_document_tool(
             )
         )
     try:
-        _reject_unknown_keys(arguments=arguments, allowed={"doc_id"})
-        raw = arguments.get("doc_id")
-        if not isinstance(raw, str) or not raw:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(message="doc_id must be a non-empty string.")
-            )
-        try:
-            doc_id = UUID(raw)
-        except ValueError as error:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(message="doc_id must be a UUID.")
-            ) from error
+        doc_id = parse_delete_document_arguments(arguments=arguments)
         deletion = backend.delete_document(doc_id=doc_id)
-    except MemoryToolArgumentError as error:
-        return _error_result(error.error)
+    except ToolArgumentError as error:
+        return error_result(error.error)
     except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
         if (
             getattr(error, "status_code", None) == 404
             and getattr(error, "detail", None) == "document_not_found"
         ):
-            return _error_result(
+            return error_result(
                 ToolError(
                     code="document_not_found",
                     message=(
@@ -573,7 +270,7 @@ def handle_delete_document_tool(
         if getattr(error, "status_code", None) == 503 and "forget_in_progress" in str(
             getattr(error, "detail", "")
         ):
-            return _error_result(
+            return error_result(
                 ToolError(
                     code="forget_in_progress",
                     message=(
@@ -588,137 +285,48 @@ def handle_delete_document_tool(
                     ),
                 )
             )
-        mapped = map_backend_error(error)
+        mapped = map_error(error)
         if mapped.code in {"internal_error", "local_backend_error"}:
             logger.exception(
                 "MCP tool %s failed with %s", DELETE_DOCUMENT_TOOL_NAME, mapped.code
             )
-        return _error_result(mapped)
+        return error_result(mapped)
     return {
         "content": [{"type": "text", "text": deletion.model_dump_json()}],
         "isError": False,
     }
 
 
-def map_backend_error(error: BaseException) -> ToolError:
-    """Map an SDK/HTTP/backend failure into the structured tool error envelope.
-
-    Failure classes:
-
-    - HTTP/API style (``status_code`` + ``detail``) — engine and cloud wire errors
-    - ``spend_safety`` — cloud reservation / spend refusals (not flattened into
-      ``engine_client_error``)
-    - ``ValidationError`` — local backend/Pydantic contract defects
-    - ``ValueError`` — typed client-side contract failures from the SDK
-    - transport-ish OS/network errors — retryable ``transport_error``
-    - everything else — non-retryable ``internal_error`` (programmer defect /
-      unexpected); callers log the full traceback at the MCP boundary
-
-    Accepts ``MemoryApiError``-shaped objects without importing the SDK type, so
-    local port adapters can raise ordinary exceptions that still map when they
-    carry the same attributes.
-    """
-    status_code = getattr(error, "status_code", None)
-    detail = getattr(error, "detail", None)
-    explicit_code = getattr(error, "code", None)
-    if isinstance(status_code, int) and isinstance(detail, str):
-        return _map_http_style_error(
-            status_code=status_code, detail=detail, explicit_code=explicit_code
+def parse_delete_document_arguments(*, arguments: Mapping[str, object]) -> UUID:
+    """Validate ``delete_document`` arguments and return the document id."""
+    reject_unknown_keys(arguments=arguments, allowed={"doc_id"})
+    raw = arguments.get("doc_id")
+    if not isinstance(raw, str) or not raw:
+        raise ToolArgumentError(
+            error=invalid_arguments(message="doc_id must be a non-empty string.")
         )
-    if isinstance(status_code, int) and detail is not None:
-        return _map_http_style_error(
-            status_code=status_code, detail=str(detail), explicit_code=explicit_code
-        )
-    if isinstance(error, ValidationError):
-        return ToolError(
-            code="local_backend_error",
-            message=f"Local backend validation failed: {error}",
-            http_status=500,
-            retryable=False,
-            agent_action=(
-                "Report a composition/contract defect; do not retry the same call."
-            ),
-        )
-    if isinstance(error, UnicodeEncodeError):
-        return ToolError(
-            code="encoding_error",
-            message=f"Body is not encodable as UTF-8: {error}",
-            http_status=422,
-            retryable=False,
-            agent_action=(
-                "Remove lone surrogates / invalid code points, or send"
-                " content_base64 for binary."
-            ),
-        )
-    if isinstance(error, ValueError):
-        return ToolError(
-            code="invalid_arguments",
-            message=str(error) or "Invalid arguments.",
-            http_status=422,
-            retryable=False,
-            agent_action="Fix the tool arguments and retry.",
-        )
-    if isinstance(error, (ConnectionError, TimeoutError)):
-        return ToolError(
-            code="transport_error",
-            message=str(error) or error.__class__.__name__,
-            http_status=0,
-            retryable=True,
-            agent_action=(
-                "Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and"
-                " network reachability."
-            ),
-        )
-    return ToolError(
-        code="internal_error",
-        message=str(error) or error.__class__.__name__,
-        http_status=500,
-        retryable=False,
-        agent_action=(
-            "Unexpected internal failure. Do not busy-retry; report the error"
-            " (and any request_id) to an operator or as a product defect."
-        ),
-    )
+    try:
+        return UUID(raw)
+    except ValueError as error:
+        raise ToolArgumentError(
+            error=invalid_arguments(message="doc_id must be a UUID.")
+        ) from error
 
 
 def _run_ingest(
     *,
     arguments: Mapping[str, object],
     backend: MemoryWriteBackend,
+    path_ingest: bool,
     settings: McpMemorySettings,
 ) -> dict[str, object]:
-    """Parse args, optionally preflight size from capability limits, ingest."""
-    capability_limit = backend.max_ingest_body_bytes()
-    parsed = _parse_ingest_arguments(
-        arguments=arguments, settings=settings, capability_limit=capability_limit
+    """Parse args (preflighting size from capability limits), then ingest."""
+    parsed = parse_ingest_arguments(
+        arguments=arguments,
+        path_ingest=path_ingest,
+        settings=settings,
+        capability_limit=backend.max_ingest_body_bytes(),
     )
-    if not parsed.content:
-        raise MemoryToolArgumentError(
-            error=ToolError(
-                code="empty_body",
-                message="Ingest body is empty.",
-                http_status=422,
-                retryable=False,
-                agent_action=(
-                    "Provide non-empty path / text / content_base64 content."
-                ),
-            )
-        )
-    if capability_limit is not None and len(parsed.content) > capability_limit:
-        raise MemoryToolArgumentError(
-            error=ToolError(
-                code="body_too_large",
-                message=(
-                    f"Ingest body exceeds the deployment capability limit of"
-                    f" {capability_limit} bytes."
-                ),
-                http_status=413,
-                retryable=False,
-                agent_action=(
-                    "Split or shorten the document; do not retry the same payload."
-                ),
-            )
-        )
     ingested = backend.ingest(
         content=parsed.content,
         filename=parsed.filename,
@@ -733,17 +341,50 @@ def _run_ingest(
     return _ingest_success_payload(ingested=ingested)
 
 
+def _check_body_size(*, content: bytes, capability_limit: int | None) -> None:
+    """Refuse an empty body, or one over the served capability limit."""
+    if not content:
+        raise ToolArgumentError(
+            error=ToolError(
+                code="empty_body",
+                message="Ingest body is empty.",
+                http_status=422,
+                retryable=False,
+                agent_action=(
+                    "Provide non-empty path / text / content_base64 content."
+                ),
+            )
+        )
+    if capability_limit is not None and len(content) > capability_limit:
+        raise ToolArgumentError(
+            error=ToolError(
+                code="body_too_large",
+                message=(
+                    f"Ingest body exceeds the deployment capability limit of"
+                    f" {capability_limit} bytes."
+                ),
+                http_status=413,
+                retryable=False,
+                agent_action=(
+                    "Split or shorten the document; do not retry the same payload."
+                ),
+            )
+        )
+
+
 def _run_pipeline_readiness(
     *, arguments: Mapping[str, object], backend: MemoryWriteBackend
 ) -> dict[str, object]:
     """Parse readiness args and return the report as a plain JSON dict."""
-    version_ids, require = _parse_pipeline_readiness_arguments(arguments=arguments)
+    version_ids, require = parse_pipeline_readiness_arguments(arguments=arguments)
     report = backend.pipeline_readiness(version_ids=version_ids, require=require)
     return report.model_dump(mode="json")
 
 
 @dataclass(frozen=True, slots=True)
-class _ParsedIngest:
+class ParsedIngest:
+    """Validated ``ingest`` arguments with the body resolved to bytes."""
+
     content: bytes
     filename: str
     mime: str
@@ -755,17 +396,22 @@ class _ParsedIngest:
     source_version_ref: str | None
 
 
-def _parse_ingest_arguments(
+def parse_ingest_arguments(
     *,
     arguments: Mapping[str, object],
+    path_ingest: bool,
     settings: McpMemorySettings,
     capability_limit: int | None,
-) -> _ParsedIngest:
-    """Validate mutual exclusion, lineage pairing, and resolve body bytes."""
-    _reject_unknown_keys(
+) -> ParsedIngest:
+    """Validate mutual exclusion, lineage pairing, and resolve body bytes.
+
+    Without ``path_ingest`` the ``path`` argument is unknown, exactly as it is
+    absent from the schema the host rendered.
+    """
+    reject_unknown_keys(
         arguments=arguments,
         allowed={
-            "path",
+            *(("path",) if path_ingest else ()),
             "text",
             "content_base64",
             "filename",
@@ -793,7 +439,7 @@ def _parse_ingest_arguments(
         if value is not None
     ]
     if len(body_modes) != 1:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="invalid_arguments",
                 message=(
@@ -809,31 +455,31 @@ def _parse_ingest_arguments(
         )
 
     filename = _optional_nonempty_string(
-        arguments, key="filename", max_length=_FILENAME_MAX_LEN
+        arguments, key="filename", max_length=FILENAME_MAX_LEN
     )
-    mime = _optional_nonempty_string(arguments, key="mime", max_length=_MIME_MAX_LEN)
+    mime = _optional_nonempty_string(arguments, key="mime", max_length=MIME_MAX_LEN)
     title = _optional_string(arguments, key="title")
-    if title is not None and len(title) > _TITLE_MAX_LEN:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
-                message=f"title must be at most {_TITLE_MAX_LEN} characters."
+    if title is not None and len(title) > TITLE_MAX_LEN:
+        raise ToolArgumentError(
+            error=invalid_arguments(
+                message=f"title must be at most {TITLE_MAX_LEN} characters."
             )
         )
 
     source_kind = _optional_nonempty_string(
-        arguments, key="source_kind", max_length=_SOURCE_KIND_MAX_LEN
+        arguments, key="source_kind", max_length=SOURCE_KIND_MAX_LEN
     )
     source_ref = _optional_nonempty_string(
-        arguments, key="source_ref", max_length=_SOURCE_REF_MAX_LEN
+        arguments, key="source_ref", max_length=SOURCE_REF_MAX_LEN
     )
     source_version_ref = _optional_nonempty_string(
-        arguments, key="source_version_ref", max_length=_SOURCE_VERSION_REF_MAX_LEN
+        arguments, key="source_version_ref", max_length=SOURCE_VERSION_REF_MAX_LEN
     )
     versioning_mode = _parse_versioning_mode(arguments.get("versioning_mode"))
     source_modified_at = _parse_source_modified_at(arguments.get("source_modified_at"))
 
     if (source_kind is None) != (source_ref is None):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="source_lineage_pair",
                 message="source_kind and source_ref must be supplied together.",
@@ -847,7 +493,7 @@ def _parse_ingest_arguments(
         or source_version_ref is not None
         or versioning_mode != "snapshot"
     ):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="source_lineage_pair",
                 message=(
@@ -872,15 +518,15 @@ def _parse_ingest_arguments(
         )
     elif text is not None:
         if not text:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(
+            raise ToolArgumentError(
+                error=invalid_arguments(
                     message="text must be non-empty when used as the body source."
                 )
             )
         try:
             content = text.encode("utf-8")
         except UnicodeEncodeError as error:
-            raise MemoryToolArgumentError(
+            raise ToolArgumentError(
                 error=ToolError(
                     code="encoding_error",
                     message=f"text is not encodable as UTF-8: {error}",
@@ -893,8 +539,8 @@ def _parse_ingest_arguments(
                 )
             ) from error
         if filename is None:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(
+            raise ToolArgumentError(
+                error=invalid_arguments(
                     message="filename is required when text is used."
                 )
             )
@@ -909,8 +555,8 @@ def _parse_ingest_arguments(
         assert content_base64 is not None
         content = _decode_base64(content_base64)
         if filename is None:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(
+            raise ToolArgumentError(
+                error=invalid_arguments(
                     message="filename is required when content_base64 is used."
                 )
             )
@@ -921,7 +567,8 @@ def _parse_ingest_arguments(
             mime or infer_upload_mime(filename) or "application/octet-stream"
         )
 
-    return _ParsedIngest(
+    _check_body_size(content=content, capability_limit=capability_limit)
+    return ParsedIngest(
         content=content,
         filename=resolved_filename,
         mime=resolved_mime,
@@ -955,7 +602,7 @@ def _resolve_path_body(
        GUARD — not a cloud ceiling).
     """
     if "\x00" in path:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
                 message="path must not contain embedded NUL bytes.",
@@ -966,7 +613,7 @@ def _resolve_path_body(
         )
     roots = tuple(settings.ingest_roots)
     if not roots:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
                 message=(
@@ -990,7 +637,7 @@ def _resolve_path_body(
         target = Path(path).expanduser()
         resolved = target.resolve(strict=True)
     except (OSError, RuntimeError) as error:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
                 message=(
@@ -1007,7 +654,7 @@ def _resolve_path_body(
         ) from error
 
     if not _path_is_under_roots(resolved=resolved, roots=roots):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
                 message=(
@@ -1034,7 +681,7 @@ def _resolve_path_body(
     try:
         pre_stat = resolved.stat()
     except OSError as error:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
                 message=(
@@ -1050,7 +697,7 @@ def _resolve_path_body(
             )
         ) from error
     if not stat.S_ISREG(pre_stat.st_mode):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_not_regular_file",
                 message=(
@@ -1065,7 +712,7 @@ def _resolve_path_body(
             )
         )
     if pre_stat.st_size > read_cap:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_too_large",
                 message=(
@@ -1095,7 +742,7 @@ def _resolve_path_body(
             # Re-check via fstat after open (TOCTOU belt).
             file_stat = _fstat_regular_file(handle=handle, path=str(resolved))
             if file_stat.st_size > read_cap:
-                raise MemoryToolArgumentError(
+                raise ToolArgumentError(
                     error=ToolError(
                         code="path_too_large",
                         message=(
@@ -1110,10 +757,10 @@ def _resolve_path_body(
                     )
                 )
             content = handle.read(read_cap + 1)
-    except MemoryToolArgumentError:
+    except ToolArgumentError:
         raise
     except OSError as error:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
                 message=(
@@ -1130,7 +777,7 @@ def _resolve_path_body(
         ) from error
 
     if len(content) > read_cap:
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_too_large",
                 message=(
@@ -1144,8 +791,8 @@ def _resolve_path_body(
 
     resolved_filename = filename or resolved.name
     if not resolved_filename:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="filename could not be inferred from path; pass filename."
             )
         )
@@ -1173,7 +820,7 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
     """fstat an open file and require a regular file (reject FIFO/device/dir)."""
     fileno_attr = getattr(handle, "fileno", None)
     if fileno_attr is None or not callable(fileno_attr):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
                 message=f"Path handle cannot be fstat'd: {path}.",
@@ -1184,7 +831,7 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
         )
     fd = fileno_attr()
     if not isinstance(fd, int):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
                 message=f"Path handle fileno is not an int: {path}.",
@@ -1195,7 +842,7 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
         )
     file_stat = os.fstat(fd)
     if not stat.S_ISREG(file_stat.st_mode):
-        raise MemoryToolArgumentError(
+        raise ToolArgumentError(
             error=ToolError(
                 code="path_not_regular_file",
                 message=(
@@ -1215,54 +862,52 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
 def _decode_base64(value: str) -> bytes:
     """Decode standard base64; reject data-URL prefixes and bad padding."""
     if value.startswith("data:"):
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message=("content_base64 must be raw standard base64, not a data: URL.")
             )
         )
     try:
         return base64.b64decode(value, validate=True)
     except (ValueError, binascii.Error) as error:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="content_base64 is not valid standard base64."
             )
         ) from error
 
 
-def _parse_pipeline_readiness_arguments(
+def parse_pipeline_readiness_arguments(
     *, arguments: Mapping[str, object]
 ) -> tuple[tuple[UUID, ...], ReadinessRequirements]:
     """Validate readiness tool args and parse UUID version ids."""
-    _reject_unknown_keys(arguments=arguments, allowed={"version_ids", "require"})
+    reject_unknown_keys(arguments=arguments, allowed={"version_ids", "require"})
     raw_ids = arguments.get("version_ids")
     if not isinstance(raw_ids, list) or not raw_ids:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="version_ids must be a non-empty array of UUID strings."
             )
         )
-    if len(raw_ids) > _VERSION_IDS_MAX:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
-                message=(
-                    f"version_ids must contain at most {_VERSION_IDS_MAX} entries."
-                )
+    if len(raw_ids) > VERSION_IDS_MAX:
+        raise ToolArgumentError(
+            error=invalid_arguments(
+                message=(f"version_ids must contain at most {VERSION_IDS_MAX} entries.")
             )
         )
     version_ids: list[UUID] = []
     for index, item in enumerate(raw_ids):
         if not isinstance(item, str) or not item.strip():
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(
+            raise ToolArgumentError(
+                error=invalid_arguments(
                     message=f"version_ids[{index}] must be a non-empty string."
                 )
             )
         try:
             version_ids.append(UUID(item))
         except ValueError as error:
-            raise MemoryToolArgumentError(
-                error=_invalid_arguments(
+            raise ToolArgumentError(
+                error=invalid_arguments(
                     message=f"version_ids[{index}] is not a valid UUID: {item!r}."
                 )
             ) from error
@@ -1270,8 +915,8 @@ def _parse_pipeline_readiness_arguments(
     try:
         require = ReadinessRequirements.model_validate(raw_require)
     except ValidationError as error:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message=(
                     "require must contain exactly the Boolean keys pipeline, p1,"
                     " live_graph, and p3."
@@ -1287,8 +932,8 @@ def _parse_versioning_mode(value: object) -> Literal["snapshot", "living"]:
         return "snapshot"
     if value in ("snapshot", "living"):
         return value  # type: ignore[return-value]
-    raise MemoryToolArgumentError(
-        error=_invalid_arguments(
+    raise ToolArgumentError(
+        error=invalid_arguments(
             message="versioning_mode must be 'snapshot' or 'living'."
         )
     )
@@ -1299,22 +944,22 @@ def _parse_source_modified_at(value: object) -> datetime | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="source_modified_at must be an ISO-8601 timestamp string."
             )
         )
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="source_modified_at must be a valid ISO-8601 timestamp."
             )
         ) from error
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message="source_modified_at must be timezone-aware UTC."
             )
         )
@@ -1390,245 +1035,12 @@ def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:
     }
 
 
-def _map_http_style_error(
-    *, status_code: int, detail: str, explicit_code: object = None
-) -> ToolError:
-    """Map status + detail string (including cloud prefix codes) to ToolError."""
-    code, reason_code = _split_detail_code(detail=detail)
-    if isinstance(explicit_code, str) and explicit_code:
-        code = explicit_code
-
-    if _is_spend_safety(code=code, detail=detail, reason_code=reason_code):
-        return ToolError(
-            code="spend_safety",
-            message=detail or "Spend or reservation safety refused this write.",
-            http_status=status_code if status_code else 403,
-            retryable=False,
-            agent_action=(
-                "Surface the spend/reservation refusal to the user/operator; do"
-                " not busy-retry. Adjust budgets or wait for a new reservation."
-            ),
-            reason_code=reason_code
-            if reason_code and code != "spend_safety"
-            else (reason_code or _reason_from_spend_detail(detail=detail)),
-        )
-    if code == "body_too_large" or status_code == 413:
-        return ToolError(
-            code="body_too_large",
-            message=(
-                detail
-                if code == "body_too_large"
-                else "Ingest body exceeds the deployment size limit."
-            ),
-            http_status=413,
-            retryable=False,
-            agent_action=(
-                "Split or shorten the document; do not retry the same payload."
-            ),
-            reason_code=reason_code,
-        )
-    if code == "empty_body":
-        return ToolError(
-            code="empty_body",
-            message=detail if detail else "Ingest body is empty.",
-            http_status=422,
-            retryable=False,
-            agent_action=("Provide non-empty path / text / content_base64 content."),
-            reason_code=reason_code,
-        )
-    if code == "dispatch_refused" or (
-        status_code == 403 and detail.startswith("dispatch_refused")
-    ):
-        return ToolError(
-            code="dispatch_refused",
-            message=detail,
-            http_status=403,
-            retryable=False,
-            agent_action=(
-                "Surface the reason to the user/operator; do not busy-retry."
-                " Typical causes: spend cap, missing policy, halt."
-            ),
-            reason_code=reason_code,
-        )
-    if code == "dispatch_parked" or (
-        status_code == 423 and detail.startswith("dispatch_parked")
-    ):
-        return ToolError(
-            code="dispatch_parked",
-            message=detail,
-            http_status=423,
-            retryable=False,
-            agent_action=(
-                "Stop automated retries and notify a human; park is policy, not"
-                " a transient blip."
-            ),
-            reason_code=reason_code,
-        )
-    if status_code == 401:
-        return ToolError(
-            code="unauthorized",
-            message=detail or "Unauthorized.",
-            http_status=401,
-            retryable=False,
-            agent_action=(
-                "Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if"
-                " the token was revoked."
-            ),
-            reason_code=reason_code,
-        )
-    if status_code == 403:
-        return ToolError(
-            code="forbidden",
-            message=detail or "Forbidden.",
-            http_status=403,
-            retryable=False,
-            agent_action=(
-                "Use a token for the configured deployment; check origin and"
-                " scope constraints."
-            ),
-            reason_code=reason_code,
-        )
-    if status_code == 0:
-        return ToolError(
-            code="transport_error",
-            message=detail or "Transport failure talking to the deployment API.",
-            http_status=0,
-            retryable=True,
-            agent_action=(
-                "Retry with back-off; check REMEMBERSTACK_API_URL and network."
-            ),
-            reason_code=reason_code,
-        )
-    if 400 <= status_code < 500:
-        return ToolError(
-            code="engine_client_error",
-            message=detail or f"Client error from engine (HTTP {status_code}).",
-            http_status=status_code,
-            retryable=False,
-            agent_action="Read the message; fix arguments. Do not retry blindly.",
-            reason_code=reason_code,
-        )
-    if status_code >= 500:
-        return ToolError(
-            code="engine_unavailable",
-            message=detail or f"Engine unavailable (HTTP {status_code}).",
-            http_status=status_code,
-            retryable=True,
-            agent_action=(
-                "Retry with back-off (3–5 attempts, 2s→30s). If still failing,"
-                " report an operator outage."
-            ),
-            reason_code=reason_code,
-        )
-    return ToolError(
-        code="engine_client_error",
-        message=detail or f"Unexpected status {status_code}.",
-        http_status=status_code,
-        retryable=False,
-        agent_action="Read the message; fix arguments or report to an operator.",
-        reason_code=reason_code,
-    )
-
-
-def _is_spend_safety(*, code: str, detail: str, reason_code: str | None) -> bool:
-    """True when the cloud refused work for spend / reservation safety."""
-    spend_codes = {
-        "spend_safety",
-        "reservation_refused",
-        "spend_cap",
-        "budget_exceeded",
-        "spend_reservation_refused",
-    }
-    if code in spend_codes:
-        return True
-    if detail.startswith("spend_safety"):
-        return True
-    if reason_code in {"cap_hit", "reservation_refused", "spend_cap"} and code in {
-        "dispatch_refused",
-        "spend_safety",
-        "engine_client_error",
-    }:
-        # Only elevate bare spend reason codes when the detail is spend-shaped;
-        # dispatch_refused:cap_hit stays dispatch_refused (already mapped first).
-        return code != "dispatch_refused" and (
-            "spend" in detail.lower() or "reservation" in detail.lower()
-        )
-    return False
-
-
-def _reason_from_spend_detail(*, detail: str) -> str | None:
-    """Pull a reason tail from ``spend_safety:reason`` forms."""
-    if ":" in detail:
-        head, tail = detail.split(":", 1)
-        if head in {
-            "spend_safety",
-            "reservation_refused",
-            "spend_cap",
-            "budget_exceeded",
-            "spend_reservation_refused",
-        }:
-            return tail or None
-    return None
-
-
-def _split_detail_code(*, detail: str) -> tuple[str, str | None]:
-    """Split ``code`` or ``code:reason`` cloud detail forms."""
-    if ":" in detail:
-        head, tail = detail.split(":", 1)
-        if head in {
-            "dispatch_refused",
-            "dispatch_parked",
-            "body_too_large",
-            "empty_body",
-            "spend_safety",
-            "reservation_refused",
-            "spend_cap",
-            "budget_exceeded",
-            "spend_reservation_refused",
-        }:
-            return head, tail or None
-    known = {
-        "body_too_large",
-        "empty_body",
-        "dispatch_refused",
-        "dispatch_parked",
-        "data_plane_upstream_error",
-        "spend_safety",
-        "reservation_refused",
-        "spend_cap",
-        "budget_exceeded",
-        "spend_reservation_refused",
-    }
-    if detail in known:
-        return detail, None
-    return detail, None
-
-
-def _error_result(error: ToolError) -> dict[str, object]:
-    """MCP tools/call error result with one JSON text block."""
-    return {
-        "content": [{"type": "text", "text": json.dumps(error.as_dict())}],
-        "isError": True,
-    }
-
-
-def _invalid_arguments(*, message: str) -> ToolError:
-    """Common 422 invalid_arguments envelope."""
-    return ToolError(
-        code="invalid_arguments",
-        message=message,
-        http_status=422,
-        retryable=False,
-        agent_action="Fix the tool arguments and retry.",
-    )
-
-
-def _reject_unknown_keys(*, arguments: Mapping[str, object], allowed: set[str]) -> None:
+def reject_unknown_keys(*, arguments: Mapping[str, object], allowed: set[str]) -> None:
     """Fail closed on unexpected keys (matches open-query strictness)."""
     unknown = sorted(set(arguments) - allowed)
     if unknown:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message=f"Unknown argument keys: {', '.join(unknown)}."
             )
         )
@@ -1642,16 +1054,16 @@ def _optional_nonempty_string(
         return None
     value = arguments[key]
     if not isinstance(value, str):
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(message=f"{key} must be a string.")
+        raise ToolArgumentError(
+            error=invalid_arguments(message=f"{key} must be a string.")
         )
     if not value:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(message=f"{key} must be non-empty when set.")
+        raise ToolArgumentError(
+            error=invalid_arguments(message=f"{key} must be non-empty when set.")
         )
     if max_length is not None and len(value) > max_length:
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(
+        raise ToolArgumentError(
+            error=invalid_arguments(
                 message=f"{key} must be at most {max_length} characters."
             )
         )
@@ -1664,7 +1076,7 @@ def _optional_string(arguments: Mapping[str, object], *, key: str) -> str | None
         return None
     value = arguments[key]
     if not isinstance(value, str):
-        raise MemoryToolArgumentError(
-            error=_invalid_arguments(message=f"{key} must be a string.")
+        raise ToolArgumentError(
+            error=invalid_arguments(message=f"{key} must be a string.")
         )
     return value

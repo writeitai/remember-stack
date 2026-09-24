@@ -332,8 +332,8 @@ remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
 
 Runs an MCP server on standard input and output for a coding agent. It finds
 the deployment the same way as every other command, so after
-`remember login` it needs no flags. `--read-only` removes the `ingest`,
-`pipeline_readiness` and `delete_document` tools.
+`remember login` it needs no flags. `--read-only` removes the `ingest` and
+`delete_document` tools.
 
 You rarely start it yourself; `remember setup` writes the agent
 configuration that starts it. The tools, their parameters and the errors are

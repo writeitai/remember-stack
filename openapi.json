@@ -584,6 +584,13 @@
             },
             "title": "Model Bindings",
             "type": "object"
+          },
+          "tools": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tools",
+            "type": "object"
           }
         },
         "title": "DeploymentBuildInfo",
@@ -3577,7 +3584,7 @@
     },
     "/deployment": {
       "get": {
-        "description": "Report which code and model bindings are serving, before any work.",
+        "description": "Report which code, model bindings and tools are serving, before any work.",
         "operationId": "deployment_build_info_deployment_get",
         "parameters": [
           {

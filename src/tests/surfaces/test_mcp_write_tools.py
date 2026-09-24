@@ -1,4 +1,4 @@
-"""Layer 1 MCP memory verbs: ingest + pipeline_readiness on both servers."""
+"""Layer 1 MCP memory verbs from `remember.mcp_tools`: ingest + pipeline_readiness on both servers."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import map_error
+from remember.mcp_tools import McpMemorySettings
+from remember.mcp_tools import OPERATION_TOOL_NAMES
+from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import tool
+from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
@@ -24,11 +31,6 @@ from rememberstack.model.client import VersionPipelineReadiness
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.mcp import OperationMcpServer
-from rememberstack.surfaces.mcp_memory_tools import handle_memory_write_tool
-from rememberstack.surfaces.mcp_memory_tools import map_backend_error
-from rememberstack.surfaces.mcp_memory_tools import McpMemorySettings
-from rememberstack.surfaces.mcp_memory_tools import memory_write_tool_descriptors
-from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 from rememberstack.surfaces.sdk import MemoryApiError
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -237,6 +239,16 @@ def _success_payload(result: dict[str, object]) -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(str(block["text"])))
 
 
+def _write_descriptors() -> list[dict[str, object]]:
+    """The two write tools as a host on the caller's machine renders them."""
+    return render_tools_list(
+        [tool("ingest"), tool("pipeline_readiness")],
+        project=False,
+        path_ingest=True,
+        read_only=False,
+    )
+
+
 def _settings_with_root(
     root: Path, *, max_bytes: int | None = None
 ) -> McpMemorySettings:
@@ -249,7 +261,7 @@ def _settings_with_root(
 
 def test_memory_write_descriptors_are_stable() -> None:
     """Both tools advertise fixed names, lineage guidance, and terminal-stop rules."""
-    descriptors = memory_write_tool_descriptors()
+    descriptors = _write_descriptors()
     assert [item["name"] for item in descriptors] == ["ingest", "pipeline_readiness"]
     ingest = descriptors[0]
     readiness = descriptors[1]
@@ -307,7 +319,7 @@ def test_ingest_schema_mode_matrix_with_jsonschema(
 ) -> None:
     """Advertised oneOf forbids multi-mode payloads; 0/1/2/3-mode matrix holds."""
     jsonschema = pytest.importorskip("jsonschema")
-    schema = memory_write_tool_descriptors()[0]["inputSchema"]
+    schema = _write_descriptors()[0]["inputSchema"]
     assert isinstance(schema, dict)
     validator = jsonschema.Draft202012Validator(schema)
     errors = list(validator.iter_errors(instance))
@@ -321,6 +333,7 @@ def test_ingest_text_happy_path_points_at_pipeline_readiness() -> None:
     """Successful ingest returns version_id and async guidance, never blocks."""
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={
             "text": "remember this",
@@ -352,6 +365,7 @@ def test_ingest_created_false_guidance_is_honest() -> None:
     """Content-hash no-op still points at a single readiness check."""
     backend = _RecordingWriteBackend(created=False)
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "same bytes", "filename": "note.md"},
         backend=backend,
@@ -372,6 +386,7 @@ def test_ingest_parked_no_route_tells_the_agent_not_to_poll() -> None:
     """An unrouted MIME is reported at ingest, so the agent tells the user now."""
     backend = _RecordingWriteBackend(parked="no_route")
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={
             "content_base64": base64.b64encode(b"%PDF-1.7").decode(),
@@ -396,6 +411,7 @@ def test_ingest_path_and_base64_modes(tmp_path: Path) -> None:
     settings = _settings_with_root(tmp_path)
 
     path_result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(source)},
         backend=backend,
@@ -409,6 +425,7 @@ def test_ingest_path_and_base64_modes(tmp_path: Path) -> None:
 
     encoded = base64.b64encode(b"pdf-bytes").decode("ascii")
     b64_result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"content_base64": encoded, "filename": "x.pdf"},
         backend=backend,
@@ -425,6 +442,7 @@ def test_path_without_roots_is_rejected(tmp_path: Path) -> None:
     source.write_text("nope", encoding="utf-8")
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(source)},
         backend=backend,
@@ -449,6 +467,7 @@ def test_path_symlink_escape_is_rejected(tmp_path: Path) -> None:
     link.symlink_to(secret)
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(link)},
         backend=backend,
@@ -469,6 +488,7 @@ def test_path_fifo_is_rejected(tmp_path: Path) -> None:
     os.mkfifo(fifo)
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(fifo)},
         backend=backend,
@@ -487,6 +507,7 @@ def test_path_directory_is_rejected(tmp_path: Path) -> None:
     nested.mkdir()
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(nested)},
         backend=backend,
@@ -504,6 +525,7 @@ def test_path_oversized_hits_local_resource_guard(tmp_path: Path) -> None:
     big.write_bytes(b"x" * 100)
     backend = _RecordingWriteBackend(max_body=None)
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(big)},
         backend=backend,
@@ -523,6 +545,7 @@ def test_path_oversized_uses_capability_cap_when_served(tmp_path: Path) -> None:
     big.write_bytes(b"x" * 100)
     backend = _RecordingWriteBackend(max_body=40)
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(big)},
         backend=backend,
@@ -537,6 +560,7 @@ def test_path_embedded_nul_is_rejected(tmp_path: Path) -> None:
     """Embedded NUL in path strings is rejected before filesystem access."""
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(tmp_path / "a") + "\x00.txt"},
         backend=backend,
@@ -553,6 +577,7 @@ def test_filename_override_mime_matches_sdk_path_name(tmp_path: Path) -> None:
     source.write_text("# hi", encoding="utf-8")
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(source), "filename": "report.pdf"},
         backend=backend,
@@ -568,6 +593,7 @@ def test_ingest_rejects_mutual_exclusion_and_lineage_pair() -> None:
     """Exactly one body source; source_kind/source_ref must travel together."""
     backend = _RecordingWriteBackend()
     both_bodies = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "a", "filename": "a.md", "path": "/tmp/x"},
         backend=backend,
@@ -575,6 +601,7 @@ def test_ingest_rejects_mutual_exclusion_and_lineage_pair() -> None:
     assert _error_payload(both_bodies)["code"] == "invalid_arguments"
 
     half_lineage = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "a", "filename": "a.md", "source_kind": "agent"},
         backend=backend,
@@ -582,6 +609,7 @@ def test_ingest_rejects_mutual_exclusion_and_lineage_pair() -> None:
     assert _error_payload(half_lineage)["code"] == "source_lineage_pair"
 
     living_without_pair = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "a", "filename": "a.md", "versioning_mode": "living"},
         backend=backend,
@@ -600,6 +628,7 @@ def test_lineage_extras_require_pair(extra: dict[str, object]) -> None:
     """source_modified_at / source_version_ref alone require the lineage pair."""
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "a", "filename": "a.md", **extra},
         backend=backend,
@@ -611,6 +640,7 @@ def test_lone_surrogate_utf8_is_encoding_error() -> None:
     """Lone surrogates are not valid UTF-8 bodies."""
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "bad\ud800text", "filename": "a.md"},
         backend=backend,
@@ -625,6 +655,7 @@ def test_ingest_path_unreadable_and_bad_base64(tmp_path: Path) -> None:
     """Local path errors and bad base64 fail closed before the backend."""
     backend = _RecordingWriteBackend()
     missing = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(tmp_path / "no-such-file.md")},
         backend=backend,
@@ -633,6 +664,7 @@ def test_ingest_path_unreadable_and_bad_base64(tmp_path: Path) -> None:
     assert _error_payload(missing)["code"] == "path_unreadable"
 
     bad_b64 = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"content_base64": "%%%", "filename": "x.bin"},
         backend=backend,
@@ -640,6 +672,7 @@ def test_ingest_path_unreadable_and_bad_base64(tmp_path: Path) -> None:
     assert _error_payload(bad_b64)["code"] == "invalid_arguments"
 
     data_url = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={
             "content_base64": "data:text/plain;base64,YQ==",
@@ -655,13 +688,17 @@ def test_capability_limit_preflight_only_when_served() -> None:
     """O1: size preflight uses served capability; absent limit means no preflight."""
     limited = _RecordingWriteBackend(max_body=4)
     too_big = handle_memory_write_tool(
-        name="ingest", arguments={"text": "12345", "filename": "a.txt"}, backend=limited
+        path_ingest=True,
+        name="ingest",
+        arguments={"text": "12345", "filename": "a.txt"},
+        backend=limited,
     )
     assert _error_payload(too_big)["code"] == "body_too_large"
     assert limited.last_ingest is None
 
     unlimited = _RecordingWriteBackend(max_body=None)
     large_ok = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"text": "x" * 2_000_000, "filename": "big.txt"},
         backend=unlimited,
@@ -677,6 +714,7 @@ def test_empty_body_from_empty_path_file(tmp_path: Path) -> None:
     empty.write_bytes(b"")
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="ingest",
         arguments={"path": str(empty)},
         backend=backend,
@@ -690,6 +728,7 @@ def test_pipeline_readiness_happy_path() -> None:
     """Readiness returns the report shape without a second envelope."""
     backend = _RecordingWriteBackend()
     result = handle_memory_write_tool(
+        path_ingest=True,
         name="pipeline_readiness",
         arguments={
             "version_ids": [str(_VERSION)],
@@ -710,11 +749,12 @@ def test_pipeline_readiness_rejects_bad_args() -> None:
     """Version ids and all four strict Boolean capability keys are required."""
     backend = _RecordingWriteBackend()
     missing = handle_memory_write_tool(
-        name="pipeline_readiness", arguments={}, backend=backend
+        path_ingest=True, name="pipeline_readiness", arguments={}, backend=backend
     )
     assert _error_payload(missing)["code"] == "invalid_arguments"
 
     as_int = handle_memory_write_tool(
+        path_ingest=True,
         name="pipeline_readiness",
         arguments={"version_ids": [str(_VERSION)], "require": {"pipeline": True}},
         backend=backend,
@@ -722,16 +762,23 @@ def test_pipeline_readiness_rejects_bad_args() -> None:
     assert _error_payload(as_int)["code"] == "invalid_arguments"
 
     empty_list = handle_memory_write_tool(
-        name="pipeline_readiness", arguments={"version_ids": []}, backend=backend
+        path_ingest=True,
+        name="pipeline_readiness",
+        arguments={"version_ids": []},
+        backend=backend,
     )
     assert _error_payload(empty_list)["code"] == "invalid_arguments"
 
     non_string = handle_memory_write_tool(
-        name="pipeline_readiness", arguments={"version_ids": [123]}, backend=backend
+        path_ingest=True,
+        name="pipeline_readiness",
+        arguments={"version_ids": [123]},
+        backend=backend,
     )
     assert _error_payload(non_string)["code"] == "invalid_arguments"
 
     malformed = handle_memory_write_tool(
+        path_ingest=True,
         name="pipeline_readiness",
         arguments={"version_ids": ["not-a-uuid"]},
         backend=backend,
@@ -739,6 +786,7 @@ def test_pipeline_readiness_rejects_bad_args() -> None:
     assert _error_payload(malformed)["code"] == "invalid_arguments"
 
     over_limit = handle_memory_write_tool(
+        path_ingest=True,
         name="pipeline_readiness",
         arguments={"version_ids": [str(uuid4()) for _ in range(1001)]},
         backend=backend,
@@ -767,7 +815,7 @@ def test_error_mapping_table(
     status_code: int, detail: str, expected_code: str, retryable: bool, http_status: int
 ) -> None:
     """Cloud and engine failures map to exact structured envelopes."""
-    error = map_backend_error(MemoryApiError(status_code=status_code, detail=detail))
+    error = map_error(MemoryApiError(status_code=status_code, detail=detail))
     assert error.code == expected_code
     assert error.retryable is retryable
     assert error.http_status == http_status
@@ -797,7 +845,10 @@ def test_unexpected_exception_is_internal_error_and_logged(
     backend = _RecordingWriteBackend(fail=RuntimeError("boom programmer defect"))
     with caplog.at_level(logging.ERROR):
         result = handle_memory_write_tool(
-            name="ingest", arguments={"text": "x", "filename": "x.md"}, backend=backend
+            path_ingest=True,
+            name="ingest",
+            arguments={"text": "x", "filename": "x.md"},
+            backend=backend,
         )
     payload = _error_payload(result)
     assert payload["code"] == "internal_error"
@@ -813,7 +864,10 @@ def test_backend_errors_surface_as_structured_tool_errors() -> None:
         fail=MemoryApiError(status_code=403, detail="dispatch_refused:halt")
     )
     result = handle_memory_write_tool(
-        name="ingest", arguments={"text": "x", "filename": "x.md"}, backend=backend
+        path_ingest=True,
+        name="ingest",
+        arguments={"text": "x", "filename": "x.md"},
+        backend=backend,
     )
     payload = _error_payload(result)
     assert payload["code"] == "dispatch_refused"
@@ -824,18 +878,21 @@ def test_backend_errors_surface_as_structured_tool_errors() -> None:
 def test_tool_not_composed_when_backend_absent() -> None:
     """Local operation-only composition returns tool_not_composed for writes."""
     result = handle_memory_write_tool(
-        name="ingest", arguments={"text": "x", "filename": "x.md"}, backend=None
+        path_ingest=True,
+        name="ingest",
+        arguments={"text": "x", "filename": "x.md"},
+        backend=None,
     )
     assert _error_payload(result)["code"] == "tool_not_composed"
 
 
 def test_local_mcp_omits_write_tools_without_ports() -> None:
-    """O2: operation-only local MCP does not advertise write tools."""
+    """O2: operation-only local MCP lists the four operations and no write tools."""
     server = OperationMcpServer(
         surface=_StubOperationSurface()  # type: ignore[arg-type]
     )
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == []
+    assert names == list(OPERATION_TOOL_NAMES)
     result = server.call_tool(
         name="ingest", arguments={"text": "x", "filename": "a.md"}
     )
@@ -1003,7 +1060,7 @@ def test_remote_mcp_maps_cloud_body_too_large() -> None:
 
 def test_remote_and_local_descriptors_match() -> None:
     """Both servers share one schema source for the static write pair."""
-    descriptors = memory_write_tool_descriptors()
+    descriptors = _write_descriptors()
     remote_names = [tool["name"] for tool in descriptors]
     assert "recipe" not in json.dumps(descriptors).lower()
     local = OperationMcpServer(

@@ -23,6 +23,8 @@ from remember import DocumentDeletion
 from remember import DocumentPage
 from remember import MemoryApiError
 from remember import MemoryClient
+from remember.mcp_tools import OPERATION_TOOL_NAMES
+from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
@@ -31,7 +33,6 @@ from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.mcp import OperationMcpServer
-from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
 
 _DEPLOYMENT_ID = UUID("57000000-0000-0000-0000-000000000001")
 _DOC = UUID("57000000-0000-0000-0000-000000000002")
@@ -276,7 +277,10 @@ class _StubSurface:
 def test_local_mcp_offers_deletion_only_when_composed() -> None:
     """The in-process server shares the tool and its absence semantics."""
     bare = OperationMcpServer(surface=_StubSurface())  # type: ignore[arg-type]
-    assert bare.list_tools() == {"tools": []}
+    assert "delete_document" not in [
+        tool["name"]
+        for tool in bare.list_tools()["tools"]  # type: ignore[union-attr]
+    ]
     assert (
         _payload(
             bare.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
@@ -290,7 +294,7 @@ def test_local_mcp_offers_deletion_only_when_composed() -> None:
         deletion=deletion,
     )
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == ["delete_document"]
+    assert names == ["delete_document", *OPERATION_TOOL_NAMES]
     done = server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
     assert done["isError"] is False
     assert _payload(done)["claims_retired"] == 4

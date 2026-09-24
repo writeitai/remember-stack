@@ -31,8 +31,9 @@ deployment and token the same way as every other `remember` command: flags,
 then environment variables, then the credential file that `remember login`
 writes. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
 
-`--read-only` leaves out the `ingest`, `pipeline_readiness` and
-`delete_document` tools and refuses calls to them.
+`--read-only` leaves out the two tools that change memory, `ingest` and
+`delete_document`, and refuses calls to them. `pipeline_readiness` only
+reads, so it stays.
 
 ### Protocol
 
@@ -58,8 +59,8 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest`, `pipeline_readiness` and `delete_document`, unless
-   `--read-only` is set.
+1. `ingest`, `pipeline_readiness` and `delete_document` (only
+   `pipeline_readiness` with `--read-only`).
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -71,6 +72,11 @@ this order:
    64-character manifest hash). Any error or other answer leaves them out.
 
 A full server therefore lists 14 tools: 3 + 4 + 7.
+
+Every tool carries MCP tool annotations:
+`readOnlyHint` is `true` for a tool that only reads and `false` for
+`ingest` and `delete_document`, and `destructiveHint` is `true` only for
+`delete_document`.
 
 ### Results
 
@@ -359,8 +365,8 @@ the agent what to do next.
 | `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
 | `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
 
-With `--read-only`, a call to `ingest` or `pipeline_readiness` returns
-`isError: true` with the plain text
+With `--read-only`, a call to `ingest` returns `isError: true` with the
+plain text
 `write tool 'ingest' is disabled on this read-only MCP server`. A call to
 `delete_document` returns the `tool_not_composed` error object.
 

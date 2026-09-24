@@ -37,10 +37,6 @@ if TYPE_CHECKING:
     from rememberstack.surfaces.query_sandbox.open_query import (
         OpenQueryFacade as OpenQueryFacade,
     )
-    from rememberstack.surfaces.remote_mcp import (
-        RemoteOperationMcpServer as RemoteOperationMcpServer,
-    )
-    from rememberstack.surfaces.remote_mcp import serve_mcp_stdio as serve_mcp_stdio
     from rememberstack.surfaces.sdk import MemoryApiError as MemoryApiError
     from rememberstack.surfaces.sdk import MemoryClient as MemoryClient
 
@@ -78,10 +74,6 @@ _EXPORTS = {
         "rememberstack.surfaces.operation_surface",
         "OperationSurface",
     ),
-    "RemoteOperationMcpServer": (
-        "rememberstack.surfaces.remote_mcp",
-        "RemoteOperationMcpServer",
-    ),
     "ToolDescriptor": ("rememberstack.model.client", "ToolDescriptor"),
     "UnknownOperationError": (
         "rememberstack.surfaces.operation_surface",
@@ -89,7 +81,6 @@ _EXPORTS = {
     ),
     "build_api": ("rememberstack.surfaces.http_api", "build_api"),
     "cli_main": ("rememberstack.surfaces.cli", "main"),
-    "serve_mcp_stdio": ("rememberstack.surfaces.remote_mcp", "serve_mcp_stdio"),
 }
 
 __all__ = (
@@ -105,12 +96,10 @@ __all__ = (
     "OperationExecutor",
     "OperationMcpServer",
     "OperationSurface",
-    "RemoteOperationMcpServer",
     "ToolDescriptor",
     "UnknownOperationError",
     "build_api",
     "cli_main",
-    "serve_mcp_stdio",
 )
 
 
