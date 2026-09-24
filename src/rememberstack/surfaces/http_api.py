@@ -62,6 +62,7 @@ from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import tool
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
@@ -96,6 +97,8 @@ from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.model.client import DocumentSearchPage
+from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -237,6 +240,14 @@ class PipelineReadinessPort(Protocol):
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
     ) -> PipelineReadinessReport: ...
+
+
+class DocumentSearchPort(Protocol):
+    """Find documents by name, general metadata and content (D134)."""
+
+    def search_documents(
+        self, *, deployment_id: UUID, request: DocumentSearchRequest
+    ) -> DocumentSearchPage: ...
 
 
 class DocumentInventoryPort(Protocol):
@@ -410,6 +421,7 @@ def build_api(
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
+    document_search: DocumentSearchPort | None = None,
     deletion: DocumentDeletionPort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
@@ -422,7 +434,8 @@ def build_api(
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `auth` gates every request
+    `DELETE /documents/{doc_id}` (D135); `document_search` adds
+    `POST /documents/search` (D134); `auth` gates every request
     on one perimeter credential; `direct_admission` enforces the per-credential
     and per-deployment rate and in-flight limits after authentication and
     before the spend lease and routing (D136 §7.6); and `spend_lease` holds
@@ -644,6 +657,10 @@ def build_api(
         _mount_document_inventory(
             app=app, documents=documents, deployment_id=deployment_id
         )
+    if document_search is not None:
+        _mount_document_search(
+            app=app, search=document_search, deployment_id=deployment_id
+        )
     if deletion is not None:
         _mount_document_deletion(
             app=app, deletion=deletion, deployment_id=deployment_id
@@ -661,6 +678,7 @@ def build_api(
                 ingest=ingest is not None,
                 pipeline_readiness=pipeline_readiness is not None,
                 deletion=deletion is not None,
+                document_search=document_search is not None,
             ),
         )
 
@@ -809,6 +827,7 @@ def _served_tools(
     ingest: bool,
     pipeline_readiness: bool,
     deletion: bool,
+    document_search: bool,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -823,6 +842,8 @@ def _served_tools(
         names.append(PIPELINE_READINESS_TOOL_NAME)
     if deletion:
         names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if document_search:
+        names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
     if open_query:
@@ -1199,6 +1220,33 @@ def _mount_document_inventory(
         except ValueError as error:
             # A cursor that does not parse. 400 rather than a silent restart:
             # returning page one would look like the corpus repeating itself.
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _mount_document_search(
+    *, app: FastAPI, search: DocumentSearchPort, deployment_id: UUID
+) -> None:
+    """Expose ``search_documents`` (D134): find files. A read."""
+
+    @app.post(
+        "/documents/search",
+        response_model=DocumentSearchPage,
+        responses={400: {"description": "cursor is malformed"}},
+    )
+    def search_documents(
+        body: Annotated[DocumentSearchRequest, Body()],
+    ) -> DocumentSearchPage:
+        """Find documents by observed name, general metadata and content.
+
+        Each result is a document judged by one version: its current version
+        by default, or with ``versions: all`` the newest live version that
+        matches. With a ``query`` results are ranked and not paged; with
+        filters only they are ordered by declared creation date and paged by
+        ``cursor``, which pins the first call's as-of instant.
+        """
+        try:
+            return search.search_documents(deployment_id=deployment_id, request=body)
+        except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
@@ -1848,6 +1896,7 @@ _READ_ROUTES: Final = frozenset(
         ("GET", "/query/space/search"),
         ("GET", "/query/saved"),
         ("GET", "/documents"),
+        ("POST", "/documents/search"),
     }
 )
 

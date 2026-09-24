@@ -23,8 +23,11 @@ from remember.mcp_tools._definitions import Permission
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
+from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
+from remember.mcp_tools._documents import DocumentSearchBackend
+from remember.mcp_tools._documents import handle_search_documents_tool
 from remember.mcp_tools._errors import error_result
 from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import status_error_result
@@ -46,7 +49,9 @@ __all__ = (
     "OPERATION_TOOL_NAMES",
     "PIPELINE_READINESS_TOOL_NAME",
     "PROJECT_ARGUMENT",
+    "SEARCH_DOCUMENTS_TOOL_NAME",
     "DocumentDeleteBackend",
+    "DocumentSearchBackend",
     "McpMemorySettings",
     "MemoryWriteBackend",
     "Permission",
@@ -56,6 +61,7 @@ __all__ = (
     "error_result",
     "handle_delete_document_tool",
     "handle_memory_write_tool",
+    "handle_search_documents_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",

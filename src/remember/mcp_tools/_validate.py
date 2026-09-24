@@ -10,7 +10,9 @@ from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import tool
+from remember.mcp_tools._documents import parse_search_documents_arguments
 from remember.mcp_tools._errors import invalid_arguments
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._memory import load_mcp_memory_settings
@@ -36,7 +38,8 @@ def validate_arguments(
     ``path`` only when ``path_ingest`` is set and the operator configured
     allowlisted roots — and refuses an empty body or one over
     ``max_body_bytes``. ``pipeline_readiness`` returns ``version_ids`` and a
-    ``require`` model; ``delete_document`` returns ``doc_id`` as a UUID.
+    ``require`` model; ``delete_document`` returns ``doc_id`` as a UUID;
+    ``search_documents`` returns its ``request`` model.
 
     Raises :class:`ToolArgumentError` for the memory write tools and the
     assured operations, and ``SandboxRejection`` (the open-query error
@@ -60,6 +63,8 @@ def validate_arguments(
         return {"version_ids": version_ids, "require": require}
     if name == DELETE_DOCUMENT_TOOL_NAME:
         return {"doc_id": parse_delete_document_arguments(arguments=arguments)}
+    if name == SEARCH_DOCUMENTS_TOOL_NAME:
+        return {"request": parse_search_documents_arguments(arguments=arguments)}
     if name in OPEN_QUERY_TOOL_NAMES:
         return validate_open_query_arguments(name=name, arguments=arguments)
     # An assured operation: the engine validates values against its registry;

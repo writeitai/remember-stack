@@ -6,6 +6,8 @@ the source of the assured-operation registry's agent-facing fields.
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import UTC
 import subprocess
 import sys
 from unittest.mock import MagicMock
@@ -23,6 +25,8 @@ from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import validate_arguments
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
@@ -65,6 +69,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "ingest",
         "pipeline_readiness",
         "delete_document",
+        "search_documents",
         *OPERATION_TOOL_NAMES,
         *OPEN_QUERY_TOOL_NAMES,
     ]
@@ -256,6 +261,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         ingest=MagicMock(),
         pipeline_readiness=MagicMock(),
         deletion=MagicMock(),
+        document_search=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
@@ -274,3 +280,64 @@ def test_catalogue_imports_without_the_engine() -> None:
         "assert not loaded, loaded\n"
     )
     subprocess.run([sys.executable, "-c", probe], check=True)
+
+
+def test_search_documents_arguments_become_one_request() -> None:
+    """Flat tool arguments split into the request and its filters."""
+    parsed = validate_arguments(
+        "search_documents",
+        {
+            "query": "q3 sales",
+            "family": ["office"],
+            "authors": ["alice@acme.com"],
+            "created_from": "2025-01-01T00:00:00Z",
+            "versions": "all",
+            "k": 5,
+        },
+    )
+    request = parsed["request"]
+    assert isinstance(request, DocumentSearchRequest)
+    assert request.query == "q3 sales"
+    assert request.filters.family == ("office",)
+    assert request.filters.authors == ("alice@acme.com",)
+    assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
+    assert request.versions == "all"
+    assert request.k == 5
+    with pytest.raises(ToolArgumentError, match="Unknown argument keys: title"):
+        validate_arguments("search_documents", {"title": "x"})
+    with pytest.raises(ToolArgumentError, match="cursor pages filter-only"):
+        validate_arguments("search_documents", {"query": "x", "cursor": "abc"})
+    with pytest.raises(ToolArgumentError, match="created_from"):
+        validate_arguments("search_documents", {"created_from": "2025-01-01T00:00:00"})
+
+
+def test_engine_mcp_offers_search_documents_only_when_composed() -> None:
+    """The engine lists and answers search_documents through its port."""
+    surface = MagicMock()
+    surface.deployment_id = _DEPLOYMENT
+    without = OperationMcpServer(surface=surface)
+    names = [entry["name"] for entry in without.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert "search_documents" not in names
+    refused = without.call_tool(name="search_documents", arguments={})
+    assert refused["isError"] is True
+    assert "tool_not_composed" in str(refused["content"])
+
+    search = MagicMock()
+    search.search_documents.return_value = DocumentSearchPage(
+        documents=(), as_of=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    server = OperationMcpServer(surface=surface, document_search=search)
+    names = [entry["name"] for entry in server.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert names[0] == "search_documents"
+    result = server.call_tool(
+        name="search_documents", arguments={"query": "report", "k": 3}
+    )
+    assert result["isError"] is False
+    call = search.search_documents.call_args.kwargs
+    assert call["deployment_id"] == _DEPLOYMENT
+    assert call["request"] == DocumentSearchRequest(query="report", k=3)
+
+    search.search_documents.side_effect = ValueError("cursor is malformed")
+    bad = server.call_tool(name="search_documents", arguments={"cursor": "zz"})
+    assert bad["isError"] is True
+    assert "cursor is malformed" in str(bad["content"])

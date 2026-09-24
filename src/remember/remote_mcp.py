@@ -16,15 +16,19 @@ from remember.client import MemoryClient
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import status_error_result
 from remember.mcp_tools import tool
 from remember.models import DocumentDeletion
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -92,6 +96,10 @@ class _RemoteMemoryWriteBackend:
         """Proxy one document deletion through the typed HTTP SDK."""
         return self._client.delete_document(doc_id=doc_id)
 
+    def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
+        """Proxy one document search through the typed HTTP SDK."""
+        return self._client.search_documents_request(request=request)
+
 
 class RemoteOperationMcpServer:
     """Render remote writes, assured operations, and open-query tools."""
@@ -105,8 +113,8 @@ class RemoteOperationMcpServer:
     def list_tools(self) -> dict[str, object]:
         """List remote write tools, assured operations, then open-query tools.
 
-        Order is stable: write/readiness tools and ``delete_document``,
-        operations from ``GET /operations``, then the seven open-query tools
+        Order is stable: write/readiness tools, ``delete_document`` and
+        ``search_documents``, operations from ``GET /operations``, then the seven open-query tools
         when the remote deployment mounts the open facade (same composition
         gate as local MCP and HTTP). ``--read-only`` omits every tool that
         changes memory (``ingest`` and ``delete_document``).
@@ -118,6 +126,7 @@ class RemoteOperationMcpServer:
                     INGEST_TOOL_NAME,
                     PIPELINE_READINESS_TOOL_NAME,
                     DELETE_DOCUMENT_TOOL_NAME,
+                    SEARCH_DOCUMENTS_TOOL_NAME,
                 )
             ],
             project=False,
@@ -152,6 +161,10 @@ class RemoteOperationMcpServer:
             return handle_delete_document_tool(
                 arguments=arguments,
                 backend=None if self._read_only else self._write_backend,
+            )
+        if name == SEARCH_DOCUMENTS_TOOL_NAME:
+            return handle_search_documents_tool(
+                arguments=arguments, backend=self._write_backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             if self._read_only and tool(name).mutates:

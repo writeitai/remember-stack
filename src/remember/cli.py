@@ -31,6 +31,7 @@ from remember.credentials import DurabilityUnconfirmed
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
 from remember.models import ConnectorCreate
+from remember.models import DocumentSearchFilters
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
 
@@ -685,8 +686,29 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List the deployment's documents, or delete one from the live memory."""
+    """List, search, or delete the deployment's documents."""
     with _cli_memory_client(args) as client:
+        if args.documents_command == "search":
+            page = client.search_documents(
+                args.query,
+                filters=DocumentSearchFilters(
+                    family=tuple(args.family),
+                    authors=tuple(args.author),
+                    recipients=tuple(args.recipient),
+                    created_from=args.created_from,
+                    created_to=args.created_to,
+                    modified_from=args.modified_from,
+                    modified_to=args.modified_to,
+                    language=args.language,
+                    thread_ref=args.thread_ref,
+                    doc_ids=tuple(args.doc_id),
+                ),
+                versions=args.versions,
+                k=args.limit,
+                cursor=args.cursor,
+            )
+            print(page.model_dump_json())
+            return 0
         if args.documents_command == "list":
             page = client.list_documents(
                 limit=args.limit, cursor=args.cursor, status=args.status
@@ -1038,7 +1060,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     ingest.add_argument("--source-version-ref")
 
     documents = commands.add_parser(
-        "documents", help="list documents or delete one from memory"
+        "documents", help="list, search, or delete documents"
     )
     documents_commands = documents.add_subparsers(
         dest="documents_command", required=True
@@ -1058,6 +1080,46 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--status",
         choices=("ingesting", "converting", "structuring", "ready", "failed"),
         help="only documents whose newest version has this status",
+    )
+    search_documents = documents_commands.add_parser(
+        "search",
+        parents=[client_flags],
+        help=(
+            "find documents by name, metadata and content, as JSON (ranked with"
+            " a query; newest first and paged without one)"
+        ),
+    )
+    search_documents.add_argument(
+        "query", nargs="?", help="words from the file name, title, path or text"
+    )
+    for flag, help_text in (
+        ("--family", "keep this format family (repeatable)"),
+        ("--author", "an author's name or address (repeatable; any matches)"),
+        ("--recipient", "a recipient's name or address (repeatable; any matches)"),
+    ):
+        search_documents.add_argument(flag, action="append", default=[], help=help_text)
+    for flag in ("--created-from", "--created-to", "--modified-from", "--modified-to"):
+        search_documents.add_argument(
+            flag,
+            type=datetime.fromisoformat,
+            help="an ISO 8601 instant with a timezone, inclusive",
+        )
+    search_documents.add_argument("--language")
+    search_documents.add_argument("--thread-ref")
+    search_documents.add_argument(
+        "--doc-id", action="append", default=[], type=UUID, help="only this document"
+    )
+    search_documents.add_argument(
+        "--versions",
+        choices=("current", "all"),
+        default="current",
+        help="judge each document by its current version (default) or any version",
+    )
+    search_documents.add_argument(
+        "--limit", type=int, default=20, help="documents per page (1-200, default 20)"
+    )
+    search_documents.add_argument(
+        "--cursor", help="the cursor a previous page returned (only without a query)"
     )
     delete_document = documents_commands.add_parser(
         "delete",

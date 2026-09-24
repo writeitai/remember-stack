@@ -28,6 +28,10 @@ from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
+from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
 from remember.models import Envelope
@@ -60,6 +64,10 @@ __all__ = (
     "ContextBundleV2",
     "DocumentDeletion",
     "DocumentPage",
+    "DocumentSearchFilters",
+    "DocumentSearchPage",
+    "DocumentSearchRequest",
+    "DocumentSearchResult",
     "DocumentSummary",
     "DocumentVersionSummary",
     "Envelope",

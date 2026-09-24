@@ -51,6 +51,9 @@ from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
 from remember.models import Envelope
 from remember.models import IngestedVersion
@@ -838,6 +841,49 @@ class MemoryClient:
             DocumentPage,
             self._json("GET", "/documents", params=params),
             endpoint="GET /documents",
+        )
+
+    def search_documents(
+        self,
+        query: str | None = None,
+        *,
+        filters: DocumentSearchFilters | None = None,
+        versions: Literal["current", "all"] = "current",
+        k: int = 20,
+        cursor: str | None = None,
+    ) -> DocumentSearchPage:
+        """Find documents by name, general metadata and content (D134).
+
+        ``query`` matches every name a document was stored under (file name,
+        title, source path, old names after a rename; partial and misspelled
+        names too) and its text. ``filters`` narrow by family, authors,
+        recipients, date ranges, language, thread and doc ids. Without a
+        ``query`` results are newest first and ``cursor`` pages them; with one
+        they are ranked and not paged. Invalid combinations raise
+        ``pydantic.ValidationError`` before any request is sent.
+        """
+        return self.search_documents_request(
+            request=DocumentSearchRequest(
+                query=query,
+                filters=filters if filters is not None else DocumentSearchFilters(),
+                versions=versions,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def search_documents_request(
+        self, *, request: DocumentSearchRequest
+    ) -> DocumentSearchPage:
+        """Send one prepared :class:`DocumentSearchRequest` (``POST /documents/search``)."""
+        return _validated(
+            DocumentSearchPage,
+            self._json(
+                "POST",
+                "/documents/search",
+                json_body=request.model_dump(mode="json", exclude_defaults=True),
+            ),
+            endpoint="POST /documents/search",
         )
 
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
