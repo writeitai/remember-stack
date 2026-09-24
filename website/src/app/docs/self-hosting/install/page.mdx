@@ -34,6 +34,14 @@ one on download, so it appears as `default.env.example`.
 
 ## 2. Fill in `.env`
 
+<Callout type="warning">
+
+The API needs no token by default. That is safe only on Docker Engine
+28.0.0 or later; on an older engine, set a token first. See
+[Before you expose it](#before-you-expose-it).
+
+</Callout>
+
 Docker Compose reads `.env` from the project directory and substitutes its
 values into `compose.yaml`. These variables have no default in
 `compose.yaml` and must be set:
@@ -202,7 +210,12 @@ The first two hold the memory. Back them up together; see
 ## Before you expose it
 
 By default the API needs no token, so Compose publishes its port on
-`127.0.0.1` only: only this machine can reach it. To serve other machines,
+`127.0.0.1` only: only this machine can reach it. That holds on Docker
+Engine 28.0.0 or later. On an older engine, other hosts on the same local
+network can reach a port published on `127.0.0.1`, so set
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` before the first start (see
+[Requirements](/docs/self-hosting/requirements#docker-and-compose)). To serve other machines,
 set a token and then the address to publish on
 (`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`); see
 [Opening the API to other machines](/docs/self-hosting/authentication#opening-the-api-to-other-machines).

@@ -33,8 +33,10 @@ Only organisation owners can create tokens. See
 
 <Tab label="Self-hosted">
 
-You need Docker with Compose and an
-[OpenRouter](https://openrouter.ai) API key.
+You need Docker Engine 28.0.0 or later with Compose, and an
+[OpenRouter](https://openrouter.ai) API key. On an older Docker Engine,
+turn on API authentication before the first start; see
+[Requirements](/docs/self-hosting/requirements#docker-and-compose).
 
 ```bash
 git clone https://github.com/writeitai/remember-stack.git

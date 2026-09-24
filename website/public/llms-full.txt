@@ -384,8 +384,10 @@ client and CLI.*
 
 ## 1. Get an endpoint
 
-You need Docker with Compose and an
-[OpenRouter](https://openrouter.ai) API key.
+You need Docker Engine 28.0.0 or later with Compose, and an
+[OpenRouter](https://openrouter.ai) API key. On an older Docker Engine,
+turn on API authentication before the first start; see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose).
 
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
@@ -6017,7 +6019,16 @@ top-level `name`, `depends_on` conditions such as
 `service_completed_successfully`, and profiles, which the v2 plugin
 supports.
 
-The project does not state a minimum Docker or Compose version. Its own
+Run the tokenless quickstart only on Docker Engine 28.0.0 or later
+(`docker version --format '{{.Server.Version}}'`). Compose publishes the
+API on `127.0.0.1` only, and before Engine 28.0.0 a port published on
+`127.0.0.1` can still be reached by other hosts on the same local network.
+On an older engine, turn on API authentication before the first start:
+set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` in `.env` (see
+[A shared secret](https://remember.dev/docs/self-hosting/authentication#a-shared-secret)).
+
+The project states no other minimum Docker or Compose version. Its own
 continuous-integration check runs `docker compose up --build --detach --wait`
 on a current GitHub Actions Ubuntu runner.
 
@@ -6196,6 +6207,12 @@ one on download, so it appears as `default.env.example`.
 
 ## 2. Fill in `.env`
 
+**Warning:**
+
+The API needs no token by default. That is safe only on Docker Engine
+28.0.0 or later; on an older engine, set a token first. See
+[Before you expose it](#before-you-expose-it).
+
 Docker Compose reads `.env` from the project directory and substitutes its
 values into `compose.yaml`. These variables have no default in
 `compose.yaml` and must be set:
@@ -6358,7 +6375,12 @@ The first two hold the memory. Back them up together; see
 ## Before you expose it
 
 By default the API needs no token, so Compose publishes its port on
-`127.0.0.1` only: only this machine can reach it. To serve other machines,
+`127.0.0.1` only: only this machine can reach it. That holds on Docker
+Engine 28.0.0 or later. On an older engine, other hosts on the same local
+network can reach a port published on `127.0.0.1`, so set
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` before the first start (see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose)). To serve other machines,
 set a token and then the address to publish on
 (`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`); see
 [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines).

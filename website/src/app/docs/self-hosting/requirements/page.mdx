@@ -20,7 +20,16 @@ top-level `name`, `depends_on` conditions such as
 `service_completed_successfully`, and profiles, which the v2 plugin
 supports.
 
-The project does not state a minimum Docker or Compose version. Its own
+Run the tokenless quickstart only on Docker Engine 28.0.0 or later
+(`docker version --format '{{.Server.Version}}'`). Compose publishes the
+API on `127.0.0.1` only, and before Engine 28.0.0 a port published on
+`127.0.0.1` can still be reached by other hosts on the same local network.
+On an older engine, turn on API authentication before the first start:
+set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` in `.env` (see
+[A shared secret](/docs/self-hosting/authentication#a-shared-secret)).
+
+The project states no other minimum Docker or Compose version. Its own
 continuous-integration check runs `docker compose up --build --detach --wait`
 on a current GitHub Actions Ubuntu runner.
 
