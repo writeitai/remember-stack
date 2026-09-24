@@ -460,6 +460,51 @@ def test_re_resolution_keeps_the_first_project(issuer: FakeIssuer) -> None:
     assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-c.test"]
 
 
+def test_concurrent_first_requests_share_one_resolution(issuer: FakeIssuer) -> None:
+    """Two threads racing the first request resolve once and agree.
+
+    The issuer's default changes between what the two threads would each see;
+    the first resolution must win for both (project id and URL together).
+    """
+    import threading
+
+    second_started = threading.Event()
+    original = issuer.handle
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/keys/self/project":
+            second_started.wait(0.5)  # let the other thread reach resolution
+            response = original(request)
+            issuer.projects[None] = ("p-notes", "notes", DEPLOYMENT_B)
+            return response
+        return original(request)
+
+    issuer.handle = handle  # type: ignore[method-assign]
+    client = Client(api_key=make_key(), transport=issuer.transport())
+    errors: list[BaseException] = []
+
+    def call() -> None:
+        if threading.current_thread().name == "second":
+            second_started.set()
+        try:
+            client.list_operations()
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    first = threading.Thread(target=call, name="first")
+    second = threading.Thread(target=call, name="second")
+    first.start()
+    second.start()
+    first.join(5)
+    second.join(5)
+    client.close()
+    assert errors == []
+    assert len(issuer.calls("/api/v1/keys/self/project")) == 1
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"] * 2
+    assert client._route is not None
+    assert client._route._pinned == ("p-docs", DEPLOYMENT_A)
+
+
 def test_read_timeout_is_not_a_moved_deployment(issuer: FakeIssuer) -> None:
     _moved(issuer, httpx.ReadTimeout("slow"))
     with Client(api_key=make_key(), transport=issuer.transport()) as client:

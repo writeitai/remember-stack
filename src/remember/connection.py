@@ -301,10 +301,11 @@ class EngineRoute:
         self._connection = connection
         self._http = http
         self._clock = clock
-        self._resolved: str | None = None
-        #: The project id of the first resolution. A re-resolution asks for
-        #: this id, never the issuer's (possibly changed) default project.
-        self._project_id: str | None = None
+        #: ``(project id, engine URL)`` from the issuer, set as one value under
+        #: the lock. The first resolution wins; a re-resolution asks for the
+        #: same project id, never the issuer's (possibly changed) default.
+        self._pinned: tuple[str, str] | None = None
+        self._lock = threading.Lock()
 
     @property
     def key_routed(self) -> bool:
@@ -318,9 +319,7 @@ class EngineRoute:
             self._check_stored_key_destination(connection.api_url)
             return connection.api_url, connection.authorization
         if connection.claims is not None and connection.key is not None:
-            if self._resolved is None:
-                self._resolved = self._resolve(refresh=False)
-            return self._resolved, connection.authorization
+            return self._first()[1], connection.authorization
         if connection.key_source == "file":
             raise StoredKeyRefused(
                 detail=(
@@ -338,29 +337,37 @@ class EngineRoute:
         """
         if not self.key_routed:
             return False
-        previous = self._resolved
+        project_id, previous = self._first()
         try:
-            self._resolved = self._resolve(refresh=True)
+            fresh = self._resolve(project=project_id, refresh=True)
         except ProjectResolutionError:
             return False
-        return previous is not None and previous.rstrip("/") != self._resolved.rstrip(
-            "/"
-        )
+        with self._lock:
+            if self._pinned is not None and self._pinned[0] == project_id:
+                self._pinned = (project_id, fresh.api_url)
+        return previous.rstrip("/") != fresh.api_url.rstrip("/")
 
-    def _resolve(self, *, refresh: bool) -> str:
+    def _first(self) -> tuple[str, str]:
+        """The pinned ``(project id, URL)``, resolving once under the lock."""
+        with self._lock:
+            if self._pinned is None:
+                resolved = self._resolve(
+                    project=self._connection.project, refresh=False
+                )
+                self._pinned = (resolved.project, resolved.api_url)
+            return self._pinned
+
+    def _resolve(self, *, project: str | None, refresh: bool) -> ResolvedProject:
         connection = self._connection
         assert connection.claims is not None and connection.key is not None
-        resolved = resolve_project(
+        return resolve_project(
             key=connection.key.get_secret_value(),
             claims=connection.claims,
-            project=self._project_id or connection.project,
+            project=project,
             http=self._http,
             clock=self._clock,
             refresh=refresh,
         )
-        if self._project_id is None:
-            self._project_id = resolved.project
-        return resolved.api_url
 
     def _check_stored_key_destination(self, url: str) -> None:
         """Enforce the stored-key origin rule for a configured engine URL."""
@@ -375,7 +382,7 @@ class EngineRoute:
             if same_origin(url, claims.iss):
                 return
             try:
-                resolved = self._resolve(refresh=False)
+                resolved = self._first()[1]
             except ProjectResolutionError:
                 resolved = None
             if resolved is not None and same_origin(url, resolved):
