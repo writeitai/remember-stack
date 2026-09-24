@@ -1588,6 +1588,16 @@ access-isolation arm; `retrieval_design.md` §9.)
 > a saved query, not minting a top-level MCP tool. A fifth assured operation
 > requires the evidence gate in `open_query_space_design.md` §1.13.
 
+> **Refined by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> "MCP tools render from the registry" now means: the agent-facing fields of the
+> four operations (name, description, input schema, `mutates`, version) are defined
+> once in the public `remember.mcp_tools` catalogue, the engine registry generates
+> them from it, and every MCP host — including hosts outside this repository —
+> renders from the catalogue rather than from `GET /operations`. The registry still
+> owns the primitive chain, grain and intent enums and the linter; the trust model
+> above (one deployment, one trust domain) is unchanged, and the host-resolved
+> `project` argument never reaches the engine.
+
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
 **Decision.** The primary consumers are **agentic coding harnesses** (Claude Code, Codex,
@@ -3930,6 +3940,19 @@ export on the customer perimeter; derive token host from API URL (that is D92).
 
 ## D92. `remember login` is a CLI device-grant client, not a second credential store
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> Replaced: the required explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`
+> (login now discovers endpoints from the issuer's OAuth metadata, default issuer
+> `https://remember.dev`, `--issuer` / `REMEMBER_ISSUER` to override), the D92/D108
+> credential-file shape (now version 2 holding one key), and the JSON device-grant
+> variant (now the standard RFC 8628 grant). Also replaced: "the credential file is
+> CLI-only" — the SDK now reads the same stored file with the same precedence as the
+> CLI (explicit > environment > file), and the stored-key origin rule (D136 design
+> §8.2) is what stops a stored key reaching a host the caller never named; and
+> "revoke, then replace" on re-login — now mint, persist, then revoke with the
+> pending-revocation journal. Still binding: logout revokes then unlinks; the engine
+> grows no second credential store.
+
 **Decision (2026-08-13).** `remember login` / `logout` live in the base CLI.
 They require an explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`. The
 credential file is CLI-only; `MemoryClient` / `ClientSettings` do not read it.
@@ -5289,6 +5312,16 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> In item 4, the *Authentication & Project Context* host (`https://api.remember.dev`
+> was never a live host; login now uses the issuer's metadata, default issuer
+> `https://remember.dev`), the *Credential Separation* clause (control-plane session
+> plus per-project data-plane tokens is replaced by one signed key; `remember switch`
+> changes only the default project), and the *Data Plane* default of `remember setup`
+> (now: remote MCP entry, stdio bridge, or self-hosted entry per D136) are replaced,
+> as is the D92 part of **Amends**. Items 1–3 and 5, the platform-CLI taxonomy and
+> the durable launcher rule remain binding.
+
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
 1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
 2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
@@ -6165,3 +6198,115 @@ in the engine.
 **Authority:** [design §8](plan/designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly),
 [analysis](plan/analysis/public_document_deletion.md).
 
+## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** On 2026-09-23 the owner approved one credential for every client
+surface of remember.dev — a signed key covering one or more projects with the
+permissions `memory:read`, `memory:write`, `account:read`, `account:manage` —
+one hosted MCP endpoint, and one set of memory tools defined once in the
+open-source `remember` package. The engine side needed answers the old corpus
+contradicted: tool definitions lived in three places here and were copied by
+hand into the hosted server (which shipped stale names and still lacks the
+SQL tools and most `ingest` arguments); `remember mcp` was stdio-only and could
+only call an engine directly; the perimeter accepted signed tokens only with
+exactly one audience and an engine-specific `scope` claim; `remember login`
+chose between deployment and control tokens against a hard-coded
+`https://api.remember.dev` that is not a live host; and the SDK read
+`REMEMBER_API_KEY` while the CLI ignored it.
+
+**Decision.**
+1. **One catalogue.** `remember.mcp_tools` is the public, versioned module
+   that defines every memory tool (`ingest`, `pipeline_readiness`,
+   `delete_document`, the four assured operations, `source_open`, the seven SQL tools):
+   names, descriptions, input schemas, validation, error envelopes, required
+   permission, and a per-tool version. Every MCP host imports it; the engine
+   registry generates `GET /operations`' agent-facing fields from it; each
+   deployment advertises the tool versions it serves in `GET /deployment`, and
+   hosts render a tool only at an equal version.
+2. **`project` is host-resolved routing.** The catalogue defines one optional
+   `project` argument that hosts serving several deployments add and strip
+   before calling one. The engine API and `remember mcp` (which serves one
+   engine) refuse it.
+3. **`remember mcp`** has an engine mode (stdio, and Streamable HTTP that
+   forwards each caller's bearer to the engine) and a bridge mode that relays
+   stdio to any remote MCP URL with a bearer key. A stored key is attached only to the
+   issuer-advertised `remember_mcp_endpoint` origin; `--read-only` passes only
+   tools annotated `readOnlyHint: true`. `remember setup` writes a remote entry
+   (OAuth, or a key header by variable reference) where the harness supports
+   it, a stdio bridge otherwise, and a self-hosted entry for local engines.
+4. **Perimeter contract.** The signed-credential adapter requires a
+   configured issuer and complete claim sets per `kind`. A bearer is
+   `<letters>_<JWS>` (remember.dev: `rmb_`) so secret scanners can catch leaked
+   keys; the engine strips the prefix when the token does not start with `eyJ`. A `key` must carry
+   `aud = org:<tenant>` and `org = <tenant>` (the deployment's configured
+   issuer-tenant id) and `projects` of `"org:*"` or at most 20 project ids
+   including this one; a derived `session` credential must carry `aud` = this
+   deployment's id and `projects` = exactly this project; any other `aud`
+   (such as a hosted-MCP OAuth token's) is refused. It maps `memory:read` → read,
+   `memory:write` → write (ingest included), `memory:ingest` → ingest only,
+   ignores non-memory permissions, refuses unknown memory permissions,
+   records a credential `kind` for audit, and takes revocation only as a
+   signed document whose `aud` is this deployment, with a sequence that
+   advances on every issued document including the heartbeat every R (lower
+   sequences rejected, last sequence persisted, the first validly signed
+   document accepted, later ones signed by a key active in the previous one),
+   with `exp = iat + S`, and whose `active_kids` list retires signing-key
+   generations. Without a fresh accepted document (at first start, or once
+   it is older than S) every signed credential is refused; a revoked key
+   stops working by r + S + leeway. S is one hour (R = 60 s), so a short
+   account-service outage does not take every data plane down.
+   The `service` credential kind (`dpcred:` subject) remains part of the
+   generic contract. The perimeter enforces per-key and per-deployment rate
+   and in-flight limits on the direct path (`429` with `Retry-After`),
+   counted in process per API replica.
+5. **Clients.** One resolver gives the SDK and CLI identical environment
+   precedence (`REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`,
+   `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`, `REMEMBER_CONFIG_DIR`; older aliases
+   removed), and both read the stored credential file after the environment;
+   a stored key is only ever sent to its issuer, its advertised MCP endpoint,
+   its recorded URL or an issuer-resolved deployment. `CloudClient` is
+   removed; account calls are a namespace of `remember.Client` calling the
+   issuer's account API. A signed key resolves its data-plane host from the
+   issuer's project endpoint (`{project, name, api_url}`), cached with a bounded lifetime and
+   re-resolved when a deployment moves. Re-login journals the old key durably,
+   then mints and persists the new key, then revokes the old one from the
+   journal. Issuer metadata also
+   names the account API (`remember_account_endpoint`).
+   `remember login` runs the standard device grant discovered from the
+   issuer's OAuth metadata and stores one key (`credentials.json` version 2).
+
+**Why.** Shared import is the only arrangement under which a separately
+deployed host cannot drift. Resolving routing in hosts and verifying keys at
+the engine against operator-configured issuer, keys and audiences meets
+remember.dev's needs through the existing D61 auth-perimeter port without the
+engine learning organisations, members or billing (D60, CLAUDE.md Rule 3).
+The bridge keeps the one key usable by harnesses that only run local servers.
+
+**Consequences.** A leaked multi-project key is valid at several deployments
+until revoked, which the old strict single audience prevented; revocation is
+therefore signed, sequenced, audience-bound and bounded in age. A host may carry
+memory traffic to the engine (the hosted MCP path); the engine treats it like any
+other caller holding a credential. Public docs change when the behaviour ships.
+
+**Simplicity.** Left out as unnecessary machinery: local multi-target
+routing, per-tool compatibility ranges, prefix configuration, inline key-set or
+revocation configuration, bridge path-ingest rewriting, and routing hints
+inside keys.
+
+**Rejected.** Per-host copies with contract tests; hosts rendering from
+`GET /operations`; the engine accepting `project`; one MCP connection per
+project; key-for-token exchange in the SDK; `remember mcp` holding its own
+credential behind the HTTP transport; keeping environment aliases.
+
+**Supersedes.** D92 in part (explicit token host, credential file shape, CLI-only file, revoke-before-replace re-login);
+D108 item 4's authentication, credential-separation and `setup` default
+clauses and its amendment of D92; the metering design's §6 login contract;
+the distribution design's §3.1/§3.4/§4 credential text. Cloud-side
+supersessions are recorded in the companion cloud design.
+
+**Authority:** [design](plan/designs/one_key_client_surfaces_design.md),
+[analysis](plan/analysis/one_key_client_surfaces_analysis.md). Companion:
+the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
+`design/one-key-one-mcp`).
