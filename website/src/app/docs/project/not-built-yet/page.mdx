@@ -28,10 +28,12 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Finding a document by name or metadata.** Each version records its file
-  name, title and source path, but no route, SDK method, CLI command or MCP
-  tool searches or filters documents by them; `GET /documents` pages by
-  status only.
+- **Document filters on search.** `search_documents` finds documents by
+  name and metadata, but the claim, chunk and fact searches and the assured
+  operations cannot yet be limited to documents matching such filters.
+- **Metadata read from inside files.** Converters read only a document's
+  title, and only where the markitdown converter reports one; no converter
+  reads authors, recipients or dates from files yet.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

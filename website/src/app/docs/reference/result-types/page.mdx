@@ -668,6 +668,72 @@ A version `status` of `ready` means conversion and structuring are done. It
 does not mean claims and facts have been extracted; check
 [readiness](#pipelinereadinessreport) for that.
 
+### DocumentSearchRequest
+
+Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string, nullable | no | | 1 to 4,096 characters. |
+| `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
+| `versions` | `current` \| `all` | no | `current` | |
+| `k` | integer | no | `20` | 1 to 200. |
+| `cursor` | string, nullable | no | | Only without `query`. |
+
+### DocumentSearchFilters
+
+| Field | Type | Default | Contents |
+|---|---|---|---|
+| `family` | array of strings | `[]` | Any listed format family. |
+| `authors` | array of strings | `[]` | Any listed name or address. |
+| `recipients` | array of strings | `[]` | Any listed name or address. |
+| `created_from`, `created_to` | date-time with timezone, nullable | | Inclusive range on the declared creation date. |
+| `modified_from`, `modified_to` | date-time with timezone, nullable | | Inclusive range on the declared modification date. |
+| `language` | string, nullable | | |
+| `thread_ref` | string, nullable | | |
+| `doc_ids` | array of UUIDs | `[]` | |
+
+### DocumentSearchPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest declared creation date first without one. |
+| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
+| `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
+
+### DocumentSearchResult
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | The version the document was judged by. |
+| `version_no` | integer | |
+| `status` | string | That version's processing status, as in [`DocumentVersionSummary`](#documentversionsummary). |
+| `lineage_title` | string, nullable | The document's title, set by its first ingest. |
+| `file_name` | string, nullable | The file name this version was ingested under. |
+| `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
+| `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
+| `family` | string | The format family. |
+| `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
+| `language` | string, nullable | |
+| `thread_ref` | string, nullable | |
+| `authors`, `recipients` | array of `{name, address}` | Either field may be `null`. |
+| `extra` | object | Format-specific metadata; not filterable. |
+| `overview` | string, nullable | A summary of the whole document, when processing produced one. Orientation, not evidence. |
+| `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
+| `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
+| `score` | number, nullable | The combined rank score with a query; `null` without one. |
+
+### DocumentPeopleMatch
+
+| Field | Type | Contents |
+|---|---|---|
+| `role` | `author` \| `recipient` | |
+| `name` | string, nullable | |
+| `address` | string, nullable | |
+| `documents` | integer | Matching documents that list this person. |
+
 ### DocumentDeletion
 
 What [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id)

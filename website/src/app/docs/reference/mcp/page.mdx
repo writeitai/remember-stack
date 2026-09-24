@@ -36,8 +36,8 @@ then environment variables, then the credential file<Cloud> that `remember login
 writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
-`delete_document`, and refuses calls to them. `pipeline_readiness` only
-reads, so it stays.
+`delete_document`, and refuses calls to them. `pipeline_readiness` and
+`search_documents` only read, so they stay.
 
 ### Protocol
 
@@ -63,8 +63,8 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest`, `pipeline_readiness` and `delete_document` (only
-   `pipeline_readiness` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+   (only `pipeline_readiness` and `search_documents` with `--read-only`).
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -75,7 +75,7 @@ this order:
    `memory_v1` query space (schema `memory_v1`, major version 1 and a
    64-character manifest hash). Any error or other answer leaves them out.
 
-A full server therefore lists 14 tools: 3 + 4 + 7.
+A full server therefore lists 15 tools: 4 + 4 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -233,6 +233,35 @@ and never as a way to correct a fact: to correct one, ingest a document that
 says the right thing. The token needs `write` scope. See
 [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
+### `search_documents`
+
+Finds documents (files) by the names they were stored under, their general
+metadata and their text. The tool description tells the agent to use it when
+the user names or describes a file ("find Q3_sales_2025.xlsx", "emails from
+Alice") rather than asking about its content.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
+| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
+| `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
+| `language`, `thread_ref` | string | no | Exact match. |
+| `doc_ids` | array of strings | no | Document UUIDs. |
+| `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `k` | integer | no | 1–200; default 20. |
+| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+
+Unknown keys are refused. The result is a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
+`documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
+`family`, `status`, `authors`, `recipients`, dates and `overview`),
+`cursor`, `as_of` and `people_matched`. When a people filter matches several
+different people, `people_matched` lists each with a document count and the
+description tells the agent to narrow the filter instead of guessing. The
+token needs `read` scope. How matching and paging work:
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
@@ -349,6 +378,7 @@ the agent what to do next.
 | `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
 | `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. | Do not retry; check the `doc_id`. |
 | `tool_not_composed` | 404 | no | `delete_document` on a read-only server. | Tell the user deletion is not available here. |
+| `invalid_arguments` | 422 | no | `search_documents` with bad arguments, or a `cursor` the deployment cannot read. | Fix the arguments; start a new search instead of reusing the cursor. |
 | `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. | Retry later with back-off. |
 | `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
 | `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
@@ -609,12 +639,13 @@ It does not answer `ping`.
 | `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
 | `pipeline_readiness` | Yes | Yes |
 | `delete_document` | Yes | Not yet |
+| `search_documents` | Yes | Not yet |
 | Assured operations | The four the deployment lists, with its names and schemas | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
 | SQL query tools | Seven, when the deployment serves the query space | Not yet |
 | Input schemas | Full JSON Schemas | None (any object) |
 | Read-only mode | `--read-only` | No |
 | Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
-| Tool count | Up to 14 | 6 |
+| Tool count | Up to 15 | 6 |
 
 remember.dev serves SQL queries over the query space to every project; the
 hosted MCP server does not expose the seven SQL query tools yet. Until it
