@@ -552,9 +552,8 @@ class MemoryClient:
     ) -> Envelope:
         """Search live source passages as separately typed evidence.
 
-        ``documents`` (D134) keeps only claims found in a document version
-        matching the filters ``search_documents`` takes; each returned claim
-        still cites its origin. The filter travels in a body,
+        ``documents`` (D134) keeps only chunks whose document version matches
+        the filters ``search_documents`` takes. The filter travels in a body,
         so a filtered search uses ``POST /search/chunks``.
         """
         if documents is not None:
