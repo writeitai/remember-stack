@@ -4423,7 +4423,12 @@ _CONFIRM_CLAIMS_CURRENT = text(
 )
 
 # D134: confirm a current claim through its newest live occurrence in a
-# matching document version; that occurrence's chunk and spans are returned.
+# matching document version. Everything positional describes THAT occurrence,
+# so chunk_id, char_start/char_end and evidence_spans stay one coordinate
+# system (the EvidenceResult contract): the offsets are the occurrence's
+# first evidence span, which D119 stores as the origin span in the owning
+# chunk's representation. source_span stays the claim's verbatim text; reuse
+# across versions carries identical text.
 # The filter is re-checked here, not only at nomination. The ORDER BY ends in
 # a unique key per claim ((chunk_id, created_at) is the occurrence key), so
 # the chosen occurrence is deterministic.
@@ -4431,8 +4436,9 @@ _CONFIRM_CLAIMS_CURRENT = text(
 # version (rememberstack.core.document_filters).
 _CONFIRM_CLAIMS_IN_DOCUMENTS = """
     SELECT c.claim_id, c.doc_id, occ.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end,
-           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           (occ.evidence_spans->0->>'char_start')::integer AS char_start,
+           (occ.evidence_spans->0->>'char_end')::integer AS char_end,
+           occ.evidence_spans,
            c.is_attributed,
            TRUE AS is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,

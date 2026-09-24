@@ -144,8 +144,19 @@ def _claim(
     lineage: LiveDocumentLineage,
     text_body: str,
     occurrences: tuple[UUID, ...],
+    spans: tuple[tuple[int, int], ...] | None = None,
 ) -> UUID:
-    """One current claim whose origin is the lineage's chunk, with occurrences."""
+    """One current claim whose origin is the lineage's chunk, with occurrences.
+
+    ``spans`` gives each occurrence's origin evidence span in its own chunk's
+    representation; the claim's own offsets are its origin occurrence's.
+    """
+    positions = spans or tuple((index, index + 5) for index in range(len(occurrences)))
+    origin = (
+        positions[occurrences.index(lineage.chunk_id)]
+        if lineage.chunk_id in occurrences
+        else (0, 10)  # the origin chunk carries no occurrence in this fixture
+    )
     claim_id = uuid4()
     connection.execute(
         text(
@@ -153,7 +164,7 @@ def _claim(
             " claim_text, source_span, char_start, char_end, anchor_ok,"
             " window_membership_ok, is_current_testimony, extractor_version,"
             " ingested_at, asserted_at) VALUES (:claim, :d, :doc, :chunk, :body,"
-            " :body, 0, 10, true, true, true, 'd134-test', :at, :at)"
+            " :body, :start, :end, true, true, true, 'd134-test', :at, :at)"
         ),
         {
             "claim": claim_id,
@@ -161,10 +172,12 @@ def _claim(
             "doc": lineage.doc_id,
             "chunk": lineage.chunk_id,
             "body": text_body,
+            "start": origin[0],
+            "end": origin[1],
             "at": _NOW,
         },
     )
-    for position, chunk_id in enumerate(occurrences):
+    for chunk_id, (start, end) in zip(occurrences, positions, strict=True):
         connection.execute(
             text(
                 "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
@@ -175,7 +188,7 @@ def _claim(
                 "d": _DEPLOYMENT_ID,
                 "chunk": chunk_id,
                 "claim": claim_id,
-                "spans": f'[{{"char_start": {position}, "char_end": {position + 5}}}]',
+                "spans": f'[{{"char_start": {start}, "char_end": {end}}}]',
                 "at": _NOW,
             },
         )
@@ -362,6 +375,18 @@ def test_a_matching_document_below_the_unfiltered_top_k_is_still_returned(
     assert {first.doc_id, second.doc_id}.isdisjoint({alice.doc_id})
 
 
+_ROLLOUT = "the zanzibar rollout starts in may"
+# Each version's representation (document.md) as the test models it: the
+# same claim text sits at different offsets in the two readings.
+_OLDER_READING = f"Spec v1. {_ROLLOUT}."
+_NEWER_READING = f"Spec v2, revised with a longer intro. {_ROLLOUT}."
+
+
+def _span(reading: str) -> tuple[int, int]:
+    start = reading.index(_ROLLOUT)
+    return start, start + len(_ROLLOUT)
+
+
 def test_a_claim_reused_across_versions_is_tested_per_occurrence(
     database_engine: Engine, index: PostgresP1Index
 ) -> None:
@@ -408,21 +433,22 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
         claim_id = _claim(
             connection=connection,
             lineage=newer,
-            text_body="the zanzibar rollout starts in may",
+            text_body=_ROLLOUT,
             occurrences=(older.chunk_id, newer.chunk_id),
+            spans=(_span(_OLDER_READING), _span(_NEWER_READING)),
         )
     _index_rows(
-        index=index,
-        lineage=newer,
-        claim_id=claim_id,
-        body="the zanzibar rollout starts in may",
-        vector=_NEAR,
+        index=index, lineage=newer, claim_id=claim_id, body=_ROLLOUT, vector=_NEAR
     )
     engine = _engine(database_engine=database_engine, index=index)
 
-    for filters, occurrence in (
-        (_ALICE, older.chunk_id),
-        (DocumentSearchFilters(authors=("bob@acme.com",)), newer.chunk_id),
+    for filters, occurrence, reading in (
+        (_ALICE, older.chunk_id, _OLDER_READING),
+        (
+            DocumentSearchFilters(authors=("bob@acme.com",)),
+            newer.chunk_id,
+            _NEWER_READING,
+        ),
     ):
         envelope = engine.search_claims(
             deployment_id=_DEPLOYMENT_ID,
@@ -434,6 +460,14 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
         assert [(item.claim_id, item.chunk_id) for item in envelope.evidence] == [
             (claim_id, occurrence)
         ]
+        # chunk, offsets and spans are one coordinate system: the returned
+        # offsets point at the claim's verbatim text in THAT version's reading
+        evidence = envelope.evidence[0]
+        assert (evidence.char_start, evidence.char_end) == _span(reading)
+        assert reading[evidence.char_start : evidence.char_end] == evidence.source_span
+        assert [
+            (span.char_start, span.char_end) for span in evidence.evidence_spans
+        ] == [_span(reading)]
     nobody = engine.search_claims(
         deployment_id=_DEPLOYMENT_ID,
         query="zanzibar rollout",
@@ -446,7 +480,9 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
     unfiltered = engine.search_claims(
         deployment_id=_DEPLOYMENT_ID, query="zanzibar rollout", k=5, channel="bm25"
     )
-    assert [item.chunk_id for item in unfiltered.evidence] == [newer.chunk_id]
+    assert [
+        (item.chunk_id, item.char_start, item.char_end) for item in unfiltered.evidence
+    ] == [(newer.chunk_id, *_span(_NEWER_READING))]
 
 
 def test_facts_are_kept_by_a_supporting_claim_from_a_matching_document(
