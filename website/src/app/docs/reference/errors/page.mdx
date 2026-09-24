@@ -46,8 +46,9 @@ known code at its expected status). `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}` or `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}`, `GET /deployment` or `DELETE /documents/{doc_id}`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
+| `404` | `document_not_found` | `DELETE /documents/{doc_id}` for a document that does not exist or is already deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
@@ -152,9 +153,10 @@ timeouts, store codes).
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block.
 
-### Ingest and readiness tools
+### Ingest, readiness and delete tools
 
-The `ingest` and `pipeline_readiness` tools return a structured error:
+The `ingest`, `pipeline_readiness` and `delete_document` tools return a
+structured error:
 
 ```json
 {
@@ -172,6 +174,8 @@ The `ingest` and `pipeline_readiness` tools return a structured error:
 | `code` | `http_status` | `retryable` | `agent_action` |
 |---|---|---|---|
 | `invalid_arguments` | 422 | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
+| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `source_lineage_pair` | 422 | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
 | `empty_body` | 422 | no | Provide non-empty path / text / content_base64 content. |
 | `encoding_error` | 422 | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
@@ -188,7 +192,7 @@ The `ingest` and `pipeline_readiness` tools return a structured error:
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
 | `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
 | `transport_error` | 0 | yes | Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and network reachability. |
-| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. |
+| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. (For `delete_document` on a read-only server: Tell the user deletion is not available on this server; do not retry.) |
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
 

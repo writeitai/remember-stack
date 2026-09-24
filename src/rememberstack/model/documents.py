@@ -159,6 +159,14 @@ class DocumentVersionNotFoundError(Exception):
     """A stage referenced a document version the spine does not know."""
 
 
+class DocumentNotFoundError(LookupError):
+    """No live document lineage has this id in the deployment.
+
+    Raised for an id the deployment never held and for a document that is
+    already deleted: from a caller's point of view both are absent (D135).
+    """
+
+
 class RepresentationNotFoundError(Exception):
     """A stage referenced a document representation the spine does not know."""
 

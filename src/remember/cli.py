@@ -133,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_query(args)
         if args.command == "ingest":
             return _run_ingest(args)
+        if args.command == "documents":
+            return _run_documents(args)
         if args.command == "connectors":
             return _run_connectors(args)
         if args.command == "mcp":
@@ -1266,6 +1268,20 @@ def _run_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_documents(args: argparse.Namespace) -> int:
+    """List the deployment's documents, or delete one from the live memory."""
+    with _cli_memory_client(args) as client:
+        if args.documents_command == "list":
+            page = client.list_documents(
+                limit=args.limit, cursor=args.cursor, status=args.status
+            )
+            print(page.model_dump_json())
+            return 0
+        deletion = client.delete_document(doc_id=args.doc_id)
+    print(deletion.model_dump_json())
+    return 0
+
+
 def _run_connectors(args: argparse.Namespace) -> int:
     """Manage connector configuration on the deployment API."""
     with _cli_memory_client(args) as client:
@@ -2390,6 +2406,38 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     ingest.add_argument("--source-version-ref")
 
+    documents = commands.add_parser(
+        "documents", help="list documents or delete one from memory"
+    )
+    documents_commands = documents.add_subparsers(
+        dest="documents_command", required=True
+    )
+    list_documents = documents_commands.add_parser(
+        "list",
+        parents=[client_flags],
+        help="one page of documents, newest first, as JSON",
+    )
+    list_documents.add_argument(
+        "--limit", type=int, default=50, help="documents per page (1-200, default 50)"
+    )
+    list_documents.add_argument(
+        "--cursor", help="the cursor a previous page returned, to read the next"
+    )
+    list_documents.add_argument(
+        "--status",
+        choices=("ingesting", "converting", "structuring", "ready", "failed"),
+        help="only documents whose newest version has this status",
+    )
+    delete_document = documents_commands.add_parser(
+        "delete",
+        parents=[client_flags],
+        help=(
+            "remove a document from memory: its claims stop counting and facts"
+            " only it supported are closed"
+        ),
+    )
+    delete_document.add_argument("doc_id", type=UUID)
+
     connectors = commands.add_parser(
         "connectors", help="manage deployment-side connectors"
     )
@@ -2423,7 +2471,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse ingest and pipeline-readiness tools",
+        help="omit and refuse the ingest, pipeline-readiness and delete tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
     login.add_argument(

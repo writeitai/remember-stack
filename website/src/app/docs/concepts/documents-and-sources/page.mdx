@@ -145,6 +145,45 @@ Bytes that match an **older** version (the file was changed and then changed
 back) create a new version. The document moves forward; it never silently
 jumps back to an old snapshot.
 
+Bytes sent again after the document was [deleted](#deleting-a-document)
+also create a new version (`created=true`), and it is processed from the
+start.
+
+## Deleting a document
+
+Deleting a document removes it from the memory: every version of it, in one
+call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
+`remember documents delete`, or the `delete_document` MCP tool).
+
+Say Dana uploaded a draft of the billing migration plan that says "the
+migration finishes in March", and Ravi's status note says the same. Dana
+deletes the draft. From then on:
+
+- the draft is gone from `GET /documents`, search, facts, the graph and SQL
+  queries;
+- its claims stop counting as evidence (their currency ends with reason
+  `version_deleted`);
+- "the migration finishes in March" stays believed, because Ravi's note still
+  supports it; it now has one supporter instead of two;
+- a fact that only the draft supported is closed, and the closure is recorded
+  as a retraction (`retracted_source_removal`), exactly as when a living
+  document drops a passage.
+
+Deleting is not erasing. The claims, the stored original and the record of
+what changed stay in the deployment as history, which is why a deletion can
+be audited. Erasing a document's bytes and every trace of it is a separate,
+heavier operator operation that is not offered through the API.
+
+If you send the same file again later, it is added back as a new version and
+processed like a new document. The facts that were closed stay closed; its
+new claims support facts in the usual way.
+
+A deletion is all or nothing. A document that was still being processed
+when you deleted it publishes no further claims, and anything it had already
+produced is never visible and is retired when its version reaches the
+`reconcile` stage. Details and errors:
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
 ## Document statuses
 
 Each version carries a processing status for its early stages:

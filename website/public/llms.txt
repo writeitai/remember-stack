@@ -77,7 +77,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 ## Reference
 
 - [HTTP API conventions](https://remember.dev/docs/reference/http-api): Base URL, authentication, scopes, errors, limits and the other rules every RememberStack HTTP route follows.
-- [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest): The routes that add a document, report how far its processing has got, and list what the deployment holds.
+- [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest): The routes that add a document, report how far its processing has got, list what the deployment holds, and delete a document.
 - [Assured operation routes](https://remember.dev/docs/reference/http-api/operations): List the four assured operations and run one over JSON arguments.
 - [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts): Resolve a name to entities, look up relations and observations, hydrate a relation down to its sources, and read a relation's decision history.
 - [Search and adjacent chunks](https://remember.dev/docs/reference/http-api/search): Search claims and source chunks by meaning or by keyword, and fetch the chunks around one you found.

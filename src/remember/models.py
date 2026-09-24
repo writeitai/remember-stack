@@ -277,6 +277,21 @@ class DocumentPage(BaseModel):
     cursor: str | None = None
 
 
+class DocumentDeletion(BaseModel):
+    """What deleting one document changed in the live memory.
+
+    The counts describe this call. A call that finishes a deletion another
+    path started reports only the work it finished.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    deleted_at: datetime
+    claims_retired: int = Field(ge=0)
+    relations_closed: int = Field(ge=0)
+    observations_closed: int = Field(ge=0)
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=4096)

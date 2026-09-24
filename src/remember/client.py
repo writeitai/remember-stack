@@ -52,6 +52,9 @@ from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import Deployment
 from remember.models import DeploymentBuildInfo
+from remember.models import DocumentDeletion
+from remember.models import DocumentPage
+from remember.models import DocumentStatusFilter
 from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import LedgerEntry
@@ -877,6 +880,45 @@ class MemoryClient:
                 headers={"Content-Type": "application/octet-stream"},
             ),
             endpoint="POST /ingest",
+        )
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        status: DocumentStatusFilter | None = None,
+    ) -> DocumentPage:
+        """One page of the deployment's documents, newest lineage first.
+
+        Pass the returned ``cursor`` back to read the next page; ``None``
+        means there are no more. ``status`` filters on each document's newest
+        version, for example ``"failed"``.
+        """
+        params: dict[str, str | int] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if status is not None:
+            params["status"] = status
+        return _validated(
+            DocumentPage,
+            self._json("GET", "/documents", params=params),
+            endpoint="GET /documents",
+        )
+
+    def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
+        """Remove one document from the live memory.
+
+        Its claims stop being current testimony and facts that no other
+        document supports are closed. The claims and the stored original stay
+        as history. An unknown or already deleted ``doc_id`` raises
+        ``MemoryApiError`` with ``status_code`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            DocumentDeletion,
+            self._json("DELETE", f"/documents/{document}"),
+            endpoint="DELETE /documents/{doc_id}",
         )
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
