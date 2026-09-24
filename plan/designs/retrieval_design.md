@@ -194,8 +194,9 @@ location facts). Do not invent per-claim scalar inheritance in the first impleme
 **Document filters (D134).** `search` accepts a `documents` filter over the general document
 metadata (family, authors, recipients, created/modified ranges, language, thread, explicit
 `doc_ids`). Chunks match by their document version; claims when a live occurrence
-(`chunk_claims`) lies in a matching version — for document filters this refines the origin-chunk
-join above, because a claim reused across versions (D56) has one occurrence per version; relations and observations when at least one live supporting claim comes from a
+(`chunk_claims`) lies in a matching version — for inclusion this refines the origin-chunk join
+above, because a claim reused across versions (D56) has one occurrence per version; the returned
+claim evidence is still its origin; relations and observations when at least one live supporting claim comes from a
 matching document, with returned evidence limited to those claims. The filter is applied inside
 the ranked statement, before the top-k cut. `document_metadata_and_search_design.md` §4.
 

@@ -164,10 +164,11 @@ same fields as §3. It restricts results to evidence from matching documents:
 - **claims** — at least one live **occurrence** of the claim (a
   `chunk_claims` row) is in a chunk whose document version matches. A claim
   reused across versions (D56) has one occurrence per version, so each
-  version's metadata is tested on its own occurrence; the returned evidence
-  names the matching occurrence. Claims still carry no copied filter values
-  (D80); this refines D80's "join through the origin chunk" to "join through
-  occurrences" for document filters;
+  version's metadata is tested on its own occurrence. The filter decides only
+  whether the claim is included: the returned evidence is the claim's origin,
+  exactly as without a filter (the `EvidenceResult` contract). Claims still
+  carry no copied filter values (D80); this refines D80's "join through the
+  origin chunk" to "join through occurrences" for inclusion;
 - **relations and observations** — the fact has at least one live
   supporting claim from a matching document; the returned evidence is limited
   to those claims.
