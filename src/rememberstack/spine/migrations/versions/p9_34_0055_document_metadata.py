@@ -2,16 +2,27 @@
 
 Existing versions are backfilled from what the spine already records: the
 family from the stored MIME (the same mapping as
-``rememberstack.core.document_metadata.family_for_mime``), the lineage title,
-and the version's language, thread key and source dates. File names and
-source paths were never recorded before this revision, so they stay NULL.
-Lineages with a hard-forget manifest are skipped: their source-bearing rows
-were scrubbed and must not be re-derived.
+``rememberstack.core.document_metadata.family_for_mime``) and the version's
+language, thread key and source dates. What title the caller declared was
+never recorded, so ``document_metadata.title`` stays NULL (a later
+conversion can fill it); the lineage title becomes the version's first
+``document_names`` row, so the document stays findable by it. File names and
+source paths were never recorded either, so they stay NULL. Lineages with a
+hard-forget manifest are skipped: their source-bearing rows were scrubbed and
+must not be re-derived.
+
+The backfill is one statement in the migration transaction and holds locks
+on ``document_versions`` while it runs; a keyset backfill (as p9_16 does) is
+the path if a deployment is too large for that.
+
+The downgrade refuses to drop populated tables: metadata observed at ingest
+(file names, paths, observed names) cannot be re-derived from anything else.
 """
 
 from collections.abc import Sequence
 
 from alembic import op
+from sqlalchemy import text
 
 from rememberstack.spine.migrations._helpers import apply_ddl
 from rememberstack.spine.migrations._helpers import drop_tables
@@ -71,7 +82,7 @@ CREATE TABLE document_people (
   display_name    text,                        -- the display name as given
   address         text,                        -- email address or handle
   normalized_name text,                        -- lower case, unaccented, whitespace collapsed
-  normalized_address text,                     -- trimmed and lower-cased address
+  normalized_address text,                     -- lower case, unaccented, whitespace collapsed
   provenance      text NOT NULL CHECK (provenance IN ('source','connector')), -- source file or connector
   CHECK (display_name IS NOT NULL OR address IS NOT NULL),
   PRIMARY KEY (deployment_id, version_id, role, ordinal),
@@ -104,11 +115,10 @@ SELECT v.deployment_id, v.version_id, v.doc_id,
          WHEN m.mime LIKE 'text/%' THEN 'text'
          ELSE 'other'
        END,
-       NULL, NULL, d.title,
+       NULL, NULL, NULL,
        v.published_at, v.source_modified_at, v.language, v.thread_ref,
        '{BACKFILL_MAPPING_VERSION}'
 FROM document_versions v
-JOIN documents d ON d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
 JOIN LATERAL (
   SELECT lower(btrim(split_part(c.mime, ';', 1))) AS mime
   FROM content_objects c
@@ -125,14 +135,17 @@ _BACKFILL_NAMES = f"""
 INSERT INTO document_names (
   deployment_id, version_id, observed_at, title, name_text
 )
-SELECT md.deployment_id, md.version_id, v.ingested_at, md.title, btrim(md.title)
+SELECT md.deployment_id, md.version_id, v.ingested_at, d.title, btrim(d.title)
 FROM document_metadata md
 JOIN document_versions v
   ON v.deployment_id = md.deployment_id AND v.version_id = md.version_id
+JOIN documents d ON d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
 WHERE md.metadata_mapping_version = '{BACKFILL_MAPPING_VERSION}'
-  AND btrim(coalesce(md.title, '')) <> ''
+  AND btrim(coalesce(d.title, '')) <> ''
 ON CONFLICT (deployment_id, version_id, observed_at) DO NOTHING
 """
+
+_TABLES = ("document_people", "document_names", "document_metadata")
 
 
 def upgrade() -> None:
@@ -143,5 +156,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the D134 tables, dependents first."""
-    drop_tables(table_names=("document_people", "document_names", "document_metadata"))
+    """Drop the D134 tables, refusing when any holds rows."""
+    connection = op.get_bind()
+    populated = [
+        table
+        for table in _TABLES
+        if connection.execute(text(f"SELECT EXISTS (SELECT 1 FROM {table})")).scalar()
+    ]
+    if populated:
+        raise RuntimeError(
+            "D134 downgrade requires an explicitly reviewed restore/conversion"
+            f" plan: {', '.join(populated)} hold document metadata (file names,"
+            " paths, observed names) that cannot be re-derived"
+        )
+    drop_tables(table_names=_TABLES)

@@ -55,8 +55,12 @@ def test_normalize_name_lowercases_unaccents_and_collapses_whitespace() -> None:
     assert normalize_name(value=None) is None
 
 
-def test_normalize_address_trims_and_lowercases() -> None:
+def test_normalize_address_matches_name_normalization() -> None:
+    """D134: addresses normalize like names (lower, unaccented, collapsed)."""
     assert normalize_address(value=" Alice@ACME.com ") == "alice@acme.com"
+    assert normalize_address(value="Jiří.Novák@Example.CZ") == "jiri.novak@example.cz"
+    assert normalize_address(value="@Team  Lead") == "@team lead"
+    assert normalize_address(value="Zoë@x.io") == normalize_name(value="Zoë@x.io")
     assert normalize_address(value="") is None
     assert normalize_address(value=None) is None
 

@@ -92,9 +92,10 @@ def observe_names_on(
     A value the caller did not send (None) was not observed, so it never
     counts as a change: re-sending a file without a title is not a rename.
     Returns whether a row was appended. A version without a metadata row (a
-    forgotten lineage's) records nothing.
+    forgotten lineage's) records nothing. The version's metadata row is locked
+    first, so concurrent name writers compare against each other's rows.
     """
-    if not _has_metadata(
+    if not _lock_metadata(
         connection=connection, deployment_id=deployment_id, version_id=version_id
     ):
         return False
@@ -130,8 +131,13 @@ def merge_converter_metadata_on(
     taken only when the ingest declared none (a caller-declared title stays).
     Authors and recipients replace the version's earlier ``source`` people.
     Running this twice with the same metadata leaves the same rows, so a
-    replayed or repeated conversion is safe.
+    replayed or repeated conversion is safe. The metadata row is locked
+    first, so the name comparison sees any observation committed before it.
     """
+    if not _lock_metadata(
+        connection=connection, deployment_id=deployment_id, version_id=version_id
+    ):
+        return
     source_fields = {
         field: "source"
         for field, value in (
@@ -142,7 +148,7 @@ def merge_converter_metadata_on(
         )
         if value is not None
     }
-    updated = connection.execute(
+    connection.execute(
         _MERGE_METADATA,
         {
             "deployment_id": deployment_id,
@@ -156,9 +162,7 @@ def merge_converter_metadata_on(
             "provenance": json.dumps(source_fields),
             "mapping_version": mapping_version,
         },
-    ).rowcount
-    if updated == 0:
-        return
+    )
     connection.execute(
         _DELETE_SOURCE_PEOPLE,
         {"deployment_id": deployment_id, "version_id": version_id},
@@ -199,14 +203,36 @@ def merge_converter_metadata_on(
     )
 
 
-def _has_metadata(
+def refresh_family_on(
+    *, connection: Connection, deployment_id: UUID, content_hash: str, mime: str
+) -> None:
+    """Re-derive the family of every version of bytes whose MIME was repaired.
+
+    A MIME repair (D117: parked bytes re-sent with a routable type) changes
+    the stored type for every lineage holding those bytes, so every such
+    version's family changes with it, in the same transaction.
+    """
+    connection.execute(
+        _REFRESH_FAMILY,
+        {
+            "deployment_id": deployment_id,
+            "content_hash": content_hash,
+            "family": family_for_mime(mime=mime),
+        },
+    )
+
+
+def _lock_metadata(
     *, connection: Connection, deployment_id: UUID, version_id: UUID
 ) -> bool:
-    """Whether the version has a D134 metadata row to hang names on."""
+    """Lock the version's metadata row; False when it has none.
+
+    Every writer of a version's names takes this lock before reading the
+    latest name, so read-compare-insert never interleaves.
+    """
     return (
         connection.execute(
-            _SELECT_HAS_METADATA,
-            {"deployment_id": deployment_id, "version_id": version_id},
+            _LOCK_METADATA, {"deployment_id": deployment_id, "version_id": version_id}
         ).scalar_one_or_none()
         is not None
     )
@@ -281,10 +307,24 @@ _INSERT_NAME = text(
     """
 )
 
-_SELECT_HAS_METADATA = text(
+_REFRESH_FAMILY = text(
+    """
+    UPDATE document_metadata m
+    SET family = :family
+    FROM document_versions v
+    WHERE v.deployment_id = m.deployment_id
+      AND v.version_id = m.version_id
+      AND v.deployment_id = :deployment_id
+      AND v.content_hash = :content_hash
+      AND m.family <> :family
+    """
+)
+
+_LOCK_METADATA = text(
     """
     SELECT 1 FROM document_metadata
     WHERE deployment_id = :deployment_id AND version_id = :version_id
+    FOR UPDATE
     """
 )
 

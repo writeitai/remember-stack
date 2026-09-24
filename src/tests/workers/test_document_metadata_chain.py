@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+import threading
 from typing import Any
 from uuid import UUID
 
@@ -416,3 +417,118 @@ def test_converter_title_never_replaces_a_declared_title(rig: _Rig) -> None:
         None,
         "audit.eml Audit findings",
     )
+
+
+def test_mime_repair_refreshes_family_for_every_lineage(rig: _Rig) -> None:
+    """Re-sending parked bytes with a routable MIME re-derives every family."""
+    content = b"# Notes\n"
+    parked = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=_upload(
+            filename="notes",
+            title=None,
+            source_path=None,
+            content=content,
+            mime="application/x-unknown",
+        ),
+    )
+    other_lineage = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="notes",
+        upload=_upload(
+            filename="notes",
+            title=None,
+            source_path=None,
+            content=content,
+            mime="application/x-unknown",
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    for version_id in (parked.version_id, other_lineage.version_id):
+        assert rig.metadata(version_id=version_id)["family"] == "other"
+
+    resent = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=_upload(
+            filename="notes.md", title=None, source_path=None, content=content
+        ),
+    )
+
+    assert resent.created is False
+    assert resent.mime == "text/markdown"
+    for version_id in (parked.version_id, other_lineage.version_id):
+        assert rig.metadata(version_id=version_id)["family"] == "markdown"
+
+
+def test_convert_names_carry_the_latest_observed_file_name(rig: _Rig) -> None:
+    """The converter's name row builds on the newest observation, not a stale one."""
+    upload = _upload(
+        filename="audit.eml",
+        title=None,
+        source_path=None,
+        content=b"Renamed audit body.\n",
+        mime=_MAIL_MIME,
+    )
+    ingested = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=upload.model_copy(update={"filename": "renamed.eml"}),
+    )
+    rig.convert(ingested=ingested)
+
+    assert rig.names(version_id=ingested.version_id) == [
+        ("audit.eml", None, None, "audit.eml"),
+        ("renamed.eml", None, None, "renamed.eml"),
+        ("renamed.eml", "Audit findings", None, "renamed.eml Audit findings"),
+    ]
+
+
+def test_name_writers_serialize_on_the_metadata_row(rig: _Rig) -> None:
+    """An observation waits for an open convert merge, then compares to its row."""
+    upload = _upload(
+        filename="audit.eml",
+        title=None,
+        source_path=None,
+        content=b"Concurrent audit body.\n",
+        mime=_MAIL_MIME,
+    )
+    ingested = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    observation_errors: list[BaseException] = []
+
+    def observe_rename() -> None:
+        try:
+            rig.ingestor.ingest(
+                deployment_id=_DEPLOYMENT_ID,
+                upload=upload.model_copy(update={"filename": "renamed.eml"}),
+            )
+        except BaseException as error:  # surfaced to the test thread below
+            observation_errors.append(error)
+
+    with rig.engine.connect() as connection:
+        transaction = connection.begin()
+        merge_converter_metadata_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            version_id=ingested.version_id,
+            metadata=_MAIL_METADATA,
+            mapping_version="fake-mail@fake-mail-1",
+        )
+        observer = threading.Thread(target=observe_rename)
+        observer.start()
+        observer.join(timeout=1.0)
+        # the observation is blocked on the merge's metadata-row lock
+        assert observer.is_alive()
+        transaction.commit()
+    observer.join(timeout=30.0)
+    assert not observer.is_alive()
+    assert observation_errors == []
+
+    assert rig.names(version_id=ingested.version_id) == [
+        ("audit.eml", None, None, "audit.eml"),
+        ("audit.eml", "Audit findings", None, "audit.eml Audit findings"),
+        ("renamed.eml", None, None, "renamed.eml"),
+    ]

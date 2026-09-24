@@ -65,11 +65,11 @@ def normalize_name(*, value: str | None) -> str | None:
 
 
 def normalize_address(*, value: str | None) -> str | None:
-    """Trim and lower-case an email address or handle; None when empty."""
-    if value is None:
-        return None
-    stripped = value.strip().lower()
-    return stripped or None
+    """Normalize an email address or handle exactly like a name (D134).
+
+    Lower case, accents removed, whitespace collapsed; None when empty.
+    """
+    return normalize_name(value=value)
 
 
 def name_text(*, parts: Iterable[str | None]) -> str:

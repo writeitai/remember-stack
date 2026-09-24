@@ -1434,14 +1434,22 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
             assert row["created_at"] == datetime(2025, 1, 2, tzinfo=timezone.utc)
             assert row["modified_at"] == datetime(2025, 2, 3, tzinfo=timezone.utc)
             assert row["file_name"] is None and row["source_path"] is None
+            # the declared title was never recorded; the lineage title is a name
+            assert row["title"] is None
             assert row["metadata_mapping_version"] == "backfill-p9_34"
         untitled = versions[_BACKFILL_MIMES[1]][0]
-        assert rows[untitled]["title"] is None
         assert untitled not in names
         titled = versions[_BACKFILL_MIMES[0]][0]
         assert names[titled] == ("Doc 0", "Doc 0", None)
         assert len(names) == len(_BACKFILL_MIMES) - 1
 
+        # a populated store refuses the lossy downgrade and stays at head
+        with pytest.raises(RuntimeError, match="D134 downgrade requires"):
+            command.downgrade(config=config, revision="p9_33_0054")
+        assert _head_revision(database_url=database_url) == "p9_34_0055"
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM document_metadata"))
+        # an empty store drops the three tables
         command.downgrade(config=config, revision="p9_33_0054")
         with engine.connect() as connection:
             assert (

@@ -47,6 +47,7 @@ from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.spine.document_metadata import merge_converter_metadata_on
 from rememberstack.spine.document_metadata import observe_names_on
 from rememberstack.spine.document_metadata import record_ingest_metadata_on
+from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -115,6 +116,12 @@ class DocumentCatalog:
                 ).rowcount
                 == 1
             ):
+                refresh_family_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    content_hash=record.content_hash,
+                    mime=record.mime,
+                )
                 # The wake is a NOTIFY, delivered only when this commits.
                 connection.execute(
                     _RELEASE_PARKED_CONVERSIONS,
