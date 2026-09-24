@@ -2,7 +2,7 @@
 
 Per credential and per deployment: a token bucket for rate and a counting
 semaphore for requests in flight, checked after authentication and before the
-route. A refusal is ``429`` with ``rate_limited`` or ``concurrency_limited``
+spend lease and routing. A refusal is ``429`` with ``rate_limited`` or ``concurrency_limited``
 and ``Retry-After`` in whole seconds; slots come back however a request ends.
 """
 
@@ -26,8 +26,6 @@ from rememberstack.model import PerimeterCredential
 from rememberstack.surfaces.direct_admission import AdmissionLimits
 from rememberstack.surfaces.direct_admission import AdmissionRefused
 from rememberstack.surfaces.direct_admission import DirectPathAdmission
-from rememberstack.surfaces.http_api import _ADMISSION_SLOTS
-from rememberstack.surfaces.http_api import _ReleaseAdmissionSlots
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.query_engine import QueryEngine
 
@@ -272,17 +270,21 @@ class _Auth:
 
 
 class _Lease:
-    """A spend lease that never gates the probe route, to put
-    ``BaseHTTPMiddleware`` in the stack as a managed deployment has it."""
+    """A spend lease that records what reached it (``BaseHTTPMiddleware`` in
+    the stack, as a managed deployment has it)."""
 
-    def reserve(self, **_: object) -> Any:
-        raise AssertionError("the probe route is not spend-gated")
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def reserve(self, **_: object) -> str:
+        self.calls.append("reserve")
+        return "hold-1"
 
     def commit(self, **_: object) -> None:
-        return None
+        self.calls.append("commit")
 
     def release(self, **_: object) -> None:
-        return None
+        self.calls.append("release")
 
 
 class _Probe:
@@ -305,7 +307,7 @@ class _Probe:
 
 
 def _app(
-    admission: DirectPathAdmission, *, auth: bool = True
+    admission: DirectPathAdmission, *, auth: bool = True, lease: _Lease | None = None
 ) -> tuple[FastAPI, _Probe]:
     app = build_api(
         engine=cast(QueryEngine, object()),
@@ -313,11 +315,14 @@ def _app(
         admission=_Open(),
         readiness=_Ready(),
         auth=_Auth() if auth else None,
-        spend_lease=_Lease() if auth else None,  # type: ignore[arg-type]
+        spend_lease=(lease or _Lease()) if auth else None,  # type: ignore[arg-type]
         direct_admission=admission,
     )
     probe = _Probe()
     app.get("/probe")(probe)
+    # `POST /ingest` is spend-gated; this stand-in lets the order of
+    # authentication, admission and the spend hold be observed.
+    app.post("/ingest")(probe)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -420,31 +425,63 @@ async def test_a_slot_is_released_when_the_route_fails() -> None:
     assert admission._deployment.in_flight == 0
 
 
-async def test_a_slot_is_released_when_the_client_disconnects() -> None:
-    """A disconnect cancels the request; the wrapper's ``finally`` still runs."""
-    admission = _admission(key_in_flight=1)
-    started = asyncio.Event()
+@pytest.mark.parametrize("auth", [True, False])
+async def test_a_disconnect_keeps_the_slot_until_the_handler_thread_ends(
+    auth: bool,
+) -> None:
+    """Cancelling the request does not stop a ``def`` handler's thread, so the
+    slot stays taken until that thread returns (with and without the spend
+    lease's ``BaseHTTPMiddleware`` in the stack)."""
+    admission = _admission(key_in_flight=1, deployment_in_flight=1)
+    app, probe = _app(admission, auth=auth)
+    probe.gate.clear()
+    headers = _bearer("key-a") if auth else {}
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
+        first = asyncio.create_task(client.get("/probe", headers=headers))
+        await _until(lambda: probe.entered == 1)
+        first.cancel()
+        await asyncio.sleep(0.05)
 
-    async def inner(scope: dict, receive: Any, send: Any) -> None:
-        scope[_ADMISSION_SLOTS].append(admission.admit(key="jti-a"))
-        started.set()
-        await asyncio.Event().wait()  # a response that never finishes
+        # The first handler is still blocked on its thread.
+        refused = await client.get("/probe", headers=headers)
+        assert refused.status_code == 429
+        assert refused.json()["detail"]["code"] == "concurrency_limited"
+        assert probe.entered == 1
 
-    wrapper = _ReleaseAdmissionSlots(inner, admission=admission)
+        probe.gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await _until(lambda: admission._deployment.in_flight == 0)
+        assert (await client.get("/probe", headers=headers)).status_code == 200
 
-    async def receive() -> dict[str, str]:
-        return {"type": "http.disconnect"}
 
-    async def send(_: object) -> None:
-        return None
+def test_an_unknown_path_is_authenticated_and_counted() -> None:
+    admission = _admission(deployment_per_minute=4)  # burst 1
+    app, _ = _app(admission)
+    client = TestClient(app)
+    assert client.get("/no-such-route").status_code == 401
+    assert client.get("/no-such-route", headers=_bearer("key-a")).status_code == 404
+    refused = client.get("/no-such-route", headers=_bearer("key-a"))
+    assert refused.status_code == 429
 
-    task = asyncio.create_task(wrapper({"type": "http"}, receive, send))
-    await started.wait()
-    assert _refusal(admission, key="jti-a").code == "concurrency_limited"
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    admission.admit(key="jti-a")
+
+def test_an_invalid_credential_never_reaches_the_spend_lease() -> None:
+    lease = _Lease()
+    app, _ = _app(_admission(), lease=lease)
+    client = TestClient(app)
+    assert client.post("/ingest", headers=_bearer("forged")).status_code == 401
+    assert lease.calls == []
+
+
+def test_a_refused_request_never_reaches_the_spend_lease() -> None:
+    lease = _Lease()
+    app, _ = _app(_admission(key_per_minute=4), lease=lease)
+    client = TestClient(app)
+    assert client.post("/ingest", headers=_bearer("key-a")).status_code == 200
+    assert lease.calls == ["reserve", "commit"]
+    assert client.post("/ingest", headers=_bearer("key-a")).status_code == 429
+    assert lease.calls == ["reserve", "commit"]
 
 
 # --- The SDK --------------------------------------------------------------------

@@ -121,12 +121,52 @@ class AdmissionSlot:
     released: bool = False
 
 
+class RequestHold:
+    """One request's admission slot, held until the request and its handlers end.
+
+    A client disconnect cancels the request's coroutine, but a synchronous
+    handler already running on a worker thread cannot be stopped: it keeps
+    working, and keeps holding database connections. So the slot is released
+    only once the request is over *and* no handler thread started under it is
+    still running, whichever happens last.
+    """
+
+    def __init__(self, *, admission: DirectPathAdmission, slot: AdmissionSlot) -> None:
+        """Hold ``slot`` on behalf of one request."""
+        self._admission = admission
+        self._slot = slot
+        self._lock = threading.Lock()
+        self._handlers = 0
+        self._request_over = False
+
+    def handler_started(self) -> None:
+        """A handler thread began running under this request."""
+        with self._lock:
+            self._handlers += 1
+
+    def handler_finished(self) -> None:
+        """A handler thread returned or raised."""
+        with self._lock:
+            self._handlers -= 1
+            done = self._request_over and self._handlers == 0
+        if done:
+            self._admission.release(self._slot)
+
+    def request_finished(self) -> None:
+        """The ASGI request is over: answered, failed or cancelled."""
+        with self._lock:
+            self._request_over = True
+            done = self._handlers == 0
+        if done:
+            self._admission.release(self._slot)
+
+
 class DirectPathAdmission:
     """In-process rate and in-flight limits for one deployment's API process.
 
-    Thread-safe: FastAPI runs synchronous dependencies on a thread pool, and
-    releases happen on the event loop. One lock guards all counters; every
-    critical section is a few arithmetic operations.
+    Thread-safe: admission happens on the event loop and releases can happen
+    on handler threads. One lock guards all counters; every critical section
+    is a few arithmetic operations.
     """
 
     def __init__(

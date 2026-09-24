@@ -528,7 +528,8 @@ denies every signed credential.
 
 SDK and CLI traffic reaches the engine directly, not through a host that could
 meter it, so the perimeter bounds what one key and one deployment can ask for.
-After authentication and before the route runs:
+After authentication and before the spend lease and routing, for every
+request including one to an unknown path:
 
 | Limit | Starting value |
 | --- | --- |
@@ -550,7 +551,9 @@ and 150 above.
   request to a deployment with no auth perimeter. `GET /healthz` is
   exempt. A request is admitted only when every check passes, and a refused
   request consumes no token. A slot is released when the response finishes,
-  fails, or the client disconnects.
+  fails, or the client disconnects, but not before a synchronous handler
+  already running on a worker thread returns: a disconnect cannot stop that
+  thread, so its work still counts as in flight.
 - **Refusal.** `429`, error code `rate_limited` or `concurrency_limited`, and
   `Retry-After` in whole seconds (time until a token is available; 1 for an
   in-flight refusal). The SDK raises `RateLimited` with `retry_after` and does
@@ -561,7 +564,9 @@ and 150 above.
   API replicas the effective ceilings are N times the numbers; an operator
   running N replicas divides by N. The self-host profile runs one replica.
 - Spend metering (D91), the spend lease and the D74 admission barrier are
-  unchanged and apply after this check.
+  unchanged and apply after this check: authentication, then admission, then
+  the spend hold, then routing. An unauthenticated or refused request never
+  places a hold.
 
 ### 7.7 Failure responses
 
@@ -815,7 +820,9 @@ Perimeter (`signed_token_auth.py`):
   documents advance `seq`;
 - admission: per-key and per-deployment rate and in-flight limits return
   `429` with a correct `Retry-After`; in-flight slots are released on
-  success, error and client disconnect; `/healthz` is exempt;
+  success, error and client disconnect (not before the handler thread
+  returns); unknown paths are counted; `/healthz` is exempt; no spend hold
+  is placed for an unauthenticated or refused request;
 - permission mapping table, including ignored `account:*` and refused unknown
   `memory:*`; no memory permission → `403`;
 - revocation documents: lower `seq`, equal `seq` with different content,
