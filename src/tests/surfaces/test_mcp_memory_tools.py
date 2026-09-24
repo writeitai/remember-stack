@@ -61,10 +61,12 @@ class _RecordingWriteBackend:
         *,
         max_body: int | None = None,
         created: bool = True,
+        parked: Literal["no_route"] | None = None,
         fail: BaseException | None = None,
     ) -> None:
         self.max_body = max_body
         self.created = created
+        self.parked: Literal["no_route"] | None = parked
         self.fail = fail
         self.last_ingest: dict[str, object] | None = None
         self.last_readiness: dict[str, object] | None = None
@@ -101,6 +103,7 @@ class _RecordingWriteBackend:
             version_id=_VERSION,
             content_hash="a" * 64,
             created=self.created,
+            parked=self.parked,
         )
 
     def pipeline_readiness(
@@ -354,6 +357,26 @@ def test_ingest_created_false_guidance_is_honest() -> None:
     assert "may still be processing" in guidance
     assert "keep polling" in guidance
     assert "dead_letter" in guidance and "failed stage is retrying" in guidance
+
+
+def test_ingest_parked_no_route_tells_the_agent_not_to_poll() -> None:
+    """An unrouted MIME is reported at ingest, so the agent tells the user now."""
+    backend = _RecordingWriteBackend(parked="no_route")
+    result = handle_memory_write_tool(
+        name="ingest",
+        arguments={
+            "content_base64": base64.b64encode(b"%PDF-1.7").decode(),
+            "filename": "scan.pdf",
+        },
+        backend=backend,
+    )
+    payload = _success_payload(result)
+    assert payload["parked"] == "no_route"
+    assert payload["pipeline"]["status"] == "parked_no_route"
+    assert "next_tool" not in payload["pipeline"]
+    guidance = payload["pipeline"]["guidance"].lower()
+    assert "do not poll pipeline_readiness" in guidance
+    assert "conversion route" in guidance
 
 
 def test_ingest_path_and_base64_modes(tmp_path: Path) -> None:

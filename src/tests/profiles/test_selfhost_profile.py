@@ -55,9 +55,9 @@ def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> No
     routes = build_conversion_routes(route_names=settings.conversion_routes)
     assert routes["text/plain"].name == "passthrough"
     assert routes["text/markdown"] is routes["text/plain"]
+    assert routes["text/html"].name == "markitdown"
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "build_conversion_routes" in source
-    assert "stock_passthrough_routes()" not in source
 
 
 def test_selfhost_composes_every_implemented_continuous_route() -> None:

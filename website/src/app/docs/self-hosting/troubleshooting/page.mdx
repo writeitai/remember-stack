@@ -24,10 +24,11 @@ Run the commands on this page from the directory that holds your
 | `Connection refused`, or documents land somewhere else | `echo $REMEMBER_API_URL` | [Wrong port or wrong address](#wrong-port-or-wrong-address) |
 | `401` or `403` | The `detail` string | [401 and 403](#401-and-403) |
 | A browser app reports a network error | The browser console | [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api) |
+| The ingest result has `"parked": "no_route"` | The file's MIME type | [Parked conversions](#parked-conversions) |
 | Ingest succeeded, but questions never find the document | Readiness for the `version_id` | [A document never becomes queryable](#a-document-never-becomes-queryable) |
 | Documents take a long time | `remember ops inspect` | [Processing is slow](#processing-is-slow) |
 | Stages fail within seconds of each other | Worker logs | [Model key and provider errors](#model-key-and-provider-errors) |
-| Work waits and nothing fails | `remember budget inspect` | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| Work waits and nothing fails | `defer_reason` in [See what is waiting and why](#see-what-is-waiting-and-why) | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
 | The answer is empty or not what you expected | `negative`, `temporal_scope`, the operation you called | [Empty or surprising answers](#empty-or-surprising-answers) |
 | A SQL query returns `200` with no rows and an `error_code` | `termination_reason` | [A SQL query is rejected](#a-sql-query-is-rejected) |
 | `503` with `forget_in_progress` | `docker compose logs api` | [503 forget_in_progress](#503-forget_in_progress) |
@@ -35,8 +36,8 @@ Run the commands on this page from the directory that holds your
 
 ## Running operator commands
 
-Several fixes below use `remember ops` and `remember budget`. These commands
-read PostgreSQL directly, so they run inside the `api` container, and they
+Several fixes below use `remember ops`. These commands read PostgreSQL
+directly, so they run inside the `api` container, and they
 are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set there. Without it,
 `remember ops` exits with "'remember ops' is confined to internal container
 environments".
@@ -224,8 +225,12 @@ be retried.
 
 A file whose MIME type has no conversion route is stored and its `convert`
 work is parked with the reason `no_route`. It uses no attempts and makes no
-model calls. A stock deployment routes only `text/markdown` and
-`text/plain`. Add a route for the type as described in
+model calls. The ingest result reports it at once with
+`"parked": "no_route"`, and `remember ingest` prints a warning.
+
+A stock deployment routes Markdown, plain text, HTML, `.docx`, `.pptx` and
+`.xlsx`. PDFs and images need an OCR route with your own provider key. Add
+a route for the type as described in
 [File formats and converters](/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
 
@@ -349,12 +354,8 @@ If you set `REMEMBERSTACK_WORK_BUDGETS`, a stage that reaches its ceiling
 parks its work until the budget window ends. Nothing fails and nothing is
 dropped; readiness shows the stage as `pending`.
 
-```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
-  remember budget inspect --deployment "$DEPLOYMENT_ID"
-```
-
-A budget with `exhausted` true and a non-zero parked count is the cause.
+Rows with `defer_reason` `budget` in the query under
+[See what is waiting and why](#see-what-is-waiting-and-why) are the cause.
 Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
 `docker compose up -d`. See [Spend budgets](/docs/self-hosting/operating#spend-budgets).
 

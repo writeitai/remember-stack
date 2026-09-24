@@ -44,6 +44,7 @@ The call returns as soon as the bytes are stored. The result
 | `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
 | `content_hash` | SHA-256 of the bytes, in hex. |
 | `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
+| `parked` | `"no_route"` when the file's conversion is parked waiting for a conversion route for its MIME type: the bytes are stored but not read until an operator adds a route if needed and runs `remember ops resume-no-route`. `None` means only that it is not parked for `no_route`; readiness tells you the processing state. |
 
 Processing (reading, structuring, extracting claims, adjudicating facts)
 happens afterwards and takes minutes. The document is not queryable until
@@ -248,7 +249,9 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
 Limits on the tool arguments: `filename` up to 512 characters, `mime` 255,
 `title` 512, `source_kind` 128, `source_ref` 512, `source_version_ref` 512.
 The tool's reply includes the arguments to pass to `pipeline_readiness`
-next. See [Connect your coding agent](/docs/start/connect-your-agent).
+next. When the file was parked (`"parked": "no_route"`), the reply's
+`pipeline.status` is `parked_no_route` and it tells the agent to report
+that to the user instead of waiting. See [Connect your coding agent](/docs/start/connect-your-agent).
 
 ## What gets read
 
@@ -279,11 +282,12 @@ Convert other formats to Markdown before you send them. See
 
 <Tab label="Self-hosted">
 
-A fresh self-hosted deployment reads `text/markdown` and `text/plain`
-and nothing else. A file with any other MIME type is stored and its
-processing is parked, not refused: the ingest succeeds, and the
-version waits until an operator adds a converter for its type. PDF,
-HTML, Office documents and images need converters that you configure.
+A fresh self-hosted deployment reads Markdown, plain text, HTML and
+Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`). A file
+with any other MIME type is stored and its processing is parked, not
+refused: the ingest succeeds with `"parked": "no_route"`, and the
+version waits until an operator adds a converter for its type. PDFs and
+images need converters that you configure with your own provider key.
 See [File formats and converters](/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
@@ -295,7 +299,8 @@ answers HTTP 413 `body_too_large`. A request without a
 </Tabs>
 
 A parked version never becomes ready, so a readiness wait on it runs until
-its timeout. Check the MIME type before you wait.
+its timeout. Check `parked` in the ingest result before you wait;
+`remember ingest` prints a warning when it is set.
 
 ## Errors
 

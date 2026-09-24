@@ -764,7 +764,7 @@ Docs describe what the tree runs.
 | Customer HTTP scopes | async middleware in `build_api` |
 | Export HTTP | same process, daemon-thread uvicorn, second bind; not `build_api` |
 | Worker stamp | `record_call` INSERT sets `occurred_at = clock_timestamp()` |
-| `remember budget` | stays **worker-only** (D67 route ceilings). Total spend is `ops cost-export` / `v_cost_receipts`. |
+| Route budgets | enforced by workers only (D67 route ceilings); there is no budget command (`remember budget` was removed, D108). Total spend is `ops cost-export` / `v_cost_receipts`. |
 | Settings | `REMEMBERSTACK_COST_EXPORT_TOKEN`, `REMEMBERSTACK_COST_EXPORT_BIND` |
 | CLI export | `remember ops cost-export` |
 | CLI login | `remember login` / `logout` in the base extra; file load only there |

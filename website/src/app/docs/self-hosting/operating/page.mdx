@@ -43,7 +43,6 @@ Pipe it through `python3 -m json.tool` to read it.
 | `remember ops rebuild --deployment ID --snapshot-root DIR --version V` | Build a filesystem snapshot into a local directory |
 | `remember ops graph-catalog ensure` | Check and repair the PostgreSQL graph definitions |
 | `remember ops cost-export --deployment ID` | Print one page of the cost ledger ([Observability](/docs/self-hosting/observability#cost-export)) |
-| `remember budget inspect --deployment ID` | Show spend budgets and how much of each is used |
 
 ## Inspect the pipeline
 
@@ -138,18 +137,14 @@ Only one budget may exist per deployment, stage and lane. Stages without a
 budget are not capped.
 
 `compose.yaml` does not pass this variable. Put it in `engine.env`
-([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)): the
-workers enforce it, and `remember budget inspect` in the `api` container
-reads it.
+([Configuration](/docs/self-hosting/configuration#what-compose-passes-through));
+the workers enforce it.
 
-```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
-  remember budget inspect --deployment "$DEPLOYMENT_ID"
-```
-
-It prints one line per budget: the current window, `spent_usd`,
-`remaining_usd`, whether it is `exhausted`, how many items are parked, and
-the spend per model tier.
+Work a budget parked shows as `pending` in `remember ops inspect`, and with
+`defer_reason` `budget` in the diagnostic query under
+[Troubleshooting](/docs/self-hosting/troubleshooting#see-what-is-waiting-and-why).
+The spend itself is in the cost ledger; read it with `remember ops
+cost-export` ([Observability](/docs/self-hosting/observability#cost-export)).
 
 ## The graph catalog
 
