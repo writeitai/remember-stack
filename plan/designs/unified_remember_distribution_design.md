@@ -45,7 +45,7 @@ Prior to D108, the ecosystem maintained two packages with overlapping responsibi
 This split introduced fundamental developer and agent friction:
 - **Consumer Confusion**: Users and AI coding agents routinely questioned whether to install `remember` or `rememberstack`, frequently importing the wrong package or attempting to run server-side extras locally.
 - **Binary Collision**: `rememberstack` registered `[project.scripts] remember = "rememberstack.surfaces.cli:main"`. If both packages were installed into the same environment, binary resolution was non-deterministic.
-- **Heavyweight Host Burden**: Self-hosting a distributed bitemporal memory system requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO object storage, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Attempting to install the server directly via `pip install rememberstack[server]` on bare-metal developer machines led to compiler, header, and architecture incompatibilities.
+- **Heavyweight Host Burden**: Self-hosting a distributed bitemporal memory system requires PostgreSQL 19 with SQL/PGQ, `pgvector`, S3-compatible object storage, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Attempting to install the server directly via `pip install rememberstack[server]` on bare-metal developer machines led to compiler, header, and architecture incompatibilities.
 
 ### 1.2 Real-World Infrastructure Industry Alignment
 Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **PostHog**, **Temporal**) have converged on a single standard pattern:
@@ -81,7 +81,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  GHCR: `ghcr.io/writeitai/remember-stack:<version>` (Docker Engine)           │
 │                                                                              │
 │  - The complete containerized engine: FastAPI daemon + E0–E3 workers         │
-│  - Orchestrated via official `docker-compose.yaml` (Postgres 19, MinIO)       │
+│  - Orchestrated via official `docker-compose.yaml` (Postgres 19, SeaweedFS)   │
 │  - Consumed by: Self-hosters, CI test harnesses, and Cloud deployment fleet  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```

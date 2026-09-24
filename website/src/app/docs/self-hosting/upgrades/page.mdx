@@ -147,11 +147,11 @@ A deployment's state lives in four Docker volumes:
 | Volume | Must be backed up |
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
-| `rememberstack_minio-data` | Yes: original files and derived artifacts |
+| `rememberstack_object-store-data` | Yes: original files and derived artifacts |
 | `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
-Filesystem-view snapshots in MinIO can be rebuilt; everything else in the
+Filesystem-view snapshots in the object store can be rebuilt; everything else in the
 first three volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
@@ -162,7 +162,7 @@ The simplest consistent backup stops the stack and copies the volumes:
 ```bash
 docker compose stop
 mkdir -p backup
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/source:ro" \
     -v "$PWD/backup:/backup" \
@@ -172,7 +172,7 @@ docker compose start
 ```
 
 Keep the `backup/` directory and your `.env` together: a restore needs the
-same deployment id and the same database and MinIO credentials.
+same deployment id and the same database and object-store credentials.
 
 To restore it into an empty stack on the same or another machine, with the
 same `.env`:
@@ -180,7 +180,7 @@ same `.env`:
 ```bash
 docker compose down -v          # deletes the current volumes
 docker compose create           # creates empty volumes and containers
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/target" \
     -v "$PWD/backup:/backup:ro" \
@@ -206,9 +206,9 @@ docker compose exec -T postgres \
 
 Use your own user and database names from `.env`. The second file matters:
 the migrations create a separate, restricted PostgreSQL role for SQL
-queries, and roles are not part of `pg_dump`. Copy the MinIO buckets
+queries, and roles are not part of `pg_dump`. Copy the object-store buckets
 (`remember-raw`, `remember-artifacts`, `remember-corpusfs`) at the same
-time with an S3 tool such as `mc mirror`. Restoring a logical backup means
+time with an S3 tool such as `rclone sync`. Restoring a logical backup means
 creating the roles, restoring the dump into an empty database with
 `pg_restore`, copying the buckets back, and running `setup`; the project
 has not tested this path.

@@ -58,7 +58,7 @@ Industry-leading open-core infrastructure companies (**Qdrant**, **Supabase**, *
 │  - Bitemporal Memory Theory  │              │  [Self-Hosted OSS]           │
 │  - E0–E3 Pipeline Architecture│             │  - Docker Compose            │
 │  - Universal `remember setup`│              │  - Kubernetes / Helm         │
-│  - Python SDK (`remember`)   │              │  - Bare PostgreSQL 19 + MinIO│
+│  - Python SDK (`remember`)   │              │  - Bare PostgreSQL 19 + S3   │
 │  - Dynamic MCP Server        │              │                              │
 │  - Assured Context Retrieval │              │  [Managed Cloud]             │
 │  - Open SQL & Graph Space    │              │  - Dedicated Private Pods    │
@@ -103,7 +103,7 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 - **Open Query Space (`open_query`)**: Full guide to querying the bitemporal relational graph schema (`memory_v1` views: `facts_current`, `graph_edges_current`, `contradiction_members_current`) via SQL.
 
 ### 3.4 Section 4: Self-Hosting & Operations (Open Source)
-- **Docker Compose Quickstart**: Complete guide to launching the engine, PostgreSQL 19 with SQL/PGQ and `pgvector`, and MinIO storage locally.
+- **Docker Compose Quickstart**: Complete guide to launching the engine, PostgreSQL 19 with SQL/PGQ and `pgvector`, and SeaweedFS object storage locally.
 - **Production Kubernetes / Helm**: Cluster deployment blueprints, persistent volume configurations, worker scaling (E0–E3), and environment variables.
 - **Database Architecture**: PostgreSQL 19 schema spine, SQL/PGQ graph queries, Lance/pgvector index maintenance, and Alembic migrations.
 - **Backup, Restore & Disaster Recovery**: Cold storage snapshots, S3-compatible replication, and point-in-time recovery.

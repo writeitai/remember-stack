@@ -2260,7 +2260,7 @@ deployment as the shipped `compose.yaml` runs it.
 | Piece | What it does |
 |---|---|
 | **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
-| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs MinIO. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs SeaweedFS. |
 | **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
 | **The workers** | One process per [pipeline stage](https://remember.dev/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
 | **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |
@@ -6006,7 +6006,7 @@ Source: https://remember.dev/docs/self-hosting/requirements
 # Requirements
 
 A self-hosted RememberStack is a set of containers from one Compose file:
-PostgreSQL, MinIO object storage, an API process and twelve pipeline
+PostgreSQL, SeaweedFS object storage, an API process and twelve pipeline
 workers. The Compose file builds or pulls everything it needs. This page
 lists what has to be true of the machine and the accounts around it.
 
@@ -6110,13 +6110,13 @@ Original files, converted Markdown and other artifacts, and filesystem
 snapshots live in object storage, in three buckets (`remember-raw`,
 `remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
 
-Compose runs MinIO for this (image pinned to
-`RELEASE.2025-09-07T16-13-09Z`). The engine talks to it through the S3 API
-with path-style addressing and SigV4 signing. It writes every object with a
-conditional create (`If-None-Match: *`), so an object is never silently
-replaced. Only MinIO is exercised by the project's checks. Another
-S3-compatible store has to support path-style requests and conditional
-writes.
+Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
+(image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
+to it through the S3 API with path-style addressing and SigV4 signing. It
+writes every object with a conditional create (`If-None-Match: *`), so an
+object is never silently replaced. Only SeaweedFS is exercised by the
+project's checks. Another S3-compatible store has to support path-style
+requests, conditional writes and user metadata on objects.
 
 ## Model provider keys
 
@@ -6145,7 +6145,7 @@ works within:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 15: `postgres`, `minio`, `setup` (exits), `api`, 12 workers |
+| Containers started by `docker compose up` | 15: `postgres`, `object-store`, `setup` (exits), `api`, 12 workers |
 | Items one worker process runs at once | 1 |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
@@ -6195,7 +6195,7 @@ values into `compose.yaml`. These variables have no default in
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. |
 | `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials. PostgreSQL creates them on first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials. MinIO requires a secret of at least 8 characters. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
 Generate the deployment id rather than keeping the example value:
 
@@ -6222,10 +6222,10 @@ docker compose up -d --wait
 ```
 
 On the first run Compose builds the PostgreSQL image (it compiles the
-`pg_textsearch` extension, which takes a few minutes), pulls MinIO and the
+`pg_textsearch` extension, which takes a few minutes), pulls SeaweedFS and the
 RememberStack image, and starts everything in dependency order:
 
-1. `postgres` and `minio` start and report healthy.
+1. `postgres` and `object-store` start and report healthy.
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
@@ -6238,7 +6238,7 @@ RememberStack image, and starts everything in dependency order:
 | Service | Command | Role |
 |---|---|---|
 | `postgres` | `postgres` | PostgreSQL 19 beta with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
-| `minio` | `server /data` | S3-compatible storage for original files, converted Markdown and snapshots. Its web console is published on port 9001. |
+| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](https://remember.dev/docs/self-hosting/converters). |
@@ -6338,7 +6338,7 @@ Compose names volumes after the project, `rememberstack`:
 | Volume | Mounted at | Holds |
 |---|---|---|
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
-| `rememberstack_minio-data` | `/data` in `minio` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
+| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
 | `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Hard-forget manifests. Empty in a Compose deployment. |
 
@@ -6347,11 +6347,10 @@ The first two hold the memory. Back them up together; see
 
 ## Before you expose it
 
-By default the API needs no token, and Compose publishes port 8000 and the
-MinIO console on port 9001 on **every** network interface of the host, not
-only on `localhost`. Anyone who can reach those ports can read and change
-the memory. Before the machine is on a shared network, set a token and
-limit the published ports; see [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
+By default the API needs no token, and Compose publishes port 8000 on
+**every** network interface of the host, not only on `localhost`. Anyone
+who can reach that port can read and change the memory. Before the machine
+is on a shared network, set a token and limit the published port; see [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
 
 ---
 
@@ -6375,7 +6374,7 @@ a prefix:
 |---|---|
 | `REMEMBERSTACK_SELFHOST_` | The deployment, the API, authentication, pools and workers, converter routes |
 | `REMEMBERSTACK_OPENROUTER_` | The model provider |
-| `REMEMBERSTACK_MINIO_` | Object storage |
+| `REMEMBERSTACK_MINIO_` | Object storage (any S3-compatible store; Compose runs SeaweedFS) |
 | `REMEMBERSTACK_STRUCTURER_`, `_E2_`, `_E3_`, `_OBS_`, `_FACT_`, `_P1_` … | One pipeline model seat each ([Models and providers](https://remember.dev/docs/self-hosting/models)) |
 | `REMEMBERSTACK_MISTRAL_OCR_`, `REMEMBERSTACK_IMAGE_DESCRIPTION_` | [Converters](https://remember.dev/docs/self-hosting/converters) |
 | `REMEMBERSTACK_WORK_` | Retries and spend budgets |
@@ -6864,10 +6863,11 @@ every operation. Nothing is logged about who they were.
 
 That is acceptable only when nobody else can reach the port. Note that
 `compose.yaml` publishes the API (`${REMEMBERSTACK_SELFHOST_API_PORT}:8000`)
-and the MinIO console (`9001:9001`) on **all** network interfaces of the
-host. On a laptop on a shared Wi-Fi network, a colleague can reach both.
+on **all** network interfaces of the host. On a laptop on a shared Wi-Fi
+network, a colleague can reach it. (The object store publishes no host
+port.)
 
-To publish them on the loopback interface only, add to
+To publish the API on the loopback interface only, add to
 `compose.override.yaml` (Compose 2.24.4 or later, for the `!override` tag):
 
 ```yaml
@@ -6875,9 +6875,6 @@ services:
   api:
     ports: !override
       - "127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
-  minio:
-    ports: !override
-      - "127.0.0.1:9001:9001"
 ```
 
 Do this and set a token before the machine is reachable by anyone else.
@@ -8275,11 +8272,11 @@ A deployment's state lives in four Docker volumes:
 | Volume | Must be backed up |
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
-| `rememberstack_minio-data` | Yes: original files and derived artifacts |
+| `rememberstack_object-store-data` | Yes: original files and derived artifacts |
 | `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
-Filesystem-view snapshots in MinIO can be rebuilt; everything else in the
+Filesystem-view snapshots in the object store can be rebuilt; everything else in the
 first three volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
@@ -8290,7 +8287,7 @@ The simplest consistent backup stops the stack and copies the volumes:
 ```bash
 docker compose stop
 mkdir -p backup
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/source:ro" \
     -v "$PWD/backup:/backup" \
@@ -8300,7 +8297,7 @@ docker compose start
 ```
 
 Keep the `backup/` directory and your `.env` together: a restore needs the
-same deployment id and the same database and MinIO credentials.
+same deployment id and the same database and object-store credentials.
 
 To restore it into an empty stack on the same or another machine, with the
 same `.env`:
@@ -8308,7 +8305,7 @@ same `.env`:
 ```bash
 docker compose down -v          # deletes the current volumes
 docker compose create           # creates empty volumes and containers
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/target" \
     -v "$PWD/backup:/backup:ro" \
@@ -8334,9 +8331,9 @@ docker compose exec -T postgres \
 
 Use your own user and database names from `.env`. The second file matters:
 the migrations create a separate, restricted PostgreSQL role for SQL
-queries, and roles are not part of `pg_dump`. Copy the MinIO buckets
+queries, and roles are not part of `pg_dump`. Copy the object-store buckets
 (`remember-raw`, `remember-artifacts`, `remember-corpusfs`) at the same
-time with an S3 tool such as `mc mirror`. Restoring a logical backup means
+time with an S3 tool such as `rclone sync`. Restoring a logical backup means
 creating the roles, restoring the dump into an empty database with
 `pg_restore`, copying the buckets back, and running `setup`; the project
 has not tested this path.
@@ -8373,7 +8370,7 @@ docker compose --profile operations run --rm projections
 ```
 
 The `projections` service runs `project --plane p3`. It renders the whole
-tree, writes it to the `remember-corpusfs` bucket in MinIO under a new
+tree, writes it to the `remember-corpusfs` bucket in the object store under a new
 version, and marks that version as the latest. It prints a short report
 with the `snapshot_id`, the `version` and the number of `files`. Each run
 builds the tree from scratch.
@@ -8383,7 +8380,7 @@ by hand, when you want the view to catch up.
 
 ## Publish it to a directory
 
-`mounts` copies the latest snapshot out of MinIO into a directory:
+`mounts` copies the latest snapshot out of the object store into a directory:
 
 ```bash
 mkdir -p "$PWD/memory-views"
@@ -8481,8 +8478,8 @@ logged only if your mount tool logs them.
 
 `remember ops rebuild --deployment ID --snapshot-root DIR --version V`
 writes a snapshot tree straight into a directory inside the container
-instead of MinIO. It also records that snapshot as the latest, and `mounts`
-then fails to find it in MinIO. Run the `projections` service again before
+instead of the object store. It also records that snapshot as the latest, and `mounts`
+then fails to find it in the object store. Run the `projections` service again before
 the next `mounts`.
 
 ## When it refuses
@@ -15468,9 +15465,9 @@ Read by `compose.yaml` from `.env`, not by the engine.
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
-| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://minio:9000`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also MinIO's root user. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also MinIO's root password. |
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://object-store:8333`) | S3-compatible endpoint. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |

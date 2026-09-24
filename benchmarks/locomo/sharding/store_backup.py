@@ -33,7 +33,12 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
-EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
+EXPECTED_VOLUMES = (
+    "postgres-data",
+    "object-store-data",
+    "app-state",
+    "forget-manifests",
+)
 RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
@@ -940,7 +945,7 @@ def _validate_manifest_inventory(manifest: BackupManifest) -> None:
 
     expected = {
         "postgres-data": "volume",
-        "minio-data": "volume",
+        "object-store-data": "volume",
         "app-state": "volume",
         "forget-manifests": "volume",
         "run-directory": "run",
@@ -1502,7 +1507,7 @@ def restore_store(
                     "--detach",
                     "--wait",
                     "postgres",
-                    "minio",
+                    "object-store",
                     "setup",
                     "api",
                 ),

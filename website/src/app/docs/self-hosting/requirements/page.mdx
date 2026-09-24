@@ -8,7 +8,7 @@ export const metadata = {
 <AppliesTo products={["self-hosted"]} />
 
 A self-hosted RememberStack is a set of containers from one Compose file:
-PostgreSQL, MinIO object storage, an API process and twelve pipeline
+PostgreSQL, SeaweedFS object storage, an API process and twelve pipeline
 workers. The Compose file builds or pulls everything it needs. This page
 lists what has to be true of the machine and the accounts around it.
 
@@ -112,13 +112,13 @@ Original files, converted Markdown and other artifacts, and filesystem
 snapshots live in object storage, in three buckets (`remember-raw`,
 `remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
 
-Compose runs MinIO for this (image pinned to
-`RELEASE.2025-09-07T16-13-09Z`). The engine talks to it through the S3 API
-with path-style addressing and SigV4 signing. It writes every object with a
-conditional create (`If-None-Match: *`), so an object is never silently
-replaced. Only MinIO is exercised by the project's checks. Another
-S3-compatible store has to support path-style requests and conditional
-writes.
+Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
+(image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
+to it through the S3 API with path-style addressing and SigV4 signing. It
+writes every object with a conditional create (`If-None-Match: *`), so an
+object is never silently replaced. Only SeaweedFS is exercised by the
+project's checks. Another S3-compatible store has to support path-style
+requests, conditional writes and user metadata on objects.
 
 ## Model provider keys
 
@@ -147,7 +147,7 @@ works within:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 15: `postgres`, `minio`, `setup` (exits), `api`, 12 workers |
+| Containers started by `docker compose up` | 15: `postgres`, `object-store`, `setup` (exits), `api`, 12 workers |
 | Items one worker process runs at once | 1 |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
