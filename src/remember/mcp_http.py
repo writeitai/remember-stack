@@ -22,9 +22,11 @@ One endpoint, ``/mcp``:
 
 The listener binds to a loopback address only. To reach it from other
 machines, put an authenticated reverse proxy (which also terminates TLS) in
-front of it. It is bounded: at most :data:`MAX_CONCURRENT_REQUESTS` requests
-at once (more get ``503``), a :data:`READ_TIMEOUT_SECONDS` deadline on every
-socket read, and a :data:`MAX_BODY_BYTES` request body.
+front of it. It is bounded: at most :data:`MAX_CONCURRENT_REQUESTS` open
+connections, each holding a slot (and a thread) from accept until it closes
+(more get ``503``); a :data:`READ_TIMEOUT_SECONDS` deadline on every socket
+read, so an idle connection gives its slot back; and a :data:`MAX_BODY_BYTES`
+request body.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ MAX_SESSIONS: Final = 1024
 #: ``content_base64`` is ever large (base64 adds a third), so this admits a
 #: document of about 24 MiB; larger files belong to ``remember ingest``.
 MAX_BODY_BYTES: Final = 32 * 1024 * 1024
-#: Requests handled at once; more are answered ``503`` straight away.
+#: Connections served at once; more are answered ``503`` and closed at accept.
 MAX_CONCURRENT_REQUESTS: Final = 16
 #: Deadline for each read from a client socket (starting value).
 READ_TIMEOUT_SECONDS: Final = 30.0
@@ -143,6 +145,39 @@ class McpHttpServer(ThreadingHTTPServer):
         }
         self.origins = frozenset(f"http://{name}:{bound_port}" for name in hosts)
 
+    def process_request(
+        self,
+        request: socket.socket | tuple[bytes, socket.socket],
+        client_address: object,
+    ) -> None:
+        """Start a handler thread only for a connection that gets a slot.
+
+        The slot is taken here, at accept time, and held for the connection's
+        lifetime, so idle connections cannot pile up threads; a connection
+        over the limit is answered ``503`` and closed without a thread.
+        """
+        assert isinstance(request, socket.socket)
+        if not self.slots.acquire(blocking=False):
+            try:
+                request.settimeout(1.0)
+                request.sendall(_BUSY)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)  # type: ignore[arg-type]
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request: object, client_address: object) -> None:
+        """Serve one connection, then give its slot back."""
+        try:
+            super().process_request_thread(request, client_address)  # type: ignore[arg-type]
+        finally:
+            self.slots.release()
+
     @property
     def url(self) -> str:
         """The endpoint URL this listener serves."""
@@ -173,17 +208,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._bounded(self._post)
 
     def _bounded(self, handle: Callable[[], None]) -> None:
-        """Run one request in a free slot, or answer ``503`` at once."""
-        if not self.listener.slots.acquire(blocking=False):
-            self._reply(503, headers={"Retry-After": "1"}, close=True)
-            return
+        """Run one request; a stalled client loses its connection.
+
+        The connection already holds one of the listener's slots
+        (:meth:`McpHttpServer.process_request`).
+        """
         try:
             if not self._refused():
                 handle()
         except TimeoutError:
             self.close_connection = True
-        finally:
-            self.listener.slots.release()
 
     def _get(self) -> None:
         self._reply(405, headers={"Allow": "POST, DELETE"})
@@ -300,6 +334,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if payload:
             self.wfile.write(payload)
+
+
+_BUSY: Final = (
+    b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\n"
+    b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+)
 
 
 def _error_body(message: str) -> dict[str, object]:

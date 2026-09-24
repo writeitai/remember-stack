@@ -115,7 +115,7 @@ the address.
 | `DELETE /mcp` with `Mcp-Session-Id` | Ends the session (`204`). |
 | `GET /mcp` | `405`: the server never sends messages of its own. |
 | `Origin` header that is not the server's own address | `403`. This stops a web page from reaching the server through a hostname it controls. |
-| More than 16 requests at once | `503` with `Retry-After: 1`. |
+| More than 16 open connections | `503` with `Retry-After: 1`, and the connection is closed. An idle connection is closed after 30 seconds. |
 | Body over 32 MiB | `413`. Only an `ingest` body sent as `content_base64` gets this big; use `remember ingest` for larger files. |
 | A client that stops sending for 30 seconds | The connection is closed. |
 

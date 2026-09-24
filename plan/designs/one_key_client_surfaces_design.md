@@ -302,7 +302,8 @@ start-up error.
     authenticates callers and terminates TLS. (A start-up probe of the
     engine's auth was rejected: the answer can change after start-up, and a
     loopback-only rule needs no probe.)
-  - It is bounded: 16 requests at once (more get `503`), a 30-second deadline
+  - It is bounded: 16 open connections, each holding its slot from accept
+    until it closes (more get `503`), a 30-second deadline
     on each socket read, and a 32 MiB body — only an `ingest` body sent as
     `content_base64` is large, and bigger files go through `remember ingest`
     (starting values).

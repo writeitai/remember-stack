@@ -16,6 +16,7 @@ from io import StringIO
 import json
 import socket
 import threading
+import time
 from typing import cast
 from uuid import uuid4
 
@@ -532,6 +533,30 @@ def test_http_bounds_concurrent_requests(
         for _ in range(MAX_CONCURRENT_REQUESTS):
             server.slots.release()
     assert _post(server, _INITIALIZE).status_code == 200
+
+
+def test_idle_connections_cannot_pile_up_threads(
+    listener: tuple[McpHttpServer, _FakeEngine],
+) -> None:
+    """The slot is taken at accept: 32 idle sockets start at most 16 threads."""
+    server, _ = listener
+    before = threading.active_count()
+    sockets = [
+        socket.create_connection(("127.0.0.1", server.server_address[1]))
+        for _ in range(2 * MAX_CONCURRENT_REQUESTS)
+    ]
+    try:
+        deadline = time.monotonic() + 5
+        refused = 0
+        for raw in sockets[MAX_CONCURRENT_REQUESTS:]:
+            raw.settimeout(max(deadline - time.monotonic(), 0.1))
+            if raw.recv(64).startswith(b"HTTP/1.1 503"):
+                refused += 1
+        assert refused == MAX_CONCURRENT_REQUESTS
+        assert threading.active_count() - before <= MAX_CONCURRENT_REQUESTS
+    finally:
+        for raw in sockets:
+            raw.close()
 
 
 def test_http_a_stalled_body_frees_its_slot(
