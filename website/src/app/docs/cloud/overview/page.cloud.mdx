@@ -30,7 +30,7 @@ remember.dev you do none of it.
 |---|---|---|
 | Database | Run PostgreSQL 19 with the `pgvector`, `pg_partman` and `pg_textsearch` extensions, size it, keep it healthy | One PostgreSQL instance per project, provisioned and run for you |
 | Pipeline | Run the API plus a worker for every pipeline stage (conversion, structuring, chunking, embedding, claim extraction, relation labelling, adjudication and the rest) and the projection process, and restart them when they fail | The API, the workers and projections run on remember.dev hosts |
-| Object storage | Run MinIO or another S3 store for source files and derived artifacts | Per-project buckets on remember.dev storage |
+| Object storage | Run SeaweedFS or another S3 store for source files and derived artifacts | Per-project buckets on remember.dev storage |
 | Model access | Hold model provider keys, pick models, watch provider spend | remember.dev supplies model access through OpenRouter, with a separate provider key for each project |
 | Endpoint and TLS | Put the API behind a hostname, get certificates, renew them | Each project gets `https://<deployment-id>.dp.remember.dev` with certificates issued and renewed for you |
 | Authentication | Configure bearer tokens or signing keys on the engine | Mint and revoke tokens in the console; the deployment verifies them |

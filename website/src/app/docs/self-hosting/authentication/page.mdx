@@ -20,10 +20,11 @@ every operation. Nothing is logged about who they were.
 
 That is acceptable only when nobody else can reach the port. Note that
 `compose.yaml` publishes the API (`${REMEMBERSTACK_SELFHOST_API_PORT}:8000`)
-and the MinIO console (`9001:9001`) on **all** network interfaces of the
-host. On a laptop on a shared Wi-Fi network, a colleague can reach both.
+on **all** network interfaces of the host. On a laptop on a shared Wi-Fi
+network, a colleague can reach it. (The object store publishes no host
+port.)
 
-To publish them on the loopback interface only, add to
+To publish the API on the loopback interface only, add to
 `compose.override.yaml` (Compose 2.24.4 or later, for the `!override` tag):
 
 ```yaml
@@ -31,9 +32,6 @@ services:
   api:
     ports: !override
       - "127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
-  minio:
-    ports: !override
-      - "127.0.0.1:9001:9001"
 ```
 
 Do this and set a token before the machine is reachable by anyone else.

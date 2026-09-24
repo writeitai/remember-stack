@@ -145,7 +145,7 @@ Deep dive: [Retrieval](https://remember.dev/docs/concepts/retrieval)
 ## Quick start
 
 ```bash
-# 1. Run the self-hosted engine (Postgres 19 + MinIO + workers)
+# 1. Run the self-hosted engine (Postgres 19 + SeaweedFS + workers)
 cp .env.example .env
 docker compose up -d
 

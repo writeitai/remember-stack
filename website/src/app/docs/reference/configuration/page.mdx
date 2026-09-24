@@ -97,9 +97,9 @@ Read by `compose.yaml` from `.env`, not by the engine.
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
-| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://minio:9000`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also MinIO's root user. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also MinIO's root password. |
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://object-store:8333`) | S3-compatible endpoint. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
