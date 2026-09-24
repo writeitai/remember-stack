@@ -33,7 +33,12 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
-EXPECTED_VOLUMES = ("postgres-data", "object-store-data", "app-state", "forget-manifests")
+EXPECTED_VOLUMES = (
+    "postgres-data",
+    "object-store-data",
+    "app-state",
+    "forget-manifests",
+)
 RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
