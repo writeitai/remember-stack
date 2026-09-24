@@ -15,7 +15,8 @@ credential-file conversion, no acceptance of the old `scope` claim.
 3. **Perimeter.** Replace the signed-token claim contract with the per-kind
    claim sets (`aud`, `org`, `projects`, `permissions`, `kind`), URL-fetched
    key set, and the signed, sequenced revocation document with `active_kids`;
-   delete the inline key set, the plain revocation list and the `umc_dp_`
+   `src` required by the issuer on derived `session` credentials only (the
+   engine accepts it as optional); delete the inline key set, the plain revocation list and the `umc_dp_`
    special case (any letters-only prefix is stripped); add the persisted perimeter-state row.
 4. **Client resolver and login.** One `resolve_connection()` for SDK and CLI;
    delete the old variable names, `CloudClient` and credential file version 1;

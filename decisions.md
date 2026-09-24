@@ -6255,7 +6255,8 @@ chose between deployment and control tokens against a hard-coded
    with `exp = iat + S`, and whose `active_kids` list retires signing-key
    generations. Without a fresh accepted document (at first start, or once
    it is older than S) every signed credential is refused; a revoked key
-   stops working within S plus clock leeway.
+   stops working by r + S + leeway. S is one hour (R = 60 s), so a short
+   account-service outage does not take every data plane down.
    The `service` credential kind (`dpcred:` subject) remains part of the
    generic contract. The perimeter enforces per-key and per-deployment rate
    and in-flight limits on the direct path (`429` with `Retry-After`),

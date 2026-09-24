@@ -389,7 +389,7 @@ adapter (`HashedBearerAuth`) is unchanged, and the composite
 | `API_SIGNING_KEYS_URL` | Where the JWKS is fetched. Ed25519 public keys only, as today. |
 | `API_REVOCATION_URL` | Where the signed revocation document (§7.5) is fetched. |
 | `API_KEY_REFRESH_S` | R: refresh interval for both fetches (starting value 60). |
-| `API_REVOCATION_MAX_AGE_S` | S: the maximum age of an accepted revocation document (starting value 300). |
+| `API_REVOCATION_MAX_AGE_S` | S: the maximum age of an accepted revocation document (starting value 3600 = 1 hour). |
 
 Numbers here and in §7.6 are starting points to be measured, not constants.
 The inline JWKS setting and the plain revoked-id list are removed.
@@ -416,15 +416,16 @@ The inline JWKS setting and the plain revoked-id list are removed.
 | `kind` | Required claims | `aud` must equal | `projects` must be | `org` must equal | `sub` |
 | --- | --- | --- | --- | --- | --- |
 | `key` | `iss, aud, sub, org, projects, permissions, kind, iat, nbf, exp, jti` | `org:<API_KEY_TENANT_ID>` | `"org:*"`, or a list of 1–20 project ids containing `API_KEY_PROJECT_ID` | `API_KEY_TENANT_ID` | the person's id |
-| `session` (derived and browser credentials) | `iss, aud, sub, org, projects, permissions, kind, iat, nbf, exp, jti, src` | this deployment's id | exactly `[API_KEY_PROJECT_ID]` | `API_KEY_TENANT_ID` | the person's id |
+| `session` (derived and browser credentials) | `iss, aud, sub, org, projects, permissions, kind, iat, nbf, exp, jti`; plus `src` on derived credentials only | this deployment's id | exactly `[API_KEY_PROJECT_ID]` | `API_KEY_TENANT_ID` | the person's id |
 | `service` (generic machine credential) | `iss, aud, sub, permissions, kind, iat, nbf, exp, jti` | this deployment's id | — | — | exactly `dpcred:<jti>` |
 
   Anything else is refused with `401`: an `aud` of any other value (for
   example `https://remember.dev/mcp`, an OAuth token meant for the hosted MCP
   server), a list longer than 20, an empty list, another string in
-  `projects`, a missing claim, or a claim of the wrong type. `src` (where a
-  derived credential came from, e.g. `mcp` or `browser`) is recorded in the
-  audit context and never decides authority. `"org:*"` lets one key cover
+  `projects`, a missing claim, or a claim of the wrong type. `src` (which
+  host derived the credential, e.g. `mcp`) is required on credentials an issuer
+  derives from a key for its own calls and absent on browser sessions; when
+  present it is recorded in the audit context, and it never decides authority. `"org:*"` lets one key cover
   projects created after it was minted; the engine compares two opaque
   strings and learns nothing else about organisations.
 
@@ -507,11 +508,15 @@ longer fresh (including one loaded from the spine at start-up that is already
 stale), and logs a structured error each time. Only the shared-secret bearer
 is unaffected. There is no exemption for short-lived credentials: one rule is
 simpler to verify and cannot be gamed by a credential's own `exp`. A key
-revoked at time *r* therefore stops working at this deployment by **r + S**
-(plus the 30 s clock leeway) whatever happens to fetches: either a document
+revoked at time *r* therefore stops working at this deployment by **r + S + leeway**
+(leeway = the 30 s clock tolerance) whatever happens to fetches: either a document
 listing it arrives sooner, or the last document without it was issued before
 *r* and stops being fresh by *r + S*, after which nothing signed is accepted
 until a newer document arrives.
+
+S is one hour (R stays 60 s): a short account-service outage must not take
+every data plane down, and an hour is the accepted ceiling on how long a
+revoked key can outlive its revocation.
 
 **Key rotation.** Retiring a signing-key generation is done only by removing
 its `kid` from `active_kids`: every credential signed by it is refused from
@@ -794,6 +799,8 @@ Perimeter (`signed_token_auth.py`):
 - wrong `iss`, missing `permissions`/`kind`, unknown `kind`, `service` with a
   foreign `sub` → refused;
 - the §7.2 table, row by row: each kind accepted with its exact claim set;
+  a `session` accepted both with `src` (derived) and without it (browser),
+  with `src` recorded in the audit context when present;
   refused for a missing claim, `aud = https://remember.dev/mcp`, a key `aud`
   naming another tenant, a `session` `aud` naming another deployment,
   `projects` of 21 ids, an empty list, a list without this project, a string
