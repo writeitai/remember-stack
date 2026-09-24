@@ -110,6 +110,8 @@ If you changed the port, tell the client:
 export REMEMBER_API_URL=http://localhost:8080
 ```
 
+<Cloud>
+
 A second cause looks different: ingest works, but the document never shows
 up on your deployment. With no `REMEMBER_API_URL` in the environment, the
 `remember` CLI uses the credentials that `remember login` stored, and
@@ -118,6 +120,8 @@ stored credentials does it fall back to `http://127.0.0.1:8000`. The
 `--self-hosted` flag on `remember ingest` and `remember query` does not
 change this. Set `REMEMBER_API_URL` in every shell and agent configuration
 that should reach your own deployment.
+
+</Cloud>
 
 `remember doctor` prints the address it checks and whether the API
 answered:
@@ -468,5 +472,9 @@ Collect:
 `last_error` tracebacks and logs can quote text from your documents.
 Read them before you share them. See [Contributing](/docs/project/contributing).
 
+<Cloud>
+
 On remember.dev you do none of this: the pipeline is operated for you, and
 you send the `version_id` or request details to [Support](/docs/cloud/support).
+
+</Cloud>

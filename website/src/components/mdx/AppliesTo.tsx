@@ -1,5 +1,12 @@
-/** Badge under a page title saying whether the page applies to remember.dev, self-hosted, or both. */
+import { docsCloud } from "@/lib/docs/cloud";
+
+/**
+ * Badge under a page title saying whether the page applies to remember.dev,
+ * self-hosted, or both. The public build documents only the self-hosted
+ * product, so there the badge says nothing and is not rendered.
+ */
 export function AppliesTo({ products }: { products: string[] }) {
+  if (!docsCloud) return null;
   const label = (product: string) =>
     product === "self-hosted" ? "Self-hosted" : product;
   return (

@@ -3,6 +3,7 @@ import type { AnchorHTMLAttributes, HTMLAttributes } from "react";
 import Link from "next/link";
 import { AppliesTo } from "@/components/mdx/AppliesTo";
 import { Callout } from "@/components/mdx/Callout";
+import { Cloud } from "@/components/mdx/Cloud";
 import { Tab, Tabs } from "@/components/mdx/Tabs";
 
 // Route internal links through next/link so they navigate client-side and pick
@@ -71,6 +72,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
     LeadBlock: MdxLeadBlock,
     AppliesTo,
     Callout,
+    Cloud,
     Tabs,
     Tab,
   };

@@ -115,8 +115,13 @@ The check reads state; it never starts or speeds up work.
   converters](/docs/self-hosting/converters).
 - On a self-hosted deployment, the operator can inspect and replay
   dead-lettered work. See [Operating the pipeline](/docs/self-hosting/operating).
-- On remember.dev, report the `version_id` and the last `stages` list to
-  [support](/docs/cloud/support).
+
+<Cloud>
+
+On remember.dev, report the `version_id` and the last `stages` list to
+[support](/docs/cloud/support).
+
+</Cloud>
 
 Re-sending the same bytes does not restart a failed version: identical
 bytes are a no-op.

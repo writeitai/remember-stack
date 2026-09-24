@@ -3,6 +3,10 @@
 The sidebar order in website/src/lib/docs/navigation.ts decides the order.
 Run without arguments to write the files; run with --check to fail when they
 are out of date (the docs workflow does this).
+
+The committed files are the public build's. --cloud renders the cloud build's
+instead (`DOCS_CLOUD=1`): hosted-service pages (`page.cloud.mdx`), `<Cloud>`
+passages and cloud tabs included. Do not commit its output.
 """
 
 from __future__ import annotations
@@ -23,15 +27,38 @@ SUMMARY = (
     "> RememberStack is an open-source memory engine for AI agents. It keeps what each "
     "source said (claims), what is held true now (facts), when it was true, and the "
     "passage every answer came from. `remember` is its Python client, CLI and MCP server "
-    "(`pip install remember`). remember.dev runs RememberStack for you, one isolated "
-    "deployment per project."
+    "(`pip install remember`)."
 )
+CLOUD_SUMMARY = " remember.dev runs RememberStack for you, one isolated deployment per project."
 AGENT_NOTE = (
     "Agents: resolve entities first (`resolve_entity`), then ask for facts "
     "(`facts_context`, with `time` for history), then claims and sources "
     "(`claims_and_sources_context`), then SQL queries over the query space. When the "
     "memory reports it knows nothing, say so; do not guess."
 )
+
+
+_CLOUD_BLOCK = re.compile(r"<Cloud>.*?</Cloud>\n?", re.S)
+_CLOUD_TAB = re.compile(r"^<Tab cloud [^>]*>\n.*?^</Tab>\n\s*", re.S | re.M)
+_SINGLE_TAB = re.compile(
+    r"^<Tabs>\n\s*<Tab [^>]*>\n((?:(?!^</Tab>).)*)^</Tab>\n\s*</Tabs>\n", re.S | re.M
+)
+
+
+def select_variant(*, text: str, cloud: bool) -> str:
+    """Resolve the build switch in MDX source, as the site components do.
+
+    The cloud build keeps `<Cloud>` passages and cloud tabs. The public build
+    drops them, unwraps a tab group left with one tab, and drops the AppliesTo
+    badge (it would only ever say self-hosted).
+    """
+    if cloud:
+        text = re.sub(r"</?Cloud>", "", text)
+        return re.sub(r"^<Tab cloud ", "<Tab ", text, flags=re.M)
+    text = _CLOUD_BLOCK.sub("", text)
+    text = _CLOUD_TAB.sub("", text)
+    text = _SINGLE_TAB.sub(r"\1", text)
+    return re.sub(r"^<AppliesTo [^\n]*/>\n", "", text, flags=re.M)
 
 
 def navigation() -> list[tuple[str, list[tuple[str, str]]]]:
@@ -46,7 +73,8 @@ def navigation() -> list[tuple[str, list[tuple[str, str]]]]:
         items = [
             (json.loads(title), href)
             for title, href in re.findall(
-                r"\{ title: (\"[^\"]+\"), href: \"([^\"]+)\" \}", block.group(2)
+                r"\{ title: (\"[^\"]+\"), href: \"([^\"]+)\" \}",
+                block.group(2),
             )
         ]
         sections.append((json.loads(block.group(1)), items))
@@ -54,8 +82,10 @@ def navigation() -> list[tuple[str, list[tuple[str, str]]]]:
 
 
 def page_path(*, href: str) -> Path:
-    """Map a /docs route to its page.mdx."""
-    return DOCS_DIR / href.removeprefix("/docs").lstrip("/") / "page.mdx"
+    """Map a /docs route to its page.mdx, or page.cloud.mdx for a cloud page."""
+    folder = DOCS_DIR / href.removeprefix("/docs").lstrip("/")
+    page = folder / "page.mdx"
+    return page if page.exists() else folder / "page.cloud.mdx"
 
 
 def metadata(*, text: str) -> tuple[str, str]:
@@ -66,8 +96,9 @@ def metadata(*, text: str) -> tuple[str, str]:
     return json.loads(title.group(1)), json.loads(description.group(1))
 
 
-def to_markdown(*, text: str) -> str:
+def to_markdown(*, text: str, cloud: bool) -> str:
     """Strip MDX specifics so the page reads as plain Markdown."""
+    text = select_variant(text=text, cloud=cloud)
     body = re.sub(r"^export const metadata = \{.*?\};\n", "", text, count=1, flags=re.S)
     body = re.sub(
         r"<AppliesTo products=\{\[(.*?)\]\} />",
@@ -100,17 +131,29 @@ def to_markdown(*, text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", body).strip() + "\n"
 
 
-def render() -> tuple[str, str]:
+def render(*, cloud: bool) -> tuple[str, str]:
     """Build the contents of llms.txt and llms-full.txt."""
-    index = ["# RememberStack and remember.dev", "", SUMMARY, "", AGENT_NOTE, ""]
-    full = ["# RememberStack and remember.dev: full documentation", "", SUMMARY, ""]
+    name = "RememberStack and remember.dev" if cloud else "RememberStack"
+    summary = SUMMARY + CLOUD_SUMMARY if cloud else SUMMARY
+    index = [f"# {name}", "", summary, "", AGENT_NOTE, ""]
+    full = [f"# {name}: full documentation", "", summary, ""]
     for section, items in navigation():
+        pages = [(href, page_path(href=href)) for _, href in items]
+        pages = [(href, page) for href, page in pages if cloud or page.name == "page.mdx"]
+        if not pages:
+            continue
         index += [f"## {section}", ""]
-        for _, href in items:
-            text = page_path(href=href).read_text(encoding="utf-8")
+        for href, page in pages:
+            text = page.read_text(encoding="utf-8")
             title, description = metadata(text=text)
             index.append(f"- [{title}]({SITE}{href}): {description}")
-            full += ["---", "", f"Source: {SITE}{href}", "", to_markdown(text=text)]
+            full += [
+                "---",
+                "",
+                f"Source: {SITE}{href}",
+                "",
+                to_markdown(text=text, cloud=cloud),
+            ]
         index.append("")
     return "\n".join(index), "\n".join(full)
 
@@ -121,8 +164,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="fail if the files are stale"
     )
+    parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="render the cloud build's files (DOCS_CLOUD=1); do not commit them",
+    )
     args = parser.parse_args(argv)
-    outputs = dict(zip(("llms.txt", "llms-full.txt"), render(), strict=True))
+    outputs = dict(
+        zip(("llms.txt", "llms-full.txt"), render(cloud=args.cloud), strict=True)
+    )
     stale = (
         [
             name

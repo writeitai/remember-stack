@@ -24,7 +24,7 @@ agent's questions with facts it can trace back to the source. It knows what
 is true now and what was true a month ago.
 
 *RememberStack is the open-source memory engine. `remember` is its Python
-client and CLI. remember.dev runs RememberStack for you.*
+client and CLI.<Cloud> remember.dev runs RememberStack for you.</Cloud>*
 
 New to memory systems? Start with
 [What is a memory system?](/docs/start/what-is-a-memory-system), written for
@@ -88,19 +88,24 @@ relevant exists.
 RememberStack still uses vector search, as one signal among several. The
 others are keyword search, the graph of how entities relate, and time.
 
-## Two ways to run it
+## Where it runs
 
-**remember.dev** runs RememberStack for you. Each project gets its own
+RememberStack is open source under Apache-2.0 and runs on your own
+infrastructure. Everything it does with your documents is in the public
+repository. [Requirements](/docs/self-hosting/requirements) says what it
+needs.
+
+<Cloud>
+
+**remember.dev** runs the same engine for you. Each project gets its own
 isolated deployment with its own database, storage and HTTPS endpoint. You
 install the client and start sending documents. Reading from memory is not
-charged.
-
-**Self-hosted** means you run the same engine on your own infrastructure.
-It is open source under Apache-2.0. Everything RememberStack does with your
-documents is in the public repository, nothing is held back for the managed
-service, and nothing about how memory works changes between the two.
+charged. Nothing is held back for the managed service, and nothing about how
+memory works changes between the two.
 
 [Compare remember.dev and self-hosted](/docs/start/choose)
+
+</Cloud>
 
 ## Start here
 

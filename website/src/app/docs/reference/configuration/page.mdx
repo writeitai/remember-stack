@@ -11,9 +11,9 @@ This page lists every environment variable that RememberStack's engine and
 the `remember` package read. [Configuration](/docs/self-hosting/configuration)
 explains how they reach the containers.
 
-The **Client** section applies to both remember.dev and self-hosted: those
-variables are read by the `remember` CLI, Python client and MCP server on
-your own machine. Every other section applies to a self-hosted engine.
+The variables in **Client** are read by the `remember` CLI, Python client and
+MCP server on your own machine<Cloud>, and apply to both remember.dev and
+self-hosted</Cloud>. Every other section applies to a self-hosted engine.
 
 The **Compose** column says how the shipped `compose.yaml` treats each
 engine variable:
@@ -29,7 +29,11 @@ unset for optional settings.
 
 ## Client
 
+<Cloud>
+
 Applies to remember.dev and self-hosted.
+
+</Cloud>
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
@@ -37,15 +41,24 @@ Applies to remember.dev and self-hosted.
 | `REMEMBER_API_KEY` | unset | secret | The deployment token, raw or as `Bearer …`. Also read as `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION` and `REMEMBERSTACK_API_AUTHORIZATION`, in that order. The CLI prefers `REMEMBER_TOKEN`. |
 | `REMEMBERSTACK_API_TIMEOUT_SECONDS` | `30.0` | float > 0 | HTTP timeout of the client, in seconds. |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where the CLI keeps `credentials.json`. Also read as `REMEMBERSTACK_CONFIG_DIR`. |
-| `REMEMBER_TOKEN_HOST` | unset | URL | Token host for `remember login`. Also read as `REMEMBER_CONTROL_PLANE_URL` (checked first) and `REMEMBERSTACK_TOKEN_HOST`. |
 | `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
 | `APPDATA` | unset | path | Windows base for agent configuration that `remember setup` writes. |
+
+<Cloud>
+
+These are read only by the commands that talk to remember.dev:
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBER_TOKEN_HOST` | unset | URL | Token host for `remember login`. Also read as `REMEMBER_CONTROL_PLANE_URL` (checked first) and `REMEMBERSTACK_TOKEN_HOST`. |
 | `REMEMBER_CLOUD_TOKEN` | unset | secret | remember.dev only: account token for `remember-status` and the account client. |
 | `REMEMBER_CLOUD_ORG` | unset | UUID | remember.dev only: organisation for those commands. |
 | `REMEMBER_CLOUD_URL` | `https://remember.dev/app/api` | URL | remember.dev only: account API address. |
+
+</Cloud>
 
 ## Compose file only
 
@@ -102,9 +115,11 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
 | `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | unset | JWKS JSON | — | Ed25519 public keys that verify signed tokens. |
 | `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | unset | comma-separated strings | — | `jti` values refused despite a valid signature. |
-| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Used by remember.dev; leave unset. Refuses to start without a bind or signing keys and a spend lease URL. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Leave unset. Refuses to start without a bind or signing keys and a spend lease URL. |
 
 See [Authentication and scopes](/docs/self-hosting/authentication).
+
+<Cloud>
 
 ## Spend and metering
 
@@ -122,6 +137,8 @@ without the rest stops the API at start.
 | `REMEMBERSTACK_SELFHOST_REQUIRE_METERING` | `false` | bool | passed | Refuse to start without complete metering settings. |
 | `REMEMBERSTACK_SELFHOST_METER_RECEIPT_TIMEOUT_S` | `10.0` | float, max 60 | — | Receipt request timeout. |
 | `REMEMBERSTACK_SELFHOST_METER_RECEIPT_POLL_S` | `2.0` | float, max 300 | — | Receipt worker poll interval. |
+
+</Cloud>
 
 ## Pools and workers
 

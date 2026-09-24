@@ -64,11 +64,44 @@ The static site is written to `website/out/`. Preview that production build (wit
 a working search index) via `npm run preview`. `npm run typecheck` runs `tsc
 --noEmit` — run it after a build, since it depends on Next's generated types.
 
+## Hosted-service pages: the `DOCS_CLOUD` switch
+
+The public build documents open-source RememberStack and the `remember`
+client only. Pages and passages about the remember.dev hosted service stay in
+the repository but are left out unless the build runs with `DOCS_CLOUD=1`:
+
+| Source | Public build (default) | `DOCS_CLOUD=1` |
+|---|---|---|
+| A `page.cloud.mdx` page | Not a route (`next.config.ts` adds the `cloud.mdx` page extension only when the switch is on) | Route |
+| `<Cloud>…</Cloud>` in a page | Renders nothing | Rendered |
+| `<Tab cloud label="remember.dev">` | Dropped; a tab group left with one tab renders as plain content | Tab |
+| `<AppliesTo … />` | Not rendered | Badge |
+| Navigation entries inside `...(process.env.DOCS_CLOUD === "1" ? [...] : [])` | Not in the sidebar, pagination or JavaScript bundle | Listed |
+
+```bash
+DOCS_CLOUD=1 npm run dev     # or: DOCS_CLOUD=1 npm run build
+```
+
+`scripts/check_docs_truth.py` and `scripts/generate_docs_llms.py` check and
+render the public build; pass `--cloud` for the cloud build. The committed
+`public/llms*.txt` are the public build's, so do not commit the output of
+`generate_docs_llms.py --cloud`. Pagefind indexes the exported HTML, so search
+follows the build. CI builds both variants and deploys the public one.
+
+Writing a page, keep the public text complete without the hosted-service
+parts: a `<Cloud>` passage adds to the page, and the text around it must read
+naturally when it is gone. Public pages never link to a `page.cloud.mdx`
+route outside `<Cloud>`; `check_docs_truth.py` reports such links as broken.
+A `page.cloud.mdx` goes in `navigation.ts` only inside such a `DOCS_CLOUD`
+branch; the same script checks that.
+
 ## Add or edit a page
 
 1. Create `src/app/docs/<section>/<page>/page.mdx`. Start it with an exported
    `metadata` object (`title`, `description`), then one `#` H1, then
    `<AppliesTo products={["remember.dev", "self-hosted"]} />` (either or both).
+   A page only about the hosted service is `page.cloud.mdx` (see
+   [the switch](#hosted-service-pages-the-docs_cloud-switch)).
    Use `##`/`###` headings; they populate "On this page".
 2. Add the page to `src/lib/docs/navigation.ts`, the single source of truth for
    the sidebar order and prev/next pagination.
@@ -76,16 +109,18 @@ a working search index) via `npm run preview`. `npm run typecheck` runs `tsc
    and `public/llms-full.txt` (CI fails when they are stale), and
    `python ../scripts/check_docs_truth.py`.
 
-Sections: `start/`, `concepts/`, `guides/`, `cloud/` (remember.dev only),
+Sections: `start/`, `concepts/`, `guides/`, `cloud/` (remember.dev only, all `page.cloud.mdx`),
 `self-hosting/`, `reference/` (including `reference/http-api/`), `project/`.
 `/docs` itself is the home page.
 
 ### Components
 
 - `<AppliesTo products={[...]} />` under every H1.
-- `<Tabs>` with `<Tab label="remember.dev">` first, then `<Tab label="Self-hosted">`,
+- `<Tabs>` with `<Tab cloud label="remember.dev">` first, then `<Tab label="Self-hosted">`,
   only where the two genuinely differ (endpoint, token, starting the engine).
   Leave a blank line after each opening tag and before each closing tag.
+- `<Cloud>` around hosted-service passages, with blank lines inside the tags
+  for block content, or inline around a clause.
 - `<Callout type="note">` or `<Callout type="warning" title="...">`.
 - `<LeadBlock><Lead>…</Lead></LeadBlock>` for the mission statement.
 - MDX treats `{`, `}` and `<` in prose as code: write `\{`, `\}` and `&lt;`

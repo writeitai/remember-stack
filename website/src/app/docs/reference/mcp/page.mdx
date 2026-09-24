@@ -1,23 +1,27 @@
 export const metadata = {
   title: "MCP tools",
-  description: "The remember mcp server and the hosted remember.dev MCP server, every tool with its parameters, results and errors.",
+  description: "The MCP servers that give an agent access to memory: every tool with its parameters, results and errors.",
 };
 
 # MCP tools
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-MCP (Model Context Protocol) is how coding agents call external tools. There
-are two MCP servers that give an agent access to your memory:
+MCP (Model Context Protocol) is how coding agents call external tools.
+**`remember mcp`** gives an agent access to your memory. It is part of the
+`remember` package, runs on your machine next to the agent, and talks to one
+deployment<Cloud>: a self-hosted engine or a remember.dev project</Cloud>.
 
-- **`remember mcp`**, a server that runs on your machine next to the agent.
-  It is part of the `remember` package and talks to one deployment: a
-  self-hosted engine or a remember.dev project.
-- **The hosted server** at `https://remember.dev/app/api/mcp`. remember.dev
-  runs it; the agent signs in through the browser.
+<Cloud>
 
-The tables in [Side by side](#side-by-side) show how the two differ. How to
-connect an agent step by step: [Connect your coding agent](/docs/start/connect-your-agent).
+remember.dev also runs a hosted server, at `https://remember.dev/app/api/mcp`;
+the agent signs in through the browser. The tables in
+[Side by side](#side-by-side) show how the two differ.
+
+</Cloud>
+
+How to connect an agent step by step:
+[Connect your coding agent](/docs/start/connect-your-agent).
 
 ## `remember mcp`
 
@@ -28,8 +32,8 @@ remember mcp [--read-only] [--api-url URL] [--token TOKEN]
 The server reads JSON-RPC 2.0 messages from standard input, one per line,
 and writes one response per line to standard output. It finds the
 deployment and token the same way as every other `remember` command: flags,
-then environment variables, then the credential file that `remember login`
-writes. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
+then environment variables, then the credential file<Cloud> that `remember login`
+writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
 `delete_document`, and refuses calls to them. `pipeline_readiness` only
@@ -155,8 +159,8 @@ read until an operator adds a route if needed and runs
 instead of polling readiness.
 
 The server does not check body size itself. The deployment refuses a body
-over its limit, and the tool returns `body_too_large`. remember.dev's limit is
-in [Limits](/docs/cloud/limits).
+over its limit, and the tool returns `body_too_large`.<Cloud> remember.dev's limit is
+in [Limits](/docs/cloud/limits).</Cloud>
 
 #### Ingest from a path
 
@@ -354,9 +358,9 @@ the agent what to do next.
 | `path_not_regular_file` | 400 | no | Directory, pipe, device or other special file. | Point at a regular file. |
 | `path_too_large` | 413 | no | Larger than the read limit. | Split the file or raise the limit. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. | Split or shorten the document. |
-| `spend_safety` | as sent, else 403 | no | remember.dev refused the work to stay within a spend cap. | Tell the user; do not retry. |
+| `spend_safety` | as sent, else 403 | no | The deployment refused the work to stay within a spend cap. | Tell the user; do not retry. |
 | `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). | Tell the user; do not retry. |
-| `dispatch_parked` | 423 | no | The work is parked until someone acts (for example a purchase). | Stop retrying; notify a person. |
+| `dispatch_parked` | 423 | no | The work is parked until someone acts. | Stop retrying; notify a person. |
 | `unauthorized` | 401 | no | The token is missing, wrong or revoked. | Replace the token. |
 | `forbidden` | 403 | no | The token may not do this. | Use a token for this deployment with the right scope. |
 | `transport_error` | 0 | yes | No answer from the deployment. | Retry with back-off; check the address and network. |
@@ -536,6 +540,8 @@ Do not collapse distinct temporal dimensions into a single generic date:
 `remember doctor` checks the Cursor, Antigravity, Codex and Claude Desktop
 files; see [CLI](/docs/reference/cli#remember-doctor).
 
+<Cloud>
+
 ## The hosted server on remember.dev
 
 ```text
@@ -605,3 +611,5 @@ remember.dev serves SQL queries over the query space to every project; the
 hosted MCP server does not expose the seven SQL query tools yet. Until it
 does, an agent that needs them can use `remember mcp` with the project's
 token.
+
+</Cloud>

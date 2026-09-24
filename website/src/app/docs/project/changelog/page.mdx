@@ -16,9 +16,13 @@ published as `rememberstack`.
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
 
+<Cloud>
+
 remember.dev may run an earlier engine than the newest release. Which one it
 runs today, and what that means for you, is on
 [What remember.dev serves](/docs/cloud/compatibility).
+
+</Cloud>
 
 ## 0.17.0 (22 September 2026)
 
@@ -40,8 +44,8 @@ claims. Start from an empty deployment and send your sources again; see
   `pydantic-settings`.
 - New client class `remember.Client` (also `remember.RememberClient`) with an
   `api_key` argument, `from_env()`, `ingest_file()` and path support in
-  `ingest()`. `remember.CloudClient` reads a remember.dev organisation's
-  deployment, balance, ledger and spend gate.
+  `ingest()`.<Cloud> `remember.CloudClient` reads a remember.dev organisation's
+  deployment, balance, ledger and spend gate.</Cloud>
 
 **Assured operations renamed.**
 
@@ -55,16 +59,21 @@ claims. Start from an empty deployment and send your sources again; see
 **CLI.**
 
 - New commands: `remember setup` (writes MCP configuration for Cursor,
-  Claude Code, Claude Desktop, Codex and Antigravity), `remember doctor`,
+  Claude Code, Claude Desktop, Codex and Antigravity), `remember doctor`<Cloud>,
   `remember whoami`, `remember switch`, `remember projects list`,
-  `remember balance`.
-- `remember login --control` signs in with an organisation control-plane
-  token. The credential file can now hold several projects and a
-  control-plane token.
+  `remember balance`</Cloud>.
 - `remember query "<question>"` is short for `remember query text`, which
   runs `facts_context` (or `combined_context` with `--combined`).
 - `remember query adjacent-chunks`.
 - `remember review` and `remember budget` are retired.
+
+<Cloud>
+
+- `remember login --control` signs in with an organisation control-plane
+  token. The credential file can now hold several projects and a
+  control-plane token.
+
+</Cloud>
 
 **Retrieval.**
 
@@ -93,12 +102,17 @@ claims. Start from an empty deployment and send your sources again; see
 
 ## 0.16.0 (2026-09-03)
 
-- `remember login` derives the deployment address that remember.dev
-  advertises, so you no longer pass `--api-url` after signing in.
 - A narrow ingest-only token scope for write access without read access.
 - The deployment publishes its OpenAPI schema.
 - **Behaviour change.** Dated events never merge across different dates.
 - Claim validity windows use half-open bounds (`[from, until)`).
+
+<Cloud>
+
+- `remember login` derives the deployment address that remember.dev
+  advertises, so you no longer pass `--api-url` after signing in.
+
+</Cloud>
 
 ## 0.15.0 (2026-09-03)
 
@@ -109,15 +123,27 @@ claims. Start from an empty deployment and send your sources again; see
 
 ## 0.14.0 (2026-09-02)
 
+Maintenance release.
+
+<Cloud>
+
 - Fixes `remember login`, which failed for a week when remember.dev added
   fields to its token response.
 - Stored credentials record their expiry; the CLI warns 30 days before a
   token expires.
 
+</Cloud>
+
 ## 0.13.0 (2026-09-01)
+
+Maintenance release.
+
+<Cloud>
 
 - Managed deployments report text ingest usage (the `meter-receipts`
   process).
+
+</Cloud>
 
 ## 0.12.0 (2026-09-01)
 
@@ -167,12 +193,17 @@ claims. Start from an empty deployment and send your sources again; see
 
 ## 0.4.0 to 0.4.3 (2026-08-13 to 2026-08-26)
 
-- `remember login` and `remember logout` (device sign-in).
 - Cost export for operators.
 - Claim and fact search runs in PostgreSQL (0.4.2).
 - `text/plain` passes through the stock converter routes (0.4.2).
 - The MCP server keeps its write tools when a deployment serves no
   operation list (0.4.1).
+
+<Cloud>
+
+- `remember login` and `remember logout` (device sign-in).
+
+</Cloud>
 
 ## 0.3.0 (2026-08-11)
 
