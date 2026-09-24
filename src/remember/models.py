@@ -385,11 +385,14 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
-    mime: str
+    # The engine always sets these three. They default to None only so this
+    # client still parses receipts from released engines that predate them
+    # (the client-vs-engine compatibility matrix).
+    mime: str | None = None
     """The MIME type recorded for these bytes, which conversion uses."""
-    title: str | None
+    title: str | None = None
     """The document's title. Set by the first ingest of the lineage."""
-    versioning_mode: Literal["snapshot", "living"]
+    versioning_mode: Literal["snapshot", "living"] | None = None
     """The lineage's versioning mode. Set by the first ingest of the lineage."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True

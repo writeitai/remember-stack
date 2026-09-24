@@ -1948,8 +1948,15 @@
             "type": "string"
           },
           "mime": {
-            "title": "Mime",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
           },
           "title": {
             "anyOf": [
@@ -1968,12 +1975,19 @@
             "type": "string"
           },
           "versioning_mode": {
-            "enum": [
-              "snapshot",
-              "living"
+            "anyOf": [
+              {
+                "enum": [
+                  "snapshot",
+                  "living"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Versioning Mode",
-            "type": "string"
+            "title": "Versioning Mode"
           }
         },
         "required": [
@@ -1981,10 +1995,7 @@
           "doc_id",
           "version_id",
           "content_hash",
-          "created",
-          "mime",
-          "title",
-          "versioning_mode"
+          "created"
         ],
         "title": "IngestedVersion",
         "type": "object"

@@ -13779,9 +13779,12 @@ Returned by `POST /ingest`.
 | `version_id` | UUID | The version; pass it to `POST /readiness`. |
 | `content_hash` | string | SHA-256 of the bytes, hex. |
 | `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
-| `mime` | string | The MIME type recorded for these bytes, which conversion uses. Set by the first upload of the bytes, unless that type had no converter route and a later upload sent one that has. |
+| `mime` | string, nullable | The MIME type recorded for these bytes, which conversion uses. Set by the first upload of the bytes, unless that type had no converter route and a later upload sent one that has. |
 | `title` | string, nullable | The document's title, set by its first ingest. |
-| `versioning_mode` | `snapshot` \| `living` | The document's versioning mode, set by its first ingest. |
+| `versioning_mode` | `snapshot` \| `living`, nullable | The document's versioning mode, set by its first ingest. |
+
+This release's engine always sets `mime`, `title` and `versioning_mode`; they
+are `null` only from an engine release that predates them.
 
 ## Readiness
 
