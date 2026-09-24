@@ -478,21 +478,47 @@ agent names the project per call, with the `project` tool argument) and
 
 ## Configuration that `remember setup` writes
 
-[`remember setup`](/docs/reference/cli#remember-setup) writes the files below. In each,
-`<launcher>` and `<args>` are one of:
+[`remember setup`](/docs/reference/cli#remember-setup) writes one `remember`
+entry per agent, in one of these shapes:
+
+| Shape | When | What the agent does |
+|---|---|---|
+| Stdio entry | A self-hosted engine | Starts `<launcher> <args>` with `REMEMBER_API_URL`; the server reads the key from the credential file. |
+| URL entry | `--mcp-url`, engine without a key, agent accepts URL entries | Connects to your `remember mcp --transport http` server. |
+| URL entry with key header | `--mcp-url` with `--api-key`, agent can refer to a variable in a header | Connects to that URL and sends `Authorization: Bearer` with the value of `REMEMBER_API_KEY` from its own environment. |
+
+<Cloud>
+
+For remember.dev (`--cloud`) the shapes are:
+
+| Shape | When | What the agent does |
+|---|---|---|
+| URL entry | Cursor, Claude Code, Codex | Connects to the issuer's MCP endpoint and signs you in through the browser. No secret is written. For Codex, run `codex mcp login remember` once. |
+| URL entry with key header | `--headless`: Cursor, Codex | Connects to the endpoint and sends `REMEMBER_API_KEY` from its environment as the bearer token. |
+| Stdio bridge | Claude Desktop, Antigravity, and Claude Code with `--headless` | Starts `<launcher> <args>` with `REMEMBER_MCP_URL` set to the endpoint: [bridge mode](#bridge-mode-remember-mcp-with-a-rememberdev-key). The key is read at run time from `REMEMBER_API_KEY` or the credential file. |
+
+</Cloud>
+
+Claude Code and Codex take URL entries only when their installed command
+line supports them (see [`remember setup`](/docs/reference/cli#remember-setup));
+otherwise they get the stdio entry. A key is never written into any of
+these files: a URL entry names the `REMEMBER_API_KEY` variable, never its
+value.
+
+In a stdio entry, `<launcher>` and `<args>` are one of:
 
 | Situation | `command` | `args` |
 |---|---|---|
 | A `remember` binary installed outside a virtual environment or cache | absolute path of `remember` | `["mcp"]` |
 | Otherwise, when `uvx` is installed | absolute path of `uvx` | `["remember", "mcp"]` |
 
-An `env` block is added only when there is an address to pin: with
-`--self-hosted` (default `http://127.0.0.1:8000`) or with `--api-url`. It holds
-exactly one variable, `REMEMBER_API_URL`. Keys are never written into these
-files; the server reads them from the credential file.
+A stdio entry's `env` block holds exactly one variable: `REMEMBER_API_URL`
+for a self-hosted engine (default `http://127.0.0.1:8000`)<Cloud>, or
+`REMEMBER_MCP_URL` for the remember.dev bridge</Cloud>.
 
 Existing files are merged: other servers and settings are kept, and the
-`remember` entry is replaced.
+`remember` entry is replaced. A file whose content would not change is not
+rewritten, and a rewritten file keeps its permissions.
 
 ### Cursor
 
@@ -511,6 +537,22 @@ Existing files are merged: other servers and settings are kept, and the
   }
 }
 ```
+
+A URL entry is `{ "url": "http://127.0.0.1:8765/mcp" }`. With a key header:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer ${env:REMEMBER_API_KEY}" }
+    }
+  }
+}
+```
+
+Cursor replaces `${env:REMEMBER_API_KEY}` with the variable's value when it
+connects.
 
 It also writes a rule file, `<project>/.cursor/rules/remember.mdc`,
 replacing any earlier version:
@@ -542,19 +584,23 @@ available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_co
 
 ### Claude Code
 
-`remember setup` runs Claude Code's own command:
+`remember setup` runs Claude Code's own command in the project directory,
+after removing any earlier `remember` entry with
+`claude mcp remove --scope local remember`:
 
 ```bash
-claude mcp add remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
 ```
 
-The `-e` part appears only when an address is pinned. Claude Code decides
-where it stores the entry. When `claude` is not on `PATH`, `remember setup`
-prints this command for you to run.
+A URL entry is added with
+`claude mcp add --scope local --transport http remember <url>`. Claude Code
+does not get the key-header shape; with a key it gets the stdio entry. When
+`claude` is not on `PATH`, `remember setup` prints the command for you to
+run.
 
 ### Claude Desktop
 
-The same JSON as for Cursor (the `mcpServers.remember` entry, no rule file),
+Always a stdio entry, as JSON like Cursor's (the `mcpServers.remember` entry, no rule file),
 merged into Claude Desktop's configuration file:
 
 | System | File |
@@ -578,14 +624,17 @@ args = ["mcp"]
 REMEMBER_API_URL = "http://127.0.0.1:8000"
 ```
 
+A URL entry is `url = "<url>"` in that table; with a key header it adds
+`bearer_token_env_var = "REMEMBER_API_KEY"`.
+
 Any earlier `[mcp_servers.remember]` and `[mcp_servers.remember.*]` tables
 are removed first; the rest of the file is kept. Codex loads a project's
 `.codex/config.toml` only when you trust the project in Codex.
 
 ### Antigravity
 
-`<project>/.agents/mcp_config.json`, with the same `mcpServers.remember`
-entry as Cursor, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
+`<project>/.agents/mcp_config.json`, always with a stdio
+`mcpServers.remember` entry like Cursor's, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
 replacing any earlier version:
 
 ```markdown

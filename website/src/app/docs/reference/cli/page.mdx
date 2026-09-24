@@ -368,37 +368,49 @@ and the errors are in [MCP tools](/docs/reference/mcp).
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted] [--api-url URL] [--api-key KEY]
+remember setup [--self-hosted] [--api-url URL] [--api-key KEY] [--mcp-url URL]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 
 <Cloud>
 
 ```text
-remember setup --cloud [--api-url URL]
+remember setup --cloud [--issuer URL] [--headless]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 
 </Cloud>
 
-Writes MCP configuration so your coding agents start `remember mcp`.
+Writes each coding agent's MCP entry for Remember.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--self-hosted` | | Configure for an engine at `--api-url`, default `http://127.0.0.1:8000`. |
-| `--api-url` | none | The engine address. It is written into the agent configuration as `REMEMBER_API_URL`. |
+| `--api-url` | none | The engine address. It implies `--self-hosted` and is written into stdio entries as `REMEMBER_API_URL`. |
 | `--api-key` | none | With `--self-hosted`: the engine's key, stored in the [credential file](#credential-file) and never written into agent configuration. |
+| `--mcp-url` | none | The URL of your own `remember mcp --transport http` server. It implies `--self-hosted`. Agents that accept a URL entry connect to it; the others get a stdio entry. |
 | `--agent` | `all` | Which agent to configure. `agy` is Antigravity; `claude` means Claude Code and Claude Desktop. |
 | `--dir` | current directory | The project directory for project-level configuration. |
-| `--dry-run` | off | Print what would change; write nothing. |
+| `--dry-run` | off | Print the entries it would write; write nothing. |
 
 <Cloud>
 
-`--cloud` configures for remember.dev; sign in with `remember login` first.
-It refuses `--api-key`: a remember.dev key comes from `remember login` or
-`REMEMBER_API_KEY`. With neither `--cloud` nor `--self-hosted`, on an
-interactive terminal, the command asks which backend to use; remember.dev is
-the default answer. When standard input is not a terminal, it chooses
+| Flag | Default | Meaning |
+|---|---|---|
+| `--cloud` | | Configure for remember.dev, or for the issuer given with `--issuer`. |
+| `--issuer` | `REMEMBER_ISSUER`, else `https://remember.dev` | The key issuer to use. |
+| `--headless` | on when `CI` is set | For machines without a browser: agents send the key from `REMEMBER_API_KEY` instead of signing in. |
+
+`--cloud` asks the issuer for its MCP endpoint (`remember_mcp_endpoint` in
+its metadata) and points each agent at it. With no stored key and no
+`REMEMBER_API_KEY`, it runs [`remember login`](#remember-login) first,
+except with `--headless` or `--dry-run`. Only a key minted by the selected
+issuer counts: a stored key from elsewhere (or a self-hosted entry) is
+replaced by that login, and a `REMEMBER_API_KEY` from elsewhere is refused. It refuses `--api-key`,
+`--api-url` and `--mcp-url`: a remember.dev key comes from `remember login`
+or `REMEMBER_API_KEY`. With neither `--cloud` nor a self-hosted flag, on an
+interactive terminal, the command asks which backend to use; remember.dev
+is the default answer. When standard input is not a terminal, it chooses
 `--cloud`.
 
 </Cloud>
@@ -410,14 +422,31 @@ What it does, in order:
    it uses `uvx remember mcp`. Paths are resolved to absolute paths so an
    editor started from a desktop launcher finds them. With neither
    `remember` nor `uvx` on `PATH` it exits with status 1.
-2. With `--self-hosted`, stores the engine address and key in the credential
-   file (see the warning below).
-3. Configures each agent. With `--agent all` it configures what it finds:
+2. Chooses the agents. With `--agent all` it configures what it finds:
    Cursor if `.cursor/` exists in the directory, Antigravity if `.agents/`
    exists, Codex if `.codex/` exists or `codex` is installed, Claude Code if
-   `claude` is on `PATH`, Claude Desktop if its configuration file exists
-   (or, on macOS, the app is installed). If it finds none, it configures
-   Cursor and Antigravity.
+   `claude` is on `PATH`, Claude Desktop if its configuration file or
+   directory exists (or, on macOS, the app is installed). If it finds none,
+   it configures Cursor and Antigravity.
+3. For a self-hosted engine, stores the engine address and key in the
+   credential file (see the warning below).
+4. Writes one entry per agent. For a self-hosted engine the entry starts
+   `remember mcp` with `REMEMBER_API_URL`. With `--mcp-url`, Cursor, Claude
+   Code and Codex get a URL entry instead; Claude Desktop and Antigravity
+   keep the stdio entry. A key, if any, is never written: a URL entry refers
+   to the `REMEMBER_API_KEY` variable, which you set in the agent's
+   environment.<Cloud> For remember.dev, Cursor, Claude Code and Codex get the
+   endpoint URL and sign you in through the browser (for Codex, run
+   `codex mcp login remember` once, as the command prints), and the other agents
+   start `remember mcp` as a bridge to that endpoint. With `--headless`,
+   Cursor and Codex send `REMEMBER_API_KEY` as the bearer token, and Claude
+   Code gets the bridge.</Cloud>
+
+Claude Code and Codex count as accepting URL entries only when their
+installed command line supports them: `claude mcp add --help` must list
+`--transport`, and `codex mcp add --help` must list
+`--bearer-token-env-var`. Otherwise they get the stdio entry, which works
+everywhere.
 
 The exact files and their content are listed in
 [MCP tools: configuration that `remember setup` writes](/docs/reference/mcp#configuration-that-remember-setup-writes).
@@ -431,8 +460,10 @@ refuses; run `remember logout` first.</Cloud>
 
 </Callout>
 
-Existing configuration files must be valid JSON or TOML; otherwise the
-command stops with status 1 and changes nothing in that file.
+Existing configuration files must be valid JSON or TOML and must not be
+symbolic links; otherwise that agent is not configured and the command exits with status 1. A failure in
+one agent does not stop the others. Running the command again with the same
+flags leaves the files unchanged.
 
 ```bash
 remember setup --self-hosted --agent cursor --dry-run
@@ -453,8 +484,9 @@ Checks your setup and prints one line per check:
    authenticated exactly as every other command.
 4. Agent configuration in the current directory: `.cursor/mcp.json`,
    `.agents/mcp_config.json`, `.codex/config.toml`, and Claude Desktop's
-   configuration file. For each it checks the file parses, contains a
-   `remember` server, and that server's command exists and is executable.
+   configuration file. For each it checks the file parses and contains a
+   `remember` server. For a stdio entry it checks the command exists and is
+   executable; for a URL entry it prints the URL.
 
 `[✓]` is a pass, `[-]` is informational, `[!]` is a failure. Exit status 1
 when any check fails.
