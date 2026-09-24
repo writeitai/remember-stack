@@ -82,6 +82,7 @@ src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py
 src/tests/surfaces/test_graph_http_api.py
+src/tests/surfaces/test_http_api_robustness.py
 src/tests/surfaces/test_login.py
 src/tests/surfaces/test_mcp_memory_tools.py
 src/tests/surfaces/test_openapi_export.py

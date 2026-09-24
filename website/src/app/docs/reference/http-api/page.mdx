@@ -213,7 +213,7 @@ do about it.
 | `404` | `Not Found` | Unknown path. |
 | `405` | `Method Not Allowed` | Known path, wrong method. |
 | `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
-| `500` | `Internal Server Error` | An unhandled failure. Report it. |
+| `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
 
 ### Spend refusals (remember.dev)
@@ -288,7 +288,7 @@ A deployment that meters processed text (remember.dev) also refuses a text
 document over 10,000,000 bytes with `413` `source_bytes_limit_exceeded`; see
 [Ingest](/docs/reference/http-api/ingest#errors).
 
-Other bounds are per route: search `k` up to 400, search query up to 4,096
+Other bounds are per route: search and lookup `k` up to 400, search query up to 4,096
 characters in the `POST` form, operation queries up to 8,192 characters, SQL
 text up to 65,536 bytes, and so on. Each group page lists them.
 

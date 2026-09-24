@@ -162,6 +162,11 @@ The command prints `{"released": [...]}` with the processing ids it
 released. It releases only work whose stored MIME type the current table
 covers; the rest stays parked. See [Operating the pipeline](/docs/self-hosting/operating).
 
+If the file was simply sent with the wrong type, send the same bytes again
+with a type that has a route (`--mime text/markdown` on the CLI,
+`mime="text/markdown"` in Python). The new type replaces the unrouted one
+and the parked conversion is released without an operator step.
+
 ## Not supported yet
 
 RememberStack does not ingest audio, video or web addresses yet. To add a

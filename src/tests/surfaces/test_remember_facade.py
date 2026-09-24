@@ -136,6 +136,9 @@ def test_client_ingest_string_path(tmp_path: Path) -> None:
                 "version_id": "22222222-2222-2222-2222-222222222222",
                 "content_hash": "sha256:abcd",
                 "created": True,
+                "mime": "text/markdown",
+                "title": None,
+                "versioning_mode": "snapshot",
             },
         )
 
@@ -166,6 +169,9 @@ def test_client_ingest_file_alias(tmp_path: Path) -> None:
                 "version_id": "22222222-2222-2222-2222-222222222222",
                 "content_hash": "sha256:abcd",
                 "created": True,
+                "mime": "text/markdown",
+                "title": None,
+                "versioning_mode": "snapshot",
             },
         )
 

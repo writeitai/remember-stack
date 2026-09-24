@@ -52,6 +52,9 @@ class _RecordingIngest:
             version_id=uuid4(),
             content_hash="0" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def ingest(
@@ -248,6 +251,9 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
                 version_id=uuid4(),
                 content_hash="0" * 64,
                 created=True,
+                mime="text/markdown",
+                title=None,
+                versioning_mode="snapshot",
             )
 
     legacy = _LegacyIngest()
@@ -272,6 +278,9 @@ def test_receipt_never_serializes_the_internal_admission_hint() -> None:
         version_id=uuid4(),
         content_hash="0" * 64,
         created=True,
+        mime="text/markdown",
+        title=None,
+        versioning_mode="snapshot",
         processing_admission="pending",
     )
     assert set(receipt.model_dump(mode="json")) == {
@@ -280,6 +289,9 @@ def test_receipt_never_serializes_the_internal_admission_hint() -> None:
         "version_id",
         "content_hash",
         "created",
+        "mime",
+        "title",
+        "versioning_mode",
         "parked",
     }
 

@@ -385,6 +385,15 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    # The engine always sets these three. They default to None only so this
+    # client still parses receipts from released engines that predate them
+    # (the client-vs-engine compatibility matrix).
+    mime: str | None = None
+    """The MIME type recorded for these bytes, which conversion uses."""
+    title: str | None = None
+    """The document's title. Set by the first ingest of the lineage."""
+    versioning_mode: Literal["snapshot", "living"] | None = None
+    """The lineage's versioning mode. Set by the first ingest of the lineage."""
     parked: Literal["no_route"] | None = None
     """``no_route`` when conversion is parked waiting for a route for this MIME type.
 
