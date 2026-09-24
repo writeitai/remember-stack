@@ -57,6 +57,12 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import INGEST_TOOL_NAME
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import OPERATION_TOOL_NAMES
+from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import tool
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
 from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
@@ -635,7 +641,18 @@ def build_api(
     if graph is not None:
         _mount_graph(app=app, graph=graph)
     if build_info is not None:
-        _mount_build_info(app=app, build_info=build_info, deployment_id=deployment_id)
+        _mount_build_info(
+            app=app,
+            build_info=build_info,
+            deployment_id=deployment_id,
+            tools=_served_tools(
+                operations=surface is not None,
+                open_query=open_query is not None,
+                ingest=ingest is not None,
+                pipeline_readiness=pipeline_readiness is not None,
+                deletion=deletion is not None,
+            ),
+        )
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
@@ -775,8 +792,40 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     )
 
 
+def _served_tools(
+    *,
+    operations: bool,
+    open_query: bool,
+    ingest: bool,
+    pipeline_readiness: bool,
+    deletion: bool,
+) -> dict[str, int]:
+    """Catalogue tool name → ``tool_version`` for every tool this API serves.
+
+    A tool is listed exactly when the route it calls is composed, so a host
+    renders only tools this deployment can answer, at the version it answers
+    them (D136 §3.4).
+    """
+    names: list[str] = []
+    if ingest:
+        names.append(INGEST_TOOL_NAME)
+    if pipeline_readiness:
+        names.append(PIPELINE_READINESS_TOOL_NAME)
+    if deletion:
+        names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if operations:
+        names.extend(OPERATION_TOOL_NAMES)
+    if open_query:
+        names.extend(OPEN_QUERY_TOOL_NAMES)
+    return {name: tool(name).tool_version for name in names}
+
+
 def _mount_build_info(
-    *, app: FastAPI, build_info: BuildInfoPort, deployment_id: UUID
+    *,
+    app: FastAPI,
+    build_info: BuildInfoPort,
+    deployment_id: UUID,
+    tools: dict[str, int],
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -790,12 +839,17 @@ def _mount_build_info(
     is the container's liveness probe rather than part of the query API, and it
     is marked `include_in_schema=False` so the published document does not
     offer it as one. Every *documented* route is composed here.
+
+    `tools` is decided by composition, not by the build-info port: which
+    catalogue tools this API serves is a fact about the routes mounted here.
     """
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
-        """Report which code and model bindings are serving, before any work."""
-        return build_info.build_info(deployment_id=deployment_id)
+        """Report which code, model bindings and tools are serving, before any work."""
+        return build_info.build_info(deployment_id=deployment_id).model_copy(
+            update={"tools": dict(tools)}
+        )
 
 
 @contextmanager

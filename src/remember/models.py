@@ -347,6 +347,9 @@ class DeploymentBuildInfo(BaseModel):
     build_revision: str = Field(default="")
     model_bindings: dict[str, str] = Field(default_factory=dict)
     document_binding_generation: str | None = Field(default=None)
+    # Catalogue tool name -> tool_version for every memory tool this deployment
+    # serves (D136). A host renders a tool only at an equal version.
+    tools: dict[str, int] = Field(default_factory=dict)
 
 
 class ConnectorCreate(BaseModel):

@@ -1,6 +1,8 @@
 """Closed registry for the four D87 assured operations."""
 
+import copy
 import json
+from typing import cast
 from uuid import UUID
 from uuid import uuid4
 
@@ -10,6 +12,7 @@ from sqlalchemy import RowMapping
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.mcp_tools import tool
 from rememberstack.core.assured_operation_linter import AssuredOperationLintError
 from rememberstack.core.assured_operation_linter import lint_assured_operation
 from rememberstack.model import AssuredAnswerIntent
@@ -149,56 +152,48 @@ def _operation_from_row(row: RowMapping) -> AssuredOperation:
     return operation
 
 
-_TIME_SCHEMA = {
-    "type": "object",
-    "default": {"mode": "current"},
-    "oneOf": [
-        {
-            "properties": {"mode": {"const": "current"}},
-            "required": ["mode"],
-            "additionalProperties": False,
-        },
-        {
-            "properties": {
-                "mode": {"const": "at"},
-                "at": {"type": "string", "format": "date-time"},
-            },
-            "required": ["mode", "at"],
-            "additionalProperties": False,
-        },
-        {
-            "properties": {
-                "mode": {"const": "overlap"},
-                "from": {"type": "string", "format": "date-time"},
-                "to": {"type": "string", "format": "date-time"},
-            },
-            "required": ["mode", "from", "to"],
-            "additionalProperties": False,
-        },
-        {
-            "properties": {"mode": {"const": "history"}},
-            "required": ["mode"],
-            "additionalProperties": False,
-        },
-    ],
-}
+def _parameters(name: AssuredOperationName) -> dict[str, object]:
+    """The registry's parameter specs, generated from the tool catalogue.
 
-_ENTITY_IDS = {
-    "type": "array",
-    "required": False,
-    "items": {"type": "string", "format": "uuid"},
-    "minItems": 1,
-    "maxItems": 20,
-    "uniqueItems": True,
-}
+    The registry stores each argument's JSON Schema with an inline
+    ``required`` flag; the catalogue's closed input schema is the source.
+    """
+    schema = tool(name.value).input_schema
+    properties = cast("dict[str, dict[str, object]]", schema["properties"])
+    required = set(cast("list[str]", schema.get("required", [])))
+    return {
+        argument: {**copy.deepcopy(spec), "required": argument in required}
+        for argument, spec in properties.items()
+    }
 
-_NEIGHBORHOOD_ENTITY_IDS = {**_ENTITY_IDS, "maxItems": 19}
 
-_QUERY = {"type": "string", "required": True, "minLength": 1, "maxLength": 8192}
+def _catalogue_operation(
+    *,
+    name: AssuredOperationName,
+    result_schema: dict[str, object],
+    execution_plan: PrimitiveChainPlan | OperationBundlePlan,
+    result_contract: AssuredResultContract,
+    output_grain: Grain | None,
+    answer_intent: AssuredAnswerIntent,
+) -> AssuredOperation:
+    """One canonical operation whose agent-facing fields come from the catalogue.
 
-_HOPS = {"type": "integer", "required": False, "default": 1, "minimum": 1, "maximum": 2}
-
-_PREDICATE = {"type": "string", "required": False, "minLength": 1, "maxLength": 200}
+    Name, description, parameters and version are the catalogue's, so the
+    registry, ``GET /operations`` and every MCP host describe the operation
+    identically (D136). The execution fields are the engine's own.
+    """
+    definition = tool(name.value)
+    return AssuredOperation(
+        name=name,
+        description=definition.description,
+        parameters=_parameters(name),
+        result_schema=result_schema,
+        execution_plan=execution_plan,
+        result_contract=result_contract,
+        output_grain=output_grain,
+        answer_intent=answer_intent,
+        version=definition.tool_version,
+    )
 
 
 def _envelope_schema() -> dict[str, object]:
@@ -207,39 +202,16 @@ def _envelope_schema() -> dict[str, object]:
 
 
 CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
-    AssuredOperation(
+    _catalogue_operation(
         name=AssuredOperationName.RESOLVE_ENTITY,
-        description=(
-            "Resolve a name to ranked current survivor candidates; never silently guess."
-        ),
-        parameters={"name": {"type": "string", "required": True, "minLength": 1}},
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(steps=(OperationStep(op="resolve_entity"),)),
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.IDENTITY,
     ),
-    AssuredOperation(
+    _catalogue_operation(
         name=AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT,
-        description=("High-recall current claims and confirmed source passages."),
-        parameters={
-            "query": _QUERY,
-            "entity_ids": _ENTITY_IDS,
-            "k": {
-                "type": "integer",
-                "required": False,
-                "default": 50,
-                "minimum": 1,
-                "maximum": 100,
-            },
-            "candidate_k": {
-                "type": "integer",
-                "required": False,
-                "default": 200,
-                "minimum": 1,
-                "maximum": 400,
-            },
-        },
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(
             steps=(OperationStep(op="claims_and_sources_context"),)
@@ -247,36 +219,9 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.EVIDENCE,
         answer_intent=AssuredAnswerIntent.CLAIMS_AND_SOURCES,
-        version=2,
     ),
-    AssuredOperation(
+    _catalogue_operation(
         name=AssuredOperationName.FACTS_CONTEXT,
-        description=(
-            "Adjudicated relations and observations under an explicit world-time"
-            " scope, with bounded live-graph expansion for current or point-in-time"
-            " entity anchors."
-        ),
-        parameters={
-            "query": _QUERY,
-            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
-            "k": {
-                "type": "integer",
-                "required": False,
-                "default": 15,
-                "minimum": 1,
-                "maximum": 30,
-            },
-            "evidence_per_fact": {
-                "type": "integer",
-                "required": False,
-                "default": 3,
-                "minimum": 1,
-                "maximum": 5,
-            },
-            "hops": _HOPS,
-            "predicate": _PREDICATE,
-            "time": {**_TIME_SCHEMA, "required": False},
-        },
         result_schema=_envelope_schema(),
         execution_plan=PrimitiveChainPlan(
             steps=(
@@ -287,27 +232,14 @@ CANONICAL_OPERATIONS: tuple[AssuredOperation, ...] = (
         result_contract=AssuredResultContract.ENVELOPE,
         output_grain=Grain.FACT,
         answer_intent=AssuredAnswerIntent.FACTS,
-        version=3,
     ),
-    AssuredOperation(
+    _catalogue_operation(
         name=AssuredOperationName.COMBINED_CONTEXT,
-        description=(
-            "Complete claims-and-sources and neighborhood-aware fact responses side by side"
-            " in ContextBundle/v2."
-        ),
-        parameters={
-            "query": _QUERY,
-            "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
-            "hops": _HOPS,
-            "predicate": _PREDICATE,
-            "time": {**_TIME_SCHEMA, "required": False},
-        },
         result_schema=ContextBundleV2.model_json_schema(mode="serialization"),
         execution_plan=OperationBundlePlan(),
         result_contract=AssuredResultContract.CONTEXT_BUNDLE_V2,
         output_grain=None,
         answer_intent=AssuredAnswerIntent.COMBINED_CONTEXT,
-        version=4,
     ),
 )
 

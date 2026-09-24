@@ -126,9 +126,9 @@ answered:
 remember doctor
 ```
 
-It asks `GET /deployment`, which needs a `write` credential. With a `read`
-token it reports an authentication failure even though the address is
-right.
+It asks `GET /deployment`, which needs a `read` or `write` credential. With
+an `ingest` token it reports an authentication failure even though the
+address is right.
 
 ## 401 and 403
 

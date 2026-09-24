@@ -83,7 +83,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Search and adjacent chunks](https://remember.dev/docs/reference/http-api/search): Search claims and source chunks by meaning or by keyword, and fetch the chunks around one you found.
 - [Graph](https://remember.dev/docs/reference/http-api/graph): Walk the live graph of entities and relations, find paths between two entities, and trace citation chains between documents.
 - [SQL queries](https://remember.dev/docs/reference/http-api/query): Run a read-only SQL statement over the memory_v1 query space, inspect its plan, discover the query space, and run saved queries.
-- [Deployment info and health](https://remember.dev/docs/reference/http-api/deployment): Check which code and models a deployment is serving, probe its health, and read its cost export.
+- [Deployment info and health](https://remember.dev/docs/reference/http-api/deployment): Check which code, models and tools a deployment is serving, probe its health, and read its cost export.
 - [Assured operations](https://remember.dev/docs/reference/assured-operations): The four fixed retrievals RememberStack guarantees, with every parameter, limit, default and result contract.
 - [Result types](https://remember.dev/docs/reference/result-types): Every response model of the RememberStack HTTP API, field by field, with every enum value.
 - [Query space memory_v1](https://remember.dev/docs/reference/query-space): Every view, column, function, grammar rule, limit and shipped saved query of the memory_v1 query space that SQL queries run over.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import copy
 from datetime import datetime
 import hashlib
 from itertools import islice
@@ -19,14 +20,14 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import tool
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import ContextBundleV2
 from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
-from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
-from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.sdk import MemoryClient
 
@@ -836,39 +837,27 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
 
 
 def _open_query_descriptors() -> tuple[ToolDescriptor, ...]:
-    """Adapt the nine shared MCP descriptors without duplicating their schemas."""
-    result: list[ToolDescriptor] = []
-    for descriptor in open_query_tool_descriptors():
-        raw_schema = descriptor["inputSchema"]
-        if not isinstance(raw_schema, dict) or not all(
-            isinstance(key, str) for key in raw_schema
-        ):
-            raise RuntimeError("open-query tool descriptor has an invalid schema")
-        input_schema: dict[str, object] = {
-            key: value for key, value in raw_schema.items() if isinstance(key, str)
-        }
-        result.append(
-            ToolDescriptor(
-                name=str(descriptor["name"]),
-                description=str(descriptor["description"]),
-                input_schema=input_schema,
-                result_schema={"type": "object"},
-                result_contract="QueryResult/v1-or-discovery",
-                output_grain=(
-                    "discovery"
-                    if descriptor["name"]
-                    in {
-                        "describe_query_space",
-                        "search_query_space",
-                        "list_saved_queries",
-                        "describe_saved_query",
-                    }
-                    else "exploratory_tabular"
-                ),
-                answer_intent="query_infrastructure",
-            )
+    """Adapt the catalogue's open-query tools without duplicating their schemas."""
+    discovery = {
+        "describe_query_space",
+        "search_query_space",
+        "list_saved_queries",
+        "describe_saved_query",
+    }
+    return tuple(
+        ToolDescriptor(
+            name=definition.name,
+            description=definition.description,
+            input_schema=copy.deepcopy(definition.input_schema),
+            result_schema={"type": "object"},
+            result_contract="QueryResult/v1-or-discovery",
+            output_grain=(
+                "discovery" if definition.name in discovery else "exploratory_tabular"
+            ),
+            answer_intent="query_infrastructure",
         )
-    return tuple(result)
+        for definition in (tool(name) for name in OPEN_QUERY_TOOL_NAMES)
+    )
 
 
 def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:

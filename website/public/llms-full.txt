@@ -704,7 +704,7 @@ With the self-hosted server the agent gets these tools:
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-three write tools (`ingest`, `pipeline_readiness`, `delete_document`).
+two tools that change memory (`ingest` and `delete_document`).
 
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](https://remember.dev/docs/cloud/hosted-mcp) for its exact list.
@@ -9556,9 +9556,9 @@ answered:
 remember doctor
 ```
 
-It asks `GET /deployment`, which needs a `write` credential. With a `read`
-token it reports an authentication failure even though the address is
-right.
+It asks `GET /deployment`, which needs a `read` or `write` credential. With
+an `ingest` token it reports an authentication failure even though the
+address is right.
 
 ## 401 and 403
 
@@ -10101,8 +10101,9 @@ It needs no token, and Compose uses it as the API's health check.
 `GET /deployment` reports `build_revision` (the source commit the image
 was built from, empty for a local build), `model_bindings` (the model on
 each pipeline seat and the OpenRouter routing settings) and
-`document_binding_generation`. It needs a `write` credential when
-authentication is on.
+`document_binding_generation`, and the MCP memory tools it serves
+(`tools`). It needs a `read` or `write` credential when authentication is
+on.
 
 remember.dev collects diagnostic traces by default, with an opt-out in
 Settings; see [Data handling and security](https://remember.dev/docs/cloud/data-and-security).
@@ -12727,12 +12728,11 @@ are described in [HTTP API conventions](https://remember.dev/docs/reference/http
 
 ## GET /deployment
 
-Report the code revision and the model and document bindings the deployment
-is serving. It touches no submitted work, so you can call it first to confirm
-you are talking to the build you expect.
+Report the code revision, the model and document bindings, and the MCP
+memory tools the deployment is serving. It touches no submitted work, so you
+can call it first to confirm you are talking to the build you expect.
 
-**Scope:** `write`. This route is not in the list of read routes, so a `read`
-credential is refused with `403`.
+**Scope:** `read`.
 
 ### Parameters
 
@@ -12750,7 +12750,18 @@ None.
     "p1_embedding": "…",
     "fact_adjudication": "…"
   },
-  "document_binding_generation": "…"
+  "document_binding_generation": "…",
+  "tools": {
+    "ingest": 1,
+    "pipeline_readiness": 1,
+    "delete_document": 1,
+    "resolve_entity": 1,
+    "claims_and_sources_context": 2,
+    "facts_context": 3,
+    "combined_context": 4,
+    "query_sql": 1,
+    "…": 1
+  }
 }
 ```
 
@@ -12759,15 +12770,16 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `chunk_embedding`, `context_prefix`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding`, `fact_label`, and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, and `delete_document` only when document deletion is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
-The same three fields also appear on every
+The first three fields also appear on every
 [`PipelineReadinessReport`](https://remember.dev/docs/reference/result-types#pipelinereadinessreport).
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `403` | `credential may not perform this operation` | The credential's scope is not `write`. |
+| `403` | `credential may not perform this operation` | The credential has the `ingest` scope, which cannot read. |
 
 ### Example
 
@@ -14006,6 +14018,7 @@ One assured operation, as `GET /operations` returns it.
 | `build_revision` | string | Source revision the image was built from; empty when unknown. Default `""`. |
 | `model_bindings` | object of string to string | Model per pipeline role. Default `{}`. |
 | `document_binding_generation` | string, nullable | |
+| `tools` | object of string to integer | MCP memory tool name to tool version, for every tool the deployment serves. Default `{}`. |
 
 ## Request bodies
 
@@ -15813,7 +15826,8 @@ MemoryClient.deployment_build_info() -> DeploymentBuildInfo
 
 Returns which engine build and which model bindings the deployment is
 serving: `build_revision` (str), `model_bindings` (dict of str to str),
-`document_binding_generation` (str or `None`). The class is
+`document_binding_generation` (str or `None`), and `tools` (dict of MCP
+memory tool name to tool version). The class is
 `remember.models.DeploymentBuildInfo`; it is not in `__all__`.
 
 ```python
@@ -16891,8 +16905,8 @@ remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
 
 Runs an MCP server on standard input and output for a coding agent. It finds
 the deployment the same way as every other command, so after
-`remember login` it needs no flags. `--read-only` removes the `ingest`,
-`pipeline_readiness` and `delete_document` tools.
+`remember login` it needs no flags. `--read-only` removes the `ingest` and
+`delete_document` tools.
 
 You rarely start it yourself; `remember setup` writes the agent
 configuration that starts it. The tools, their parameters and the errors are
@@ -17325,8 +17339,9 @@ deployment and token the same way as every other `remember` command: flags,
 then environment variables, then the credential file that `remember login`
 writes. See [CLI: How the CLI finds your deployment](https://remember.dev/docs/reference/cli#how-the-cli-finds-your-deployment).
 
-`--read-only` leaves out the `ingest`, `pipeline_readiness` and
-`delete_document` tools and refuses calls to them.
+`--read-only` leaves out the two tools that change memory, `ingest` and
+`delete_document`, and refuses calls to them. `pipeline_readiness` only
+reads, so it stays.
 
 ### Protocol
 
@@ -17352,8 +17367,8 @@ The server offers tools only: no resources and no prompts.
 Every `tools/list` call asks the deployment what it serves and returns, in
 this order:
 
-1. `ingest`, `pipeline_readiness` and `delete_document`, unless
-   `--read-only` is set.
+1. `ingest`, `pipeline_readiness` and `delete_document` (only
+   `pipeline_readiness` with `--read-only`).
 2. The assured operations the deployment lists at `GET /operations`:
    `resolve_entity`, `claims_and_sources_context`, `facts_context`,
    `combined_context`. Their input schemas come from the deployment. If
@@ -17365,6 +17380,11 @@ this order:
    64-character manifest hash). Any error or other answer leaves them out.
 
 A full server therefore lists 14 tools: 3 + 4 + 7.
+
+Every tool carries MCP tool annotations:
+`readOnlyHint` is `true` for a tool that only reads and `false` for
+`ingest` and `delete_document`, and `destructiveHint` is `true` only for
+`delete_document`.
 
 ### Results
 
@@ -17653,8 +17673,8 @@ the agent what to do next.
 | `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
 | `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
 
-With `--read-only`, a call to `ingest` or `pipeline_readiness` returns
-`isError: true` with the plain text
+With `--read-only`, a call to `ingest` returns `isError: true` with the
+plain text
 `write tool 'ingest' is disabled on this read-only MCP server`. A call to
 `delete_document` returns the `tool_not_composed` error object.
 
@@ -18211,7 +18231,7 @@ known code at its expected status, and on a `429`, which also sets
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}`, `GET /deployment` or `DELETE /documents/{doc_id}`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
 | `404` | `document_not_found` | `DELETE /documents/{doc_id}` for a document that does not exist or is already deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |

@@ -43,11 +43,11 @@ from benchmarks.locomo.retrieval import p3_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.models import ContextBundleV2
 from remember.models import Envelope
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
-from remember.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAuditError
 from rememberstack.adapters import CodexSubscriptionInfrastructureError

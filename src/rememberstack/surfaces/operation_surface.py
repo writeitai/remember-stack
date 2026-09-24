@@ -1,5 +1,6 @@
 """Shared HTTP/SDK/CLI/MCP rendering for the four assured operations."""
 
+import copy
 from datetime import datetime
 import hashlib
 from typing import cast
@@ -8,6 +9,7 @@ from uuid import UUID
 from pydantic import TypeAdapter
 from pydantic import ValidationError
 
+from remember.mcp_tools import tool
 from rememberstack.model import AssuredOperation
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
@@ -92,36 +94,24 @@ def operation_descriptors(
 def _descriptor(
     *, operation: AssuredOperation, child_hashes: dict[str, str]
 ) -> ToolDescriptor:
-    """Render one descriptor into the shared public tool contract."""
-    properties: dict[str, object] = {}
-    required: list[str] = []
-    for name, raw in operation.parameters.items():
-        spec = dict(raw) if isinstance(raw, dict) else {"type": "string"}
-        if spec.pop("required", False):
-            required.append(name)
-        properties[name] = spec
-    input_schema: dict[str, object] = {
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if required:
-        input_schema["required"] = sorted(required)
+    """Render one descriptor into the shared public tool contract.
+
+    The agent-facing fields — name, description, input schema, mutates and
+    version — are the tool catalogue's (D136); the rest are the engine's.
+    """
+    definition = tool(operation.name.value)
     return ToolDescriptor(
-        name=operation.name.value,
-        description=operation.description,
-        input_schema=input_schema,
+        name=definition.name,
+        description=definition.description,
+        input_schema=copy.deepcopy(definition.input_schema),
         result_schema=operation.result_schema,
         result_contract=operation.result_contract.value,
         output_grain=(
             None if operation.output_grain is None else operation.output_grain.value
         ),
         answer_intent=operation.answer_intent.value,
-        # The catalog is closed to four assured operations, and every one only
-        # reads: none stores, changes or deletes anything. Declaring it lets a
-        # read-only credential run them; an undeclared operation stays WRITE.
-        mutates=False,
-        version=operation.version,
+        mutates=definition.mutates,
+        version=definition.tool_version,
         implementation_plan_hash=_plan_hash(
             operation=operation, child_hashes=child_hashes
         ),
