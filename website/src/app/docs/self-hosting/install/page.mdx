@@ -165,12 +165,11 @@ docker compose logs -f worker-extract-claims worker-normalize-relations
 
 <Callout type="note">
 
-Set `REMEMBER_API_URL` explicitly. The `--self-hosted` flag on
-`remember ingest` and `remember query` does not change where the
-request goes. With no URL in the environment, the CLI<Cloud> uses the
-credentials that `remember login` stored, which point at remember.dev
-if you have ever signed in there. Without stored credentials it</Cloud> falls
-back to `http://127.0.0.1:8000`.
+Set `REMEMBER_API_URL` explicitly, or run `remember setup --self-hosted`,
+which stores the address. With no address anywhere, the CLI falls back to
+`http://127.0.0.1:8000`.<Cloud> If you have signed in to remember.dev with
+`remember login`, the stored key is never sent to your engine: pass your
+engine's key in `REMEMBER_API_KEY`, or the command stops with status 2.</Cloud>
 
 </Callout>
 

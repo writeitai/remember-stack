@@ -65,8 +65,7 @@ publishes it on the host.
 </Tabs>
 
 Paths in this reference are relative to that base URL. The `remember` client
-reads the same variable (`REMEMBER_API_URL`; `REMEMBER_DATA_PLANE_URL` and
-`REMEMBERSTACK_API_URL` are also accepted) and falls back to
+reads the same variable (`REMEMBER_API_URL`) and falls back to
 `http://127.0.0.1:8000`.
 
 ## Authentication
@@ -114,7 +113,7 @@ remember.dev issues three more:
 
 | Credential | Where it comes from | Scope it carries |
 |---|---|---|
-| Deployment API token, `umc_dp_…` (remember.dev) | Console, Settings → API Tokens, or `remember login`. A signed credential the deployment verifies with published public keys. | `write` |
+| Deployment API token, `umc_dp_…` (remember.dev) | Console, Settings → API Tokens. A signed credential the deployment verifies with published public keys. | `write` |
 | Browser read credential (remember.dev console) | Issued to the console for a signed-in member; lives 10 minutes. | `read` |
 | Browser ingest credential (remember.dev console) | Issued to the console for one upload; lives 3 minutes. | `ingest` |
 
@@ -210,8 +209,9 @@ Branch on the status and on `code` (or the short string), never on `message`.
 Messages are written for people and can change.
 
 The `remember` client raises `remember.MemoryApiError` for every failure, with
-`status_code`, `detail` and, on the `/query/*` routes and on a `429`, `code`
-(plus `retry_after` on a `429`). A network failure has `status_code` `0`.
+`status_code`, `detail` and, on the `/query/*` routes, `code`. A `429` raises
+its subclass `remember.RateLimited`, with `code` and `retry_after`. A network
+failure has `status_code` `0`.
 
 [Errors and status codes](/docs/reference/errors) lists every status, code and what to
 do about it.

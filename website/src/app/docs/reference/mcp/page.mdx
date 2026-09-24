@@ -26,12 +26,12 @@ How to connect an agent step by step:
 ## `remember mcp`
 
 ```bash
-remember mcp [--read-only] [--api-url URL] [--token TOKEN]
+remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 The server reads JSON-RPC 2.0 messages from standard input, one per line,
 and writes one response per line to standard output. It finds the
-deployment and token the same way as every other `remember` command: flags,
+deployment and key the same way as every other `remember` command: flags,
 then environment variables, then the credential file<Cloud> that `remember login`
 writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
 
@@ -409,9 +409,9 @@ as an operation and returns the deployment's error in this shape.
 | Otherwise, when `uvx` is installed | absolute path of `uvx` | `["remember", "mcp"]` |
 
 An `env` block is added only when there is an address to pin: with
-`--self-hosted` (default `http://localhost:8000`) or with `--url`. It holds
-exactly one variable, `REMEMBER_DATA_PLANE_URL`. Tokens are never written into
-these files; the server reads them from the credential file.
+`--self-hosted` (default `http://127.0.0.1:8000`) or with `--api-url`. It holds
+exactly one variable, `REMEMBER_API_URL`. Keys are never written into these
+files; the server reads them from the credential file.
 
 Existing files are merged: other servers and settings are kept, and the
 `remember` entry is replaced.
@@ -427,7 +427,7 @@ Existing files are merged: other servers and settings are kept, and the
       "command": "/Users/ravi/.local/bin/remember",
       "args": ["mcp"],
       "env": {
-        "REMEMBER_DATA_PLANE_URL": "http://localhost:8000"
+        "REMEMBER_API_URL": "http://127.0.0.1:8000"
       }
     }
   }
@@ -467,7 +467,7 @@ available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_co
 `remember setup` runs Claude Code's own command:
 
 ```bash
-claude mcp add remember -e REMEMBER_DATA_PLANE_URL=http://localhost:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
 ```
 
 The `-e` part appears only when an address is pinned. Claude Code decides
@@ -497,7 +497,7 @@ command = "/Users/ravi/.local/bin/remember"
 args = ["mcp"]
 
 [mcp_servers.remember.env]
-REMEMBER_DATA_PLANE_URL = "http://localhost:8000"
+REMEMBER_API_URL = "http://127.0.0.1:8000"
 ```
 
 Any earlier `[mcp_servers.remember]` and `[mcp_servers.remember.*]` tables
@@ -602,8 +602,8 @@ It does not answer `ping`.
 | Works with | A self-hosted engine or a remember.dev project | remember.dev projects |
 | Transport | stdio, one JSON-RPC message per line | HTTP `POST`, one JSON-RPC message per request |
 | Protocol version answered | `2025-11-25` | `2025-11-25` |
-| Sign-in | Token from flags, environment or the credential file | OAuth in the browser; you pick a project |
-| Where the token lives | Credential file (`remember login` or `remember setup --token`) | With the agent's OAuth client; access 1 hour, refresh 30 days |
+| Sign-in | Key from flags, environment or the credential file | OAuth in the browser; you pick a project |
+| Where the key lives | Credential file (`remember login`) or `REMEMBER_API_KEY` | With the agent's OAuth client; access 1 hour, refresh 30 days |
 | Configure with | `remember setup` | The agent's "add remote MCP server" setting |
 | `ingest` bodies | `text`, `content_base64`, `path` | `text` only, stored as Markdown |
 | `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |

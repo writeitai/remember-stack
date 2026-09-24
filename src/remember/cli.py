@@ -17,6 +17,8 @@ import sys
 from uuid import UUID
 
 import httpx
+from pydantic import AliasChoices
+from pydantic import Field
 from pydantic import JsonValue
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -36,9 +38,14 @@ from remember.remote_mcp import serve_mcp_stdio
 class _InternalOpsSettings(BaseSettings):
     """Whether ``remember ops`` is enabled (engine containers only)."""
 
-    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
-    internal_ops: bool = False
+    internal_ops: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "REMEMBERSTACK_INTERNAL_OPS", "REMEMBER_INTERNAL_OPS"
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

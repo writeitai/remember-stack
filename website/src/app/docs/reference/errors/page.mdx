@@ -34,8 +34,10 @@ Branch on the status and the code or string, not on `message`.
 The `remember` Python client raises `remember.MemoryApiError` for all of
 them, with `status_code` (`0` for a network failure), `detail` (the string, or
 the message) and `code` (set on `/query/*` routes when the body carries a
-known code at its expected status, and on a `429`, which also sets
-`retry_after`). `wait_for_readiness` raises
+known code at its expected status). A `429` raises its subclass
+`remember.RateLimited`, whose `code` is `rate_limited` or
+`concurrency_limited` and whose `retry_after` holds the `Retry-After`
+seconds. `wait_for_readiness` raises
 `remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
 ([Python SDK](/docs/reference/python-sdk#pipelinedeadlettered)).
 
@@ -45,7 +47,7 @@ known code at its expected status, and on a `429`, which also sets
 |---|---|---|---|
 | `400` | `cursor is malformed` | `GET /documents` got a cursor it cannot read. | Restart paging without a cursor. |
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
-| `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, create one in the console or run `remember login`.</Cloud> |
+| `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, run `remember login` again or create a token in the console.</Cloud> |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
@@ -200,11 +202,11 @@ structured error:
 | `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
-| `unauthorized` | 401 | no | Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if the token was revoked. |
+| `unauthorized` | 401 | no | Refresh or replace REMEMBER_API_KEY; re-mint if the token was revoked. |
 | `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
 | `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
-| `transport_error` | 0 | yes | Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and network reachability. |
+| `transport_error` | 0 | yes | Retry with back-off; check REMEMBER_API_URL, credentials, and network reachability. |
 | `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. (For `delete_document` on a read-only server: Tell the user deletion is not available on this server; do not retry.) |
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
@@ -260,26 +262,26 @@ See [MCP tools](/docs/reference/mcp).
 
 ## remember login (device grant)
 
-`remember login` uses the OAuth device flow against remember.dev. It polls
-the token endpoint no faster than the interval the server gives, between 1 and
-30 seconds.
+`remember login` runs the OAuth device authorization grant (RFC 8628)
+against the endpoints in the issuer's metadata. It polls the token endpoint
+no faster than the interval the server gives, and never waits more than 30
+seconds between polls.
 
 | Server answer | What the CLI does |
 |---|---|
 | `authorization_pending` | Keeps polling at the same interval (or `Retry-After`, if longer). |
 | `slow_down` | Adds 5 seconds to the interval and keeps polling. |
-| `temporarily_unavailable` | Adds 5 seconds and keeps polling. |
+| `429` or `503` | Keeps polling, no faster than `Retry-After`. |
 | `access_denied` | Stops: you declined in the browser. Run `remember login` again. |
 | `expired_token` | Stops: the code expired before approval. Run it again and approve sooner. |
-| `invalid_grant` | Stops. Run it again. |
-| any other error | Stops with the server's description. |
-| code expires while polling | Stops: `device grant expired before authorization`. |
-| authorize request not `200` | Stops: `authorize failed with HTTP <status>`. |
-| poll answer not `200` or `400` | Stops: `token poll failed with HTTP <status>`. |
-| unusable success body | Stops: `token host returned an unusable token response`. |
-| redirect to another host | Stops: `refusing a cross-host redirect`. |
+| any other error | Stops with `token polling failed with HTTP <status> (<error>)`. |
+| code expires while polling | Stops: `the device code expired before approval`. |
+| metadata unavailable | Stops, naming the metadata URL. |
+| a key issued by another issuer | Stops, and revokes that key. |
+| redirect to another host | Stops: `refusing a cross-origin redirect`. |
 
-Every failure exits with status 1. See [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+Every failure exits with status 1 and leaves the stored key unchanged;
+Ctrl-C exits with status 130. See [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
 
 ## remember.dev account API errors
 
@@ -301,14 +303,8 @@ Branch on `code`; `message` is for people. Some older routes answer with a
 plain string `detail`. When the body has no `request_id`, the `remember`
 client takes it from the `X-Request-Id` response header if one is present.
 
-The `remember` client raises:
-
-| Exception | Status | Meaning |
-|---|---|---|
-| `remember.Unauthenticated` | 401 | No credential, or one that is not accepted (also revoked, expired, or membership ended). Sign in again. |
-| `remember.NotPermitted` | 403 | The credential may not do this. A fresh credential of the same kind will not help. |
-| `remember.RateLimited` | 429 | Too many requests. `retry_after` holds the `Retry-After` seconds when sent. |
-| `remember.CloudError` | any other | The base class; carries `status_code`, `code`, `retryable`, `request_id`. |
+`client.account` raises `remember.MemoryApiError` with the status and the
+message, and `remember.RateLimited` on a `429`.
 
 The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 
@@ -373,7 +369,7 @@ deployment in this release.
 | `refuse` | Work is refused; the engine answers `403 dispatch_refused:<reason>`. |
 | `park` | Work waits; the engine answers `423 dispatch_parked:<reason>`. It resumes when the cause is fixed. |
 
-`remember.CloudClient.spend_gate(deployment_id=...)` returns this decision
-with its `reason_code`.
+`GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate`
+returns this decision with its `reason_code`.
 
 </Cloud>

@@ -1100,6 +1100,11 @@ class Client(MemoryClient):
     :class:`MemoryClient` for the arguments.
     """
 
+    @classmethod
+    def from_env(cls, **overrides: object) -> Self:
+        """Same as ``Client(**overrides)``: arguments, then environment, then the file."""
+        return cls(**overrides)  # type: ignore[arg-type]
+
     @property
     def account(self) -> AccountApi:
         """The key issuer's account API, called with the same key.

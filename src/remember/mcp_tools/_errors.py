@@ -216,8 +216,7 @@ def _map_http_style_error(
             http_status=401,
             retryable=False,
             agent_action=(
-                "Refresh or replace REMEMBER_API_KEY (or run `remember login`); re-mint if"
-                " the token was revoked."
+                "Refresh or replace REMEMBER_API_KEY; re-mint if the token was revoked."
             ),
             reason_code=reason_code,
         )

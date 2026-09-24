@@ -516,7 +516,7 @@ def test_invalid_env_zero_traceback_cli_error_boundary(
     import subprocess
     import sys
 
-    src_dir = str(Path(__file__).parents[2] / "src")
+    src_dir = str(Path(__file__).parents[2])
     monkeypatch.setenv("PYTHONPATH", src_dir)
     monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "banana")
 

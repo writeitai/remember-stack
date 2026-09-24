@@ -536,7 +536,7 @@ configures each one. To configure one agent only:
 remember setup --self-hosted --agent cursor   # or claude, codex, agy
 ```
 
-Add `--dry-run` to see what it would write, and `--url` if your engine
+Add `--dry-run` to see what it would write, and `--api-url` if your engine
 is not at `http://localhost:8000`. Then check the result:
 
 ```bash
@@ -6304,10 +6304,9 @@ docker compose logs -f worker-extract-claims worker-normalize-relations
 
 **Note:**
 
-Set `REMEMBER_API_URL` explicitly. The `--self-hosted` flag on
-`remember ingest` and `remember query` does not change where the
-request goes. With no URL in the environment, the CLI falls
-back to `http://127.0.0.1:8000`.
+Set `REMEMBER_API_URL` explicitly, or run `remember setup --self-hosted`,
+which stores the address. With no address anywhere, the CLI falls back to
+`http://127.0.0.1:8000`.
 
 ## Stop, start and reset
 
@@ -6481,7 +6480,7 @@ consequences of its own; see [Models and providers](https://remember.dev/docs/se
 
 The `remember` CLI and Python client read a separate, small set of
 variables on your own machine, most importantly `REMEMBER_API_URL` and
-`REMEMBER_API_KEY` (or `REMEMBER_TOKEN`). They are listed at the top of
+`REMEMBER_API_KEY`. They are listed at the top of
 [Configuration variables](https://remember.dev/docs/reference/configuration#client).
 
 ---
@@ -8441,8 +8440,7 @@ The engine listens on port 8000 inside its container
 publishes it on the host.
 
 Paths in this reference are relative to that base URL. The `remember` client
-reads the same variable (`REMEMBER_API_URL`; `REMEMBER_DATA_PLANE_URL` and
-`REMEMBERSTACK_API_URL` are also accepted) and falls back to
+reads the same variable (`REMEMBER_API_URL`) and falls back to
 `http://127.0.0.1:8000`.
 
 ## Authentication
@@ -8568,8 +8566,9 @@ Branch on the status and on `code` (or the short string), never on `message`.
 Messages are written for people and can change.
 
 The `remember` client raises `remember.MemoryApiError` for every failure, with
-`status_code`, `detail` and, on the `/query/*` routes and on a `429`, `code`
-(plus `retry_after` on a `429`). A network failure has `status_code` `0`.
+`status_code`, `detail` and, on the `/query/*` routes, `code`. A `429` raises
+its subclass `remember.RateLimited`, with `code` and `retry_after`. A network
+failure has `status_code` `0`.
 
 [Errors and status codes](https://remember.dev/docs/reference/errors) lists every status, code and what to
 do about it.
@@ -13197,8 +13196,10 @@ The client is synchronous. There is no async client yet
 | `Client` | class | [Client](#client) |
 | `RememberClient` | alias of `Client` | [Client](#client) |
 | `MemoryClient` | class | [MemoryClient](#memoryclient) |
-| `ClientSettings` | settings class | [ClientSettings](#clientsettings) |
+| `resolve_connection` | function | [Connecting](#connecting) |
 | `MemoryApiError` | exception | [Errors](#errors) |
+| `RateLimited` | exception | [Errors](#errors) |
+| `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
@@ -13221,19 +13222,53 @@ The client is synchronous. There is no async client yet
 | `VersionPipelineReadiness` | model | [Models](#models) |
 | `__version__` | string | The installed package version, for example `"0.17.0"`. |
 
-`remember.credentials.CredentialError`, raised by the CLI helpers, lives
-outside `__all__`.
-See [Errors](#errors).
+`remember.credentials.CredentialError`, raised when the credential file is
+unreadable or not in the current format, lives outside `__all__`. See
+[Errors](#errors).
 
 ## Which client to use
 
 | You want to | Use |
 |---|---|
 | Store and retrieve memory (the usual case) | `Client` (same as `RememberClient`) |
-| The same, with only the base constructor and no `api_key` shortcut | `MemoryClient` |
+| The same, without the file-path `ingest` shortcut | `MemoryClient` |
 
 `Client` is a subclass of `MemoryClient`. Every method listed under
 [MemoryClient](#memoryclient) is available on `Client`.
+
+## Connecting
+
+`Client` and `MemoryClient` resolve their connection the way the CLI does,
+with one function, `remember.resolve_connection()`. Each setting is resolved
+on its own; first match wins:
+
+| Setting | 1. Argument | 2. Environment | 3. Credential file | 4. Otherwise |
+|---|---|---|---|---|
+| Key | `api_key` | `REMEMBER_API_KEY` | `key` | no key |
+| Address | `base_url` | `REMEMBER_API_URL` | `api_url` | `http://127.0.0.1:8000` |
+| Project | `project` | `REMEMBER_PROJECT` | `default_project` | none |
+
+The credential file is the one the CLI writes
+([CLI: credential file](https://remember.dev/docs/reference/cli#credential-file)). It is read only
+when a setting is not given as an argument or in the environment.
+
+A key read from the credential file is only sent to the address stored
+beside it. When `base_url` or `REMEMBER_API_URL` names
+another address, the first request raises `StoredKeyRefused`; pass the key
+explicitly to use it there. A key you pass as an argument or in
+`REMEMBER_API_KEY` is sent wherever you point it.
+
+```bash
+export REMEMBER_API_URL=http://localhost:8000
+export REMEMBER_API_KEY=<the key your engine accepts, if any>
+```
+
+```python
+import remember
+
+with remember.Client() as memory:
+    print(memory.deployment_build_info().build_revision)
+```
 
 ## Client
 
@@ -13252,12 +13287,10 @@ Client(
     *,
     api_key: str | None = None,
     base_url: str | None = None,
-    api_url: str | None = None,
-    data_plane_url: str | None = None,
-    authorization: str | None = None,
+    project: str | None = None,
+    timeout: float = 30.0,
     client: httpx.Client | None = None,
-    timeout: float | None = None,
-    settings: ClientSettings | None = None,
+    transport: httpx.BaseTransport | None = None,
 )
 ```
 
@@ -13265,75 +13298,23 @@ All parameters are keyword-only.
 
 | Parameter | Meaning |
 |---|---|
-| `api_key` | The deployment token. A bare secret or a full `Bearer …` value; the client adds `Bearer ` when it is missing. |
-| `base_url`, `api_url`, `data_plane_url` | The deployment address. Three names for the same thing. If you pass more than one, `data_plane_url` wins, then `base_url`, then `api_url`. |
-| `authorization` | A complete `Authorization` header value. Used only when `api_key` is not given. |
-| `client` | An `httpx.Client` you built yourself. It cannot be combined with any other parameter. The SDK does not close a client you pass in. |
-| `timeout` | Seconds per HTTP request. Default: `ClientSettings.api_timeout_seconds` (30). |
-| `settings` | A [`ClientSettings`](#clientsettings) object to use instead of reading the environment for the token. |
+| `api_key` | The API key. A bare key or a full `Bearer …` value. |
+| `base_url` | The deployment address. |
+| `project` | Which project to use, by id or name, when the key covers several. |
+| `timeout` | Seconds per HTTP request. Default 30. |
+| `client` | An `httpx.Client` you built yourself, with its own address and headers. It cannot be combined with any other parameter, and nothing is resolved. The SDK does not close a client you pass in. |
+| `transport` | An `httpx` transport to use instead of the network (for tests or a proxy). |
+
+How each setting is chosen: [Connecting](#connecting). Creating a client
+makes no network call.
 
 Raises:
 
 - `ValueError` when `client` is combined with another parameter.
-- `ValueError` when `api_key` (or `REMEMBER_API_KEY`) is empty, is the bare
-  word `Bearer`, or contains a newline.
-
-How the address is chosen, first match wins:
-
-1. `data_plane_url`, `base_url` or `api_url` argument
-2. `settings.api_url`, when you pass `settings`
-3. `REMEMBER_DATA_PLANE_URL`
-4. `REMEMBER_API_URL`
-5. `REMEMBERSTACK_API_URL`
-6. `API_URL`
-7. `http://127.0.0.1:8000`
-
-How the token is chosen, first match wins:
-
-1. `api_key` argument
-2. `authorization` argument
-3. `settings.api_authorization`, when you pass `settings`
-4. `REMEMBER_API_KEY`
-5. `REMEMBERSTACK_API_AUTHORIZATION`
-6. `REMEMBER_TOKEN`
-7. `REMEMBER_API_AUTHORIZATION`
-8. `API_AUTHORIZATION`
-9. none: requests are sent without an `Authorization` header
-
-**Note:**
-
-The client never reads the CLI's credential file.
-A script that should use the same deployment as your CLI needs
-`REMEMBER_API_URL` and `REMEMBER_API_KEY` set, or explicit arguments.
-
-Example, with the address and token in the environment:
-
-```bash
-export REMEMBER_API_URL=http://localhost:8000
-export REMEMBER_API_KEY=<the token your engine accepts, if any>
-```
-
-```python
-import remember
-
-with remember.Client() as memory:
-    print(memory.deployment_build_info().build_revision)
-```
-
-### `Client.from_env`
-
-```python
-@classmethod
-Client.from_env(**overrides) -> Client
-```
-
-Builds a client from the environment. `overrides` are the constructor's
-keyword arguments; anything you pass wins over the environment. It is
-equivalent to `Client(**overrides)`.
-
-```python
-memory = remember.Client.from_env(timeout=60)
-```
+- `ValueError` when the key is empty, is the bare word `Bearer`, or contains a
+  line break.
+- `remember.credentials.CredentialError` when the credential file has to be
+  read and is unreadable or not in the current format.
 
 ### `Client.ingest`
 
@@ -13383,47 +13364,8 @@ The typed client every other memory client builds on.
 
 ### Constructor
 
-```python
-MemoryClient(
-    *,
-    base_url: str | None = None,
-    api_url: str | None = None,
-    data_plane_url: str | None = None,
-    token: str | None = None,
-    authorization: str | None = None,
-    client: httpx.Client | None = None,
-    timeout: float | None = None,
-    settings: ClientSettings | None = None,
-)
-```
-
-| Parameter | Meaning |
-|---|---|
-| `base_url`, `api_url`, `data_plane_url` | The deployment address. `data_plane_url` wins, then `base_url`, then `api_url`. |
-| `token` | The deployment token, bare or with `Bearer `. |
-| `authorization` | A full header value. Wins over `token`. |
-| `client` | An injected `httpx.Client`; cannot be combined with any other parameter. |
-| `timeout` | Seconds per request. Default: `settings.api_timeout_seconds`. |
-| `settings` | A `ClientSettings`. Default: read from the environment. |
-
-Address, first match wins: argument; `REMEMBER_DATA_PLANE_URL`,
-`REMEMBER_API_URL`, `REMEMBERSTACK_API_URL`; `settings.api_url` (which itself
-reads the same variables plus `API_URL`); `http://127.0.0.1:8000`.
-
-Token, first match wins: `authorization`, `token`, then
-`settings.api_authorization` (from `REMEMBER_API_KEY`, `REMEMBER_TOKEN`,
-`REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION`,
-`API_AUTHORIZATION`, in that order).
-
-**Warning:**
-
-An address in the environment wins over `settings.api_url` even when you
-pass `settings` explicitly. To pin an address in code, pass `base_url`.
-
-Raises `ValueError` when `client` is combined with another parameter.
-
-`MemoryClient.from_settings()` is a class method that returns
-`MemoryClient(settings=ClientSettings())`.
+`MemoryClient` takes the same parameters as [`Client`](#constructor) and
+resolves its connection the same way ([Connecting](#connecting)).
 
 `MemoryClient` supports `with` and `close()` the same way `Client` does.
 
@@ -14128,41 +14070,18 @@ and `connector_status(*, connector_id)` exist in the SDK, but no deployment
 serves the `/connectors` routes today; every call raises `MemoryApiError`
 with `status_code` 404. See [What is not built yet](https://remember.dev/docs/project/not-built-yet).
 
-## ClientSettings
-
-```python
-class remember.ClientSettings(pydantic_settings.BaseSettings)
-```
-
-How a client reaches one deployment. Build it with no arguments to read the
-environment, or pass values directly.
-
-| Field | Type | Default | Read from (first found wins) |
-|---|---|---|---|
-| `api_url` | `str` | `http://127.0.0.1:8000` | `REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_URL`, `REMEMBERSTACK_API_URL`, `API_URL` |
-| `api_authorization` | `SecretStr \| None` | `None` | `REMEMBER_API_KEY`, `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION`, `API_AUTHORIZATION` |
-| `api_timeout_seconds` | `float`, greater than 0 | `30.0` | `REMEMBERSTACK_API_TIMEOUT_SECONDS` |
-
-Variable names are not case-sensitive.
-
-```python
-settings = remember.ClientSettings(api_url="http://localhost:8000", api_timeout_seconds=60)
-memory = remember.MemoryClient(settings=settings)
-```
-
-The full list of client variables is in
-[Configuration variables](https://remember.dev/docs/reference/configuration).
-
 ## Errors
 
 ```text
 RuntimeError
-├── MemoryApiError                 memory clients (Client, MemoryClient)
+├── MemoryApiError                 every memory call
+│   ├── RateLimited                429 from the deployment's admission limits
+│   └── StoredKeyRefused           the stored key may not go to that address
 └── PipelineDeadLettered           wait_for_readiness
 Exception
 └── ConnectorNotFoundError         exported, not raised today
 ValueError
-└── CredentialError                remember.credentials (CLI credential file)
+└── CredentialError                remember.credentials (the credential file)
 ```
 
 ### MemoryApiError
@@ -14173,8 +14092,7 @@ Raised by every memory-client method when a request fails.
 |---|---|
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
-| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` admission refusal (`rate_limited` or `concurrency_limited`); otherwise `None`. |
-| `retry_after` | On a `429`, the `Retry-After` seconds the deployment sent (a `float`); otherwise `None`. The client does not retry by itself. |
+| `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
 | `response` | Not set by the SDK (`None`). |
 
 `str(error)` reads `API <status_code>: <detail>`.
@@ -14187,6 +14105,30 @@ except remember.MemoryApiError as error:
 ```
 
 Status codes and their meaning: [Errors and status codes](https://remember.dev/docs/reference/errors).
+
+### RateLimited
+
+Raised when the deployment refuses a request with `429` because a key or the
+deployment has reached its request-rate or in-flight limit. `code` is
+`rate_limited` or `concurrency_limited`; `retry_after` is the `Retry-After`
+the deployment sent, in seconds (a `float`), or `None`. The client does not
+retry by itself.
+
+```python
+import time
+
+try:
+    memory.facts_context("Who owns the billing migration?")
+except remember.RateLimited as error:
+    time.sleep(error.retry_after or 1)
+```
+
+### StoredKeyRefused
+
+Raised on the first request when the key came from the credential file and
+the address came from `base_url` or `REMEMBER_API_URL` and is not an address
+that key may be sent to ([Connecting](#connecting)). Pass the key as
+`api_key` or in `REMEMBER_API_KEY` to use it there.
 
 ### PipelineDeadLettered
 
@@ -14206,9 +14148,9 @@ operator can replay the work after fixing the cause. See
 ### CredentialError
 
 `remember.credentials.CredentialError` (a `ValueError`) is raised when the
-CLI credential file cannot be read or written safely: it is a symlink, it is
-readable by group or others, it is malformed, or the lock cannot be taken.
-The memory clients never raise it.
+credential file cannot be read or written safely: it is a symlink, it is
+readable by group or others, it is not a version-2 file, or the lock cannot be
+taken. `remember setup --self-hosted` replaces the file.
 
 ### ConnectorNotFoundError
 
@@ -14285,45 +14227,36 @@ standalone tool; `uvx remember …` runs it without installing.
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`mcp`, `connectors`, `doctor`) accepts the same three flags:
+`documents`, `mcp`, `connectors`, `doctor`) accepts the same three flags:
 
 | Flag | Meaning |
 |---|---|
-| `--api-url URL`, `--url URL` | The deployment address. |
-| `--token TOKEN` | The deployment token. A bare secret or a full `Bearer …` value. |
-| `--self-hosted` | Marks the target as a self-hosted engine; it does not change the address. |
+| `--api-url URL` | The deployment address. |
+| `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
+| `--project PROJECT` | Which project to use, by id or name, when the key covers several. |
 
 Put flags after the subcommand: `remember query sql --api-url … "SELECT 1"`.
 
-### Address
+Each setting is resolved on its own. First match wins:
 
-First match wins:
+| Setting | 1. Flag | 2. Environment | 3. [Credential file](#credential-file) | 4. Otherwise |
+|---|---|---|---|---|
+| Key | `--api-key` | `REMEMBER_API_KEY` | `key` | no key |
+| Address | `--api-url` | `REMEMBER_API_URL` | `api_url` | `http://127.0.0.1:8000` |
+| Project | `--project` | `REMEMBER_PROJECT` | `default_project` | none |
 
-1. `--api-url` / `--url`
-2. `REMEMBER_DATA_PLANE_URL`, then `REMEMBER_API_URL`, then `REMEMBERSTACK_API_URL`
-3. The active project's address in the [credential file](#credential-file)
-4. `http://127.0.0.1:8000`
+The Python SDK resolves the same settings the same way
+([Python SDK](https://remember.dev/docs/reference/python-sdk#connecting)).
 
-### Token
-
-First match wins:
-
-1. `--token`
-2. `REMEMBER_TOKEN`, then `REMEMBER_API_AUTHORIZATION`, then `REMEMBERSTACK_API_AUTHORIZATION`
-3. The active project's token in the credential file. When the address came
-   from a flag or the environment, the stored token is used only if that
-   address has the same scheme, host and port as the stored project.
-4. `REMEMBER_API_KEY`
-5. No token
-
-**Note:**
-
-A stored credential wins over `REMEMBER_API_KEY`. To force the key in
-that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
+A key read from the credential file is only sent to the address stored beside
+it. If `--api-url` or `REMEMBER_API_URL` names another address,
+the command exits with status 2 and asks for the key explicitly, with
+`--api-key` or `REMEMBER_API_KEY`. A key you pass explicitly is sent wherever
+you point it.
 
 ```bash
 export REMEMBER_API_URL=http://localhost:8000
-export REMEMBER_TOKEN=<the token your engine accepts, if any>
+export REMEMBER_API_KEY=<the key your engine accepts, if any>
 remember query "Who owns the billing migration?"
 ```
 
@@ -14338,8 +14271,8 @@ you can pipe the output into `jq` safely.
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | The request failed (network, HTTP error, rejected token), the credential file is unusable, or a check in `doctor` failed. |
-| 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). |
+| 1 | The request failed (network, HTTP error, rejected key), the credential file is unusable, or a check in `doctor` failed. |
+| 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). Also a stored key refused for the address you named. |
 
 ## Memory commands
 
@@ -14351,7 +14284,7 @@ remember ingest FILE [--mime MIME] [--title TITLE]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
                      [--source-version-ref REF]
-                     [--api-url URL] [--token TOKEN] [--self-hosted]
+                     [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Uploads one file and prints the new version as JSON:
@@ -14398,8 +14331,8 @@ readiness command. See [Wait until a document is queryable](https://remember.dev
 ```text
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
-                        [--api-url URL] [--token TOKEN] [--self-hosted]
-remember documents delete DOC_ID [--api-url URL] [--token TOKEN] [--self-hosted]
+                        [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one page of documents as JSON, newest document first, in the
@@ -14445,7 +14378,7 @@ remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max
 remember query adjacent-chunks CHUNK_ID [--window {1,2}]
 ```
 
-Every subcommand also takes `--api-url`, `--token` and `--self-hosted`.
+Every subcommand also takes `--api-url`, `--api-key` and `--project`.
 
 #### Asking a question
 
@@ -14507,8 +14440,8 @@ remember query adjacent-chunks 6f1c2d0e-… --window 2
 ### `remember operations`
 
 ```text
-remember operations list [--api-url URL] [--token TOKEN] [--self-hosted]
-remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--token TOKEN] [--self-hosted]
+remember operations list [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one JSON descriptor per line for the four assured operations,
@@ -14533,7 +14466,7 @@ in [Assured operations](https://remember.dev/docs/reference/assured-operations).
 ### `remember mcp`
 
 ```text
-remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
+remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Runs an MCP server on standard input and output for a coding agent. It finds
@@ -14547,7 +14480,7 @@ in [MCP tools](https://remember.dev/docs/reference/mcp).
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted] [--url URL] [--token TOKEN]
+remember setup [--self-hosted | --cloud] [--api-url URL] [--api-key KEY]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 
@@ -14555,9 +14488,9 @@ Writes MCP configuration so your coding agents start `remember mcp`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--self-hosted` | | Configure for an engine at `--url`, default `http://localhost:8000`. |
-| `--url` | none | The deployment address. With `--self-hosted` it is written into the agent configuration as `REMEMBER_DATA_PLANE_URL`. |
-| `--token` | none | A token to store in the [credential file](#credential-file). Never written into agent configuration. |
+| `--self-hosted` | | Configure for an engine at `--api-url`, default `http://127.0.0.1:8000`. |
+| `--api-url` | none | The engine address. It is written into the agent configuration as `REMEMBER_API_URL`. |
+| `--api-key` | none | With `--self-hosted`: the engine's key, stored in the [credential file](#credential-file) and never written into agent configuration. |
 | `--agent` | `all` | Which agent to configure. `agy` is Antigravity; `claude` means Claude Code and Claude Desktop. |
 | `--dir` | current directory | The project directory for project-level configuration. |
 | `--dry-run` | off | Print what would change; write nothing. |
@@ -14569,8 +14502,8 @@ What it does, in order:
    it uses `uvx remember mcp`. Paths are resolved to absolute paths so an
    editor started from a desktop launcher finds them. With neither
    `remember` nor `uvx` on `PATH` it exits with status 1.
-2. Updates the credential file when you pass `--token` or `--self-hosted`
-   (see the warning below).
+2. With `--self-hosted`, stores the engine address and key in the credential
+   file (see the warning below).
 3. Configures each agent. With `--agent all` it configures what it finds:
    Cursor if `.cursor/` exists in the directory, Antigravity if `.agents/`
    exists, Codex if `.codex/` exists or `codex` is installed, Claude Code if
@@ -14583,10 +14516,9 @@ The exact files and their content are listed in
 
 **Warning:**
 
-`remember setup --self-hosted` rewrites the credential file: it adds a
-project named `self_hosted` pointing at the engine, with the token from
-`--token` (or an empty one), and makes it the active project. Afterwards
-every command talks to the self-hosted engine.
+`remember setup --self-hosted` replaces the credential file with the engine's
+address and the key from `--api-key` (or no key). Afterwards every command
+talks to that engine.
 
 Existing configuration files must be valid JSON or TOML; otherwise the
 command stops with status 1 and changes nothing in that file.
@@ -14598,17 +14530,15 @@ remember setup --self-hosted --agent cursor --dry-run
 ### `remember doctor`
 
 ```text
-remember doctor [--api-url URL] [--token TOKEN] [--self-hosted]
+remember doctor [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Checks your setup and prints one line per check:
 
 1. `remember` or `uvx` is on `PATH`.
-2. The credential file: its location, whether its mode is `0600`, the active project and the token's expiry.
-3. The deployment: `GET /deployment` with a 5-second timeout. The stored
-   token is sent only when the address matches the stored project. A `401`
-   or `403` is reported as an authentication failure. When `/deployment`
-   answers anything else, it tries `GET /healthz`.
+2. The credential file: whether it is readable, and what it holds.
+3. The deployment: `GET /deployment` with a 5-second timeout, resolved and
+   authenticated exactly as every other command.
 4. Agent configuration in the current directory: `.cursor/mcp.json`,
    `.agents/mcp_config.json`, `.codex/config.toml`, and Claude Desktop's
    configuration file. For each it checks the file parses, contains a
@@ -14679,35 +14609,51 @@ The pipeline stages are explained in
 
 ## Credential file
 
-`remember setup` stores tokens in `credentials.json`.
+`remember setup --self-hosted` stores the engine address and key in
+`credentials.json`. The CLI and the Python SDK both read it, after flags (or
+arguments) and environment variables.
 
 Location, first match wins:
 
-1. `REMEMBER_CONFIG_DIR` or `REMEMBERSTACK_CONFIG_DIR`
+1. `REMEMBER_CONFIG_DIR`
 2. `$XDG_CONFIG_HOME/remember/`
 3. `~/.config/remember/`
 
 Protection:
 
 - The directory is created with mode `0700` and the file with mode `0600`.
-  The file is written to a temporary name and renamed, so a crash leaves
-  either the old file or the new one.
+  The file is written to a temporary name, synced and renamed, so a crash
+  leaves either the old file or the new one.
 - The CLI refuses to read a file that is a symbolic link or that group or
   other users can read, and exits with status 1. Fix it with
   `chmod 600 ~/.config/remember/credentials.json`.
 - Commands that change the file take a lock (`.lock` in the same directory).
 
-The Python SDK never reads this file.
+Format, version 2, for a self-hosted engine:
+
+```json
+{
+  "version": 2,
+  "api_url": "http://127.0.0.1:8000",
+  "key": "<the engine's key, or null>",
+  "issuer": null,
+  "key_id": null,
+  "expires_at": null,
+  "default_project": null
+}
+```
+
+A file in any other shape is refused. `remember setup --self-hosted` replaces
+it.
 
 ## Environment variables
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_URL`, `REMEMBERSTACK_API_URL` | memory commands | Deployment address. |
-| `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION` | memory commands | Deployment token, ahead of the credential file. |
-| `REMEMBER_API_KEY` | memory commands | Deployment token, after the credential file. |
-| `REMEMBERSTACK_API_TIMEOUT_SECONDS` | memory commands | Seconds per request; default 30. |
-| `REMEMBER_CONFIG_DIR`, `REMEMBERSTACK_CONFIG_DIR` | all | Credential file directory. |
+| `REMEMBER_API_URL` | memory commands | Deployment address. |
+| `REMEMBER_API_KEY` | memory commands | API key, ahead of the credential file. |
+| `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
+| `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
 | `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
 | `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops` inside the engine container. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](https://remember.dev/docs/reference/mcp#ingest-from-a-path). |
@@ -14733,12 +14679,12 @@ How to connect an agent step by step:
 ## `remember mcp`
 
 ```bash
-remember mcp [--read-only] [--api-url URL] [--token TOKEN]
+remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 The server reads JSON-RPC 2.0 messages from standard input, one per line,
 and writes one response per line to standard output. It finds the
-deployment and token the same way as every other `remember` command: flags,
+deployment and key the same way as every other `remember` command: flags,
 then environment variables, then the credential file. See [CLI: How the CLI finds your deployment](https://remember.dev/docs/reference/cli#how-the-cli-finds-your-deployment).
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
@@ -15102,9 +15048,9 @@ as an operation and returns the deployment's error in this shape.
 | Otherwise, when `uvx` is installed | absolute path of `uvx` | `["remember", "mcp"]` |
 
 An `env` block is added only when there is an address to pin: with
-`--self-hosted` (default `http://localhost:8000`) or with `--url`. It holds
-exactly one variable, `REMEMBER_DATA_PLANE_URL`. Tokens are never written into
-these files; the server reads them from the credential file.
+`--self-hosted` (default `http://127.0.0.1:8000`) or with `--api-url`. It holds
+exactly one variable, `REMEMBER_API_URL`. Keys are never written into these
+files; the server reads them from the credential file.
 
 Existing files are merged: other servers and settings are kept, and the
 `remember` entry is replaced.
@@ -15120,7 +15066,7 @@ Existing files are merged: other servers and settings are kept, and the
       "command": "/Users/ravi/.local/bin/remember",
       "args": ["mcp"],
       "env": {
-        "REMEMBER_DATA_PLANE_URL": "http://localhost:8000"
+        "REMEMBER_API_URL": "http://127.0.0.1:8000"
       }
     }
   }
@@ -15160,7 +15106,7 @@ available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_co
 `remember setup` runs Claude Code's own command:
 
 ```bash
-claude mcp add remember -e REMEMBER_DATA_PLANE_URL=http://localhost:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
 ```
 
 The `-e` part appears only when an address is pinned. Claude Code decides
@@ -15190,7 +15136,7 @@ command = "/Users/ravi/.local/bin/remember"
 args = ["mcp"]
 
 [mcp_servers.remember.env]
-REMEMBER_DATA_PLANE_URL = "http://localhost:8000"
+REMEMBER_API_URL = "http://127.0.0.1:8000"
 ```
 
 Any earlier `[mcp_servers.remember]` and `[mcp_servers.remember.*]` tables
@@ -15271,15 +15217,20 @@ unset for optional settings.
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBER_API_URL` | `http://127.0.0.1:8000` | URL | The deployment endpoint. Also read as `REMEMBER_DATA_PLANE_URL` (checked first) and `REMEMBERSTACK_API_URL` (checked last). |
-| `REMEMBER_API_KEY` | unset | secret | The deployment token, raw or as `Bearer …`. Also read as `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION` and `REMEMBERSTACK_API_AUTHORIZATION`, in that order. The CLI prefers `REMEMBER_TOKEN`. |
-| `REMEMBERSTACK_API_TIMEOUT_SECONDS` | `30.0` | float > 0 | HTTP timeout of the client, in seconds. |
-| `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where the CLI keeps `credentials.json`. Also read as `REMEMBERSTACK_CONFIG_DIR`. |
+| `REMEMBER_API_URL` | `http://127.0.0.1:8000` | URL | The deployment endpoint. |
+| `REMEMBER_API_KEY` | unset | secret | The API key, raw or as `Bearer …`. |
+| `REMEMBER_PROJECT` | unset | id or name | The project to use when the key covers several. |
+| `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where `credentials.json` lives. |
 | `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
 | `APPDATA` | unset | path | Windows base for agent configuration that `remember setup` writes. |
+
+The CLI and the Python client read `REMEMBER_API_KEY`, `REMEMBER_API_URL` and
+`REMEMBER_PROJECT` the same way: a flag or argument wins over the variable,
+and the variable wins over the credential file
+([CLI](https://remember.dev/docs/reference/cli#how-the-cli-finds-your-deployment)).
 
 ## Compose file only
 
@@ -15516,8 +15467,10 @@ Branch on the status and the code or string, not on `message`.
 The `remember` Python client raises `remember.MemoryApiError` for all of
 them, with `status_code` (`0` for a network failure), `detail` (the string, or
 the message) and `code` (set on `/query/*` routes when the body carries a
-known code at its expected status, and on a `429`, which also sets
-`retry_after`). `wait_for_readiness` raises
+known code at its expected status). A `429` raises its subclass
+`remember.RateLimited`, whose `code` is `rate_limited` or
+`concurrency_limited` and whose `retry_after` holds the `Retry-After`
+seconds. `wait_for_readiness` raises
 `remember.PipelineDeadLettered` when a stage it waits on is `dead_letter`
 ([Python SDK](https://remember.dev/docs/reference/python-sdk#pipelinedeadlettered)).
 
@@ -15640,11 +15593,11 @@ structured error:
 | `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
-| `unauthorized` | 401 | no | Refresh or replace REMEMBERSTACK_API_AUTHORIZATION; re-mint if the token was revoked. |
+| `unauthorized` | 401 | no | Refresh or replace REMEMBER_API_KEY; re-mint if the token was revoked. |
 | `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
 | `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
 | `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
-| `transport_error` | 0 | yes | Retry with back-off; check REMEMBERSTACK_API_URL, credentials, and network reachability. |
+| `transport_error` | 0 | yes | Retry with back-off; check REMEMBER_API_URL, credentials, and network reachability. |
 | `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. (For `delete_document` on a read-only server: Tell the user deletion is not available on this server; do not retry.) |
 | `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
 | `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
@@ -15926,8 +15879,8 @@ Start the engine with the protocol's model bindings; see
 [Models and providers](https://remember.dev/docs/self-hosting/models). Point the harness at it:
 
 ```bash
-export REMEMBERSTACK_API_URL=http://127.0.0.1:8000
-export REMEMBERSTACK_API_AUTHORIZATION="Bearer <token>"
+export REMEMBER_API_URL=http://127.0.0.1:8000
+export REMEMBER_API_KEY="<token>"
 export REMEMBERSTACK_OPENROUTER_API_KEY=<openrouter key>
 ```
 

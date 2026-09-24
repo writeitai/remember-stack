@@ -130,18 +130,17 @@ def resolve_connection(
 ) -> Connection:
     """Resolve key, engine URL, project and issuer with the one precedence.
 
-    The credential file is read only when some setting falls through to it,
-    so a caller that supplies everything is unaffected by a stale file.
+    The credential file is read only when the key or the engine URL falls
+    through to it, so a caller that supplies both is unaffected by a stale
+    file.
     """
     env = _Environment.model_validate({})
     env_key = env.api_key.get_secret_value() if env.api_key is not None else None
 
     stored: StoredCredentials | None = None
-    if (
-        (api_key is None and not env_key)
-        or (api_url is None and not env.api_url)
-        or (project is None and not env.project)
-    ):
+    if (api_key is None and not env_key) or (api_url is None and not env.api_url):
+        # A project matters only for a key routed by its issuer, which needs no
+        # engine URL, so a caller naming both key and URL never needs the file.
         stored = load_credentials()
 
     key: SecretStr | None = None

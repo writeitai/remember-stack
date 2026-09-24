@@ -21,12 +21,6 @@ remember --version
 It needs Python 3.12 or newer. `uv tool install remember` installs it as a
 standalone tool; `uvx remember …` runs it without installing.
 
-<Cloud>
-
-The package also installs a second command, [`remember-status`](#remember-status).
-
-</Cloud>
-
 ## Commands at a glance
 
 | Group | Command | What it does |
@@ -47,13 +41,10 @@ For remember.dev:
 
 | Group | Command | What it does |
 |---|---|---|
-| Account | [`login`](#remember-login) | Sign in to remember.dev from the terminal. |
-| | [`logout`](#remember-logout) | Revoke the stored tokens and delete the credential file. |
-| | [`whoami`](#remember-whoami) | Show who you are signed in as and which project is active. |
-| | [`switch`](#remember-switch) | Make another stored project the active one. |
-| | [`projects list`](#remember-projects-list) | List your organisation's projects. |
-| | [`balance`, `billing`](#remember-balance) | Show the organisation's credit balance. |
-| Console only | [`projects create`, `members list`, `members invite`](#commands-that-point-to-the-console) | Print a link to the web console and exit with status 1. |
+| Account | [`login`](#remember-login) | Sign in from the terminal and store one API key. |
+| | [`logout`](#remember-logout) | Revoke the stored key and delete the credential file. |
+| | [`whoami`](#remember-whoami) | Show the stored key's projects, permissions and expiry. |
+| | [`switch`](#remember-switch) | Choose the default project for the stored key. |
 
 </Cloud>
 
@@ -63,43 +54,33 @@ For remember.dev:
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`mcp`, `connectors`, `doctor`) accepts the same three flags:
+`documents`, `mcp`, `connectors`, `doctor`) accepts the same three flags:
 
 | Flag | Meaning |
 |---|---|
-| `--api-url URL`, `--url URL` | The deployment address. |
-| `--token TOKEN` | The deployment token. A bare secret or a full `Bearer …` value. |
-| `--self-hosted` | Marks the target as a self-hosted engine; it does not change the address.<Cloud> Only `whoami`, `balance`, `projects`, `switch` and `members` use it.</Cloud> |
+| `--api-url URL` | The deployment address. |
+| `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
+| `--project PROJECT` | Which project to use, by id or name, when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
 
 Put flags after the subcommand: `remember query sql --api-url … "SELECT 1"`.
 
-### Address
+Each setting is resolved on its own. First match wins:
 
-First match wins:
+| Setting | 1. Flag | 2. Environment | 3. [Credential file](#credential-file) | 4. Otherwise |
+|---|---|---|---|---|
+| Key | `--api-key` | `REMEMBER_API_KEY` | `key` | no key |
+| Address | `--api-url` | `REMEMBER_API_URL` | `api_url` | `http://127.0.0.1:8000`<Cloud>, or the project's address for a remember.dev key</Cloud> |
+| Project | `--project` | `REMEMBER_PROJECT` | `default_project` | none<Cloud>, or the key's default project</Cloud> |
 
-1. `--api-url` / `--url`
-2. `REMEMBER_DATA_PLANE_URL`, then `REMEMBER_API_URL`, then `REMEMBERSTACK_API_URL`
-3. The active project's address in the [credential file](#credential-file)
-4. `http://127.0.0.1:8000`
+The Python SDK resolves the same settings the same way
+([Python SDK](/docs/reference/python-sdk#connecting)).
 
-### Token
-
-First match wins:
-
-1. `--token`
-2. `REMEMBER_TOKEN`, then `REMEMBER_API_AUTHORIZATION`, then `REMEMBERSTACK_API_AUTHORIZATION`
-3. The active project's token in the credential file. When the address came
-   from a flag or the environment, the stored token is used only if that
-   address has the same scheme, host and port as the stored project.
-4. `REMEMBER_API_KEY`
-5. No token
-
-<Callout type="note">
-
-A stored credential wins over `REMEMBER_API_KEY`. To force the key in
-that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
-
-</Callout>
+A key read from the credential file is only sent to the address stored beside
+it<Cloud>, to remember.dev, or to a project address remember.dev returns for
+that key</Cloud>. If `--api-url` or `REMEMBER_API_URL` names another address,
+the command exits with status 2 and asks for the key explicitly, with
+`--api-key` or `REMEMBER_API_KEY`. A key you pass explicitly is sent wherever
+you point it.
 
 <Tabs>
 
@@ -108,10 +89,12 @@ that variable, pass it with `--token` or put it in `REMEMBER_TOKEN`.
 ```bash
 remember login
 remember query "Who owns the billing migration?"
+remember query "Who owns the billing migration?" --project docs
 ```
 
-`remember login` stores the project's address and token, so you pass
-neither afterwards.
+`remember login` stores one key. Each command asks remember.dev which address
+serves the project, then talks to that address directly, so you pass neither
+an address nor a key.
 
 </Tab>
 
@@ -119,7 +102,7 @@ neither afterwards.
 
 ```bash
 export REMEMBER_API_URL=http://localhost:8000
-export REMEMBER_TOKEN=<the token your engine accepts, if any>
+export REMEMBER_API_KEY=<the key your engine accepts, if any>
 remember query "Who owns the billing migration?"
 ```
 
@@ -134,10 +117,8 @@ you can pipe the output into `jq` safely.
 
 <Cloud>
 
-When the stored credential expires within 30 days, or has expired, memory
-commands print a warning on standard error. When a replaced credential could
-not be revoked, every command prints a warning until `remember login` or
-`remember logout` retires it.
+When the stored key expires within 30 days, or has expired, memory commands
+print a warning on standard error.
 
 </Cloud>
 
@@ -146,8 +127,8 @@ not be revoked, every command prints a warning until `remember login` or
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | The request failed (network, HTTP error, rejected token), the credential file is unusable, or a check in `doctor` failed.<Cloud> Also when the command only points to the web console.</Cloud> |
-| 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array).<Cloud> Also `--token-host` that is not a usable URL.</Cloud> |
+| 1 | The request failed (network, HTTP error, rejected key), the credential file is unusable, or a check in `doctor` failed.<Cloud> Also when remember.dev cannot resolve the project.</Cloud> |
+| 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). Also a stored key refused for the address you named. |
 
 <Cloud>
 
@@ -165,7 +146,7 @@ remember ingest FILE [--mime MIME] [--title TITLE]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
                      [--source-version-ref REF]
-                     [--api-url URL] [--token TOKEN] [--self-hosted]
+                     [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Uploads one file and prints the new version as JSON:
@@ -212,8 +193,8 @@ readiness command. See [Wait until a document is queryable](/docs/guides/wait-fo
 ```text
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
-                        [--api-url URL] [--token TOKEN] [--self-hosted]
-remember documents delete DOC_ID [--api-url URL] [--token TOKEN] [--self-hosted]
+                        [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one page of documents as JSON, newest document first, in the
@@ -259,7 +240,7 @@ remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max
 remember query adjacent-chunks CHUNK_ID [--window {1,2}]
 ```
 
-Every subcommand also takes `--api-url`, `--token` and `--self-hosted`.
+Every subcommand also takes `--api-url`, `--api-key` and `--project`.
 
 #### Asking a question
 
@@ -323,8 +304,8 @@ remember query adjacent-chunks 6f1c2d0e-… --window 2
 ### `remember operations`
 
 ```text
-remember operations list [--api-url URL] [--token TOKEN] [--self-hosted]
-remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--token TOKEN] [--self-hosted]
+remember operations list [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one JSON descriptor per line for the four assured operations,
@@ -349,7 +330,7 @@ in [Assured operations](/docs/reference/assured-operations).
 ### `remember mcp`
 
 ```text
-remember mcp [--read-only] [--api-url URL] [--token TOKEN] [--self-hosted]
+remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Runs an MCP server on standard input and output for a coding agent. It finds
@@ -364,7 +345,7 @@ in [MCP tools](/docs/reference/mcp).
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted] [--url URL] [--token TOKEN]
+remember setup [--self-hosted | --cloud] [--api-url URL] [--api-key KEY]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 
@@ -372,19 +353,21 @@ Writes MCP configuration so your coding agents start `remember mcp`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--self-hosted` | | Configure for an engine at `--url`, default `http://localhost:8000`. |
-| `--url` | none | The deployment address. With `--self-hosted`<Cloud> or `--cloud`</Cloud> it is written into the agent configuration as `REMEMBER_DATA_PLANE_URL`. |
-| `--token` | none | A token to store in the [credential file](#credential-file). Never written into agent configuration.<Cloud> With `--cloud` it requires `--url` unless you are already signed in.</Cloud> |
+| `--self-hosted` | | Configure for an engine at `--api-url`, default `http://127.0.0.1:8000`. |
+| `--api-url` | none | The engine address. It is written into the agent configuration as `REMEMBER_API_URL`. |
+| `--api-key` | none | With `--self-hosted`: the engine's key, stored in the [credential file](#credential-file) and never written into agent configuration. |
 | `--agent` | `all` | Which agent to configure. `agy` is Antigravity; `claude` means Claude Code and Claude Desktop. |
 | `--dir` | current directory | The project directory for project-level configuration. |
 | `--dry-run` | off | Print what would change; write nothing. |
 
 <Cloud>
 
-`--cloud` configures for remember.dev. With neither `--cloud` nor
-`--self-hosted`, on an interactive terminal, the command asks which backend
-to use; remember.dev is the default answer. When standard input is not a
-terminal, it chooses `--cloud`.
+`--cloud` configures for remember.dev; sign in with `remember login` first.
+It refuses `--api-key`: a remember.dev key comes from `remember login` or
+`REMEMBER_API_KEY`. With neither `--cloud` nor `--self-hosted`, on an
+interactive terminal, the command asks which backend to use; remember.dev is
+the default answer. When standard input is not a terminal, it chooses
+`--cloud`.
 
 </Cloud>
 
@@ -395,8 +378,8 @@ What it does, in order:
    it uses `uvx remember mcp`. Paths are resolved to absolute paths so an
    editor started from a desktop launcher finds them. With neither
    `remember` nor `uvx` on `PATH` it exits with status 1.
-2. Updates the credential file when you pass `--token` or `--self-hosted`
-   (see the warning below).
+2. With `--self-hosted`, stores the engine address and key in the credential
+   file (see the warning below).
 3. Configures each agent. With `--agent all` it configures what it finds:
    Cursor if `.cursor/` exists in the directory, Antigravity if `.agents/`
    exists, Codex if `.codex/` exists or `codex` is installed, Claude Code if
@@ -409,11 +392,10 @@ The exact files and their content are listed in
 
 <Callout type="warning">
 
-`remember setup --self-hosted` rewrites the credential file: it adds a
-project named `self_hosted` pointing at the engine, with the token from
-`--token` (or an empty one), and makes it the active project. Afterwards
-every command talks to the self-hosted engine.<Cloud> Run `remember switch` to
-go back to a remember.dev project.</Cloud>
+`remember setup --self-hosted` replaces the credential file with the engine's
+address and the key from `--api-key` (or no key). Afterwards every command
+talks to that engine.<Cloud> When a remember.dev key is stored, the command
+refuses; run `remember logout` first.</Cloud>
 
 </Callout>
 
@@ -427,18 +409,16 @@ remember setup --self-hosted --agent cursor --dry-run
 ### `remember doctor`
 
 ```text
-remember doctor [--api-url URL] [--token TOKEN] [--self-hosted]
+remember doctor [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Checks your setup and prints one line per check:
 
 1. `remember` or `uvx` is on `PATH`.
-2. The credential file: its location, whether its mode is `0600`<Cloud>, the
-   signed-in identity</Cloud>, the active project and the token's expiry.
-3. The deployment: `GET /deployment` with a 5-second timeout. The stored
-   token is sent only when the address matches the stored project. A `401`
-   or `403` is reported as an authentication failure. When `/deployment`
-   answers anything else, it tries `GET /healthz`.
+2. The credential file: whether it is readable, and what it holds<Cloud>
+   (the issuer, the key id and its expiry)</Cloud>.
+3. The deployment: `GET /deployment` with a 5-second timeout, resolved and
+   authenticated exactly as every other command.
 4. Agent configuration in the current directory: `.cursor/mcp.json`,
    `.agents/mcp_config.json`, `.codex/config.toml`, and Claude Desktop's
    configuration file. For each it checks the file parses, contains a
@@ -451,172 +431,74 @@ when any check fails.
 
 ## Account commands
 
-These commands concern remember.dev. Against a self-hosted engine they say
-so and do nothing.
-
 ### `remember login`
 
 ```text
-remember login [--token-host URL] [--api-url URL]
-               [--audience {deployment,control} | --control-plane | --control]
+remember login [--issuer URL]
 ```
 
 Signs you in with a device code. The command prints a link and a short code;
 you open the link, sign in to remember.dev, check that the code matches, and
-approve. The command waits for the approval, then stores the token in the
-[credential file](#credential-file).
+choose which projects and permissions the key gets. The command waits for
+your approval, then stores one API key in the
+[credential file](#credential-file). The key is never printed.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--token-host` | see below | Where to request the token. |
-| `--api-url` | the address remember.dev advertises for the deployment | Override the deployment address that gets stored. |
-| `--audience` | `deployment` | `deployment`: a deployment token (`umc_dp_…`) with read and write access to one project's memory; you pick the organisation and project in the browser. `control`: a control-plane token (`umc_cp_…`) that can read organisation status, balance and projects, and cannot read memory or spend money. |
-| `--control-plane`, `--control` | | Same as `--audience control`. |
-
-Token host, first match wins: `--token-host`; `REMEMBER_CONTROL_PLANE_URL`,
-`REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST`;
-`https://remember.dev/app/api`. For remember.dev you pass none of them.
+The issuer is `--issuer`, else `REMEMBER_ISSUER`, else
+`https://remember.dev`. The command reads the issuer's OAuth metadata at
+`/.well-known/oauth-authorization-server` and runs the standard device
+authorization grant (RFC 8628) against the endpoints it names.
 
 ```bash
 remember login
 ```
 
-After approval it prints:
-
-```text
-[✓] Authenticated with Remember Cloud.
-deployment_id: …
-active_project: …
-token_prefix: umc_dp
-token_host: https://remember.dev/app/api
-api_url: https://<deployment-id>.dp.remember.dev
-expires_at: …
-```
-
 Behaviour worth knowing:
 
-- A deployment login adds the project to the credential file and makes it
-  active. Projects you signed in to before stay in the file; use
-  `remember switch` to move between them.
-- A control login adds the control-plane token next to your projects.
-- When you sign in again to the same project, the new token replaces the old
-  one and the old one is revoked after the new one is safely on disk. If the
-  revoke cannot be confirmed, the old token is recorded and retried on the
-  next `login` or `logout`; revoke it in the console if the warning persists.
-- If remember.dev reports that the deployment's address is not live yet, the
-  login fails and asks you to try again later, unless you pass `--api-url`.
-- If `REMEMBER_API_URL` (or another address variable) points elsewhere, the
-  command warns that it will override the stored address.
+- Waiting honours the server's pace: it slows down when asked, respects
+  `Retry-After`, and never waits more than 30 seconds between checks.
+- When you sign in again, the old key is revoked only after the new one is
+  safely stored. The old key is first recorded in `pending-revocation.json`;
+  if the command is interrupted, or the revocation cannot be confirmed, the
+  next `remember` command finishes the job. A key that was never replaced is
+  simply forgotten from that record, not revoked.
 - The browser step has a time limit set by the server. When it runs out, or
-  you deny the request, the command exits with status 1.
+  you deny the request, the command exits with status 1 and the stored key
+  is unchanged. Ctrl-C exits with status 130 and writes nothing.
 
 ### `remember logout`
 
 ```text
-remember logout [--token-host URL]
+remember logout
 ```
 
-Revokes every stored remember.dev token (the active one, every stored
-project's, and the control-plane token) and then deletes the credential file.
-Tokens for `localhost`, `127.0.0.1` and `.local` addresses are not sent
-anywhere. If a revoke is not confirmed, the file is kept and the command exits
-with status 1. With no credential file it does nothing and exits 0.
+Revokes the stored key at remember.dev (RFC 7009) and deletes the credential
+file. A key remember.dev no longer knows counts as revoked. If the revocation
+is not confirmed, the file is kept and the command exits with status 1. With
+no credential file it does nothing and exits 0. A stored self-hosted address
+and key are simply deleted.
 
 ### `remember whoami`
 
 ```text
-remember whoami [--api-url URL] [--token TOKEN] [--self-hosted]
+remember whoami
 ```
 
-Prints the signed-in user id, email and organisation (when a control-plane
-token is stored), the active project and its address. Exit status 1 when you
-are not signed in. Against a self-hosted engine it prints
-`Identity: self-hosted (local)` and the address.
+Prints what the stored key says about itself: the issuer, key id, expiry,
+projects and permissions, and your default project. It never calls a
+deployment. When the key has the `account:read` permission, it also prints
+remember.dev's account view of the key. Exit status 1 when you are not
+signed in.
 
 ### `remember switch`
 
 ```text
-remember switch PROJECT [--api-url URL] [--token TOKEN] [--self-hosted]
+remember switch PROJECT
 ```
 
-Makes another project in the credential file the active one. `PROJECT` is a
-project id or name as `remember projects list` shows it. It changes only the
-local file; it cannot reach a project you have not signed in to. Exit status
-1 when the project is not in the file.
-
-### `remember projects list`
-
-```text
-remember projects list [--api-url URL] [--token TOKEN] [--self-hosted]
-```
-
-Prints a table: project id, name, status, and `*` for the active project.
-
-- With a control-plane token stored (`remember login --control`), it asks
-  remember.dev for the organisation's projects. The name column shows the
-  first eight characters of the project id; remember.dev does not send
-  project names on this route.
-- Otherwise, or when that request fails, it lists the projects stored in
-  the credential file.
-
-Against a self-hosted engine it prints a single row, `local`.
-
-### `remember balance`
-
-```text
-remember balance [--api-url URL] [--token TOKEN] [--self-hosted]
-remember billing ...      (same command)
-```
-
-Prints `Current balance: €<amount> [<billing state>]` for your organisation.
-It needs a control-plane token (`remember login --control`); without one it
-prints the console address, `https://remember.dev/app/billing`, and exits
-with status 1. Prices and credits: [Pricing and credits](/docs/cloud/pricing).
-
-### `remember-status`
-
-```text
-remember-status [--org ORG_ID] [--url URL] [--quiet]
-```
-
-A separate command for scripts. It reads a control-plane token from
-`REMEMBER_CLOUD_TOKEN`, the organisation from `REMEMBER_CLOUD_ORG` (or
-`--org`) and the address from `REMEMBER_CLOUD_URL` (or `--url`, default
-`https://remember.dev/app/api`). It does not read the credential file.
-
-It prints the deployment state and id, whether its address is live, the
-billing state and balance, and the spend gate's decision:
-
-```text
-deployment  active     3f0c…
-endpoint    live       3f0c….dp.remember.dev
-billing     ACTIVE     balance 42.50
-spend       allow
-```
-
-| Exit | Meaning |
-|---|---|
-| 0 | A deployment exists and is live, billing allows spending, and the spend gate allows work. |
-| 1 | Any of those is not true. |
-| 2 | Missing token or organisation, rejected token, rate limited, or another error. |
-
-`--quiet` prints nothing; use the exit status. The same checks in Python:
-[`CloudClient`](/docs/reference/python-sdk#cloudclient).
-
-## Commands that point to the console
-
-These commands exist, do not change anything, print a link to the web
-console and exit with status 1.
-
-| Command | What it prints |
-|---|---|
-| `remember projects create NAME` | Create projects at `https://remember.dev/app/projects`, then run `remember login`. |
-| `remember members list` | Manage members at `https://remember.dev/app/team`. |
-| `remember members invite EMAIL [--role {member,owner}]` | Invite members at `https://remember.dev/app/team`. `--role` defaults to `member`. |
-
-Against a self-hosted engine each says that projects and members are
-remember.dev features. See
-[Organisations, projects and members](/docs/cloud/organisations-and-projects).
+Makes `PROJECT` (an id or a name) the default project for the stored key.
+It asks remember.dev once to check that the key covers the project, then
+stores the project's id. No new key is created. Exit status 1 when the key
+does not cover the project.
 
 </Cloud>
 
@@ -690,85 +572,73 @@ The pipeline stages are explained in
 
 ## Credential file
 
-`remember setup` stores tokens in `credentials.json`<Cloud>, and so does
-`remember login`</Cloud>.
+`remember setup --self-hosted` stores the engine address and key in
+`credentials.json`<Cloud>, and `remember login` stores your remember.dev key
+there</Cloud>. The CLI and the Python SDK both read it, after flags (or
+arguments) and environment variables.
 
 Location, first match wins:
 
-1. `REMEMBER_CONFIG_DIR` or `REMEMBERSTACK_CONFIG_DIR`
+1. `REMEMBER_CONFIG_DIR`
 2. `$XDG_CONFIG_HOME/remember/`
 3. `~/.config/remember/`
 
 Protection:
 
 - The directory is created with mode `0700` and the file with mode `0600`.
-  The file is written to a temporary name and renamed, so a crash leaves
-  either the old file or the new one.
+  The file is written to a temporary name, synced and renamed, so a crash
+  leaves either the old file or the new one.
 - The CLI refuses to read a file that is a symbolic link or that group or
   other users can read, and exits with status 1. Fix it with
   `chmod 600 ~/.config/remember/credentials.json`.
 - Commands that change the file take a lock (`.lock` in the same directory).
 
-<Cloud>
-
-Next to it, `pending-revocation.json` lists replaced tokens that could not be
-revoked yet (at most 20). `login` and `logout` retry them.
-
-Format, version 1 (tokens shortened):
+Format, version 2, for a self-hosted engine:
 
 ```json
 {
-  "version": 1,
-  "active_project_id": "8c1d…",
-  "projects": {
-    "8c1d…": {
-      "name": "billing-migration",
-      "data_plane_url": "https://3f0c….dp.remember.dev",
-      "data_plane_token": "umc_dp_…",
-      "deployment_id": "3f0c…",
-      "token_host": "https://remember.dev/app/api",
-      "token_id": "…",
-      "expires_at": "2027-09-23T10:00:00Z"
-    }
-  },
-  "control_plane": {
-    "url": "https://remember.dev/app/api",
-    "access_token": "umc_cp_…",
-    "org_id": "…",
-    "token_id": "…",
-    "expires_at": "…"
-  },
-  "api_url": "https://3f0c….dp.remember.dev",
-  "access_token": "umc_dp_…",
-  "token_host": "https://remember.dev/app/api",
-  "token_type": "Bearer",
-  "token_id": "…",
-  "org_id": "…",
-  "deployment_id": "3f0c…",
-  "label": "billing-migration",
-  "token_prefix": "umc_dp",
-  "expires_at": "2027-09-23T10:00:00Z"
+  "version": 2,
+  "api_url": "http://127.0.0.1:8000",
+  "key": "<the engine's key, or null>",
+  "issuer": null,
+  "key_id": null,
+  "expires_at": null,
+  "default_project": null
 }
 ```
 
-The top-level `api_url`, `access_token` and related fields repeat the active
-project. `control_plane` is present only after `remember login --control`.
-The file rejects unknown keys: a file written by a newer CLI can be refused
-by an older one; `remember login` again fixes it.
+<Cloud>
+
+After `remember login`:
+
+```json
+{
+  "version": 2,
+  "issuer": "https://remember.dev",
+  "key": "rmb_…",
+  "key_id": "…",
+  "expires_at": "2027-09-23T10:00:00+00:00",
+  "default_project": null,
+  "api_url": null
+}
+```
+
+Next to it, `pending-revocation.json` lists replaced keys whose revocation is
+not confirmed yet (at most 20). Every `remember` command retries them.
 
 </Cloud>
 
-The Python SDK never reads this file.
+A file in any other shape is refused. `remember setup --self-hosted` replaces
+it<Cloud>, and so does `remember login`</Cloud>.
 
 ## Environment variables
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_URL`, `REMEMBERSTACK_API_URL` | memory commands | Deployment address. |
-| `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION` | memory commands | Deployment token, ahead of the credential file. |
-| `REMEMBER_API_KEY` | memory commands | Deployment token, after the credential file. |
-| `REMEMBERSTACK_API_TIMEOUT_SECONDS` | memory commands | Seconds per request; default 30. |
-| `REMEMBER_CONFIG_DIR`, `REMEMBERSTACK_CONFIG_DIR` | all | Credential file directory. |
+| `REMEMBER_API_URL` | memory commands | Deployment address. |
+| `REMEMBER_API_KEY` | memory commands | API key, ahead of the credential file. |
+| `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
+| `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
 | `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
 | `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops` inside the engine container. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](/docs/reference/mcp#ingest-from-a-path). |
@@ -780,8 +650,7 @@ For remember.dev:
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `REMEMBER_CONTROL_PLANE_URL`, `REMEMBER_TOKEN_HOST`, `REMEMBERSTACK_TOKEN_HOST` | `login`, `logout` | Token host. |
-| `REMEMBER_CLOUD_TOKEN`, `REMEMBER_CLOUD_ORG`, `REMEMBER_CLOUD_URL` | `remember-status` | Control-plane token, organisation, address. |
+| `REMEMBER_ISSUER` | `login` | The key issuer; default `https://remember.dev`. |
 
 </Cloud>
 

@@ -214,9 +214,7 @@ def test_project_precedence_reaches_the_issuer(
 def test_the_file_is_not_read_when_everything_is_explicit() -> None:
     """A stale or broken file cannot break a caller who supplied every setting."""
     _store({"legacy": True})
-    connection = resolve_connection(
-        api_key="k", api_url="http://explicit.test", project="p"
-    )
+    connection = resolve_connection(api_key="k", api_url="http://explicit.test")
     assert connection.stored is None
     assert connection.key_source == "explicit"
 

@@ -318,7 +318,7 @@ def test_logout_without_a_file_is_success(issuer: FakeIssuer) -> None:
 def test_logout_of_a_self_hosted_entry_makes_no_call(issuer: FakeIssuer) -> None:
     write_credentials(
         credentials=StoredCredentials(
-            version=2, api_url="http://127.0.0.1:8000", key="shared"
+            version=2, api_url="http://127.0.0.1:8000", key=SecretStr("shared")
         )
     )
     assert main(["logout"]) == 0
