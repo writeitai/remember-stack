@@ -163,3 +163,90 @@ def test_slot_rule() -> None:
     assert own_document_name_slot(refs=refs, own_document_name="Other") == (None, False)
     twice = (EntityRef(name=_NAME), EntityRef(name="x", surface=_NAME))
     assert own_document_name_slot(refs=twice, own_document_name=_NAME) == (None, True)
+
+
+def test_longer_surface_containing_the_name_is_skipped() -> None:
+    """A surface "The report Audit_2025.pdf" still names the document."""
+    resolver, facts = _normalize(
+        claim=_claim_with(claim_text=_SELF_CLAIM, own_name=_NAME),
+        payload={
+            "relations": [
+                {
+                    "subject": {"name": "Acme"},
+                    "predicate": "authored",
+                    "object": {
+                        "name": "2025 audit report",
+                        "surface": f"The report {_NAME}",
+                    },
+                }
+            ]
+        },
+    )
+    assert resolver.calls == []
+    assert facts.applications.staged == []
+
+
+def test_name_only_match_is_skipped() -> None:
+    """The canonical name is the document even when the surface is longer."""
+    resolver, facts = _normalize(
+        claim=_claim_with(claim_text=_SELF_CLAIM, own_name=_NAME),
+        payload={
+            "observations": [
+                {
+                    "subject": {"name": _NAME, "surface": "the report"},
+                    "statement": "summarizes the 2025 audit findings",
+                }
+            ]
+        },
+    )
+    assert resolver.calls == []
+    assert facts.applications.staged == []
+
+
+def test_two_containing_references_skip_none() -> None:
+    """Ambiguity protection holds for containment matches too."""
+    resolver, facts = _normalize(
+        claim=_claim_with(claim_text=_SELF_CLAIM, own_name=_NAME),
+        payload={
+            "relations": [
+                {
+                    "subject": {"name": _NAME},
+                    "predicate": "audited",
+                    "object": {"name": "Audit", "surface": f"The report {_NAME}"},
+                }
+            ]
+        },
+    )
+    assert [ref.name for ref in resolver.calls] == [_NAME, "Audit"]
+    assert len(facts.applications.staged) == 1
+
+
+def test_person_reference_without_the_name_is_untouched() -> None:
+    """Only the matching reference is skipped; the person still resolves."""
+    resolver, facts = _normalize(
+        claim=_claim_with(
+            claim_text=f"Alice wrote the report {_NAME}.", own_name=_NAME
+        ),
+        payload={
+            "observations": [
+                {
+                    "subject": {"name": "Alice"},
+                    "statement": "wrote a report",
+                    "context_refs": [
+                        {"name": "Audit", "surface": f"the report {_NAME}"}
+                    ],
+                }
+            ]
+        },
+    )
+    assert [ref.name for ref in resolver.calls] == ["Alice"]
+    (staged,) = facts.applications.staged
+    assert staged["context_bindings"] == ()
+
+
+def test_slot_rule_needs_a_whole_name() -> None:
+    """ "Audit_2025.pdf" inside "Audit_2025.pdfx" is not the document."""
+    refs = (EntityRef(name="Audit_2025.pdfx"), EntityRef(name="Acme"))
+    assert own_document_name_slot(refs=refs, own_document_name=_NAME) == (None, False)
+    spaced = (EntityRef(name="acme"), EntityRef(name="x", surface="AUDIT_2025.PDF"))
+    assert own_document_name_slot(refs=spaced, own_document_name=_NAME) == (1, False)

@@ -12,6 +12,7 @@ written into a claim in place of a self-reference, is not a referent either
 
 import re
 
+from rememberstack.core.document_metadata import normalize_name
 from rememberstack.model.relations import EntityRef
 from rememberstack.spine.entity_registry import normalized_lemma
 
@@ -70,20 +71,30 @@ def own_document_name_slot(
     """Find the one reference that is the claim's own document name (D134).
 
     ``refs`` are one assertion's references in slot order (subject, object
-    when a relation, then context references). A reference whose surface text
-    equals the name at the claim's recorded span is the document itself, not
-    an entity, and is not minted or resolved. Returns ``(slot, ambiguous)``:
-    the slot of the single matching reference, or ``None``; ``ambiguous`` is
-    True when several references in the assertion share that text ("Alice
-    wrote the report Alice") — then none is skipped, so a person is never
-    lost to a document's name. A claim without the span skips nothing.
+    when a relation, then context references). A reference matches when its
+    ``name`` or its claim surface contains the name at the claim's recorded
+    span as a whole (word-bounded, after the D134 name normalization) — so a
+    surface "The report Audit_2025.pdf" or a canonical name "Audit_2025.pdf"
+    with a longer surface both match. That reference is the document itself,
+    not an entity, and is not minted or resolved. Returns ``(slot,
+    ambiguous)``: the slot of the single matching reference, or ``None``;
+    ``ambiguous`` is True when several references in the assertion match
+    ("Alice wrote the report Alice") — then none is skipped, so a person is
+    never lost to a document's name. A claim without the span skips nothing.
     """
     if own_document_name is None:
         return None, False
+    normalized = normalize_name(value=own_document_name)
+    if normalized is None:
+        return None, False
+    whole_name = re.compile(r"(?<!\w)" + re.escape(normalized) + r"(?!\w)")
     matches = [
         slot
         for slot, ref in enumerate(refs)
-        if ref.mention_surface() == own_document_name
+        if any(
+            whole_name.search(normalize_name(value=text) or "")
+            for text in (ref.name, ref.mention_surface())
+        )
     ]
     if len(matches) == 1:
         return matches[0], False
