@@ -116,8 +116,8 @@ Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or pre-shared
 - **`remember doctor`**: Verifies connectivity, auth token validity, tenant endpoint health, and agent harness configurations.
 
 ### 3.3 Retirement of Legacy Commands
-- **`remember review` (Retired)**: The D24 human review queue (`review list`, `review decide`) was built for early prototype cluster curation. The production engine uses autonomous bitemporal adjudication (D3/D43/D107). Human review has been removed from all documentation and is not part of the public product.
-- **`remember budget` (Retired from Client)**: Spend ceiling inspection on local database ledgers is an internal worker detail, replaced on the platform level by `remember balance`.
+- **`remember review` (Removed)**: The D24 human review queue commands (`review list`, `review decide`) are deleted from the CLI, including their internal-ops path. They were built for early prototype cluster curation. The production engine uses autonomous bitemporal adjudication (D3/D43/D107). Human review has been removed from all documentation and is not part of the public product.
+- **`remember budget` (Removed)**: The command is deleted from the CLI, including its internal-ops path. Spend ceilings are an internal worker detail enforced by the workers; operators read spend with `remember ops cost-export`, and the platform exposes credits through `remember balance`.
 - **`remember ops` (Confined to Internal/Docker)**: SRE tasks (`ops replay`, `ops rebuild`) are executed inside the server container environment via internal scripts, not exposed on the developer client CLI.
 
 ### 3.4 Credential Architecture & Token Isolation (Amending D92)

@@ -120,6 +120,7 @@ Success result:
   "version_id": "…",
   "content_hash": "…",
   "created": true,
+  "parked": null,
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
@@ -135,6 +136,12 @@ Success result:
 `created: false` means these exact bytes were already stored; no new
 processing starts, and one readiness check tells the agent whether the
 content is already available.
+
+`parked: "no_route"` means the deployment has no converter for the file's
+media type. The bytes are stored, but they are not read until an operator
+adds a route. The reply then has `pipeline.status` `parked_no_route`, no
+`next_tool` or `poll_with`, and guidance telling the agent to tell the user
+instead of polling readiness.
 
 The server does not check body size itself. The deployment refuses a body
 over its limit, and the tool returns `body_too_large`. remember.dev's limit is

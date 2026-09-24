@@ -9,9 +9,11 @@ export const metadata = {
 
 Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Which converter handles which file is a table you configure: a
-map from MIME type to converter name. A stock deployment accepts only
-Markdown and plain text. Everything else is stored and waits until you add
-a route for it.
+map from MIME type to converter name. A stock deployment converts
+Markdown, plain text, HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel
+(`.xlsx`) with no API key. Everything else, including PDFs and images, is
+stored and waits until you add a route for it; the ingest response says so
+at once with `"parked": "no_route"`.
 
 ## The default table
 
@@ -21,9 +23,18 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
 |---|---|
 | `text/markdown` | `passthrough` |
 | `text/plain` | `passthrough` |
+| `text/html` | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (`.docx`) | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.presentationml.presentation` (`.pptx`) | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`) | `markitdown` |
 
 `passthrough` keeps the text as it is. It requires valid UTF-8; a file in
-another encoding fails conversion.
+another encoding fails conversion. `markitdown` runs in the worker with no
+network call (see [markitdown](#markitdown)).
+
+PDFs and images are not in the default table: the converters that read
+them call a paid provider API with your own key. Add a route for them as
+shown below.
 
 The MIME type is the one sent with the upload. The `remember` CLI, Python
 client and MCP `ingest` tool take it from the file extension, the same way
@@ -36,11 +47,12 @@ the extension does not say what the file is. The match is exact:
 ## Add routes
 
 Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. It
-**replaces** the default table, so include the text types again:
+**replaces** the default table, so include the default routes again. This
+example adds PDFs and images:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "markitdown", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "markitdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
@@ -50,19 +62,21 @@ both read this variable. A route that names an unknown converter stops the
 | Converter | Runs | Accepts | Needs |
 |---|---|---|---|
 | `passthrough` | In the worker | Markdown and plain text | Nothing |
-| `markitdown` | In the worker | HTML, and other formats the markitdown library reads without extra packages | Nothing |
+| `markitdown` | In the worker | HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
 ## markitdown
 
 `markitdown` converts in the worker process, with no network call and no
-cost. The image installs the markitdown library **without its optional
-format packages**. HTML converts. Word (`.docx`), PowerPoint (`.pptx`),
-Excel (`.xlsx`) and PDF need packages the image does not contain, so a file
-of those types routed to `markitdown` fails conversion. Route PDFs to
-`mistral_ocr` instead. RememberStack does not convert Office files in the
-shipped image yet.
+cost. The image installs the markitdown library with the packages it needs
+for Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`); HTML needs
+none. It reads the text, headings, lists and tables of these files; it does
+not read text inside embedded images.
+
+The image does not contain markitdown's PDF, audio or legacy Office
+(`.doc`, `.ppt`, `.xls`) packages, so a file of those types routed to
+`markitdown` fails conversion. Route PDFs to `mistral_ocr` instead.
 
 ## mistral_ocr
 
@@ -128,8 +142,13 @@ the `api` and `worker-convert` services need them. Without the key, the
 An upload whose MIME type has no route is still accepted. The API stores
 the original bytes and creates the version, and its `convert` work is
 parked with the reason `no_route`. It uses no attempts and makes no model
-calls. [Readiness](/docs/guides/wait-for-readiness) shows the version's
-`convert` stage as `pending`.
+calls.
+
+The ingest response says so immediately: its `parked` field is
+`"no_route"` (it is `null` when conversion was scheduled). `remember ingest`
+also prints a warning, and the MCP `ingest` tool tells the agent not to
+wait for readiness. [Readiness](/docs/guides/wait-for-readiness) shows the
+version's `convert` stage as `pending`.
 
 After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
@@ -146,7 +165,7 @@ covers; the rest stays parked. See [Operating the pipeline](/docs/self-hosting/o
 ## Not supported yet
 
 RememberStack does not ingest audio, video or web addresses yet. To add a
-web page, download it and send the HTML with a `markitdown` route.
+web page, download it and send the HTML.
 
 remember.dev accepts UTF-8 Markdown and plain text only; see
 [Limits](/docs/cloud/limits) for the formats and sizes it accepts.

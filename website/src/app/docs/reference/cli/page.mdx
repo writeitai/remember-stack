@@ -173,6 +173,12 @@ remember ingest notes/2026-09-18-billing-sync.md \
   --source-kind meeting-notes --source-ref billing-sync/2026-09-18
 ```
 
+It prints the `IngestedVersion` as one JSON line. When the deployment has
+no converter for the file's type, the line has `"parked":"no_route"` and
+the command also prints a warning to stderr; the exit status stays 0,
+because the file is stored. See
+[File formats and converters](/docs/self-hosting/converters#files-no-route-accepts).
+
 Ingest returns before processing ends. To wait, use the SDK's
 `wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
 readiness command. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
@@ -556,14 +562,6 @@ remember connectors status CONNECTOR_ID
 These commands call `/connectors` routes that no deployment serves today.
 Every one fails with `API 404` and exit status 1. Connectors are listed in
 [What is not built yet](/docs/project/not-built-yet).
-
-<Callout type="note">
-
-`remember review` and `remember budget` are retired. They print a notice
-and exit with status 1, and will be removed. Check credits with
-`remember balance`.
-
-</Callout>
 
 ## Self-hosted operations: `remember ops`
 

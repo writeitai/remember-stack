@@ -38,7 +38,7 @@ Applies to remember.dev and self-hosted.
 | `REMEMBERSTACK_API_TIMEOUT_SECONDS` | `30.0` | float > 0 | HTTP timeout of the client, in seconds. |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where the CLI keeps `credentials.json`. Also read as `REMEMBERSTACK_CONFIG_DIR`. |
 | `REMEMBER_TOKEN_HOST` | unset | URL | Token host for `remember login`. Also read as `REMEMBER_CONTROL_PLANE_URL` (checked first) and `REMEMBERSTACK_TOKEN_HOST`. |
-| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`, `remember budget` and `remember review`. They work only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
@@ -204,7 +204,7 @@ See [File formats and converters](/docs/self-hosting/converters).
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | `{"text/markdown": "passthrough", "text/plain": "passthrough"}` | JSON object | passed | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](/docs/self-hosting/converters#the-default-table)) | JSON object | passed | MIME type → converter. Replaces the default table. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | passed | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | passed | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | passed | OCR model. |

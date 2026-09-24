@@ -401,7 +401,7 @@ about who operates it, not about how well it remembers.
 |---|---|---|
 | **Memory engine** | RememberStack, Apache-2.0 | RememberStack, one isolated deployment per project |
 | **What you run** | PostgreSQL 19 with eight extensions, S3-compatible object storage, the API and twelve pipeline workers | Nothing. You install the `remember` client. |
-| **File formats** | Markdown and plain text by default; PDFs, images, HTML and Office files once you configure a converter | UTF-8 Markdown and plain text, up to 10,000,000 bytes per document |
+| **File formats** | Markdown, plain text, HTML, Word, PowerPoint and Excel by default; PDFs and images once you configure an OCR converter | UTF-8 Markdown and plain text, up to 10,000,000 bytes per document |
 | **Model inference for the pipeline** | Your own OpenRouter account, plus a Mistral key for PDFs and images | Included in the processing charge |
 | **Endpoint** | Wherever you run it | `https://<deployment-id>.dp.remember.dev`, over TLS, straight to your deployment |
 | **Access for agents** | You configure bearer or signed-token authentication | API tokens from the console, `remember login`, and hosted MCP with browser sign-in |
@@ -3133,10 +3133,11 @@ self-hosted deployment.
 | Markdown (`.md`) | Yes | Yes | Yes |
 | Plain text (`.txt`) | Yes | Yes | Yes |
 | Chat logs and transcripts, as Markdown or text | Yes | Yes | Yes |
-| HTML | No | No | Yes, with `markitdown` |
+| HTML | No | Yes | Yes |
+| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | No | Yes | Yes |
 | PDF, including scanned PDFs | No | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
 | PNG and JPEG images | No | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Word, PowerPoint, Excel | No | No | No: the bundled converter lacks the packages these need |
+| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
 | Audio and video | No | No | No |
 | Web addresses (URLs) | No | No | No: download the page and send the HTML |
 
@@ -3154,13 +3155,13 @@ to Markdown first and send the Markdown.
 
 ## Self-hosted
 
-A new self-hosted deployment converts Markdown and plain text only. Other
-formats are accepted and stored, but they wait unprocessed until you add a
-converter for their type. Nothing tells you at upload time, so check
-[readiness](https://remember.dev/docs/guides/wait-for-readiness) after your first upload of a
-new format.
+A new self-hosted deployment converts Markdown, plain text, HTML, Word,
+PowerPoint and Excel files locally, with no API key. Other formats are
+accepted and stored, but they wait unprocessed until you add a converter
+for their type. The upload response tells you: its `parked` field is
+`"no_route"`, and `remember ingest` prints a warning.
 
-To read HTML, PDFs and images, map each file type to a converter in
+To read PDFs and images, map each file type to a converter in
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
 converters](https://remember.dev/docs/self-hosting/converters) shows the setting, what each
 converter does and costs, and how to release files that were stored before
@@ -3539,6 +3540,7 @@ The call returns as soon as the bytes are stored. The result
 | `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
 | `content_hash` | SHA-256 of the bytes, in hex. |
 | `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
+| `parked` | `"no_route"` when the deployment has no converter for the file's MIME type: the bytes are stored but will not be read until an operator adds one. `None` when processing was scheduled. |
 
 Processing (reading, structuring, extracting claims, adjudicating facts)
 happens afterwards and takes minutes. The document is not queryable until
@@ -3743,7 +3745,9 @@ An agent connected over MCP uses the `ingest` tool. Exactly one of `text`,
 Limits on the tool arguments: `filename` up to 512 characters, `mime` 255,
 `title` 512, `source_kind` 128, `source_ref` 512, `source_version_ref` 512.
 The tool's reply includes the arguments to pass to `pipeline_readiness`
-next. See [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent).
+next. When the file was parked (`"parked": "no_route"`), the reply's
+`pipeline.status` is `parked_no_route` and it tells the agent to report
+that to the user instead of waiting. See [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent).
 
 ## What gets read
 
@@ -3770,11 +3774,12 @@ Convert other formats to Markdown before you send them. See
 
 **Self-hosted:**
 
-A fresh self-hosted deployment reads `text/markdown` and `text/plain`
-and nothing else. A file with any other MIME type is stored and its
-processing is parked, not refused: the ingest succeeds, and the
-version waits until an operator adds a converter for its type. PDF,
-HTML, Office documents and images need converters that you configure.
+A fresh self-hosted deployment reads Markdown, plain text, HTML and
+Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`). A file
+with any other MIME type is stored and its processing is parked, not
+refused: the ingest succeeds with `"parked": "no_route"`, and the
+version waits until an operator adds a converter for its type. PDFs and
+images need converters that you configure with your own provider key.
 See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
@@ -3783,7 +3788,8 @@ answers HTTP 413 `body_too_large`. A request without a
 `Content-Length` header is refused with HTTP 411 when a limit is set.
 
 A parked version never becomes ready, so a readiness wait on it runs until
-its timeout. Check the MIME type before you wait.
+its timeout. Check `parked` in the ingest result before you wait;
+`remember ingest` prints a warning when it is set.
 
 ## Errors
 
@@ -8592,9 +8598,11 @@ Applies to: self-hosted
 
 Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Which converter handles which file is a table you configure: a
-map from MIME type to converter name. A stock deployment accepts only
-Markdown and plain text. Everything else is stored and waits until you add
-a route for it.
+map from MIME type to converter name. A stock deployment converts
+Markdown, plain text, HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel
+(`.xlsx`) with no API key. Everything else, including PDFs and images, is
+stored and waits until you add a route for it; the ingest response says so
+at once with `"parked": "no_route"`.
 
 ## The default table
 
@@ -8604,9 +8612,18 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
 |---|---|
 | `text/markdown` | `passthrough` |
 | `text/plain` | `passthrough` |
+| `text/html` | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (`.docx`) | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.presentationml.presentation` (`.pptx`) | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`) | `markitdown` |
 
 `passthrough` keeps the text as it is. It requires valid UTF-8; a file in
-another encoding fails conversion.
+another encoding fails conversion. `markitdown` runs in the worker with no
+network call (see [markitdown](#markitdown)).
+
+PDFs and images are not in the default table: the converters that read
+them call a paid provider API with your own key. Add a route for them as
+shown below.
 
 The MIME type is the one sent with the upload. The `remember` CLI, Python
 client and MCP `ingest` tool take it from the file extension, the same way
@@ -8619,11 +8636,12 @@ the extension does not say what the file is. The match is exact:
 ## Add routes
 
 Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. It
-**replaces** the default table, so include the text types again:
+**replaces** the default table, so include the default routes again. This
+example adds PDFs and images:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "markitdown", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "markitdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
@@ -8633,19 +8651,21 @@ both read this variable. A route that names an unknown converter stops the
 | Converter | Runs | Accepts | Needs |
 |---|---|---|---|
 | `passthrough` | In the worker | Markdown and plain text | Nothing |
-| `markitdown` | In the worker | HTML, and other formats the markitdown library reads without extra packages | Nothing |
+| `markitdown` | In the worker | HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
 ## markitdown
 
 `markitdown` converts in the worker process, with no network call and no
-cost. The image installs the markitdown library **without its optional
-format packages**. HTML converts. Word (`.docx`), PowerPoint (`.pptx`),
-Excel (`.xlsx`) and PDF need packages the image does not contain, so a file
-of those types routed to `markitdown` fails conversion. Route PDFs to
-`mistral_ocr` instead. RememberStack does not convert Office files in the
-shipped image yet.
+cost. The image installs the markitdown library with the packages it needs
+for Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`); HTML needs
+none. It reads the text, headings, lists and tables of these files; it does
+not read text inside embedded images.
+
+The image does not contain markitdown's PDF, audio or legacy Office
+(`.doc`, `.ppt`, `.xls`) packages, so a file of those types routed to
+`markitdown` fails conversion. Route PDFs to `mistral_ocr` instead.
 
 ## mistral_ocr
 
@@ -8709,8 +8729,13 @@ the `api` and `worker-convert` services need them. Without the key, the
 An upload whose MIME type has no route is still accepted. The API stores
 the original bytes and creates the version, and its `convert` work is
 parked with the reason `no_route`. It uses no attempts and makes no model
-calls. [Readiness](https://remember.dev/docs/guides/wait-for-readiness) shows the version's
-`convert` stage as `pending`.
+calls.
+
+The ingest response says so immediately: its `parked` field is
+`"no_route"` (it is `null` when conversion was scheduled). `remember ingest`
+also prints a warning, and the MCP `ingest` tool tells the agent not to
+wait for readiness. [Readiness](https://remember.dev/docs/guides/wait-for-readiness) shows the
+version's `convert` stage as `pending`.
 
 After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
@@ -8727,7 +8752,7 @@ covers; the rest stays parked. See [Operating the pipeline](https://remember.dev
 ## Not supported yet
 
 RememberStack does not ingest audio, video or web addresses yet. To add a
-web page, download it and send the HTML with a `markitdown` route.
+web page, download it and send the HTML.
 
 remember.dev accepts UTF-8 Markdown and plain text only; see
 [Limits](https://remember.dev/docs/cloud/limits) for the formats and sizes it accepts.
@@ -9144,7 +9169,6 @@ Pipe it through `python3 -m json.tool` to read it.
 | `remember ops rebuild --deployment ID --snapshot-root DIR --version V` | Build a filesystem snapshot into a local directory |
 | `remember ops graph-catalog ensure` | Check and repair the PostgreSQL graph definitions |
 | `remember ops cost-export --deployment ID` | Print one page of the cost ledger ([Observability](https://remember.dev/docs/self-hosting/observability#cost-export)) |
-| `remember budget inspect --deployment ID` | Show spend budgets and how much of each is used |
 
 ## Inspect the pipeline
 
@@ -9239,18 +9263,14 @@ Only one budget may exist per deployment, stage and lane. Stages without a
 budget are not capped.
 
 `compose.yaml` does not pass this variable. Put it in `engine.env`
-([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)): the
-workers enforce it, and `remember budget inspect` in the `api` container
-reads it.
+([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through));
+the workers enforce it.
 
-```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
-  remember budget inspect --deployment "$DEPLOYMENT_ID"
-```
-
-It prints one line per budget: the current window, `spent_usd`,
-`remaining_usd`, whether it is `exhausted`, how many items are parked, and
-the spend per model tier.
+Work a budget parked shows as `pending` in `remember ops inspect`, and with
+`defer_reason` `budget` in the diagnostic query under
+[Troubleshooting](https://remember.dev/docs/self-hosting/troubleshooting#see-what-is-waiting-and-why).
+The spend itself is in the cost ledger; read it with `remember ops
+cost-export` ([Observability](https://remember.dev/docs/self-hosting/observability#cost-export)).
 
 ## The graph catalog
 
@@ -9310,10 +9330,11 @@ Run the commands on this page from the directory that holds your
 | `Connection refused`, or documents land somewhere else | `echo $REMEMBER_API_URL` | [Wrong port or wrong address](#wrong-port-or-wrong-address) |
 | `401` or `403` | The `detail` string | [401 and 403](#401-and-403) |
 | A browser app reports a network error | The browser console | [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api) |
+| The ingest result has `"parked": "no_route"` | The file's MIME type | [Parked conversions](#parked-conversions) |
 | Ingest succeeded, but questions never find the document | Readiness for the `version_id` | [A document never becomes queryable](#a-document-never-becomes-queryable) |
 | Documents take a long time | `remember ops inspect` | [Processing is slow](#processing-is-slow) |
 | Stages fail within seconds of each other | Worker logs | [Model key and provider errors](#model-key-and-provider-errors) |
-| Work waits and nothing fails | `remember budget inspect` | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| Work waits and nothing fails | `defer_reason` in [See what is waiting and why](#see-what-is-waiting-and-why) | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
 | The answer is empty or not what you expected | `negative`, `temporal_scope`, the operation you called | [Empty or surprising answers](#empty-or-surprising-answers) |
 | A SQL query returns `200` with no rows and an `error_code` | `termination_reason` | [A SQL query is rejected](#a-sql-query-is-rejected) |
 | `503` with `forget_in_progress` | `docker compose logs api` | [503 forget_in_progress](#503-forget_in_progress) |
@@ -9321,8 +9342,8 @@ Run the commands on this page from the directory that holds your
 
 ## Running operator commands
 
-Several fixes below use `remember ops` and `remember budget`. These commands
-read PostgreSQL directly, so they run inside the `api` container, and they
+Several fixes below use `remember ops`. These commands read PostgreSQL
+directly, so they run inside the `api` container, and they
 are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set there. Without it,
 `remember ops` exits with "'remember ops' is confined to internal container
 environments".
@@ -9510,8 +9531,12 @@ be retried.
 
 A file whose MIME type has no conversion route is stored and its `convert`
 work is parked with the reason `no_route`. It uses no attempts and makes no
-model calls. A stock deployment routes only `text/markdown` and
-`text/plain`. Add a route for the type as described in
+model calls. The ingest result reports it at once with
+`"parked": "no_route"`, and `remember ingest` prints a warning.
+
+A stock deployment routes Markdown, plain text, HTML, `.docx`, `.pptx` and
+`.xlsx`. PDFs and images need an OCR route with your own provider key. Add
+a route for the type as described in
 [File formats and converters](https://remember.dev/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
 
@@ -9635,12 +9660,8 @@ If you set `REMEMBERSTACK_WORK_BUDGETS`, a stage that reaches its ceiling
 parks its work until the budget window ends. Nothing fails and nothing is
 dropped; readiness shows the stage as `pending`.
 
-```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
-  remember budget inspect --deployment "$DEPLOYMENT_ID"
-```
-
-A budget with `exhausted` true and a non-zero parked count is the cause.
+Rows with `defer_reason` `budget` in the query under
+[See what is waiting and why](#see-what-is-waiting-and-why) are the cause.
 Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
 `docker compose up -d`. See [Spend budgets](https://remember.dev/docs/self-hosting/operating#spend-budgets).
 
@@ -10710,7 +10731,8 @@ longer makes stop being current testimony. See
 [Updating a source](https://remember.dev/docs/concepts/updating-sources).
 
 A MIME type the deployment has no converter for is still accepted. Its
-conversion waits until a converter route for that type exists. See
+conversion waits until a converter route for that type exists, and the
+response says so with `"parked": "no_route"`. See
 [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
 ### Attribution
@@ -10737,12 +10759,17 @@ does not change it.
   "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
   "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
   "content_hash": "3b7c0e2d9f1a…",
-  "created": true
+  "created": true,
+  "parked": null
 }
 ```
 
-`200` means the version is stored and its processing is queued. It is not yet
-queryable. Poll [`POST /readiness`](#post-readiness) with the `version_id`.
+`200` means the version is stored. With `"parked": null` its processing is
+queued; it is not yet queryable, so poll [`POST /readiness`](#post-readiness)
+with the `version_id`. With `"parked": "no_route"` the deployment has no
+converter for the `mime`: the bytes are kept, but nothing reads them until an
+operator adds a route and releases the parked work. Do not wait on readiness
+for it; it will not become ready on its own.
 
 ### Errors
 
@@ -13533,6 +13560,7 @@ Returned by `POST /ingest`.
 | `version_id` | UUID | The version; pass it to `POST /readiness`. |
 | `content_hash` | string | SHA-256 of the bytes, hex. |
 | `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
+| `parked` | `"no_route"` or `null` | `"no_route"` when the deployment has no converter for the upload's MIME type: the bytes are stored, but conversion waits until an operator adds a route. `null` when conversion was scheduled. |
 
 ## Readiness
 
@@ -16305,6 +16333,12 @@ remember ingest notes/2026-09-18-billing-sync.md \
   --source-kind meeting-notes --source-ref billing-sync/2026-09-18
 ```
 
+It prints the `IngestedVersion` as one JSON line. When the deployment has
+no converter for the file's type, the line has `"parked":"no_route"` and
+the command also prints a warning to stderr; the exit status stays 0,
+because the file is stored. See
+[File formats and converters](https://remember.dev/docs/self-hosting/converters#files-no-route-accepts).
+
 Ingest returns before processing ends. To wait, use the SDK's
 `wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
 readiness command. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
@@ -16685,12 +16719,6 @@ These commands call `/connectors` routes that no deployment serves today.
 Every one fails with `API 404` and exit status 1. Connectors are listed in
 [What is not built yet](https://remember.dev/docs/project/not-built-yet).
 
-**Note:**
-
-`remember review` and `remember budget` are retired. They print a notice
-and exit with status 1, and will be removed. Check credits with
-`remember balance`.
-
 ## Self-hosted operations: `remember ops`
 
 `remember ops` repairs and inspects a self-hosted engine's pipeline. It runs
@@ -16946,6 +16974,7 @@ Success result:
   "version_id": "…",
   "content_hash": "…",
   "created": true,
+  "parked": null,
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
@@ -16961,6 +16990,12 @@ Success result:
 `created: false` means these exact bytes were already stored; no new
 processing starts, and one readiness check tells the agent whether the
 content is already available.
+
+`parked: "no_route"` means the deployment has no converter for the file's
+media type. The bytes are stored, but they are not read until an operator
+adds a route. The reply then has `pipeline.status` `parked_no_route`, no
+`next_tool` or `poll_with`, and guidance telling the agent to tell the user
+instead of polling readiness.
 
 The server does not check body size itself. The deployment refuses a body
 over its limit, and the tool returns `body_too_large`. remember.dev's limit is
@@ -17426,7 +17461,7 @@ Applies to remember.dev and self-hosted.
 | `REMEMBERSTACK_API_TIMEOUT_SECONDS` | `30.0` | float > 0 | HTTP timeout of the client, in seconds. |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where the CLI keeps `credentials.json`. Also read as `REMEMBERSTACK_CONFIG_DIR`. |
 | `REMEMBER_TOKEN_HOST` | unset | URL | Token host for `remember login`. Also read as `REMEMBER_CONTROL_PLANE_URL` (checked first) and `REMEMBERSTACK_TOKEN_HOST`. |
-| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`, `remember budget` and `remember review`. They work only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
@@ -17592,7 +17627,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | `{"text/markdown": "passthrough", "text/plain": "passthrough"}` | JSON object | passed | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | passed | MIME type → converter. Replaces the default table. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | passed | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | passed | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | passed | OCR model. |
