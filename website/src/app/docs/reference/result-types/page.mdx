@@ -785,6 +785,7 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only evidence from matching documents. |
 
 ### AdjacentChunksRequest
 

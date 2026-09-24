@@ -34,6 +34,33 @@ spend hold.</Cloud> Base URL, authentication and error shapes are described in
 
 A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 
+### Limiting search to certain documents
+
+The `POST` forms accept a `documents` filter with the same fields as
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch):
+`family`, `authors`, `recipients`, `created_from`/`created_to`,
+`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. Only
+evidence from matching documents is returned:
+
+- **chunks** match when the chunk's document version matches;
+- **claims** match when at least one place the claim occurs is in a matching
+  document version. A claim that repeats across a document's versions is
+  checked against each version separately, so `authors: ["alice"]` finds the
+  claim through the version Alice wrote even if a later version names someone
+  else. The returned `chunk_id` and `evidence_spans` are that occurrence's,
+  not the chunk the claim was first extracted from.
+
+Deleted documents and deleted versions never match. The filter is applied
+while ranking, before the `k` best are chosen, so asking for `k: 10` returns
+up to ten matching results even when better-scoring results from other
+documents exist.
+
+For "everything about Project X from emails from Alice": find the right
+Alice with `POST /documents/search` and `filters.authors`; if several people
+match, narrow to an address. Then search with
+`{"query": "Project X", "documents": {"authors": ["alice@acme.com"]}}`.
+Every result cites the document it came from.
+
 ## GET /search/claims
 
 Search claims.
@@ -90,6 +117,7 @@ Search claims, with the query in the body.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters) | no | | Only evidence from matching documents; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
 
 Unknown fields are rejected.
 
@@ -111,8 +139,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/claims" \
   -d '{"query": "billing migration cutover date", "k": 20, "channel": "bm25"}'
 ```
 
-The `remember` Python client has no method for the `POST` form; its
-`search_claims` uses `GET`.
+The `remember` Python client's `search_claims` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /search/chunks
 
@@ -178,7 +206,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
   -d '{"query": "rollback plan", "k": 10}'
 ```
 
-The `remember` Python client has no method for the `POST` form.
+The `remember` Python client's `search_chunks` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /chunks/\{chunk_id\}/adjacent
 
