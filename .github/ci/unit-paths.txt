@@ -73,6 +73,7 @@ src/tests/surfaces/test_adjacent_chunks.py
 src/tests/surfaces/test_assured_operation_authorities.py
 src/tests/surfaces/test_browser_origin_cors.py
 src/tests/surfaces/test_cli_platform.py
+src/tests/surfaces/test_setup_entries.py
 src/tests/surfaces/test_client_first_run.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py

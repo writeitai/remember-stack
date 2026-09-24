@@ -364,7 +364,7 @@ HTTP endpoint. It is generic: any HTTPS MCP URL and any bearer key.
 ## 6. `remember setup`
 
 `remember setup` writes each detected harness's MCP entry. It chooses among
-three entry shapes:
+four entry shapes:
 
 | Situation | Entry written |
 | --- | --- |
@@ -380,11 +380,39 @@ Rules:
   support). The table above is the selection rule; the probe decides which
   row applies, and uncertainty falls to the stdio bridge, which works
   everywhere.
+- What each harness takes (the probe's answers):
+
+  | Harness | Remote entry (OAuth) | Key header by reference | Probe |
+  | --- | --- | --- | --- |
+  | Cursor (`.cursor/mcp.json`) | yes: `{"url": …}` | yes: `${env:REMEMBER_API_KEY}` in `headers` | none; the file format has no version, and both are documented Cursor features |
+  | Claude Code (`claude mcp add --scope local`) | yes: `--transport http` | no — whether a CLI-added entry expands variables is not established, so headless use gets the bridge | `claude mcp add --help` lists `--transport` |
+  | Codex (`.codex/config.toml`) | yes: `url`; the user runs `codex mcp login remember` once | yes: `bearer_token_env_var = "REMEMBER_API_KEY"` | `codex mcp add --help` lists `--bearer-token-env-var` |
+  | Claude Desktop (`claude_desktop_config.json`) | no (the file takes stdio servers only) | no | none |
+  | Antigravity (`.agents/mcp_config.json`) | not established | not established | none |
+
+  A probe that cannot run (the CLI is missing, fails or times out) answers
+  "no".
+- **Headless** is `--headless`, or a `CI` environment variable that is set
+  and not `0`/`false`. A headless run never starts `remember login`; the
+  agents read the key from `REMEMBER_API_KEY` at run time.
+- `--api-url` or `--mcp-url` means a self-hosted engine; combining either
+  with `--cloud` is a usage error. With `--mcp-url`, the remote entry
+  carries the key header only when the engine has a key (`--api-key`),
+  because a self-hosted listener has no OAuth sign-in; a harness that cannot
+  reference a variable in a header gets the stdio engine entry.
+- Writes are idempotent and keep unrelated configuration: only the
+  `remember` entry (for Codex, the `[mcp_servers.remember]` tables) is
+  replaced, a file whose content would not change is left untouched, and a
+  rewritten file is replaced atomically with its permissions kept. Claude
+  Code's entry is re-registered (`claude mcp remove`, then `add`) in the
+  project's local scope. A failure in one harness does not stop the others;
+  the command then exits 1.
 - Launcher resolution (absolute `remember` or `uvx` path) is unchanged from
   [unified_remember_distribution_design.md §4.3](unified_remember_distribution_design.md).
 - `--cloud` means "use the issuer": with no stored key it runs `remember login`
   first. `--issuer URL` selects a non-default issuer.
-- `--dry-run` prints the entries with the key replaced by `***`.
+- `--dry-run` prints the entries it would write and writes nothing. No entry
+  ever holds a key, so there is nothing to mask.
 
 ## 7. Engine perimeter: the signed-key contract
 

@@ -1,30 +1,59 @@
-"""The AI coding agent bootstrapper for `remember setup` (D108).
+"""``remember setup``: write each coding harness's MCP entry (D108, D136 §6).
 
-Configures persistent MCP connections and context rules for Cursor, Claude Code,
-Claude Desktop, Codex, and Antigravity with zero secret leakage in git and
-durable absolute launcher paths.
+Configures Cursor, Claude Code, Claude Desktop, Codex and Antigravity. For
+each harness it picks one of four entry shapes:
+
+- **remote** — the MCP endpoint URL only; the harness signs in with OAuth
+  when the server asks, so no secret is written anywhere;
+- **remote with a key header** — the URL plus ``Authorization: Bearer`` that
+  *references* ``REMEMBER_API_KEY`` in the harness's own variable syntax; the
+  literal key is never written;
+- **stdio bridge** — ``<launcher> mcp`` with ``REMEMBER_MCP_URL``; the key is
+  read at run time from ``REMEMBER_API_KEY`` or the credential file;
+- **stdio engine** — ``<launcher> mcp`` with ``REMEMBER_API_URL`` for a
+  self-hosted engine.
+
+A remote shape is used only where the harness is known to take it; anything
+uncertain falls back to a stdio entry, which works everywhere.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+from dataclasses import field
 import json
+import os
 from pathlib import Path
+import re
+import shlex
 import shutil
 import subprocess
 import sys
-from typing import Any
+import tempfile
+import tomllib
+from typing import Final
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 
-class _DesktopSettings(BaseSettings):
+class _SetupSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     appdata: Path | None = None
     xdg_config_home: Path | None = None
+    #: Set by CI systems; a non-empty value other than ``0``/``false`` means
+    #: headless (no browser sign-in).
+    ci: str | None = None
 
+
+#: The variable a remote key-header entry and the stdio bridge read the key from.
+KEY_VARIABLE: Final = "REMEMBER_API_KEY"
+SERVER_NAME: Final = "remember"
+_PROBE_TIMEOUT_SECONDS: Final = 15.0
+_CLAUDE_TIMEOUT_SECONDS: Final = 60.0
 
 CURSOR_RULE_CONTENT = """---
 description: Use Remember bitemporal memory for codebase facts, architecture, and past decisions
@@ -131,97 +160,238 @@ def resolve_launcher() -> tuple[str, list[str]]:
     )
 
 
-def configure_cursor(
-    *,
-    cwd: Path,
-    launcher_cmd: str,
-    launcher_args: list[str],
-    env: dict[str, str] | None = None,
-    dry_run: bool = False,
-) -> bool:
-    """Configure Cursor (.cursor/mcp.json and .cursor/rules/remember.mdc)."""
-    cursor_dir = cwd / ".cursor"
-    mcp_file = cursor_dir / "mcp.json"
-    rules_dir = cursor_dir / "rules"
-    rule_file = rules_dir / "remember.mdc"
+# ---------------------------------------------------------------------------
+# Entries
+# ---------------------------------------------------------------------------
 
-    mcp_config: dict[str, object] = {}
-    if mcp_file.is_file():
+Shape = Literal["remote", "remote_key_header", "stdio_bridge", "stdio_engine"]
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Where every harness entry of one run points."""
+
+    #: The remote MCP endpoint (the issuer's, or a self-hoster's ``--mcp-url``).
+    remote_url: str | None
+    #: A remote entry must carry the key header (headless, or a keyed engine).
+    key_header: bool
+    stdio_shape: Literal["stdio_bridge", "stdio_engine"]
+    #: The one variable a stdio entry pins (``REMEMBER_MCP_URL`` or ``REMEMBER_API_URL``).
+    stdio_env: dict[str, str]
+    launcher_cmd: str
+    launcher_args: tuple[str, ...]
+    #: The remote endpoint is the hosted one (OAuth sign-in is expected).
+    hosted: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteSupport:
+    """What a harness is known to accept besides a stdio entry."""
+
+    #: A remote Streamable HTTP entry, with OAuth sign-in when the server asks.
+    url: bool = False
+    #: A request header that references an environment variable.
+    header_env: bool = False
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One harness entry, before rendering into the harness's format."""
+
+    shape: Shape
+    url: str | None = None
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def remote(self) -> bool:
+        return self.shape in ("remote", "remote_key_header")
+
+
+def select_entry(plan: Plan, support: RemoteSupport) -> Entry:
+    """The D136 §6 selection rule for one harness."""
+    if (
+        plan.remote_url is not None
+        and support.url
+        and (support.header_env or not plan.key_header)
+    ):
+        shape: Shape = "remote_key_header" if plan.key_header else "remote"
+        return Entry(shape=shape, url=plan.remote_url)
+    return Entry(
+        shape=plan.stdio_shape,
+        command=plan.launcher_cmd,
+        args=plan.launcher_args,
+        env=dict(plan.stdio_env),
+    )
+
+
+def _json_entry(entry: Entry) -> dict[str, object]:
+    """``mcpServers.remember`` for the JSON harnesses (Cursor's header syntax)."""
+    if entry.url is not None:
+        rendered: dict[str, object] = {"url": entry.url}
+        if entry.shape == "remote_key_header":
+            rendered["headers"] = {"Authorization": f"Bearer ${{env:{KEY_VARIABLE}}}"}
+        return rendered
+    rendered = {"command": entry.command, "args": list(entry.args)}
+    if entry.env:
+        rendered["env"] = dict(entry.env)
+    return rendered
+
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+
+
+def _cli_help_mentions(argv: list[str], needle: str) -> bool:
+    """Whether ``argv`` (a ``--help`` call) runs and its output names ``needle``."""
+    executable = shutil.which(argv[0])
+    if executable is None:
+        return False
+    try:
+        result = subprocess.run(
+            [executable, *argv[1:]],
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and needle in result.stdout + result.stderr
+
+
+#: Cursor's ``mcp.json`` takes ``url`` entries (OAuth sign-in) and
+#: ``${env:NAME}`` in header values. It has no CLI to probe.
+CURSOR_SUPPORT: Final = RemoteSupport(url=True, header_env=True)
+#: ``claude_desktop_config.json`` takes stdio servers only.
+CLAUDE_DESKTOP_SUPPORT: Final = RemoteSupport()
+#: Antigravity's remote-entry and header-variable support is not established.
+ANTIGRAVITY_SUPPORT: Final = RemoteSupport()
+
+
+def claude_code_support() -> RemoteSupport:
+    """Claude Code takes ``--transport http`` entries and signs in with OAuth.
+
+    Header variable references are not relied on: whether a CLI-added entry
+    expands them is not established, so a headless run gets the stdio bridge.
+    """
+    return RemoteSupport(
+        url=_cli_help_mentions(["claude", "mcp", "add", "--help"], "--transport")
+    )
+
+
+def codex_support() -> RemoteSupport:
+    """A Codex whose ``mcp add`` knows ``--bearer-token-env-var`` reads ``url``
+    entries, ``bearer_token_env_var`` and ``codex mcp login`` (OAuth)."""
+    supported = _cli_help_mentions(
+        ["codex", "mcp", "add", "--help"], "--bearer-token-env-var"
+    )
+    return RemoteSupport(url=supported, header_env=supported)
+
+
+# ---------------------------------------------------------------------------
+# Writing files
+# ---------------------------------------------------------------------------
+
+
+def _write_if_changed(path: Path, text: str) -> None:
+    """Replace ``path`` atomically, keeping its mode; skip when unchanged."""
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if path.exists():
+            shutil.copymode(path, temporary)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _merged_json(path: Path, entry: Entry) -> str:
+    """``path``'s JSON with ``mcpServers.remember`` replaced, everything else kept."""
+    config: dict[str, object] = {}
+    if path.is_file():
         try:
-            loaded = json.loads(mcp_file.read_text(encoding="utf-8"))
-        except Exception as error:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as error:
             raise RuntimeError(
-                f"Existing {mcp_file} contains invalid JSON: {error}. "
+                f"Existing {path} contains invalid JSON: {error}. "
                 "Please fix or remove it before configuring Remember."
             ) from error
         if not isinstance(loaded, dict):
             raise RuntimeError(
-                f"Existing {mcp_file} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
+                f"Existing {path} has invalid structure: expected JSON object at root, "
+                f"got {type(loaded).__name__}."
             )
-        mcp_config = loaded
-
-    servers_raw = mcp_config.setdefault("mcpServers", {})
-    if not isinstance(servers_raw, dict):
+        config = loaded
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
         raise RuntimeError(
-            f"Existing {mcp_file} has invalid structure: 'mcpServers' must be a JSON object, got {type(servers_raw).__name__}."
+            f"Existing {path} has invalid structure: 'mcpServers' must be a JSON "
+            f"object, got {type(servers).__name__}."
         )
+    servers[SERVER_NAME] = _json_entry(entry)
+    return json.dumps(config, indent=2) + "\n"
 
-    servers: dict[str, object] = servers_raw
-    server_entry: dict[str, object] = {"command": launcher_cmd, "args": launcher_args}
-    if env:
-        server_entry["env"] = env
-    servers["remember"] = server_entry
 
+def _describe(entry: Entry) -> str:
+    return {
+        "remote": "remote entry (sign-in through the browser)",
+        "remote_key_header": f"remote entry with the key from ${KEY_VARIABLE}",
+        "stdio_bridge": "stdio bridge (`remember mcp`)",
+        "stdio_engine": "stdio engine entry (`remember mcp`)",
+    }[entry.shape]
+
+
+def _print_dry_run(path: object, rendered: str) -> None:
+    print(f"[dry-run] Would write to {path}:")
+    for line in rendered.rstrip("\n").splitlines():
+        print(f"    {line}")
+
+
+# ---------------------------------------------------------------------------
+# Harnesses
+# ---------------------------------------------------------------------------
+
+
+def configure_cursor(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+    """``.cursor/mcp.json`` and the rule file ``.cursor/rules/remember.mdc``."""
+    mcp_file = cwd / ".cursor" / "mcp.json"
+    rule_file = cwd / ".cursor" / "rules" / "remember.mdc"
+    merged = _merged_json(mcp_file, entry)
     if dry_run:
-        print(f"[dry-run] Would update {mcp_file}")
+        _print_dry_run(
+            mcp_file, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+        )
         print(f"[dry-run] Would write {rule_file}")
         return True
-
-    cursor_dir.mkdir(parents=True, exist_ok=True)
-    mcp_file.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
-
-    rules_dir.mkdir(parents=True, exist_ok=True)
-    rule_file.write_text(CURSOR_RULE_CONTENT, encoding="utf-8")
-    print(f"[✓] Configured Cursor: {mcp_file} & {rule_file}")
+    _write_if_changed(mcp_file, merged)
+    _write_if_changed(rule_file, CURSOR_RULE_CONTENT)
+    print(f"[✓] Configured Cursor, {_describe(entry)}: {mcp_file} & {rule_file}")
     return True
 
 
-def configure_claude_code(
-    *,
-    launcher_cmd: str,
-    launcher_args: list[str],
-    env: dict[str, str] | None = None,
-    dry_run: bool = False,
-) -> bool:
-    """Register MCP server with Claude Code CLI (claude mcp add)."""
-    cmd = ["claude", "mcp", "add", "remember"]
-    if env:
-        for k, v in env.items():
-            cmd.extend(["-e", f"{k}={v}"])
-    cmd.extend(["--", launcher_cmd, *launcher_args])
-
+def configure_antigravity(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+    """``.agents/mcp_config.json`` and the skill ``.agents/skills/remember/SKILL.md``."""
+    mcp_file = cwd / ".agents" / "mcp_config.json"
+    skill_file = cwd / ".agents" / "skills" / "remember" / "SKILL.md"
+    merged = _merged_json(mcp_file, entry)
     if dry_run:
-        print(f"[dry-run] Would execute: {' '.join(cmd)}")
+        _print_dry_run(
+            mcp_file, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+        )
+        print(f"[dry-run] Would write {skill_file}")
         return True
-
-    if not shutil.which("claude"):
-        print(
-            f"[-] Claude Code CLI not found on PATH. To configure manually, run:\n    {' '.join(cmd)}"
-        )
-        return False
-
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if res.returncode == 0:
-            print("[✓] Configured Claude Code CLI (claude mcp add remember)")
-            return True
-        print(
-            f"[!] Claude Code registration returned exit code {res.returncode}: {res.stderr.strip() or res.stdout.strip()}"
-        )
-        return False
-    except Exception as error:
-        print(f"[!] Claude Code registration failed: {error}")
-        return False
+    _write_if_changed(mcp_file, merged)
+    _write_if_changed(skill_file, ANTIGRAVITY_SKILL_CONTENT)
+    print(f"[✓] Configured Antigravity, {_describe(entry)}: {mcp_file} & {skill_file}")
+    return True
 
 
 def get_claude_desktop_config_path() -> Path:
@@ -234,488 +404,419 @@ def get_claude_desktop_config_path() -> Path:
             / "Claude"
             / "claude_desktop_config.json"
         )
-    settings = _DesktopSettings.model_validate({})
+    settings = _SetupSettings.model_validate({})
     if sys.platform == "win32":
         base = settings.appdata or (Path.home() / "AppData" / "Roaming")
         return base / "Claude" / "claude_desktop_config.json"
-    # Linux / XDG
     base = settings.xdg_config_home or (Path.home() / ".config")
     return base / "Claude" / "claude_desktop_config.json"
 
 
-def configure_claude_desktop(
-    *,
-    launcher_cmd: str,
-    launcher_args: list[str],
-    env: dict[str, str] | None = None,
-    dry_run: bool = False,
-) -> bool:
-    """Configure Claude Desktop app configuration."""
+def configure_claude_desktop(*, entry: Entry, dry_run: bool = False) -> bool:
+    """Claude Desktop's ``claude_desktop_config.json`` (stdio entries only)."""
     config_path = get_claude_desktop_config_path()
-    config: dict[str, object] = {}
-    if config_path.is_file():
-        try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception as error:
-            raise RuntimeError(
-                f"Existing {config_path} contains invalid JSON: {error}. "
-                "Please fix or remove it before configuring Remember."
-            ) from error
-        if not isinstance(loaded, dict):
-            raise RuntimeError(
-                f"Existing {config_path} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
-            )
-        config = loaded
-
-    servers_raw = config.setdefault("mcpServers", {})
-    if not isinstance(servers_raw, dict):
-        raise RuntimeError(
-            f"Existing {config_path} has invalid structure: 'mcpServers' must be a JSON object, got {type(servers_raw).__name__}."
-        )
-
-    servers: dict[str, object] = servers_raw
-    server_entry: dict[str, object] = {"command": launcher_cmd, "args": launcher_args}
-    if env:
-        server_entry["env"] = env
-    servers["remember"] = server_entry
-
+    merged = _merged_json(config_path, entry)
     if dry_run:
-        print(f"[dry-run] Would update {config_path}")
+        _print_dry_run(
+            config_path, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+        )
         return True
-
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    print(f"[✓] Configured Claude Desktop: {config_path}")
+    _write_if_changed(config_path, merged)
+    print(f"[✓] Configured Claude Desktop, {_describe(entry)}: {config_path}")
     return True
+
+
+def claude_code_command(entry: Entry) -> list[str]:
+    """The ``claude mcp add`` call for ``entry``, in the project's local scope."""
+    command = ["claude", "mcp", "add", "--scope", "local"]
+    if entry.url is not None:
+        # Header variables are never selected for Claude Code (see its probe).
+        return [*command, "--transport", "http", SERVER_NAME, entry.url]
+    command.append(SERVER_NAME)
+    for name, value in entry.env.items():
+        command.extend(["-e", f"{name}={value}"])
+    return [*command, "--", entry.command or "", *entry.args]
+
+
+def configure_claude_code(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+    """Register the entry with ``claude mcp add``, replacing any earlier one."""
+    add = claude_code_command(entry)
+    if dry_run:
+        print(f"[dry-run] Would run in {cwd}: {shlex.join(add)}")
+        return True
+    executable = shutil.which("claude")
+    if executable is None:
+        print(
+            "[-] Claude Code CLI not found on PATH. To configure manually, run in "
+            f"{cwd}:\n    {shlex.join(add)}"
+        )
+        return False
+    try:
+        # `claude mcp add` refuses an existing name, so an earlier entry goes
+        # first; a missing one makes `remove` fail, which is fine.
+        subprocess.run(
+            [executable, "mcp", "remove", "--scope", "local", SERVER_NAME],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=_CLAUDE_TIMEOUT_SECONDS,
+            check=False,
+        )
+        result = subprocess.run(
+            [executable, *add[1:]],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=_CLAUDE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"[!] Claude Code registration failed: {error}")
+        return False
+    if result.returncode != 0:
+        print(
+            f"[!] Claude Code registration returned exit code {result.returncode}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return False
+    print(f"[✓] Configured Claude Code, {_describe(entry)}")
+    return True
+
+
+def codex_block(entry: Entry) -> str:
+    """The ``[mcp_servers.remember]`` table(s) for ``entry``."""
+    lines = [f"[mcp_servers.{SERVER_NAME}]"]
+    if entry.url is not None:
+        lines.append(f"url = {json.dumps(entry.url)}")
+        if entry.shape == "remote_key_header":
+            lines.append(f"bearer_token_env_var = {json.dumps(KEY_VARIABLE)}")
+    else:
+        lines.append(f"command = {json.dumps(entry.command)}")
+        lines.append(f"args = {json.dumps(list(entry.args))}")
+        if entry.env:
+            lines.extend(["", f"[mcp_servers.{SERVER_NAME}.env]"])
+            lines.extend(f"{k} = {json.dumps(v)}" for k, v in entry.env.items())
+    return "\n".join(lines) + "\n"
+
+
+#: An existing ``[mcp_servers.remember]`` table or one of its sub-tables, up to
+#: the next table header.
+_CODEX_TABLE = re.compile(
+    rf"(?ms)^\[mcp_servers\.{SERVER_NAME}(?:\.[^\]]+)?\].*?(?=^\[|\Z)"
+)
 
 
 def configure_codex(
-    *,
-    cwd: Path,
-    launcher_cmd: str,
-    launcher_args: list[str],
-    env: dict[str, str] | None = None,
-    dry_run: bool = False,
+    *, cwd: Path, entry: Entry, hosted: bool = False, dry_run: bool = False
 ) -> bool:
-    """Configure Codex MCP servers in .codex/config.toml."""
-    import re
-    import tomllib
-
-    codex_dir = cwd / ".codex"
-    config_file = codex_dir / "config.toml"
-
-    existing_content = (
-        config_file.read_text(encoding="utf-8") if config_file.is_file() else ""
-    )
-    if config_file.is_file():
-        try:
-            tomllib.loads(existing_content)
-        except Exception as error:
-            raise RuntimeError(
-                f"Existing {config_file} contains invalid TOML: {error}. "
-                "Please fix or remove it before configuring Remember."
-            ) from error
-
-    cmd_repr = json.dumps(launcher_cmd)
-    args_repr = json.dumps(launcher_args)
-    block_lines = [
-        "",
-        "[mcp_servers.remember]",
-        f"command = {cmd_repr}",
-        f"args = {args_repr}",
-    ]
-    if env:
-        block_lines.append("")
-        block_lines.append("[mcp_servers.remember.env]")
-        for k, v in env.items():
-            block_lines.append(f"{k} = {json.dumps(v)}")
-    block = "\n".join(block_lines) + "\n"
-
-    # Strip any existing [mcp_servers.remember] and [mcp_servers.remember.*] sections (cleans stale configs and leaked secrets)
-    pattern = r"(?ms)^\[mcp_servers\.remember(?:\.[^\]]+)?\].*?(?=(?:^\[|\Z))"
-    cleaned = re.sub(pattern, "", existing_content).rstrip()
-
-    if cleaned:
-        new_content = cleaned + "\n\n" + block.lstrip()
-    else:
-        new_content = block.lstrip()
-
-    # Validate that resulting document parses cleanly
+    """``.codex/config.toml``: the ``remember`` tables replaced, the rest kept."""
+    config_file = cwd / ".codex" / "config.toml"
+    existing = config_file.read_text(encoding="utf-8") if config_file.is_file() else ""
     try:
-        tomllib.loads(new_content)
-    except Exception as error:
+        tomllib.loads(existing)
+    except tomllib.TOMLDecodeError as error:
+        raise RuntimeError(
+            f"Existing {config_file} contains invalid TOML: {error}. "
+            "Please fix or remove it before configuring Remember."
+        ) from error
+    block = codex_block(entry)
+    kept = _CODEX_TABLE.sub("", existing).rstrip()
+    content = f"{kept}\n\n{block}" if kept else block
+    try:
+        tomllib.loads(content)
+    except tomllib.TOMLDecodeError as error:
         raise RuntimeError(
             f"Generated configuration for {config_file} contains invalid TOML: {error}."
         ) from error
-
     if dry_run:
-        print(f"[dry-run] Would update {config_file} with [mcp_servers.remember]")
+        _print_dry_run(config_file, block)
         return True
-
-    codex_dir.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(new_content, encoding="utf-8")
-    print(f"[✓] Configured Codex: {config_file}")
-    print(
-        "    Note: Project-local Codex MCP servers require the project directory to be trusted by Codex."
-    )
+    _write_if_changed(config_file, content)
+    print(f"[✓] Configured Codex, {_describe(entry)}: {config_file}")
+    print("    Codex loads a project's .codex/config.toml only when you trust it.")
+    if entry.shape == "remote" and hosted:
+        print(f"    Sign in once: run `codex mcp login {SERVER_NAME}` in {cwd}")
     return True
 
 
-def configure_antigravity(
-    *,
-    cwd: Path,
-    launcher_cmd: str,
-    launcher_args: list[str],
-    env: dict[str, str] | None = None,
-    dry_run: bool = False,
-) -> bool:
-    """Configure Antigravity MCP servers in .agents/mcp_config.json."""
-    agents_dir = cwd / ".agents"
-    mcp_file = agents_dir / "mcp_config.json"
-    skill_dir = agents_dir / "skills" / "remember"
-    skill_file = skill_dir / "SKILL.md"
+# ---------------------------------------------------------------------------
+# The command
+# ---------------------------------------------------------------------------
 
-    config: dict[str, Any] = {"mcpServers": {}}
-    if mcp_file.is_file():
-        try:
-            loaded = json.loads(mcp_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as err:
+Harness = Literal["cursor", "agy", "codex", "claude_code", "claude_desktop"]
+
+_LABELS: Final[dict[Harness, str]] = {
+    "cursor": "Cursor",
+    "agy": "Antigravity",
+    "codex": "Codex",
+    "claude_code": "Claude Code",
+    "claude_desktop": "Claude Desktop",
+}
+
+
+def _claude_desktop_present() -> bool:
+    config = get_claude_desktop_config_path()
+    return (
+        config.exists()
+        or config.parent.is_dir()
+        or (sys.platform == "darwin" and Path("/Applications/Claude.app").exists())
+    )
+
+
+def _harnesses(agent: str, target_dir: Path) -> list[Harness]:
+    """The harnesses to configure for ``--agent``."""
+    if agent == "cursor":
+        return ["cursor"]
+    if agent == "agy":
+        return ["agy"]
+    if agent == "codex":
+        return ["codex"]
+    claude: list[Harness] = []
+    if shutil.which("claude"):
+        claude.append("claude_code")
+    if _claude_desktop_present():
+        claude.append("claude_desktop")
+    if agent == "claude":
+        if not claude:
             raise RuntimeError(
-                f"Antigravity config {mcp_file} exists but contains invalid JSON: {err}. Refusing to overwrite."
-            ) from err
-        if not isinstance(loaded, dict):
-            raise RuntimeError(
-                f"Antigravity config {mcp_file} has invalid structure: expected JSON object at root, got {type(loaded).__name__}."
+                "Neither Claude Code CLI ('claude') nor Claude Desktop was detected.\n"
+                "To install Claude Code CLI: npm install -g @anthropic-ai/claude-code\n"
+                "To install Claude Desktop:  https://claude.ai/download"
             )
-        config = loaded
+        return claude
+    found: list[Harness] = []
+    if (target_dir / ".cursor").is_dir():
+        found.append("cursor")
+    if (target_dir / ".agents").is_dir():
+        found.append("agy")
+    if (
+        (target_dir / ".codex").is_dir()
+        or shutil.which("codex")
+        or (Path.home() / ".codex").is_dir()
+    ):
+        found.append("codex")
+    found.extend(claude)
+    return found or ["cursor", "agy"]
 
-    if "mcpServers" in config and not isinstance(config["mcpServers"], dict):
-        raise RuntimeError(
-            f"Antigravity config {mcp_file} has invalid structure: 'mcpServers' must be a JSON object, got {type(config['mcpServers']).__name__}."
+
+def _configure(
+    harness: Harness, *, target_dir: Path, plan: Plan, dry_run: bool
+) -> bool:
+    """Probe one harness, select its entry and write it."""
+    if harness == "cursor":
+        entry = select_entry(plan, CURSOR_SUPPORT)
+        return configure_cursor(cwd=target_dir, entry=entry, dry_run=dry_run)
+    if harness == "agy":
+        entry = select_entry(plan, ANTIGRAVITY_SUPPORT)
+        return configure_antigravity(cwd=target_dir, entry=entry, dry_run=dry_run)
+    if harness == "codex":
+        entry = select_entry(plan, codex_support())
+        return configure_codex(
+            cwd=target_dir, entry=entry, hosted=plan.hosted, dry_run=dry_run
         )
+    if harness == "claude_code":
+        entry = select_entry(plan, claude_code_support())
+        return configure_claude_code(cwd=target_dir, entry=entry, dry_run=dry_run)
+    entry = select_entry(plan, CLAUDE_DESKTOP_SUPPORT)
+    return configure_claude_desktop(entry=entry, dry_run=dry_run)
 
-    servers = config.setdefault("mcpServers", {})
-    entry: dict[str, Any] = {"command": launcher_cmd, "args": launcher_args}
-    if env:
-        entry["env"] = env
-    servers["remember"] = entry
 
-    if dry_run:
-        print(f"[dry-run] Would update {mcp_file} and create {skill_file}")
+def _headless(args: argparse.Namespace) -> bool:
+    if getattr(args, "headless", False):
         return True
-
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    mcp_file.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    skill_file.write_text(ANTIGRAVITY_SKILL_CONTENT, encoding="utf-8")
-    print(f"[✓] Configured Antigravity: {mcp_file} & {skill_file}")
-    return True
+    ci = (_SetupSettings.model_validate({}).ci or "").strip().lower()
+    return ci not in ("", "0", "false")
 
 
-def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
-    """Execute harness configuration according to parsed CLI args."""
-    target_dir = getattr(args, "cwd", None) or cwd or Path.cwd()
-
-    try:
-        launcher_cmd, launcher_args = resolve_launcher()
-    except RuntimeError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-
-    dry_run: bool = getattr(args, "dry_run", False)
-    target_agent: str = getattr(args, "agent", None) or "all"
+def _choose_backend(args: argparse.Namespace, *, dry_run: bool) -> str:
+    """``cloud`` or ``self_hosted``; an engine or listener URL means self-hosted."""
     target_env: str | None = getattr(args, "target_env", None)
-    is_cloud: bool = target_env == "cloud" or getattr(args, "cloud", False)
-    is_self_hosted: bool = target_env == "self_hosted" or getattr(
-        args, "self_hosted", False
+    explicit_self_hosted = bool(
+        getattr(args, "api_url", None) or getattr(args, "mcp_url", None)
     )
-    target_url: str | None = getattr(args, "api_url", None)
-    target_key: str | None = getattr(args, "api_key", None)
+    if target_env == "cloud" and explicit_self_hosted:
+        raise ValueError(
+            "--api-url and --mcp-url are for a self-hosted engine; drop --cloud"
+        )
+    if target_env is not None:
+        return target_env
+    if explicit_self_hosted:
+        return "self_hosted"
+    if sys.stdin.isatty() and not dry_run:
+        print("Choose your Remember backend:")
+        print("  1) remember.dev [default]")
+        print("  2) Self-hosted engine (http://127.0.0.1:8000)")
+        try:
+            choice = input("Select [1/2, default 1]: ").strip()
+        except EOFError:
+            choice = ""
+        return "self_hosted" if choice == "2" else "cloud"
+    return "cloud"
 
-    # Interactive choice if neither is specified on a TTY
-    if target_env is None and not is_cloud and not is_self_hosted:
-        if sys.stdin.isatty() and not dry_run:
-            print("Choose your Remember backend:")
-            print("  1) Remember Cloud [default]")
-            print("  2) Self-Hosted Engine (http://127.0.0.1:8000)")
-            try:
-                choice = input("Select [1/2, default 1]: ").strip()
-                if choice == "2":
-                    is_self_hosted = True
-                else:
-                    is_cloud = True
-            except (EOFError, KeyboardInterrupt):
-                is_cloud = True
-        else:
-            is_cloud = True
 
+def _self_hosted_plan(
+    args: argparse.Namespace, *, launcher: tuple[str, list[str]], dry_run: bool
+) -> Plan | None:
+    """Store the engine URL (and key) and plan stdio engine entries.
+
+    Returns ``None`` after printing the reason when a hosted key is stored.
+    """
     from pydantic import SecretStr
 
+    from remember.connection import DEFAULT_API_URL
     from remember.connection import normalize_key
     from remember.credentials import credential_lock
     from remember.credentials import CredentialError
     from remember.credentials import load_credentials
     from remember.credentials import StoredCredentials
     from remember.credentials import write_credentials
+    from remember.issuer import require_secure_url
 
-    try:
-        stored = load_credentials()
-    except CredentialError:
-        stored = None
+    if getattr(args, "issuer", None):
+        raise ValueError("--issuer is for remember.dev (--cloud)")
+    url: str = getattr(args, "api_url", None) or DEFAULT_API_URL
+    key: str | None = getattr(args, "api_key", None)
+    mcp_url: str | None = getattr(args, "mcp_url", None)
+    if mcp_url:
+        mcp_url = str(require_secure_url(mcp_url.strip(), what="--mcp-url"))
+    print("Backend: self-hosted engine")
+    print(f"  Engine URL: {url}")
+    refusal = (
+        "error: a key from {issuer} is stored; run `remember logout` "
+        "before configuring a self-hosted engine"
+    )
 
-    env: dict[str, str] = {}
-    if is_self_hosted:
-        url = target_url or "http://127.0.0.1:8000"
-        env["REMEMBER_API_URL"] = url
-        print("Backend: Self-Hosted Engine")
-        print(f"  Engine URL: {url}")
-        refusal = (
-            "error: a key from {issuer} is stored; run `remember logout` "
-            "before configuring a self-hosted engine"
-        )
-        if dry_run:
-            if stored is not None and stored.issuer:
-                print(refusal.format(issuer=stored.issuer), file=sys.stderr)
-                return 1
-        else:
-            # Read, check and write under the lock `remember login` holds, so
-            # a concurrent login's key is never overwritten unrevoked. The key
-            # goes to the owner-only credential file, never into a harness
-            # configuration file.
-            with credential_lock():
-                try:
-                    current = load_credentials()
-                except CredentialError:
-                    current = None
-                if current is not None and current.issuer:
-                    print(refusal.format(issuer=current.issuer), file=sys.stderr)
-                    return 1
-                write_credentials(
-                    credentials=StoredCredentials(
-                        version=2,
-                        api_url=url,
-                        key=SecretStr(normalize_key(target_key))
-                        if target_key
-                        else None,
-                    )
-                )
-            print(
-                "[✓] Stored the engine URL (and key) in the owner-only credential file"
-            )
+    def stored_issuer() -> str | None:
+        try:
+            current = load_credentials()
+        except CredentialError:
+            return None
+        return current.issuer if current is not None else None
+
+    if dry_run:
+        issuer = stored_issuer()
+        if issuer:
+            print(refusal.format(issuer=issuer), file=sys.stderr)
+            return None
     else:
-        print("Backend: Remember Cloud")
-        if target_key:
-            print(
-                "error: --api-key is for --self-hosted; for Remember Cloud run "
-                "`remember login`, or set REMEMBER_API_KEY in the harness environment",
-                file=sys.stderr,
+        # Read, check and write under the lock `remember login` holds, so a
+        # concurrent login's key is never overwritten unrevoked. The key goes
+        # to the owner-only credential file, never into a harness file.
+        with credential_lock():
+            issuer = stored_issuer()
+            if issuer:
+                print(refusal.format(issuer=issuer), file=sys.stderr)
+                return None
+            write_credentials(
+                credentials=StoredCredentials(
+                    version=2,
+                    api_url=url,
+                    key=SecretStr(normalize_key(key)) if key else None,
+                )
             )
+        print("[✓] Stored the engine URL (and key) in the owner-only credential file")
+    if mcp_url and key:
+        print(
+            f"  Remote entries send ${KEY_VARIABLE}: set it in the agent's environment"
+        )
+    return Plan(
+        remote_url=mcp_url,
+        key_header=bool(key),
+        stdio_shape="stdio_engine",
+        stdio_env={"REMEMBER_API_URL": url},
+        launcher_cmd=launcher[0],
+        launcher_args=tuple(launcher[1]),
+    )
+
+
+def _hosted_plan(
+    args: argparse.Namespace,
+    *,
+    launcher: tuple[str, list[str]],
+    dry_run: bool,
+    headless: bool,
+) -> Plan:
+    """Find the issuer's MCP endpoint, signing in first when there is no key."""
+    import httpx
+
+    from remember.connection import resolve_connection
+    from remember.issuer import DEFAULT_ISSUER
+    from remember.issuer import fetch_issuer_metadata
+    from remember.issuer import normalize_issuer
+    from remember.login import login
+
+    if getattr(args, "api_key", None):
+        raise ValueError(
+            "--api-key is for --self-hosted; for remember.dev run `remember login`, "
+            f"or set {KEY_VARIABLE} in the agent's environment"
+        )
+    connection = resolve_connection(issuer=getattr(args, "issuer", None))
+    issuer = normalize_issuer(connection.issuer or DEFAULT_ISSUER)
+    print(f"Backend: {issuer}")
+    with httpx.Client(timeout=30.0, follow_redirects=False) as http:
+        if connection.key is None:
+            if headless:
+                print(f"  No key stored; the agents read it from ${KEY_VARIABLE}.")
+            elif dry_run:
+                print("[dry-run] Would run `remember login` first (no key stored)")
+            else:
+                print("  Not signed in; running `remember login` first.")
+                login(issuer=issuer, http=http)
+        endpoint = fetch_issuer_metadata(issuer, http=http).endpoint(
+            "remember_mcp_endpoint"
+        )
+    print(f"  MCP endpoint: {endpoint}")
+    return Plan(
+        remote_url=endpoint,
+        key_header=headless,
+        stdio_shape="stdio_bridge",
+        stdio_env={"REMEMBER_MCP_URL": endpoint},
+        launcher_cmd=launcher[0],
+        launcher_args=tuple(launcher[1]),
+        hosted=True,
+    )
+
+
+def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
+    """Write the ``remember`` MCP entry of each requested or detected harness."""
+    target_dir: Path = getattr(args, "cwd", None) or cwd or Path.cwd()
+    dry_run: bool = getattr(args, "dry_run", False)
+    agent: str = getattr(args, "agent", None) or "all"
+    try:
+        launcher = resolve_launcher()
+    except RuntimeError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    harnesses = _harnesses(agent, target_dir)
+    if _choose_backend(args, dry_run=dry_run) == "self_hosted":
+        plan = _self_hosted_plan(args, launcher=launcher, dry_run=dry_run)
+        if plan is None:
             return 1
-        if target_url:
-            env["REMEMBER_API_URL"] = target_url
-            print(f"  Engine URL (explicit override): {target_url}")
-        elif stored is None or not stored.issuer:
-            print(
-                "  [!] Not signed in. Run `remember login`; your agents connect "
-                "once it completes."
-            )
+    else:
+        headless = _headless(args)
+        plan = _hosted_plan(args, launcher=launcher, dry_run=dry_run, headless=headless)
 
     print("Configuring AI coding harnesses for Remember:")
-    print(f"  Launcher command: {launcher_cmd} {' '.join(launcher_args)}")
+    print(f"  Launcher command: {launcher[0]} {' '.join(launcher[1])}")
     if dry_run:
         print("  Mode: DRY RUN (no files will be written)")
     print()
 
-    configured_any = False
-
-    if target_agent == "cursor":
-        ok = configure_cursor(
-            cwd=target_dir,
-            launcher_cmd=launcher_cmd,
-            launcher_args=launcher_args,
-            env=env if env else None,
-            dry_run=dry_run,
-        )
+    failed: list[str] = []
+    for harness in harnesses:
+        try:
+            ok = _configure(harness, target_dir=target_dir, plan=plan, dry_run=dry_run)
+        except RuntimeError as error:
+            print(f"error: {error}", file=sys.stderr)
+            ok = False
         if not ok:
-            print("error: Failed to configure Cursor harness.", file=sys.stderr)
-            return 1
-        configured_any = True
-    elif target_agent == "agy":
-        ok = configure_antigravity(
-            cwd=target_dir,
-            launcher_cmd=launcher_cmd,
-            launcher_args=launcher_args,
-            env=env if env else None,
-            dry_run=dry_run,
-        )
-        if not ok:
-            print("error: Failed to configure Antigravity harness.", file=sys.stderr)
-            return 1
-        configured_any = True
-    elif target_agent == "codex":
-        ok = configure_codex(
-            cwd=target_dir,
-            launcher_cmd=launcher_cmd,
-            launcher_args=launcher_args,
-            env=env if env else None,
-            dry_run=dry_run,
-        )
-        if not ok:
-            print("error: Failed to configure OpenAI Codex harness.", file=sys.stderr)
-            return 1
-        configured_any = True
-    elif target_agent == "claude":
-        claude_cli_installed = bool(shutil.which("claude"))
-        desktop_config = get_claude_desktop_config_path()
-        desktop_installed = (
-            desktop_config.exists()
-            or desktop_config.parent.is_dir()
-            or (sys.platform == "darwin" and Path("/Applications/Claude.app").exists())
-        )
-
-        if not claude_cli_installed and not desktop_installed:
-            print(
-                "error: Neither Claude Code CLI ('claude') nor Claude Desktop was detected.\n"
-                "To install Claude Code CLI: npm install -g @anthropic-ai/claude-code\n"
-                "To install Claude Desktop:  https://claude.ai/download",
-                file=sys.stderr,
-            )
-            return 1
-
-        code_failed = False
-        if claude_cli_installed:
-            ok_code = configure_claude_code(
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            if not ok_code:
-                code_failed = True
-            else:
-                configured_any = True
-
-        desktop_failed = False
-        if desktop_installed:
-            try:
-                ok_desktop = configure_claude_desktop(
-                    launcher_cmd=launcher_cmd,
-                    launcher_args=launcher_args,
-                    env=env if env else None,
-                    dry_run=dry_run,
-                )
-                if not ok_desktop:
-                    desktop_failed = True
-                else:
-                    configured_any = True
-            except RuntimeError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                desktop_failed = True
-
-        if code_failed or desktop_failed or not configured_any:
-            failed_targets = []
-            if code_failed:
-                failed_targets.append("Claude Code CLI")
-            if desktop_failed:
-                failed_targets.append("Claude Desktop")
-            print(
-                f"error: Failed to configure Claude harness ({', '.join(failed_targets)} failed).",
-                file=sys.stderr,
-            )
-            return 1
-    else:
-        # target_agent == "all": auto-detect existing harnesses
-        if (target_dir / ".cursor").is_dir():
-            try:
-                configure_cursor(
-                    cwd=target_dir,
-                    launcher_cmd=launcher_cmd,
-                    launcher_args=launcher_args,
-                    env=env if env else None,
-                    dry_run=dry_run,
-                )
-                configured_any = True
-            except RuntimeError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 1
-
-        if (target_dir / ".agents").is_dir():
-            try:
-                configure_antigravity(
-                    cwd=target_dir,
-                    launcher_cmd=launcher_cmd,
-                    launcher_args=launcher_args,
-                    env=env if env else None,
-                    dry_run=dry_run,
-                )
-                configured_any = True
-            except RuntimeError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 1
-
-        if (
-            (target_dir / ".codex").is_dir()
-            or bool(shutil.which("codex"))
-            or (Path.home() / ".codex").is_dir()
-        ):
-            try:
-                configure_codex(
-                    cwd=target_dir,
-                    launcher_cmd=launcher_cmd,
-                    launcher_args=launcher_args,
-                    env=env if env else None,
-                    dry_run=dry_run,
-                )
-                configured_any = True
-            except RuntimeError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 1
-
-        if shutil.which("claude"):
-            ok = configure_claude_code(
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            if ok:
-                configured_any = True
-
-        desktop_config = get_claude_desktop_config_path()
-        if desktop_config.exists() or (
-            sys.platform == "darwin" and Path("/Applications/Claude.app").exists()
-        ):
-            try:
-                configure_claude_desktop(
-                    launcher_cmd=launcher_cmd,
-                    launcher_args=launcher_args,
-                    env=env if env else None,
-                    dry_run=dry_run,
-                )
-                configured_any = True
-            except RuntimeError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 1
-
-        if not configured_any:
-            # Default fallback to Cursor and Antigravity
-            configure_cursor(
-                cwd=target_dir,
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-            configure_antigravity(
-                cwd=target_dir,
-                launcher_cmd=launcher_cmd,
-                launcher_args=launcher_args,
-                env=env if env else None,
-                dry_run=dry_run,
-            )
-
+            failed.append(_LABELS[harness])
+    if failed:
+        print(f"error: failed to configure {', '.join(failed)}.", file=sys.stderr)
+        return 1
     print(
-        "\nTip: Run `uv tool install remember` to install the remember CLI permanently to your shell PATH."
+        "\nTip: Run `uv tool install remember` to install the remember CLI "
+        "permanently to your shell PATH."
     )
     return 0
