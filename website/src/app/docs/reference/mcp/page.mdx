@@ -9,8 +9,10 @@ export const metadata = {
 
 MCP (Model Context Protocol) is how coding agents call external tools.
 **`remember mcp`** gives an agent access to your memory. It is part of the
-`remember` package, runs on your machine next to the agent, and talks to one
-deployment<Cloud>: a self-hosted engine or a remember.dev project</Cloud>.
+`remember` package, runs next to the agent, and talks to one
+deployment<Cloud>: a self-hosted engine or a remember.dev project</Cloud>. It
+speaks on standard input and output (the agent starts it), or over HTTP
+(agents connect to a URL).
 
 <Cloud>
 
@@ -27,17 +29,20 @@ How to connect an agent step by step:
 
 ```bash
 remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
 ```
 
-The server reads JSON-RPC 2.0 messages from standard input, one per line,
-and writes one response per line to standard output. It finds the
+By default the server reads JSON-RPC 2.0 messages from standard input, one
+per line, and writes one response per line to standard output. It finds the
 deployment and key the same way as every other `remember` command: flags,
 then environment variables, then the credential file<Cloud> that `remember login`
 writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli#how-the-cli-finds-your-deployment).
+`--transport http` serves the same tools over HTTP; see
+[Over HTTP](#over-http).
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
-`delete_document`, and refuses calls to them. `pipeline_readiness` only
-reads, so it stays.
+`delete_document`, and refuses calls to them with the error `read_only`.
+`pipeline_readiness` only reads, so it stays.
 
 ### Protocol
 
@@ -54,33 +59,79 @@ JSON-RPC error codes: `-32700` for a line that is not JSON, `-32600` for a
 message that is not a valid request, `-32602` for bad `initialize` or
 `tools/call` parameters, `-32603` for a failure while building the answer
 (for example `tools/list` when the deployment cannot be reached or rejects
-the token).
+the key).
 
 The server offers tools only: no resources and no prompts.
 
 ### How `tools/list` is built
 
-Every `tools/list` call asks the deployment what it serves and returns, in
-this order:
+The tool definitions — names, descriptions, input schemas — come from the
+`remember` package itself, so every server that uses the package describes
+the same tools the same way. Each tool has a version number that rises when
+its arguments change in a way an older engine could not handle.
+
+Every `tools/list` call reads `GET /deployment` and lists, in this order,
+each tool the deployment reports at the same version:
 
 1. `ingest`, `pipeline_readiness` and `delete_document` (only
    `pipeline_readiness` with `--read-only`).
-2. The assured operations the deployment lists at `GET /operations`:
-   `resolve_entity`, `claims_and_sources_context`, `facts_context`,
-   `combined_context`. Their input schemas come from the deployment. If
-   the deployment answers `404` there, this group is empty. Any other
-   failure (unreachable, `401`, `403`) makes `tools/list` fail with `-32603`,
-   so a wrong token never looks like an empty tool list.
-3. The seven SQL query tools, only when `GET /query/space` answers with the
-   `memory_v1` query space (schema `memory_v1`, major version 1 and a
-   64-character manifest hash). Any error or other answer leaves them out.
+2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
+   `facts_context`, `combined_context`.
+3. The seven SQL query tools, when the deployment serves the query space.
 
-A full server therefore lists 14 tools: 3 + 4 + 7.
+A tool the deployment does not serve, or serves at another version, is left
+out: upgrade `remember` or the engine so their versions match. If
+`GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
+`-32603`, so a wrong key never looks like an empty tool list. A full server
+lists 14 tools: 3 + 4 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
 `ingest` and `delete_document`, and `destructiveHint` is `true` only for
 `delete_document`.
+
+The server serves one deployment, so no tool takes a `project` argument; a
+call that passes one is refused with `project_routing_unavailable`. A call to
+a name that is not one of these tools is refused with `unknown_tool`. Neither
+reaches the deployment.
+
+### Over HTTP
+
+```bash
+remember mcp --transport http --api-url http://127.0.0.1:8000
+```
+
+The server listens at `http://127.0.0.1:8765/mcp` (Streamable HTTP, the MCP
+transport for servers an agent reaches by URL). `--bind HOST:PORT` changes
+the address.
+
+| Request | Behaviour |
+|---|---|
+| `POST /mcp` | One JSON-RPC message per request, answered with `application/json`; a notification gets `202` and no body. |
+| `initialize` | A successful one opens a session: the answer carries an `Mcp-Session-Id` header. Every later request must send it back. |
+| Missing `Mcp-Session-Id` | `400`. |
+| `MCP-Protocol-Version` other than `2025-11-25` | `400`. The header is optional. |
+| Unknown or expired session | `404`: initialize again. A session unused for an hour expires. |
+| `DELETE /mcp` with `Mcp-Session-Id` | Ends the session (`204`). |
+| `GET /mcp` | `405`: the server never sends messages of its own. |
+| `Origin` header that is not the server's own address | `403`. This stops a web page from reaching the server through a hostname it controls. |
+| More than 16 open connections | `503` with `Retry-After: 1`, and the connection is closed. An idle connection is closed after 30 seconds. |
+| Body over 32 MiB | `413`. Only an `ingest` body sent as `content_base64` gets this big; use `remember ingest` for larger files. |
+| A client that stops sending for 30 seconds | The connection is closed. |
+
+The HTTP server holds no key. It passes each caller's `Authorization`
+header to the engine unchanged with every call, so the engine decides what
+each caller may do, and a caller without a key reaches the engine without
+one. `tools/list` therefore shows every tool the deployment serves; a call
+the caller's key may not make returns `insufficient_permission`.
+`--api-key` and `--project` are refused with `--transport http`.
+
+`ingest` does not offer the `path` body over HTTP: the caller may be on
+another machine.
+
+It listens on a loopback address only; `--bind` with any other address is
+refused. To let agents on other machines reach it, put a reverse proxy in
+front of it that authenticates callers and terminates TLS.
 
 ### Results
 
@@ -94,8 +145,7 @@ Every `tools/call` result has this shape:
 ```
 
 The text is a JSON document: the tool's result on success, an error object
-when `isError` is `true`. The error object differs by tool group; see
-[Errors](#errors).
+when `isError` is `true`; see [Errors](#errors).
 
 ### `ingest`
 
@@ -236,8 +286,8 @@ says the right thing. The token needs `write` scope. See
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
-schemas are served by the deployment; the tables below are what a v0.17.0
-engine serves. Behaviour and results: [Assured operations](/docs/reference/assured-operations).
+schemas come from the `remember` package, as for every tool. Behaviour and
+results: [Assured operations](/docs/reference/assured-operations).
 
 #### `resolve_entity`
 
@@ -325,78 +375,106 @@ Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 ### Errors
 
 Errors come back as a tool result with `isError: true`, so the agent can read
-them. The JSON inside depends on the tool group.
-
-**`ingest`, `pipeline_readiness` and `delete_document`** return:
+them. Every tool returns the same JSON:
 
 ```json
 {
-  "code": "path_not_allowed",
-  "message": "…",
-  "http_status": 400,
-  "retryable": false,
-  "agent_action": "Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. …",
-  "reason_code": "…",
-  "request_id": "…"
+  "error": {
+    "code": "rate_limited",
+    "status_code": 429,
+    "detail": "…",
+    "retryable": true,
+    "agent_action": "Wait retry_after seconds (if given), then retry; …",
+    "retry_after": 7
+  }
 }
 ```
 
-`reason_code` and `request_id` appear only when known. `agent_action` tells
-the agent what to do next.
+| Field | Meaning |
+|---|---|
+| `code` | A stable code: the deployment's own code when it sent one (SQL query errors, `rate_limited`), else one of the codes below. |
+| `status_code` | The deployment's HTTP status. `0` when no answer arrived; `null` when the call never reached the deployment (the server refused it itself). |
+| `detail` | What went wrong. |
+| `retryable` | Whether the same call can succeed later. |
+| `agent_action` | What the agent should do next. |
+| `retry_after` | Seconds to wait, when the deployment said. |
+| `reason_code`, `request_id` | Present only when known. |
 
-| `code` | `http_status` | `retryable` | When | `agent_action` in short |
-|---|---|---|---|---|
-| `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
-| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. | Do not retry; check the `doc_id`. |
-| `tool_not_composed` | 404 | no | `delete_document` on a read-only server. | Tell the user deletion is not available here. |
-| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. | Retry later with back-off. |
-| `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
-| `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
-| `empty_body` | 422 | no | The body is empty. | Send non-empty content. |
-| `path_not_allowed` | 400 | no | Path ingest is off, or the path is outside the listed directories, or contains a NUL byte. | Use `text`/`content_base64`, or ask the operator to set the roots. |
-| `path_unreadable` | 400 | no | The path does not exist or cannot be read. | Check the path on the machine running the server. |
-| `path_not_regular_file` | 400 | no | Directory, pipe, device or other special file. | Point at a regular file. |
-| `path_too_large` | 413 | no | Larger than the read limit. | Split the file or raise the limit. |
-| `body_too_large` | 413 | no | The deployment refused the body as too large. | Split or shorten the document. |
-| `unauthorized` | 401 | no | The token is missing, wrong or revoked. | Replace the token. |
-| `forbidden` | 403 | no | The token may not do this. | Use a token for this deployment with the right scope. |
-| `transport_error` | 0 | yes | No answer from the deployment. | Retry with back-off; check the address and network. |
-| `engine_client_error` | the 4xx status | no | Any other 4xx from the deployment. | Read the message and fix the call. |
-| `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. | Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
-| `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
-| `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
+| `code` | `status_code` | `retryable` | When |
+|---|---|---|---|
+| `invalid_arguments` | `null` | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. |
+| `unknown_tool` | `null` | no | The name is not one of the server's tools. |
+| `project_routing_unavailable` | `null` | no | The call passed a `project` argument. |
+| `read_only` | `null` | no | A tool that changes memory, on a `--read-only` server. |
+| `source_lineage_pair` | `null` | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. |
+| `encoding_error` | `null` | no | `text` cannot be encoded as UTF-8. |
+| `empty_body` | `null`, or the deployment's | no | The body is empty. |
+| `path_not_allowed` | `null` | no | Path ingest is off, or the path is outside the listed directories, or contains a NUL byte. |
+| `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
+| `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
+| `path_too_large` | `null` | no | Larger than the read limit. |
+| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. |
+| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
+| `body_too_large` | 413 | no | The deployment refused the body as too large. |
+| `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |
+| `insufficient_permission` | 403 | no | The key may not do this on this deployment. |
+| `rate_limited` | 429 | yes | The key or the deployment sent too many requests; wait `retry_after` seconds. |
+| `concurrency_limited` | 429 | yes | Too many calls at once; wait `retry_after` seconds. |
+| `transport_error` | 0 | yes | No answer from the deployment. |
+| SQL query codes | as sent | as the code | A SQL query tool failed; the codes are in [Errors and status codes](/docs/reference/errors). |
+| `engine_client_error` | the 4xx status | no | Any other 4xx from the deployment. |
+| `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
+| `local_backend_error` | `null` | no | The deployment's answer did not match the expected shape. |
+| `internal_error` | `null` | no | An unexpected failure in the server. |
 
 <Cloud>
 
 A remember.dev deployment can also refuse work to stay within its spend controls:
 
-| `code` | `http_status` | `retryable` | When | `agent_action` in short |
-|---|---|---|---|---|
-| `spend_safety` | as sent, else 403 | no | The deployment refused the work to stay within a spend cap. | Tell the user; do not retry. |
-| `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). | Tell the user; do not retry. |
-| `dispatch_parked` | 423 | no | The work is parked until someone acts. | Stop retrying; notify a person. |
+| `code` | `status_code` | `retryable` | When |
+|---|---|---|---|
+| `spend_safety` | as sent | no | The deployment refused the work to stay within a spend cap. |
+| `dispatch_refused` | 403 | no | The deployment refused to start the work (spend cap, missing policy, halt). |
+| `dispatch_parked` | 423 | no | The work is parked until someone acts. |
 
 </Cloud>
 
-With `--read-only`, a call to `ingest` returns `isError: true` with the
-plain text
-`write tool 'ingest' is disabled on this read-only MCP server`. A call to
-`delete_document` returns the `tool_not_composed` error object.
+<Cloud>
 
-**Assured operations and SQL query tools** return:
+## Bridge mode: `remember mcp` with a remember.dev key
 
-```json
-{"error": {"status_code": 422, "detail": "…", "code": "relation_not_allowed"}}
+Some agents can only start a local MCP server. For them, `remember mcp`
+relays to a remote MCP endpoint instead of serving the tools itself:
+
+```bash
+remember login
+remember mcp            # relays to the endpoint remember.dev advertises for the key
+remember mcp --remote-url https://mcp.example.com/mcp --api-key "$KEY"
 ```
 
-`status_code` is the deployment's HTTP status (`0` when no answer arrived,
-`null` when `remember mcp` refused the arguments before calling the
-deployment). `code` is present for SQL query failures; the codes are listed
-in [Errors and status codes](/docs/reference/errors). A few argument errors come back as
-plain text instead of JSON.
+It runs in this mode when a remote URL is given (`--remote-url`, else
+`REMEMBER_MCP_URL`), or when the key is a remember.dev key and no engine
+address (`--api-url`, `REMEMBER_API_URL`) is given: then it asks the key's
+issuer for its MCP endpoint (`remember_mcp_endpoint` in the issuer's
+metadata). An engine address always means the server described above. Giving
+both an engine address and a remote URL is an error, as are `--project` (the
+agent names the project per call, with the `project` tool argument) and
+`--transport http` (an HTTP client connects to the remote URL directly).
 
-A `tools/call` for a name the server does not know is sent to the deployment
-as an operation and returns the deployment's error in this shape.
+| Behaviour | Detail |
+|---|---|
+| Relay | Each message from the agent is sent to the remote URL with the key as `Authorization: Bearer …`; the answer, JSON or an event stream, is written back in order. |
+| Tools | The remote's tools pass through unchanged, including tools only the remote has. The bridge reads no local files: send file bodies as `text` or `content_base64`. |
+| Key | Required: `--api-key`, `REMEMBER_API_KEY`, or the credential file. A stored key is sent only to the endpoint its issuer advertises; any other remote URL needs the key passed explicitly. The key never appears in output. |
+| URL | Must be `https`, or `http` on a loopback address. Redirects are followed only within the same host; any other redirect is an error and the key is not sent. |
+| Lost session | A `404` re-opens the session once with the agent's original `initialize` parameters and retries the message once. |
+| `401` | A JSON-RPC error telling you to run `remember login`. |
+| `403` | A JSON-RPC error with the remote's message. |
+| `429` on a tool call | The `rate_limited` tool error, with `retry_after` when the remote sent `Retry-After`. |
+| Network failure, `5xx` | A JSON-RPC error for that request; the bridge keeps running. |
+| `--read-only` | Passes only the memory tools that read and that the remote marks `readOnlyHint: true`. Every other tool, including the remote's own tools, is left out of `tools/list`, and a call to it is refused without being sent. |
+
+</Cloud>
 
 ## Configuration that `remember setup` writes
 
@@ -600,7 +678,7 @@ It does not answer `ping`.
 |---|---|---|
 | Runs | On your machine, started by the agent | On remember.dev |
 | Works with | A self-hosted engine or a remember.dev project | remember.dev projects |
-| Transport | stdio, one JSON-RPC message per line | HTTP `POST`, one JSON-RPC message per request |
+| Transport | stdio, one JSON-RPC message per line; or HTTP with `--transport http` | HTTP `POST`, one JSON-RPC message per request |
 | Protocol version answered | `2025-11-25` | `2025-11-25` |
 | Sign-in | Key from flags, environment or the credential file | OAuth in the browser; you pick a project |
 | Where the key lives | Credential file (`remember login`) or `REMEMBER_API_KEY` | With the agent's OAuth client; access 1 hour, refresh 30 days |
@@ -609,7 +687,7 @@ It does not answer `ping`.
 | `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
 | `pipeline_readiness` | Yes | Yes |
 | `delete_document` | Yes | Not yet |
-| Assured operations | The four the deployment lists, with its names and schemas | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
+| Assured operations | The four, when the deployment serves them at the same version | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
 | SQL query tools | Seven, when the deployment serves the query space | Not yet |
 | Input schemas | Full JSON Schemas | None (any object) |
 | Read-only mode | `--read-only` | No |

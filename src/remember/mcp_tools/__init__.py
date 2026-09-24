@@ -26,8 +26,8 @@ from remember.mcp_tools._definitions import render_tools_list
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
 from remember.mcp_tools._errors import error_result
+from remember.mcp_tools._errors import invalid_arguments
 from remember.mcp_tools._errors import map_error
-from remember.mcp_tools._errors import status_error_result
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mcp_tools._memory import DocumentDeleteBackend
@@ -55,11 +55,11 @@ __all__ = (
     "ToolError",
     "error_result",
     "handle_delete_document_tool",
+    "invalid_arguments",
     "handle_memory_write_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",
-    "status_error_result",
     "tool",
     "validate_arguments",
     "validate_saved_query_identifier",

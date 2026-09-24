@@ -331,16 +331,39 @@ in [Assured operations](/docs/reference/assured-operations).
 
 ```text
 remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
 ```
 
-Runs an MCP server on standard input and output for a coding agent. It finds
-the deployment the same way as every other command<Cloud>, so after
-`remember login` it needs no flags</Cloud>. `--read-only` removes the `ingest` and
-`delete_document` tools.
+<Cloud>
+
+```text
+remember mcp [--read-only] [--remote-url URL] [--api-key KEY]
+```
+
+</Cloud>
+
+Runs an MCP server for a coding agent. By default it speaks on standard input
+and output and finds the deployment the same way as every other
+command<Cloud>, so after `remember login` it needs no flags</Cloud>.
+`--transport http` serves the same tools over HTTP at
+`http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
+`--read-only` removes the tools that change memory, `ingest` and
+`delete_document`.
+
+<Cloud>
+
+With a remember.dev key and no `--api-url`, it relays the agent's messages to
+the MCP endpoint remember.dev advertises for the key instead of serving the
+tools itself. `--remote-url` or `REMEMBER_MCP_URL` names another endpoint;
+the stored key is only sent to the advertised one, so another endpoint needs
+the key passed explicitly. `--remote-url` cannot be combined with `--api-url`,
+`--project` or `--transport http`.
+
+</Cloud>
 
 You rarely start it yourself; `remember setup` writes the agent
-configuration that starts it. The tools, their parameters and the errors are
-in [MCP tools](/docs/reference/mcp).
+configuration that starts it. The two transports, the tools, their parameters
+and the errors are in [MCP tools](/docs/reference/mcp).
 
 ### `remember setup`
 
@@ -660,6 +683,7 @@ For remember.dev:
 | Variable | Used by | Meaning |
 |---|---|---|
 | `REMEMBER_ISSUER` | `login` | The key issuer; default `https://remember.dev`. |
+| `REMEMBER_MCP_URL` | `mcp` | A remote MCP endpoint to relay to; see [`remember mcp`](#remember-mcp). |
 
 </Cloud>
 

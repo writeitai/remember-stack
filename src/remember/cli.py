@@ -26,13 +26,14 @@ from pydantic_settings import SettingsConfigDict
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.connection import Connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
+from remember.issuer import fetch_issuer_metadata
+from remember.issuer import same_origin
 from remember.models import ConnectorCreate
-from remember.remote_mcp import RemoteOperationMcpServer
-from remember.remote_mcp import serve_mcp_stdio
 
 
 class _InternalOpsSettings(BaseSettings):
@@ -234,6 +235,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
             f"[✓] Engine reachable and authenticated ({elapsed}ms, "
             f"build {info.build_revision or 'unknown'})"
         )
+        for line in _tool_version_mismatches(info.tools):
+            print(f"[!] {line}")
+            all_ok = False
     except (MemoryApiError, CredentialError, ValueError) as err:
         print(f"[!] Engine check failed: {err}")
         all_ok = False
@@ -728,14 +732,136 @@ def _run_connectors(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tool_version_mismatches(served: dict[str, int]) -> list[str]:
+    """Catalogue tools the engine serves at another version (hidden by `remember mcp`)."""
+    from remember.mcp_tools import memory_tools
+
+    lines: list[str] = []
+    for definition in memory_tools():
+        version = served.get(definition.name)
+        if version is None or version == definition.tool_version:
+            continue
+        newer = "remember" if version > definition.tool_version else "the engine"
+        lines.append(
+            f"MCP tool {definition.name!r}: this remember has version"
+            f" {definition.tool_version}, the engine serves {version}; `remember mcp`"
+            f" leaves it out until you upgrade {newer}"
+        )
+    return lines
+
+
 def _run_mcp(args: argparse.Namespace) -> int:
-    """Expose the remote assured operations and open retrieval tools over MCP."""
+    """Serve memory tools over MCP: engine mode (stdio or HTTP) or bridge mode.
+
+    Bridge mode is chosen by a remote MCP URL (``--remote-url``,
+    ``REMEMBER_MCP_URL``, or the signed key's issuer's
+    ``remember_mcp_endpoint`` when no engine URL is given); an explicit engine
+    URL (``--api-url``, ``REMEMBER_API_URL``) always means engine mode.
+    """
+    from remember.connection import DEFAULT_API_URL
+    from remember.connection import resolve_connection
+
+    connection = resolve_connection(
+        api_key=args.api_key,
+        api_url=args.api_url,
+        project=args.project,
+        mcp_url=args.remote_url,
+    )
+    explicit_engine = connection.api_url_source in ("explicit", "environment")
+    if connection.mcp_url and explicit_engine:
+        return _usage_error(
+            "give either an engine URL (--api-url / REMEMBER_API_URL) or a remote"
+            " MCP URL (--remote-url / REMEMBER_MCP_URL), not both"
+        )
+    if args.transport == "http":
+        if connection.mcp_url:
+            return _usage_error(
+                "--transport http serves an engine; an HTTP client should connect"
+                f" to the remote MCP URL {connection.mcp_url} directly"
+            )
+        if args.api_key or args.project:
+            return _usage_error(
+                "--transport http holds no key: each caller's Authorization"
+                " header is forwarded to the engine. Drop --api-key/--project"
+            )
+        if connection.api_url is None and connection.claims is not None:
+            return _usage_error(
+                "--transport http needs the engine URL: pass --api-url or set"
+                " REMEMBER_API_URL"
+            )
+        from remember.mcp_http import serve_http
+
+        return serve_http(
+            bind=args.bind,
+            engine_url=connection.api_url or DEFAULT_API_URL,
+            read_only=bool(args.read_only),
+        )
+    remote_url = connection.mcp_url
+    if remote_url is None and not explicit_engine and connection.claims is not None:
+        with _issuer_http() as http:
+            remote_url = fetch_issuer_metadata(
+                connection.claims.iss, http=http
+            ).remember_mcp_endpoint
+    if remote_url is not None:
+        return _run_mcp_bridge(args, connection=connection, remote_url=remote_url)
+    from remember.mcp_engine import EngineMcpServer
+    from remember.mcp_engine import serve_stdio
+
     with _cli_memory_client(args) as client:
-        return serve_mcp_stdio(
-            server=RemoteOperationMcpServer(
-                client=client, read_only=bool(args.read_only)
+        return serve_stdio(
+            server=EngineMcpServer(
+                client=client, read_only=bool(args.read_only), path_ingest=True
             )
         )
+
+
+def _run_mcp_bridge(
+    args: argparse.Namespace, *, connection: Connection, remote_url: str
+) -> int:
+    """Relay stdio to ``remote_url`` with the resolved key (D136 §5.3)."""
+    from remember.mcp_bridge import McpBridge
+
+    if args.project:
+        return _usage_error(
+            "--project applies to engine mode; through a remote MCP endpoint the"
+            " agent names the project per call (the `project` tool argument)"
+        )
+    if connection.key is None:
+        return _usage_error(
+            "bridge mode needs a key: run `remember login`, or set REMEMBER_API_KEY"
+        )
+    if connection.key_source == "file":
+        issuer = (
+            connection.claims.iss
+            if connection.claims is not None
+            else (connection.stored.issuer if connection.stored else None)
+        )
+        advertised = None
+        if issuer is not None:
+            with _issuer_http() as http:
+                advertised = fetch_issuer_metadata(
+                    issuer, http=http
+                ).remember_mcp_endpoint
+        if advertised is None or not same_origin(remote_url, advertised):
+            raise StoredKeyRefused(
+                detail=(
+                    f"the stored key is not sent to {remote_url}: it goes only to"
+                    " the MCP endpoint its issuer advertises. Pass the key"
+                    " explicitly (--api-key or REMEMBER_API_KEY) to use it there"
+                )
+            )
+    _warn_if_expiring()
+    bridge = McpBridge(
+        url=remote_url,
+        key=connection.key.get_secret_value(),
+        read_only=bool(args.read_only),
+    )
+    return bridge.run()
+
+
+def _usage_error(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 2
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -1097,12 +1223,28 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp = commands.add_parser(
         "mcp",
         parents=[client_flags],
-        help="serve remote retrieval tools over MCP stdio",
+        help="serve memory tools over MCP (stdio or HTTP), or bridge to a remote MCP URL",
     )
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse the ingest, pipeline-readiness and delete tools",
+        help="omit and refuse every tool that changes memory",
+    )
+    mcp.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="stdio (default) or Streamable HTTP; http is engine mode only",
+    )
+    mcp.add_argument(
+        "--bind",
+        default="127.0.0.1:8765",
+        help="loopback HOST:PORT for --transport http (default 127.0.0.1:8765)",
+    )
+    mcp.add_argument(
+        "--remote-url",
+        default=None,
+        help="relay stdio to this remote MCP URL (overrides REMEMBER_MCP_URL)",
     )
     login = commands.add_parser(
         "login", help="sign in with the device grant and store one key"

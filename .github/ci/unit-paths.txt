@@ -89,6 +89,7 @@ src/tests/surfaces/test_post_search.py
 src/tests/surfaces/test_postgres_graph_sql.py
 src/tests/surfaces/test_query_sandbox_graph_d98.py
 src/tests/surfaces/test_remember_facade.py
+src/tests/surfaces/test_remember_mcp.py
 src/tests/surfaces/test_route_scope.py
 src/tests/test_d98_removal_audit.py
 src/tests/test_forget_port_contract.py
