@@ -56,6 +56,8 @@ jobs:
           next="$(python scripts/prepare_next_release.py)"
           uv lock
           uv lock --check
+          uv run python scripts/export_openapi.py -o openapi.json
+          python scripts/generate_docs_llms.py
           python scripts/check_release_contract.py --tag "v${next}"
           echo "version=${next}" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -73,7 +75,7 @@ jobs:
           gh auth setup-git
           git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}" || true
           git checkout -B "$branch"
-          git add pyproject.toml uv.lock compose.yaml README.md website/
+          git add pyproject.toml uv.lock compose.yaml README.md openapi.json website/
           git commit -m "chore(release): prepare v${VERSION}"
           git push --force-with-lease origin "HEAD:${branch}"
           existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"

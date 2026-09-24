@@ -93,6 +93,9 @@ class _IngestRecorder:
                 "version_id": str(_VERSION),
                 "content_hash": "0" * 64,
                 "created": True,
+                "mime": "text/markdown",
+                "title": None,
+                "versioning_mode": "snapshot",
                 "parked": self.parked,
             },
         )
@@ -224,6 +227,9 @@ class _McpBackend:
             version_id=_VERSION,
             content_hash="0" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def pipeline_readiness(

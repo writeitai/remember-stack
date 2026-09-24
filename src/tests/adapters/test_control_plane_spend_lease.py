@@ -59,6 +59,9 @@ class _CountingIngest:
             version_id=uuid4(),
             content_hash="a" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def ingest_observed(self, **kwargs: object) -> IngestedVersion:

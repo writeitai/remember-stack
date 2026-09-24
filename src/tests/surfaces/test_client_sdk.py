@@ -965,6 +965,9 @@ def _ingested(*, deployment_id: UUID) -> IngestedVersion:
         version_id=uuid4(),
         content_hash="a" * 64,
         created=True,
+        mime="text/markdown",
+        title=None,
+        versioning_mode="snapshot",
     )
 
 

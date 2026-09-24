@@ -704,12 +704,14 @@ MemoryClient.lookup_relations(
     predicate: str | None = None,
     object_entity_id: UUID | None = None,
     valid_at: datetime | None = None,
+    k: int = 50,
 ) -> Envelope
 ```
 
 Returns the relations (facts between two entities) that match the pattern.
 With `valid_at`, returns the relations that were valid at that instant;
-without it, the current ones.
+without it, the current ones. At most `k` (1–400) come back; the envelope's
+`truncation` says when more matched.
 
 ```python
 memory.lookup_relations(subject_entity_id=dana_id, predicate="leads")
@@ -1212,7 +1214,7 @@ models below are Pydantic models (frozen) unless noted.
 |---|---|
 | `Envelope` | The result of every retrieval call: `grain`, `temporal_scope`, `entities`, `facts`, `evidence`, `chunks`, `sources`, graph fields, `truncation`, `negative`, `freshness` and more. |
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
-| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool). |
+| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
 | `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |

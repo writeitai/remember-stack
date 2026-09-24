@@ -13,6 +13,8 @@ itself never touches adapters.
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from datetime import timedelta
@@ -40,11 +42,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPBearer
+from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
+from sqlalchemy.exc import InternalError
+from sqlalchemy.exc import OperationalError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp
@@ -69,6 +74,7 @@ from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
+from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
@@ -106,6 +112,25 @@ PIPELINE_READINESS_VERSION_LIMIT: Final = 1_000
 """Maximum document versions in one read-only readiness inspection."""
 
 GraphPredicate = Annotated[str, Field(min_length=1, max_length=200)]
+
+SavedQueryStatus = Literal[
+    "draft", "pending_revalidation", "active", "deprecated", "disabled", "broken"
+]
+"""The saved-query version states `GET /query/saved?status=` may filter on."""
+
+LOOKUP_K_MAX: Final = 400
+"""Largest `k` a fact lookup returns in one call; more is reported as truncated."""
+
+
+def _require_utc(value: datetime) -> datetime:
+    """Refuse naive and non-UTC instants at the boundary (422, never 500)."""
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError("must be timezone-aware UTC (end it with Z)")
+    return value
+
+
+UTCInstant = Annotated[datetime, AfterValidator(_require_utc)]
+"""A request instant: ISO 8601 with a zero UTC offset."""
 
 
 class IngestPort(Protocol):
@@ -278,8 +303,8 @@ class GraphNeighborhoodRequest(BaseModel):
     entity_id: UUID
     hops: int = Field(default=2, ge=1, le=4)
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
-    valid_at: datetime | None = None
-    believed_at: datetime | None = None
+    valid_at: UTCInstant | None = None
+    believed_at: UTCInstant | None = None
     limit: int = Field(default=500, ge=1, le=500)
     continuation: str | None = Field(default=None, max_length=200)
     include_paths: bool = False
@@ -301,8 +326,8 @@ class GraphPathRequest(BaseModel):
     to_entity_id: UUID
     max_hops: int = Field(default=4, ge=1, le=6)
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
-    valid_at: datetime | None = None
-    believed_at: datetime | None = None
+    valid_at: UTCInstant | None = None
+    believed_at: UTCInstant | None = None
 
     @model_validator(mode="after")
     def require_complete_bitemporal_coordinate(self) -> Self:
@@ -441,6 +466,15 @@ def build_api(
         # Before any route is declared, so every one is built held.
         app.router.route_class = _HeldRoute
 
+    @app.exception_handler(ProviderCallError)
+    def model_provider_unavailable(
+        _request: Request, _error: Exception
+    ) -> JSONResponse:
+        """Any route whose embedding call fails answers 503, never 500."""
+        return JSONResponse(
+            status_code=503, content={"detail": "model provider unavailable"}
+        )
+
     @app.get("/resolve", response_model=Envelope)
     def resolve(
         name: str,
@@ -460,7 +494,8 @@ def build_api(
         subject_entity_id: UUID | None = None,
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
-        valid_at: datetime | None = None,
+        valid_at: UTCInstant | None = None,
+        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
     ) -> Envelope:
         """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
         return engine.lookup_relations(
@@ -469,6 +504,7 @@ def build_api(
             predicate=predicate,
             object_entity_id=object_entity_id,
             valid_at=valid_at,
+            k=k,
         )
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
@@ -480,7 +516,9 @@ def build_api(
 
     @app.get("/lookup/observations", response_model=Envelope)
     def lookup_observations(
-        entity_id: UUID, property_query: str | None = None, k: int = 10
+        entity_id: UUID,
+        property_query: str | None = None,
+        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
     ) -> Envelope:
         """Live observations on one entity, semantic over statements (S2)."""
         return engine.lookup_observations(
@@ -760,13 +798,39 @@ def _mount_build_info(
         return build_info.build_info(deployment_id=deployment_id)
 
 
+@contextmanager
+def _graph_errors() -> Iterator[None]:
+    """Map the live graph's bounded failures to 503, never 500."""
+    try:
+        yield
+    except GraphBusyError as error:
+        raise HTTPException(status_code=503, detail="live graph is busy") from error
+    except GraphHydrationError as error:
+        raise HTTPException(
+            status_code=503, detail="live graph result unavailable"
+        ) from error
+    except (TimeoutError, OperationalError) as error:
+        # A statement or lock timeout (or a lost connection) inside the
+        # bounded traversal: the graph could not answer in time.
+        raise HTTPException(status_code=503, detail="live graph timed out") from error
+    except InternalError as error:
+        # PostgreSQL reports transaction_timeout (SQLSTATE 25P04) as an
+        # internal error class; anything else in that class stays a 500.
+        if getattr(error.orig, "sqlstate", None) != _TRANSACTION_TIMEOUT:
+            raise
+        raise HTTPException(status_code=503, detail="live graph timed out") from error
+
+
+_TRANSACTION_TIMEOUT: Final = "25P04"
+
+
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
     """Mount the three server-owned graph operations."""
 
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
-        try:
+        with _graph_errors():
             return graph.neighborhood(
                 entity_id=body.entity_id,
                 hops=body.hops,
@@ -777,18 +841,11 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 continuation=body.continuation,
                 include_paths=body.include_paths,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
-        try:
+        with _graph_errors():
             return graph.path(
                 from_entity_id=body.from_entity_id,
                 to_entity_id=body.to_entity_id,
@@ -797,30 +854,16 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
     @app.post("/graph/citation-path", response_model=Envelope)
     def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:
         """Return bounded directed citation paths between two documents."""
-        try:
+        with _graph_errors():
             return graph.citation_path(
                 from_doc_id=body.from_doc_id,
                 to_doc_id=body.to_doc_id,
                 max_hops=body.max_hops,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
 
 def _mount_open_query(
@@ -901,7 +944,7 @@ def _mount_open_query(
 
     @app.get("/query/saved")
     def list_saved_queries(
-        namespace: str | None = None, status: str | None = None
+        namespace: str | None = None, status: SavedQueryStatus | None = None
     ) -> list[dict[str, object]]:
         """Registry metadata for discoverable saved queries."""
         rows = _open_call(
@@ -1174,10 +1217,6 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
                 status_code=422,
                 detail={"code": "invalid_parameter", "message": str(error)},
             ) from error
-        except ProviderCallError as error:
-            raise HTTPException(
-                status_code=503, detail="model provider unavailable"
-            ) from error
 
 
 class _IngestBodyLimit:
@@ -1281,6 +1320,11 @@ def _managed_text_http_error(*, error: ManagedTextClassificationError) -> HTTPEx
     if error.code == "rate_class_unavailable":
         status = 409
     return HTTPException(status_code=status, detail=error.code)
+
+
+def _forgotten_source_http_error() -> HTTPException:
+    """A hard forget covers these bytes or this source identity; it is permanent."""
+    return HTTPException(status_code=409, detail="source_forgotten")
 
 
 def _mount_ingest(
@@ -1405,6 +1449,8 @@ def _mount_ingest(
                 )
             except ManagedTextClassificationError as error:
                 raise _managed_text_http_error(error=error) from error
+            except ForgottenSourceError as error:
+                raise _forgotten_source_http_error() from error
         try:
             return ingest.ingest_observed(
                 deployment_id=deployment_id,
@@ -1419,6 +1465,8 @@ def _mount_ingest(
             )
         except ManagedTextClassificationError as error:
             raise _managed_text_http_error(error=error) from error
+        except ForgottenSourceError as error:
+            raise _forgotten_source_http_error() from error
 
 
 def _mount_connectors(
