@@ -120,3 +120,4 @@ src/tests/workers/test_e2_occurrence_provenance.py
 src/tests/surfaces/test_direct_admission.py
 src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
+src/tests/adapters/test_perimeter_trust.py

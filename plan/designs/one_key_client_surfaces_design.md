@@ -497,7 +497,9 @@ key of the fetched JWKS, header `typ` `revocation+jwt`, with claims:
   roll revocation back. The in-memory copy is what requests read; the refresh
   loop replaces it atomically.
 - The engine fetches the key set and the document every R (60 s starting
-  value). A failed fetch or a rejected document keeps the last accepted one.
+  value). Each fetch has a 10 s total deadline, checked between reads, and
+  2 s per connect, read, write and pool wait, so one fetch ends within 12 s
+  (starting values) however slowly the server sends. A failed fetch or a rejected document keeps the last accepted one.
   The issuer re-issues the document every R.
 
 **Fail closed without a fresh document** (identical in the cloud design). An

@@ -112,6 +112,11 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
         "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
         "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
+        "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER",
+        "REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID",
+        "REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID",
+        "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL",
+        "REMEMBERSTACK_SELFHOST_API_REVOCATION_URL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     for name, default in (
@@ -126,6 +131,8 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT", "8"),
         ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE", "600"),
         ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT", "32"),
+        ("REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S", "60"),
+        ("REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S", "3600"),
     ):
         assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (

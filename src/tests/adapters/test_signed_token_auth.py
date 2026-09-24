@@ -1,89 +1,44 @@
-"""Signed perimeter credentials and shared-secret compatibility at their boundary.
+"""The signed-key claim contract at the engine perimeter (D136 §7.2–§7.4).
 
-These tests are mostly about refusal. A verifier that accepts good credentials
-is easy; the interesting question is whether it can be talked into accepting
-something it should not — a token signed with the wrong key, one aimed at
-another deployment, one asking to be verified with no algorithm at all, or one
-whose expiry has passed. The HTTP proofs also pin compatibility with the legacy
-unscoped shared secret wherever narrow signed authority changes behaviour.
+Mostly refusals: a verifier that accepts good credentials is easy; the question
+is whether it can be talked into accepting something it should not — a token
+for another tenant or deployment, an OAuth token meant for a hosted MCP server,
+a key that does not cover this project, or a permission it cannot bound. The
+HTTP proofs pin what each scope reaches.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-import json
+import time
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 import jwt
-from jwt.algorithms import OKPAlgorithm
-from pydantic import SecretBytes
 import pytest
 
-from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
-from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
+from rememberstack.adapters.managed.signed_token_auth import scope_for_permissions
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenUnusable
+from rememberstack.adapters.managed.signed_token_auth import strip_credential_prefix
 from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
 from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
 from rememberstack.model import DocumentUpload
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
-from rememberstack.model import PerimeterCredential
+from rememberstack.model.auth import CredentialKind
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
-from rememberstack.profiles.selfhost import resolve_selfhost_api_auth
-from rememberstack.profiles.selfhost import SelfHostSettings
 from rememberstack.surfaces.http_api import build_api
-
-
-def _keypair(*, kid: str) -> tuple[Ed25519PrivateKey, str]:
-    """An Ed25519 private key and the single-key JWKS that verifies it."""
-    private = Ed25519PrivateKey.generate()
-    public_jwk = json.loads(OKPAlgorithm.to_jwk(private.public_key()))
-    public_jwk["kid"] = kid
-    public_jwk["alg"] = "EdDSA"
-    return private, json.dumps({"keys": [public_jwk]})
-
-
-def _token(
-    *,
-    private: Ed25519PrivateKey,
-    kid: str,
-    audience: str,
-    subject: str = "member-1",
-    scope: str = "read",
-    expires_in: timedelta = timedelta(minutes=5),
-    algorithm: str = "EdDSA",
-    **overrides: object,
-) -> str:
-    """Sign a credential the way the control plane would."""
-    now = datetime.now(timezone.utc)
-    claims: dict[str, object] = {
-        "aud": audience,
-        "sub": subject,
-        "scope": scope,
-        "iat": now,
-        "nbf": now,
-        "exp": now + expires_in,
-        "jti": uuid4().hex,
-    }
-    claims.update(overrides)
-    return jwt.encode(claims, private, algorithm=algorithm, headers={"kid": kid})
-
-
-def _present(auth: SignedTokenAuth, token: str):  # noqa: ANN202
-    """Hand a token to the adapter as the perimeter would."""
-    return auth.authenticate(
-        credential=PerimeterCredential(
-            scheme="Bearer", value=SecretBytes(token.encode("utf-8"))
-        )
-    )
+from tests.signed_key_support import build_auth
+from tests.signed_key_support import build_trust
+from tests.signed_key_support import FakeIssuer
+from tests.signed_key_support import ISSUER
+from tests.signed_key_support import present
+from tests.signed_key_support import ready_auth
+from tests.signed_key_support import TENANT
 
 
 class _OpenBoundary:
@@ -190,742 +145,437 @@ def _ingest_client(
     return TestClient(app), ingest
 
 
-def test_a_valid_credential_names_its_subject_and_scope() -> None:
-    """The whole point: a person's browser reaches the deployment as itself."""
-    deployment_id = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
-    )
+# --- the §7.2 table, row by row ---------------------------------------------
 
-    context = _present(
-        auth, _token(private=private, kid="k1", audience=str(deployment_id))
-    )
 
-    assert context.deployment_id == deployment_id
-    assert context.subject == "member-1"
+def test_a_key_is_accepted_with_its_exact_claim_set() -> None:
+    issuer, auth = ready_auth()
+    context = present(auth, issuer.credential(kind="key"))
+
+    assert context.deployment_id == issuer.deployment_id
+    assert context.subject == "person-1"
     assert context.scope is PerimeterScope.READ
-    # Machine traffic is recorded as machine traffic; the person rides alongside.
-    assert context.principal == "signed-bearer"
+    assert context.credential_kind is CredentialKind.KEY
+    assert context.actor_id == f"keycred:{context.credential_id}"
+    assert context.source is None
 
 
-def test_an_ingest_credential_uses_the_closed_ingest_scope() -> None:
-    """D62's browser credential is recognised without widening its authority."""
-    deployment_id = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
-    )
-
-    context = _present(
-        auth,
-        _token(private=private, kid="k1", audience=str(deployment_id), scope="ingest"),
-    )
-
-    assert context.scope is PerimeterScope.INGEST
-
-
-def test_an_ingest_signed_token_reaches_only_the_ingest_route() -> None:
-    """The signed D62 credential uploads, but cannot read or configure memory."""
-    deployment_id = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
-    )
-    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
-    ingest_token = _token(
-        private=private, kid="k1", audience=str(deployment_id), scope="ingest"
-    )
-    ingest_headers = {"Authorization": f"Bearer {ingest_token}"}
-
-    accepted = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={**ingest_headers, "Content-Type": "application/octet-stream"},
-    )
-    assert accepted.status_code == 200, accepted.text
-    assert ingest.calls == 1
-    assert ingest.last_principal is None
-
-    refused = (
-        client.post(
-            "/connectors",
-            json={"kind": "watched-directory", "name": "standing pull"},
-            headers=ingest_headers,
-        ),
-        client.post(f"/connectors/{uuid4()}/pause", headers=ingest_headers),
-        client.get(
-            "/search/claims", params={"query": "secret"}, headers=ingest_headers
-        ),
-        client.get(
-            "/search/chunks", params={"query": "secret"}, headers=ingest_headers
-        ),
-        client.post("/operations/anything", json={}, headers=ingest_headers),
-    )
-    assert [response.status_code for response in refused] == [403] * len(refused)
-    assert ingest.calls == 1
-
-    read_token = _token(
-        private=private, kid="k1", audience=str(deployment_id), scope="read"
-    )
-    read_response = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={
-            "Authorization": f"Bearer {read_token}",
-            "Content-Type": "application/octet-stream",
-        },
-    )
-    assert read_response.status_code == 403
-    assert ingest.calls == 1
-
-    write_token = _token(
-        private=private, kid="k1", audience=str(deployment_id), scope="write"
-    )
-    write_response = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={
-            "Authorization": f"Bearer {write_token}",
-            "Content-Type": "application/octet-stream",
-        },
-    )
-    assert write_response.status_code == 200, write_response.text
-    assert ingest.calls == 2
+@pytest.mark.parametrize(
+    "projects",
+    [
+        "org:*",
+        None,
+        ["other-project", "PROJECT"],
+        ["PROJECT"] + [f"p{i}" for i in range(19)],
+    ],
+)
+def test_a_key_covering_this_project_is_accepted(projects: object) -> None:
+    issuer, auth = ready_auth()
+    this = str(issuer.deployment_id)
+    if projects is None:
+        projects = [this]
+    elif isinstance(projects, list):
+        projects = [this if item == "PROJECT" else item for item in projects]
+    assert present(auth, issuer.credential(kind="key", projects=projects))
 
 
-def test_a_narrow_ingest_credential_cannot_assert_attribution() -> None:
-    """Direct browser upload does not grant authority to name its creator."""
-    deployment_id = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
-    )
-    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+def test_a_session_is_accepted_with_and_without_src() -> None:
+    issuer, auth = ready_auth()
 
-    ingest_token = _token(
-        private=private, kid="k1", audience=str(deployment_id), scope="ingest"
-    )
-    narrow_response = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={
-            "Authorization": f"Bearer {ingest_token}",
-            "Content-Type": "application/octet-stream",
-            "X-Ingest-Principal-Kind": "user",
-            "X-Ingest-Principal-Ref": "user:forged",
-        },
-    )
-    assert narrow_response.status_code == 200, narrow_response.text
-    assert ingest.last_principal is None
+    derived = present(auth, issuer.credential(kind="session", src="mcp"))
+    browser = present(auth, issuer.credential(kind="session"))
 
-    write_token = _token(
-        private=private, kid="k1", audience=str(deployment_id), scope="write"
-    )
-    write_response = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={
-            "Authorization": f"Bearer {write_token}",
-            "Content-Type": "application/octet-stream",
-            "X-Ingest-Principal-Kind": "user",
-            "X-Ingest-Principal-Ref": "user:trusted-control-plane",
-        },
-    )
-    assert write_response.status_code == 200, write_response.text
-    assert ingest.last_principal == IngestPrincipal(
-        kind=IngestPrincipalKind.USER, external_ref="user:trusted-control-plane"
-    )
+    assert derived.source == "mcp"
+    assert browser.source is None
+    for context in (derived, browser):
+        assert context.credential_kind is CredentialKind.BROWSER
+        assert context.subject == "person-1"
+        assert context.actor_id == f"browsercred:{context.credential_id}"
 
 
-def test_the_unscoped_shared_secret_retains_attribution_authority() -> None:
-    """The legacy shared secret remains unrestricted for compatibility."""
-    deployment_id = uuid4()
-    secret = "legacy-shared-secret"
-    auth = HashedBearerAuth(
-        issued_deployment_id=deployment_id, digest=digest_bearer_secret(secret=secret)
-    )
-    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+def test_a_service_credential_names_no_person() -> None:
+    issuer, auth = ready_auth()
+    context = present(auth, issuer.credential(kind="service"))
 
-    response = client.post(
-        "/ingest?filename=memory.md&mime=text/markdown",
-        content=b"memory",
-        headers={
-            "Authorization": f"Bearer {secret}",
-            "Content-Type": "application/octet-stream",
-            "X-Ingest-Principal-Kind": "service",
-            "X-Ingest-Principal-Ref": "service:legacy-control-plane",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    assert ingest.last_principal == IngestPrincipal(
-        kind=IngestPrincipalKind.SERVICE, external_ref="service:legacy-control-plane"
-    )
+    assert context.subject is None
+    assert context.credential_kind is CredentialKind.DEPLOYMENT
+    assert context.actor_id == f"dpcred:{context.credential_id}"
 
 
-def test_a_credential_for_another_deployment_is_refused() -> None:
-    """D45: a wildcard certificate completes TLS to the wrong process."""
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=uuid4(), keys=load_verification_keys(jwks=jwks)
-    )
+@pytest.mark.parametrize(
+    ("kind", "overrides"),
+    [
+        # An OAuth token meant for the hosted MCP server is not a key here.
+        ("key", {"aud": "https://remember.dev/mcp"}),
+        ("session", {"aud": "https://remember.dev/mcp"}),
+        ("service", {"aud": "https://remember.dev/mcp"}),
+        # A key for another tenant, a session for another deployment.
+        ("key", {"aud": "org:other-tenant"}),
+        ("key", {"aud": "DEPLOYMENT"}),
+        ("session", {"aud": str(uuid4())}),
+        ("session", {"aud": f"org:{TENANT}"}),
+        ("service", {"aud": f"org:{TENANT}"}),
+        ("key", {"aud": [f"org:{TENANT}"]}),
+        # Coverage.
+        ("key", {"projects": [f"p{i}" for i in range(20)] + ["PROJECT"]}),
+        ("key", {"projects": []}),
+        ("key", {"projects": ["another-project"]}),
+        ("key", {"projects": "org:other"}),
+        ("key", {"projects": "PROJECT"}),
+        ("key", {"projects": ["PROJECT", 7]}),
+        ("session", {"projects": ["PROJECT", "another-project"]}),
+        ("session", {"projects": "org:*"}),
+        ("session", {"projects": []}),
+        # Tenant and subject.
+        ("key", {"org": "other-tenant"}),
+        ("session", {"org": "other-tenant"}),
+        ("service", {"sub": "dpcred:someone-else"}),
+        ("service", {"sub": "person-1"}),
+        ("key", {"sub": ""}),
+        ("session", {"src": ""}),
+        ("session", {"src": 7}),
+        # Common claims.
+        ("key", {"iss": "https://other-issuer.example.test"}),
+        ("key", {"kind_claim": "browser"}),
+        ("key", {"kind_claim": "deployment"}),
+        ("key", {"jti": ""}),
+        ("key", {"permissions": "memory:read"}),
+        ("key", {"permissions": ["memory:read", 7]}),
+    ],
+)
+def test_a_claim_outside_the_contract_is_refused(
+    kind: str, overrides: dict[str, object]
+) -> None:
+    issuer, auth = ready_auth()
+    this = str(issuer.deployment_id)
 
+    def substitute(value: object) -> object:
+        if value == "PROJECT":
+            return this
+        if value == "DEPLOYMENT":
+            return this
+        if isinstance(value, list):
+            return [substitute(item) for item in value]
+        return value
+
+    claims: dict[str, Any] = {
+        name: substitute(value) for name, value in overrides.items()
+    }
     with pytest.raises(SignedTokenUnusable):
-        _present(auth, _token(private=private, kid="k1", audience=str(uuid4())))
+        present(auth, issuer.credential(kind=kind, **claims))
+
+
+@pytest.mark.parametrize(
+    ("kind", "claim"),
+    [
+        ("key", "org"),
+        ("key", "projects"),
+        ("session", "org"),
+        ("session", "projects"),
+        *[
+            (kind, claim)
+            for kind in ("key", "session", "service")
+            for claim in (
+                "iss",
+                "aud",
+                "sub",
+                "permissions",
+                "kind",
+                "iat",
+                "nbf",
+                "exp",
+                "jti",
+            )
+        ],
+    ],
+)
+def test_a_missing_claim_is_refused(kind: str, claim: str) -> None:
+    issuer, auth = ready_auth()
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(kind=kind, drop=(claim,)))
+
+
+def test_the_old_scope_claim_grants_nothing() -> None:
+    """``scope`` is not part of the contract: without ``permissions`` it is refused."""
+    issuer, auth = ready_auth()
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(scope="write", drop=("permissions",)))
+    context = present(auth, issuer.credential(scope="write", permissions=()))
+    assert context.scope is None
+
+
+def test_an_expired_credential_is_refused_and_leeway_is_thirty_seconds() -> None:
+    issuer, auth = ready_auth()
+    now = int(time.time())
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(iat=now - 600, nbf=now - 600, exp=now - 60))
+    assert present(auth, issuer.credential(iat=now - 600, nbf=now - 600, exp=now - 10))
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(nbf=now + 120))
 
 
 def test_a_credential_signed_by_another_key_is_refused() -> None:
-    """The signature is the whole basis of trust here."""
-    _accepted, jwks = _keypair(kid="k1")
-    # Same kid, different key: the attacker knows which key we expect and
-    # cannot produce its signature.
-    attacker, _ = _keypair(kid="k1")
-    deployment = uuid4()
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
+    issuer, auth = ready_auth()
+    stranger = FakeIssuer(deployment_id=issuer.deployment_id)
     with pytest.raises(SignedTokenUnusable):
-        _present(auth, _token(private=attacker, kid="k1", audience=str(deployment)))
+        present(auth, stranger.credential())
 
 
 def test_an_unknown_kid_is_refused_rather_than_searched() -> None:
-    """Trying every key would keep rotated-away signatures working."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-
+    issuer, auth = ready_auth()
+    issuer.private["k9"] = issuer.private["k1"]
     with pytest.raises(SignedTokenUnusable):
-        _present(auth, _token(private=private, kid="k2", audience=str(deployment)))
-
-
-def test_an_expired_credential_is_refused() -> None:
-    """Expiry is the entire revocation story for a browser credential."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(
-            auth,
-            _token(
-                private=private,
-                kid="k1",
-                audience=str(deployment),
-                expires_in=timedelta(minutes=-10),
-            ),
-        )
-
-
-def test_clock_leeway_admits_a_credential_that_just_expired() -> None:
-    """Host drift must not produce a false 401 on a valid credential."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-
-    context = _present(
-        auth,
-        _token(
-            private=private,
-            kid="k1",
-            audience=str(deployment),
-            expires_in=timedelta(seconds=-5),
-        ),
-    )
-    assert context.subject == "member-1"
+        present(auth, issuer.credential(kid="k9"))
 
 
 def test_an_unsigned_credential_is_refused() -> None:
-    """The `alg: none` family. The algorithm is named by us, never by the token."""
-    deployment = uuid4()
-    _private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    now = datetime.now(timezone.utc)
+    """The `alg: none` family: the algorithm is named by us, never by the token."""
+    issuer, auth = ready_auth()
+    now = int(time.time())
     unsigned = jwt.encode(
         {
-            "aud": str(deployment),
-            "sub": "member-1",
-            "scope": "write",
+            "iss": ISSUER,
+            "aud": f"org:{TENANT}",
+            "org": TENANT,
+            "projects": "org:*",
+            "sub": "person-1",
+            "kind": "key",
+            "permissions": ["memory:write"],
             "iat": now,
-            "exp": now + timedelta(minutes=5),
+            "nbf": now,
+            "exp": now + 300,
             "jti": uuid4().hex,
         },
         key="",
         algorithm="none",
         headers={"kid": "k1"},
     )
-
     with pytest.raises(SignedTokenUnusable):
-        _present(auth, unsigned)
+        present(auth, f"rmb_{unsigned}")
 
 
-def test_a_revoked_credential_is_refused() -> None:
-    """The deny-list, for credentials that outlive a single session."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    revoked = uuid4().hex
-    auth = SignedTokenAuth(
-        deployment_id=deployment,
-        keys=load_verification_keys(jwks=jwks),
-        revoked_ids=[revoked],
-    )
-
+def test_a_revocation_document_is_not_a_credential() -> None:
+    issuer, auth = ready_auth()
     with pytest.raises(SignedTokenUnusable):
-        _present(
-            auth,
-            _token(private=private, kid="k1", audience=str(deployment), jti=revoked),
-        )
+        present(auth, issuer.revocation())
 
 
-def test_a_credential_missing_required_claims_is_refused() -> None:
-    """A missing claim is a missing constraint, not an unconstrained credential."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    now = datetime.now(timezone.utc)
-    # No `aud`: the audience check cannot happen, so the credential is refused
-    # rather than treated as valid for any deployment.
-    no_audience = jwt.encode(
-        {
-            "sub": "member-1",
-            "iat": now,
-            "exp": now + timedelta(minutes=5),
-            "jti": uuid4().hex,
+# --- the prefix --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("prefix", ["rmb_", "abc_", "X_", ""])
+def test_any_letters_only_prefix_is_stripped(prefix: str) -> None:
+    issuer, auth = ready_auth()
+    assert present(auth, issuer.credential(prefix=prefix))
+
+
+@pytest.mark.parametrize("prefix", ["umc_dp_", "rmb_rmb_", "rm1_", "_", "rmb-"])
+def test_a_prefix_that_is_not_letters_only_is_refused(prefix: str) -> None:
+    issuer, auth = ready_auth()
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(prefix=prefix))
+
+
+def test_strip_credential_prefix() -> None:
+    assert strip_credential_prefix(presented="eyJabc") == "eyJabc"
+    assert strip_credential_prefix(presented="rmb_eyJabc") == "eyJabc"
+    with pytest.raises(SignedTokenUnusable):
+        strip_credential_prefix(presented="no-separator")
+
+
+# --- permissions → scope (§7.4) ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("permissions", "scope"),
+    [
+        (["memory:read"], PerimeterScope.READ),
+        (["memory:write"], PerimeterScope.WRITE),
+        (["memory:ingest"], PerimeterScope.INGEST),
+        (["memory:read", "memory:write"], PerimeterScope.WRITE),
+        (["memory:read", "memory:ingest", "memory:write"], PerimeterScope.WRITE),
+        (["memory:read", "account:read", "account:manage"], PerimeterScope.READ),
+        (["memory:read", "memory:read"], PerimeterScope.READ),
+        (["account:read", "billing:view"], None),
+        ([], None),
+    ],
+)
+def test_permissions_map_to_one_scope(
+    permissions: list[str], scope: PerimeterScope | None
+) -> None:
+    assert scope_for_permissions(permissions=permissions) is scope
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        ["memory:admin"],
+        ["memory:write", "memory:delete"],
+        ["memory:read", "memory:ingest"],
+        "memory:read",
+        None,
+        [1],
+    ],
+)
+def test_unknown_or_conflicting_memory_permissions_are_refused(
+    permissions: object,
+) -> None:
+    with pytest.raises(SignedTokenUnusable):
+        scope_for_permissions(permissions=permissions)
+
+
+# --- through HTTP -----------------------------------------------------------
+
+
+def _upload(client: TestClient, bearer: str, **headers: str) -> Any:
+    return client.post(
+        "/ingest?filename=memory.md&mime=text/markdown",
+        content=b"memory",
+        headers={
+            "Authorization": f"Bearer {bearer}",
+            "Content-Type": "application/octet-stream",
+            **headers,
         },
-        private,
-        algorithm="EdDSA",
-        headers={"kid": "k1"},
     )
 
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, no_audience)
 
+def test_an_ingest_credential_reaches_only_the_ingest_route() -> None:
+    """The narrow D62 upload credential uploads, but cannot read or configure."""
+    issuer, auth = ready_auth()
+    client, ingest = _ingest_client(deployment_id=issuer.deployment_id, auth=auth)
+    ingest_bearer = issuer.credential(kind="session", permissions=("memory:ingest",))
+    headers = {"Authorization": f"Bearer {ingest_bearer}"}
 
-def test_an_unknown_scope_is_refused_not_downgraded() -> None:
-    """A credential claiming authority this build cannot bound is refused."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    accepted = _upload(client, ingest_bearer)
+    assert accepted.status_code == 200, accepted.text
+    assert ingest.calls == 1
+
+    refused = (
+        client.post(
+            "/connectors",
+            json={"kind": "watched-directory", "name": "standing pull"},
+            headers=headers,
+        ),
+        client.post(f"/connectors/{uuid4()}/pause", headers=headers),
+        client.get("/search/claims", params={"query": "secret"}, headers=headers),
+        client.get("/search/chunks", params={"query": "secret"}, headers=headers),
+        client.post("/operations/anything", json={}, headers=headers),
     )
+    assert [response.status_code for response in refused] == [403] * len(refused)
 
-    with pytest.raises(SignedTokenUnusable):
-        _present(
-            auth,
-            _token(
-                private=private, kid="k1", audience=str(deployment), scope="superuser"
-            ),
-        )
-
-
-def test_without_keys_the_adapter_is_inert() -> None:
-    """Self-host configures none, and must go on working exactly as before."""
-    auth = SignedTokenAuth(deployment_id=uuid4(), keys={})
-    assert not auth.configured
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, "anything")
+    read_response = _upload(client, issuer.credential(permissions=("memory:read",)))
+    assert read_response.status_code == 403
+    write_response = _upload(client, issuer.credential(permissions=("memory:write",)))
+    assert write_response.status_code == 200, write_response.text
+    assert ingest.calls == 2
 
 
-def test_a_key_set_without_kids_is_rejected_at_load() -> None:
-    """Half-loading a key set is a rotation that half works."""
-    private = Ed25519PrivateKey.generate()
-    jwk = json.loads(OKPAlgorithm.to_jwk(private.public_key()))
-    jwk["alg"] = "EdDSA"
+def test_a_credential_without_memory_permission_authenticates_and_is_denied() -> None:
+    issuer, auth = ready_auth()
+    client, ingest = _ingest_client(deployment_id=issuer.deployment_id, auth=auth)
+    bearer = issuer.credential(permissions=("account:read", "account:manage"))
 
-    with pytest.raises(ValueError, match="kid"):
-        load_verification_keys(jwks=json.dumps({"keys": [jwk]}))
-
-
-def test_a_routing_prefixed_credential_is_accepted() -> None:
-    """The control plane keeps `umc_dp_` in front of signed material.
-
-    It needs the prefix to pick a verifier before parsing; a JWT parser cannot
-    read it, because `umc_dp_eyJ…` is not valid JWS. Without stripping, every
-    signed deployment token would be refused here — which the design asserted
-    was fine, wrongly, until a review checked it.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
+    assert _upload(client, bearer).status_code == 403
+    response = client.get(
+        "/search/claims",
+        params={"query": "x"},
+        headers={"Authorization": f"Bearer {bearer}"},
     )
-    token = _token(private=private, kid="k1", audience=str(deployment), scope="write")
-
-    context = _present(auth, f"umc_dp_{token}")
-
-    assert context.scope is PerimeterScope.WRITE
-    assert context.deployment_id == deployment
+    assert response.status_code == 403
+    assert ingest.calls == 0
 
 
-def test_only_known_prefixes_are_stripped() -> None:
-    """Stripping arbitrary leading bytes would be a parser bypass."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(private=private, kid="k1", audience=str(deployment))
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, f"anything_{token}")
-
-
-def test_a_machine_credential_names_no_person() -> None:
-    """`dpcred:` in the subject is a credential id, not somebody accountable.
-
-    Recording it as the human subject would let an audit attribute a memory read
-    to something that cannot answer for it.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token_id = uuid4().hex
-    token = _token(
-        private=private,
-        kid="k1",
-        audience=str(deployment),
-        subject=f"dpcred:{token_id}",
-        scope="write",
-        jti=token_id,
-    )
-
-    context = _present(auth, f"umc_dp_{token}")
-
-    assert context.subject is None
-    assert context.credential_id == token_id
-
-
-def test_a_browser_credential_still_names_its_person() -> None:
-    """The distinction must not erase attribution where it exists."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-
-    context = _present(
-        auth, _token(private=private, kid="k1", audience=str(deployment))
-    )
-
-    assert context.subject == "member-1"
-    assert context.credential_id is not None
-
-
-def test_a_multi_audience_credential_is_refused() -> None:
-    """One credential must not authenticate at two deployments.
-
-    JWT permits `aud` to be a list, and the default is to accept when *any*
-    entry matches. A control plane — or anyone who obtained signing authority —
-    could then issue a single credential valid at several customers'
-    deployments at once, which is exactly what D45's issued-deployment binding
-    exists to prevent, and neither end could see it from the credential.
-
-    Found by review, with a working token: the audience array below was
-    accepted by verifiers bound to both deployments before `strict_aud`.
-    """
-    deployment = uuid4()
-    other = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(
-        private=private,
-        kid="k1",
-        audience=str(deployment),
-        aud=[str(deployment), str(other)],
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, token)
-
-
-def test_a_credential_with_an_empty_id_is_refused() -> None:
-    """A credential with no id could never be revoked.
-
-    The deny-list names ids. A credential presenting an empty one cannot appear
-    in it, so it would stay usable for its whole life whatever the control
-    plane decided — which makes the whole revocation mechanism decorative.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(
-        private=private, kid="k1", audience=str(deployment), subject="dpcred:", jti=""
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, token)
-
-
-def test_a_machine_subject_must_name_its_own_credential() -> None:
-    """`dpcred:` is a claim about identity, and it is checked.
-
-    Without this, a payload could name any credential it liked — or drop the
-    delegating person from a credential that has one — and the audit record
-    would faithfully report the lie.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(
-        private=private,
-        kid="k1",
-        audience=str(deployment),
-        subject="dpcred:not-the-jti",
-        jti=uuid4().hex,
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, token)
-
-
-def test_the_control_plane_routing_label_is_not_stripped_here() -> None:
-    """`umc_cp_` addresses the control plane, which this perimeter is not.
-
-    Accepting it would make the routing label decorative — the two credential
-    kinds would become interchangeable at a verifier that reasons about only
-    one of them.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(private=private, kid="k1", audience=str(deployment))
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, f"umc_cp_{token}")
-
-
-def test_a_doubled_routing_label_is_refused() -> None:
-    """Unwrapping repeatedly would accept a credential no issuer produced."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token = _token(private=private, kid="k1", audience=str(deployment))
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, f"umc_dp_umc_dp_{token}")
-
-
-def test_the_credential_kind_names_the_audit_actor() -> None:
-    """Audit needs to say *which credential*, not only which person."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    token_id = uuid4().hex
-    machine = _present(
-        auth,
-        "umc_dp_"
-        + _token(
-            private=private,
-            kid="k1",
-            audience=str(deployment),
-            subject=f"dpcred:{token_id}",
-            jti=token_id,
+def test_a_refused_credential_is_an_opaque_401() -> None:
+    issuer, auth = ready_auth()
+    client, ingest = _ingest_client(deployment_id=issuer.deployment_id, auth=auth)
+    response = _upload(
+        client,
+        issuer.credential(
+            permissions=("memory:write",), aud="https://remember.dev/mcp"
         ),
     )
-    browser = _present(
-        auth, _token(private=private, kid="k1", audience=str(deployment))
-    )
-
-    assert machine.actor_id == f"dpcred:{token_id}"
-    assert browser.actor_id is not None
-    assert browser.actor_id.startswith("browsercred:")
-
-
-def test_a_credential_without_a_scope_is_refused() -> None:
-    """A credential silent about its authority must not receive some by default.
-
-    Defaulting to `read` looked harmless and was not: it made "the issuer said
-    nothing" and "the issuer said read-only" the same thing, so a signing bug
-    that dropped the claim would produce working credentials nobody had decided
-    the authority of.
-    """
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    now = datetime.now(timezone.utc)
-    token = jwt.encode(
-        {
-            "aud": str(deployment),
-            "sub": "member-1",
-            "iat": now,
-            "nbf": now,
-            "exp": now + timedelta(minutes=5),
-            "jti": uuid4().hex,
-        },
-        private,
-        algorithm="EdDSA",
-        headers={"kid": "k1"},
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, token)
-
-
-def test_a_credential_without_nbf_is_refused() -> None:
-    """D59 lists `nbf` among the claims a credential carries."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    auth = SignedTokenAuth(
-        deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-    )
-    now = datetime.now(timezone.utc)
-    token = jwt.encode(
-        {
-            "aud": str(deployment),
-            "sub": "member-1",
-            "scope": "read",
-            "iat": now,
-            "exp": now + timedelta(minutes=5),
-            "jti": uuid4().hex,
-        },
-        private,
-        algorithm="EdDSA",
-        headers={"kid": "k1"},
-    )
-
-    with pytest.raises(SignedTokenUnusable):
-        _present(auth, token)
-
-
-def test_a_key_set_that_half_loads_is_refused() -> None:
-    """PyJWT skips members it cannot use; a rotation must not half apply.
-
-    One good key beside one malformed one loaded as a set of one, so the
-    deployment silently kept verifying with the outgoing key and rejected
-    everything signed by the incoming one — discovered later, by a caller
-    holding the half that was dropped.
-    """
-    _private, jwks = _keypair(kid="k1")
-    document = json.loads(jwks)
-    document["keys"].append({"kty": "OKP", "crv": "Ed25519", "kid": "k2"})
-
-    with pytest.raises(ValueError, match="usable"):
-        load_verification_keys(jwks=json.dumps(document))
-
-
-def test_a_key_declaring_the_wrong_operations_is_refused() -> None:
-    """`key_ops` is an array of strings, and a bare string must not pass.
-
-    `"verify" in "verify"` is true, so a malformed declaration would have been
-    read as permission it never gave.
-    """
-    _private, jwks = _keypair(kid="k1")
-    document = json.loads(jwks)
-    document["keys"][0]["key_ops"] = "verify"
-
-    with pytest.raises(ValueError, match="malformed key_ops"):
-        load_verification_keys(jwks=json.dumps(document))
-
-    document["keys"][0]["key_ops"] = ["sign"]
-    with pytest.raises(ValueError, match="permit verification"):
-        load_verification_keys(jwks=json.dumps(document))
-
-
-def test_a_key_set_carrying_private_material_is_refused() -> None:
-    """A JWKS with `d` means the signing key was published to every deployment.
-
-    Nothing downstream would notice: it verifies perfectly. The deployment
-    would simply be able to mint the credentials it is supposed only to check,
-    which is the one property this whole arrangement exists to prevent.
-
-    A *valid* private JWK is used here on purpose — a malformed one is refused
-    by the parser before this check is reached, which proves nothing.
-    """
-    private, _jwks = _keypair(kid="k1")
-    private_jwk = json.loads(OKPAlgorithm.to_jwk(private))
-    private_jwk["kid"] = "k1"
-    private_jwk["alg"] = "EdDSA"
-    assert private_jwk.get("d"), "the fixture must actually carry the seed"
-
-    with pytest.raises(ValueError, match="private key material"):
-        load_verification_keys(jwks=json.dumps({"keys": [private_jwk]}))
-
-
-def test_a_key_with_a_non_string_kid_is_refused() -> None:
-    """Selection looks up a string, so a numeric kid can never be chosen.
-
-    It would load happily and then never match anything — a rotation that
-    silently does nothing, discovered by whoever holds the credential signed
-    with it.
-    """
-    _private, jwks = _keypair(kid="k1")
-    document = json.loads(jwks)
-    document["keys"][0]["kid"] = 7
-
-    with pytest.raises(ValueError, match="string kid"):
-        load_verification_keys(jwks=json.dumps(document))
-
-
-def test_key_ops_members_must_all_be_strings() -> None:
-    """An array containing an object is not the array RFC 7517 describes."""
-    _private, jwks = _keypair(kid="k1")
-    document = json.loads(jwks)
-    document["keys"][0]["key_ops"] = ["verify", {"verify": True}]
-
-    with pytest.raises(ValueError, match="malformed key_ops"):
-        load_verification_keys(jwks=json.dumps(document))
-
-
-@pytest.mark.parametrize("require_api_auth", [False, True])
-def test_explicit_empty_verifiers_deny_old_credentials_through_http(
-    require_api_auth: bool,
-) -> None:
-    """Withdrawing every key keeps a closed perimeter rather than an open API."""
-    deployment_id = uuid4()
-    private, jwks = _keypair(kid="withdrawn-key")
-    old_token = _token(
-        private=private, kid="withdrawn-key", audience=str(deployment_id), scope="write"
-    )
-    prior = SignedTokenAuth(
-        deployment_id=deployment_id, keys=load_verification_keys(jwks=jwks)
-    )
-    assert _present(prior, old_token).scope is PerimeterScope.WRITE
-
-    settings = SelfHostSettings(
-        deployment_id=deployment_id,
-        require_api_auth=require_api_auth,
-        api_signing_keys='{"keys": []}',
-        api_bearer_bind=None,
-        api_bearer_token=None,
-    )
-    auth = resolve_selfhost_api_auth(settings=settings)
-    assert isinstance(auth, SignedTokenAuth)
-    assert not auth.configured
-    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
-    for authorization in (None, f"Bearer {old_token}", f"Bearer umc_dp_{old_token}"):
-        headers = {"Content-Type": "application/octet-stream"}
-        if authorization is not None:
-            headers["Authorization"] = authorization
-        response = client.post(
-            "/ingest?filename=memory.md&mime=text/markdown",
-            content=b"memory",
-            headers=headers,
-        )
-        assert response.status_code == 401, response.text
+    assert response.status_code == 401
+    assert response.json() == {"detail": "perimeter authentication failed"}
     assert ingest.calls == 0
+
+
+def test_only_write_may_assert_ingest_attribution() -> None:
+    """Direct browser upload does not grant authority to name its creator."""
+    issuer, auth = ready_auth()
+    client, ingest = _ingest_client(deployment_id=issuer.deployment_id, auth=auth)
+    attribution = {
+        "X-Ingest-Principal-Kind": "user",
+        "X-Ingest-Principal-Ref": "user:asserted",
+    }
+
+    narrow = issuer.credential(kind="session", permissions=("memory:ingest",))
+    assert _upload(client, narrow, **attribution).status_code == 200
+    assert ingest.last_principal is None
+
+    write = issuer.credential(kind="session", permissions=("memory:write",), src="mcp")
+    assert _upload(client, write, **attribution).status_code == 200
+    assert ingest.last_principal == IngestPrincipal(
+        kind=IngestPrincipalKind.USER, external_ref="user:asserted"
+    )
+
+
+def test_the_shared_secret_retains_attribution_authority() -> None:
+    """The self-host shared secret is unrestricted."""
+    deployment_id = uuid4()
+    secret = "shared-secret"
+    auth = HashedBearerAuth(
+        issued_deployment_id=deployment_id, digest=digest_bearer_secret(secret=secret)
+    )
+    client, ingest = _ingest_client(deployment_id=deployment_id, auth=auth)
+
+    response = _upload(
+        client,
+        secret,
+        **{
+            "X-Ingest-Principal-Kind": "service",
+            "X-Ingest-Principal-Ref": "service:control-plane",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert ingest.last_principal == IngestPrincipal(
+        kind=IngestPrincipalKind.SERVICE, external_ref="service:control-plane"
+    )
+
+
+def test_a_project_id_other_than_the_deployment_id_is_matched() -> None:
+    issuer = FakeIssuer(deployment_id=uuid4())
+    issuer.revocation()
+    trust = build_trust(issuer=issuer)
+    trust.refresh()
+    auth = build_auth(issuer=issuer, trust=trust, project_id="proj_42")
+
+    assert present(auth, issuer.credential(projects=["proj_42"]))
+    assert present(auth, issuer.credential(kind="session", projects=["proj_42"]))
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(projects=[str(issuer.deployment_id)]))
+
+
+@pytest.mark.parametrize("kind", ["key", "service"])
+@pytest.mark.parametrize(
+    "permissions", [("memory:ingest",), ("memory:write", "memory:ingest")]
+)
+def test_ingest_permission_is_refused_outside_a_session(
+    kind: str, permissions: tuple[str, ...]
+) -> None:
+    issuer, auth = ready_auth()
+    with pytest.raises(SignedTokenUnusable, match="ingest_outside_session"):
+        present(auth, issuer.credential(kind=kind, permissions=permissions))
+    context = present(auth, issuer.credential(kind="session", permissions=permissions))
+    assert context.scope in (PerimeterScope.INGEST, PerimeterScope.WRITE)
+
+
+@pytest.mark.parametrize("claim", ["iat", "nbf", "exp"])
+@pytest.mark.parametrize("bad", ["float", "bool"])
+def test_time_claims_must_be_integers(claim: str, bad: str) -> None:
+    issuer, auth = ready_auth()
+    now = int(time.time())
+    base = {"iat": now, "nbf": now, "exp": now + 300}
+    value: Any = float(base[claim]) + 0.5 if bad == "float" else True
+    overrides: dict[str, Any] = {claim: value}
+    with pytest.raises(SignedTokenUnusable):
+        present(auth, issuer.credential(**overrides))

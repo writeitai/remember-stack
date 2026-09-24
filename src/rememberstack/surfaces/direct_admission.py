@@ -51,15 +51,17 @@ RefusalCode = Literal["rate_limited", "concurrency_limited"]
 def admission_key(context: AuthenticatedContext | None) -> str | None:
     """The credential identity that per-credential limits are counted against.
 
-    The credential's own id (a signed token's ``jti``): two credentials of one
-    person are limited separately, and one credential is limited the same
-    wherever it is presented from. ``None`` — the shared-secret bearer, which
-    names no credential, or a deployment without an auth perimeter — is bounded
-    by the deployment limits only.
+    The credential's audit identity, its kind marker and ``jti``
+    (``keycred:<jti>``, ``browsercred:<jti>``, ``dpcred:<jti>``): two
+    credentials of one person are limited separately, one credential is limited
+    the same wherever it is presented from, and credentials of different kinds
+    never share a bucket. ``None`` — the shared-secret bearer, which names no
+    credential, or a deployment without an auth perimeter — is bounded by the
+    deployment limits only.
     """
     if context is None:
         return None
-    return context.credential_id
+    return context.actor_id
 
 
 @dataclass(frozen=True)
