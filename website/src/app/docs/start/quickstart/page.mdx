@@ -40,22 +40,18 @@ You need Docker with Compose and an
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
+printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The first start builds the PostgreSQL image and runs migrations. When
-`docker compose ps` shows `api` as healthy, the endpoint is
-`http://localhost:8000`. No token is needed by default.
-
-<Callout type="warning">
-
-Compose publishes port 8000 on every network interface of the
-machine, and the API is open by default. On a shared network, read
-[Before you expose it](/docs/self-hosting/install#before-you-expose-it)
-first.
-
-</Callout>
+The `printf` line generates the object-store credentials; Compose refuses
+to start without them. The first start builds the PostgreSQL image and runs
+migrations. When `docker compose ps` shows `api` as healthy, the endpoint
+is `http://localhost:8000`. No token is needed by default, because the API
+is reachable from this machine only. To open it to others, see
+[Before you expose it](/docs/self-hosting/install#before-you-expose-it).
 
 </Tab>
 </Tabs>

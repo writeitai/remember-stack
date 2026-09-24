@@ -21,6 +21,7 @@ from remember import MemoryApiError
 from remember import ProjectResolutionError
 from remember import RateLimited
 from remember import StoredKeyRefused
+from remember.cli import _InternalOpsSettings
 from remember.cli import main
 from remember.connection import clear_host_cache
 from remember.connection import HOST_CACHE_TTL_SECONDS
@@ -181,6 +182,27 @@ def test_removed_variable_names_have_no_effect(
         monkeypatch.setenv(name, "http://legacy.test" if "URL" in name else "legacy")
     ENTRY_POINTS[entry](issuer)
     assert _last_engine_call(issuer) == ("http://127.0.0.1:8000/operations", None)
+
+
+@pytest.mark.parametrize("entry", sorted(ENTRY_POINTS))
+def test_bare_unprefixed_names_are_never_read(
+    entry: str, issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only ``REMEMBER_*`` names configure a client; generic names do not."""
+    configured_dir = config_dir()
+    monkeypatch.setenv("API_URL", "http://leak:1")
+    monkeypatch.setenv("API_AUTHORIZATION", "Bearer leaked")
+    monkeypatch.setenv("TOKEN_HOST", "http://leak:1")
+    monkeypatch.setenv("CONFIG_DIR", "/nonexistent-leak")
+    monkeypatch.setenv("INTERNAL_OPS", "true")
+    monkeypatch.setenv("REMEMBER_API_KEY", "secret")
+    ENTRY_POINTS[entry](issuer)
+    assert _last_engine_call(issuer) == (
+        "http://127.0.0.1:8000/operations",
+        "Bearer secret",
+    )
+    assert config_dir() == configured_dir
+    assert _InternalOpsSettings.model_validate({}).internal_ops is False
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRY_POINTS))

@@ -147,6 +147,9 @@ Deep dive: [Retrieval](https://remember.dev/docs/concepts/retrieval)
 ```bash
 # 1. Run the self-hosted engine (Postgres 19 + SeaweedFS + workers)
 cp .env.example .env
+printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+# edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 
 # 2. Configure your AI agent in one command

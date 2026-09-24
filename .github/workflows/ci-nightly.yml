@@ -25,12 +25,25 @@ jobs:
       REMEMBERSTACK_BUILD_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare .env as the quickstart documents
+        run: |
+          # .env.example ships no object-store credentials; Compose must refuse it.
+          if docker compose --env-file .env.example config --quiet; then
+            echo "Compose accepted .env.example without object-store credentials" >&2
+            exit 1
+          fi
+          cp .env.example .env
+          printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+            "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
       - name: Validate Compose model
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          docker compose --env-file .env config --quiet
+          docker compose --env-file .env config --format json | python3 -c \
+            'import json,sys; ports=json.load(sys.stdin)["services"]["api"]["ports"]; assert [p["host_ip"] for p in ports] == ["127.0.0.1"], ports'
       - name: Start fresh self-host deployment
         run: |
           started_at="$(date +%s)"
-          docker compose --env-file .env.example up --build --detach --wait
+          docker compose --env-file .env up --build --detach --wait
           curl --fail http://localhost:8000/operations
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
@@ -41,7 +54,7 @@ jobs:
           test "$elapsed_seconds" -le "$QUICKSTART_TARGET_SECONDS"
       - name: Remove quickstart deployment
         if: always()
-        run: docker compose --env-file .env.example down --volumes
+        run: docker compose --env-file .env down --volumes
 
   checks:
     runs-on: ubuntu-latest

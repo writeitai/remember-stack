@@ -102,7 +102,10 @@ On an arm64 machine, also check that the image runs at all; see
 ## Wrong port or wrong address
 
 Compose publishes the API on the host port in
-`REMEMBERSTACK_SELFHOST_API_PORT`. The `remember` client and CLI do not
+`REMEMBERSTACK_SELFHOST_API_PORT`, on `127.0.0.1` only unless
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` says otherwise, so another
+machine gets "Connection refused" until you
+[open it](/docs/self-hosting/authentication#opening-the-api-to-other-machines). The `remember` client and CLI do not
 read that variable. Without `REMEMBER_API_URL` they use
 `http://127.0.0.1:8000`, whatever port the API is published on.
 

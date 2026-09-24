@@ -446,10 +446,16 @@ def resolve_selfhost_api_auth(
 
     signed = _resolve_signed_auth(settings=settings, trust=trust)
 
-    if settings.require_api_auth and not bind_text and signed is None:
+    if (
+        settings.require_api_auth
+        and bind_text is None
+        and token_value is None
+        and signed is None
+    ):
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but neither "
-            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND nor "
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but none of "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN, "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND or "
             "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set"
         )
     if bind_text is None and token_value is None:
@@ -545,10 +551,12 @@ def _compose(
 def resolve_selfhost_spend_lease(
     *, settings: SelfHostSettings
 ) -> ControlPlaneSpendLease | None:
-    """Return the D46 lease adapter, or None for unpaid-open OSS quickstart.
+    """Return the D46 lease adapter, or None when this deployment is not billed.
 
-    ``require_api_auth`` without a well-formed lease URL refuses to start so a
-    managed BIND-only process cannot serve unpaid writes.
+    Managed billing (the metering settings) without a lease URL refuses to
+    start, so a billed deployment cannot serve unpaid writes. Authentication
+    alone does not need a lease: a self-hosted API behind a bearer token is
+    not billed by anyone.
     """
 
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
@@ -556,9 +564,9 @@ def resolve_selfhost_spend_lease(
     )
 
     url = settings.spend_lease_url
-    if settings.require_api_auth and not url:
+    if settings.meter_ingest_url is not None and not url:
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
+            "managed billing (REMEMBERSTACK_SELFHOST_METER_*) is set but "
             "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL is missing"
         )
     if not url:

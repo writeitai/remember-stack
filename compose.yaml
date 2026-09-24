@@ -218,7 +218,9 @@ services:
       timeout: 5s
       retries: 30
     ports:
-      - "${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
+      # Loopback only unless REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS says
+      # otherwise; set a token before publishing on another address.
+      - "${REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS:-127.0.0.1}:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
 
   worker-convert:
     <<: *app
