@@ -215,19 +215,11 @@ def test_members_invite_self_hosted(capsys: pytest.CaptureFixture[str]) -> None:
     assert "cloud-managed services on remember.dev" in err
 
 
-def test_review_and_budget_retirement(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI review, budget, and ops print clear retirement notices and exit 1."""
+def test_ops_is_confined_to_internal_environments(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI ops refuses outside internal container environments with exit 1."""
     dummy_dep = "74000000-0000-0000-0000-000000000001"
-    res_review = main(["review", "list", "--deployment", dummy_dep])
-    assert res_review == 1
-    err_review = capsys.readouterr().err
-    assert "remember review' is retired" in err_review
-
-    res_budget = main(["budget", "inspect", "--deployment", dummy_dep])
-    assert res_budget == 1
-    err_budget = capsys.readouterr().err
-    assert "remember budget' is retired" in err_budget
-
     res_ops = main(["ops", "inspect", "--deployment", dummy_dep])
     assert res_ops == 1
     err_ops = capsys.readouterr().err

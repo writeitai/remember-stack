@@ -1907,6 +1907,18 @@
             "title": "Doc Id",
             "type": "string"
           },
+          "parked": {
+            "anyOf": [
+              {
+                "const": "no_route",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked"
+          },
           "version_id": {
             "format": "uuid",
             "title": "Version Id",

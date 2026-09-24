@@ -185,6 +185,11 @@ class DocumentCatalog:
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
+                parked=(
+                    "no_route"
+                    if metering is None and convert_defer_reason is DeferReason.NO_ROUTE
+                    else None
+                ),
                 processing_admission=(
                     "pending" if metering is not None else "not_required"
                 ),

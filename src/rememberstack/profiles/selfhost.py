@@ -45,7 +45,6 @@ from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
-from rememberstack.model import ReviewDecisionError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -74,7 +73,6 @@ if TYPE_CHECKING:
         ControlPlaneSpendLease,
     )
     from rememberstack.ports.telemetry import TelemetryPort
-    from rememberstack.spine.review import ReviewQueue
     from rememberstack.workers import StageHandler
 
 _SUPPORTED_WORKER_STAGES = (
@@ -1366,40 +1364,6 @@ class SelfHostProfile:
                 profile_refresher=profile_refresher,
             )
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
-
-
-def build_selfhost_review_queue(
-    *, engine: Engine, deployment_id: UUID, project_profiles: bool
-) -> ReviewQueue:
-    """Compose review reads and only load the provider for profile mutations."""
-    from rememberstack.spine import EntityProfileRefresher
-    from rememberstack.spine import ReviewQueue
-    from rememberstack.workers import P1Settings
-
-    if not project_profiles:
-        return ReviewQueue(engine=engine)
-    p1_settings = P1Settings.model_validate({})
-    try:
-        provider = OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({})
-        )
-    except ValueError as error:
-        raise ReviewDecisionError(
-            "profile-changing review verdicts require REMEMBERSTACK_OPENROUTER_API_KEY"
-        ) from error
-    return ReviewQueue(
-        engine=engine,
-        profile_refresher=EntityProfileRefresher(
-            engine=engine,
-            model_provider=provider,
-            embedding_model=p1_settings.embedding_model,
-        ),
-        meter=SurfaceCostMeter(
-            recorder=SqlSurfaceCostRecorder(engine=engine, deployment_id=deployment_id),
-            deployment_id=deployment_id,
-            call_site=SurfaceCallSite.PROFILE_REVIEW,
-        ),
-    )
 
 
 def create_api() -> FastAPI:

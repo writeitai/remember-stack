@@ -370,6 +370,12 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    parked: Literal["no_route"] | None = None
+    """``no_route`` when the deployment has no converter for this MIME type.
+
+    The original is stored, but it is not converted, searched or extracted
+    until an operator adds a conversion route and releases the parked work.
+    ``None`` means conversion was scheduled normally."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )

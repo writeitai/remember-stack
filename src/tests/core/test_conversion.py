@@ -1,12 +1,14 @@
 """The D38 conversion router and passthrough route: pure behavior proofs."""
 
+from pathlib import Path
+
 from pydantic import ValidationError
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
-from rememberstack.core import stock_passthrough_routes
+from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConverterManifest
@@ -19,6 +21,8 @@ from rememberstack.model import PageLocator
 from rememberstack.model import SourceMapEntry
 from rememberstack.model import UnknownConverterError
 from rememberstack.model import UnroutableMimeError
+
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_router_returns_the_configured_route() -> None:
@@ -52,21 +56,45 @@ def test_passthrough_rejects_non_utf8_bytes_as_typed_failure() -> None:
         )
 
 
-def test_stock_passthrough_routes_accept_plain_text() -> None:
-    """CLI/SDK .txt ingest is text/plain; stock convert must not dead-letter it."""
-    router = ConversionRouter(routes=stock_passthrough_routes())
-    converter = router.converter_for(mime="text/plain")
-    assert converter.name == "passthrough"
-    result = converter.convert(content=b"hello note\n", mime="text/plain")
-    assert result.document_md == "hello note\n"
-    assert router.converter_for(mime="text/markdown") is converter
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def test_stock_passthrough_routes_still_reject_unknown_mime() -> None:
-    """Unknown MIME stays UnroutableMimeError; no silent default."""
-    router = ConversionRouter(routes=stock_passthrough_routes())
-    with pytest.raises(UnroutableMimeError):
-        router.converter_for(mime="application/pdf")
+def test_stock_routes_convert_text_html_and_office_locally() -> None:
+    """The stock table routes every keyless format; PDFs and images stay unrouted."""
+    assert STOCK_CONVERSION_ROUTE_NAMES == {
+        "text/markdown": "passthrough",
+        "text/plain": "passthrough",
+        "text/html": "markitdown",
+        _DOCX: "markitdown",
+        _PPTX: "markitdown",
+        _XLSX: "markitdown",
+    }
+    router = ConversionRouter(
+        routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
+    )
+    plain = router.converter_for(mime="text/plain")
+    assert plain.name == "passthrough"
+    assert plain.convert(content=b"hello note\n", mime="text/plain").document_md == (
+        "hello note\n"
+    )
+    assert router.converter_for(mime="text/markdown") is plain
+    for mime in ("application/pdf", "image/png", "image/jpeg"):
+        with pytest.raises(UnroutableMimeError):
+            router.converter_for(mime=mime)
+
+
+def test_stock_markitdown_route_converts_a_docx() -> None:
+    """The bundled markitdown carries its Word extra: a .docx becomes Markdown."""
+    router = ConversionRouter(
+        routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
+    )
+    content = (_FIXTURES / "tiny.docx").read_bytes()
+    result = router.converter_for(mime=_DOCX).convert(content=content, mime=_DOCX)
+    assert "Quarterly plan" in result.document_md
+    assert "Ship the converter." in result.document_md
+    assert result.manifest.components[0].name == "markitdown"
 
 
 def test_passthrough_labels_its_entire_output_as_source_expression() -> None:
