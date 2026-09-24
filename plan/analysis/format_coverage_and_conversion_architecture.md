@@ -5,7 +5,7 @@
 open PR #452 (proposed D132, byte-class detection); installed `markitdown`
 0.1.6 package metadata; DuckDB security documentation (cited in §6).
 **Binding outcome:** [format conversion design](../designs/format_conversion_design.md)
-(D133) and [document subject entities](../designs/document_subject_entity_design.md)
+(D133) and [document metadata and search](../designs/document_metadata_and_search_design.md)
 (D134).
 
 ## 1. The question
