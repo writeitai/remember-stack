@@ -1,6 +1,6 @@
-# RememberStack and remember.dev
+# RememberStack
 
-> RememberStack is an open-source memory engine for AI agents. It keeps what each source said (claims), what is held true now (facts), when it was true, and the passage every answer came from. `remember` is its Python client, CLI and MCP server (`pip install remember`). remember.dev runs RememberStack for you, one isolated deployment per project.
+> RememberStack is an open-source memory engine for AI agents. It keeps what each source said (claims), what is held true now (facts), when it was true, and the passage every answer came from. `remember` is its Python client, CLI and MCP server (`pip install remember`).
 
 Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_context`, with `time` for history), then claims and sources (`claims_and_sources_context`), then SQL queries over the query space. When the memory reports it knows nothing, say so; do not guess.
 
@@ -9,7 +9,6 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system): Why AI assistants forget, why searching your documents is not the same as remembering, and what a memory system does about it. No technical background needed.
 - [Why RememberStack](https://remember.dev/docs): Memory for AI agents that keeps what each source said, what is true now, and when, with the path back to the source.
 - [A five-minute tour](https://remember.dev/docs/start/how-it-works): What happens to a document from the moment you send it to the moment your agent asks about it.
-- [remember.dev or self-hosted?](https://remember.dev/docs/start/choose): The same engine either way. What changes is who runs it.
 - [Quickstart](https://remember.dev/docs/start/quickstart): Send a document to RememberStack and ask your first question.
 - [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent): Give Claude Code, Cursor, Codex, Antigravity or Claude Desktop access to your memory over MCP.
 
@@ -30,8 +29,8 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 
 ## Guides
 
-- [Supported file types](https://remember.dev/docs/guides/file-types): Which file types RememberStack reads on remember.dev and on a self-hosted deployment, and what to do with everything else.
-- [Bring your existing data](https://remember.dev/docs/guides/bring-your-data): Move your existing files, vector-database contents and chat history into remember.dev or a self-hosted RememberStack, with their dates and sources intact.
+- [Supported file types](https://remember.dev/docs/guides/file-types): Which file types RememberStack reads, and what to do with everything else.
+- [Bring your existing data](https://remember.dev/docs/guides/bring-your-data): Move your existing files, vector-database contents and chat history into RememberStack, with their dates and sources intact.
 - [Ingest files](https://remember.dev/docs/guides/ingest-files): Send files and raw bytes to RememberStack, name them so later edits land in the same document, and load a whole folder.
 - [Ingest conversations and transcripts](https://remember.dev/docs/guides/ingest-conversations): Turn chat sessions and meeting transcripts into documents RememberStack can date, attribute and cite turn by turn.
 - [Keep a source up to date](https://remember.dev/docs/guides/keep-sources-current): Re-send an edited file as a new version of the same document, and choose what happens to facts that the new version no longer supports.
@@ -43,21 +42,6 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Explore memory with SQL](https://remember.dev/docs/guides/sql): Discover the query space, write your first SQL query over current facts, combine search with joins, and read the limits and errors.
 - [Saved queries](https://remember.dev/docs/guides/saved-queries): List, inspect and run the 18 SQL queries every deployment ships with, and understand when a saved query runs and when it refuses.
 - [Build a memory-backed agent](https://remember.dev/docs/guides/build-an-agent): A complete project assistant that loads a folder of meeting notes into RememberStack and answers questions with checked citations.
-
-## remember.dev
-
-- [What remember.dev runs for you](https://remember.dev/docs/cloud/overview): remember.dev runs a RememberStack deployment for each of your projects, so you send documents and ask questions without operating a database, a pipeline, model keys or TLS.
-- [Organisations, projects and members](https://remember.dev/docs/cloud/organisations-and-projects): How remember.dev groups billing and people into an organisation, gives each project its own isolated deployment, and decides who can see and change what.
-- [Tokens and sign-in](https://remember.dev/docs/cloud/tokens-and-sign-in): The credentials remember.dev issues, what each one can do, how long it lives, how to get it without copying secrets, and how to revoke it.
-- [Hosted MCP](https://remember.dev/docs/cloud/hosted-mcp): Connect a coding agent to one remember.dev project over MCP with a browser sign-in instead of an API token, and what the hosted server offers.
-- [Pricing and credits](https://remember.dev/docs/cloud/pricing): How remember.dev charges for an active project, for text it processes and for data it stores, how prepaid credits and holds work, and what is never charged.
-- [Spend caps and auto top-up](https://remember.dev/docs/cloud/spend-controls): Set a monthly cap for the organisation and a sub-cap per project, understand exactly what stops when money or a cap runs out, and refill the balance automatically within a ceiling.
-- [Limits](https://remember.dev/docs/cloud/limits): Every limit remember.dev enforces on ingest, storage, tokens, sign-in, projects and billing, with the error you get when you reach it.
-- [Files and mounts](https://remember.dev/docs/cloud/files-and-mounts): Whether you can browse a remember.dev project's memory as files, and what to use instead.
-- [What remember.dev serves](https://remember.dev/docs/cloud/compatibility): Which RememberStack version remember.dev runs, which deployment routes it serves, what differs from the version these docs describe, and how changes are announced.
-- [Data handling and security](https://remember.dev/docs/cloud/data-and-security): Where remember.dev keeps your data, who and what can reach it, which outside services see it, what is recorded, and what remember.dev does not promise.
-- [Closing a project, deleting your account](https://remember.dev/docs/cloud/leaving): How to close a remember.dev project and have its data deleted, how the 30-day cancel window works, how to delete your account, and what happens to unused credit.
-- [Support](https://remember.dev/docs/cloud/support): How to reach remember.dev support, what to include so a problem can be traced, and what support can and cannot do today.
 
 ## Self-hosting
 
@@ -89,15 +73,14 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Query space memory_v1](https://remember.dev/docs/reference/query-space): Every view, column, function, grammar rule, limit and shipped saved query of the memory_v1 query space that SQL queries run over.
 - [Python SDK](https://remember.dev/docs/reference/python-sdk): Every public class, method, setting and error in the remember Python package.
 - [CLI](https://remember.dev/docs/reference/cli): Every remember command, flag, default, environment variable and exit code.
-- [MCP tools](https://remember.dev/docs/reference/mcp): The remember mcp server and the hosted remember.dev MCP server, every tool with its parameters, results and errors.
+- [MCP tools](https://remember.dev/docs/reference/mcp): The MCP servers that give an agent access to memory: every tool with its parameters, results and errors.
 - [Configuration variables](https://remember.dev/docs/reference/configuration): Every environment variable read by the RememberStack engine and by the remember client and CLI, with its default, type and purpose.
-- [Errors and status codes](https://remember.dev/docs/reference/errors): Every HTTP status, error code and status value RememberStack and remember.dev return, what each means, and what to do about it.
-- [remember.dev API](https://remember.dev/docs/reference/cloud-api): The remember.dev account API for sign-in, organisations, projects, tokens, device login, billing, usage, settings, support, offboarding and hosted MCP sign-in, with authentication and error shapes.
+- [Errors and status codes](https://remember.dev/docs/reference/errors): Every HTTP status, error code and status value a RememberStack deployment and the remember client return, what each means, and what to do about it.
 
 ## Project
 
 - [Benchmarks and how we measure](https://remember.dev/docs/project/benchmarks): What LoCoMo and BEAM measure, how the RememberStack harness runs them, which numbers exist and for which protocol, and how to reproduce a run.
 - [Releases and changelog](https://remember.dev/docs/project/changelog): What changed for users in each RememberStack release, newest first.
-- [What is not built yet](https://remember.dev/docs/project/not-built-yet): Features RememberStack and remember.dev do not have today, each in one sentence.
-- [Glossary](https://remember.dev/docs/project/glossary): Every term the RememberStack and remember.dev documentation uses, in one or two plain sentences, with a link to where it is explained.
+- [What is not built yet](https://remember.dev/docs/project/not-built-yet): Features RememberStack does not have today, each in one sentence.
+- [Glossary](https://remember.dev/docs/project/glossary): Every term the RememberStack documentation uses, in one or two plain sentences, with a link to where it is explained.
 - [Contributing, license and trademarks](https://remember.dev/docs/project/contributing): The license, the contributor agreement, the trademark policy, how to set up a development checkout and how the repository is laid out.

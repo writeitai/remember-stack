@@ -16,8 +16,8 @@ another schema, a function not on the list, a write — is rejected.
 
 The query space itself (every view, column, function and limit) is described
 in [Query space memory_v1](/docs/reference/query-space). This page covers the seven
-routes. All of them are served on remember.dev and on a self-hosted
-deployment.
+routes.<Cloud> All of them are served on remember.dev and on a self-hosted
+deployment.</Cloud>
 
 All seven need the `read` scope. Base URL, authentication and error shapes are
 described in [HTTP API conventions](/docs/reference/http-api).
@@ -70,7 +70,11 @@ an open self-hosted deployment as a third. The analytical tier listed in
 
 Run one read-only SQL statement.
 
+<Cloud>
+
 **Spend hold (remember.dev):** `search`.
+
+</Cloud>
 
 ### Request body
 
@@ -174,7 +178,11 @@ plain dictionary. Each row is a list of values in column order.
 
 Validate one statement and return PostgreSQL's plan for it without running it.
 
+<Cloud>
+
 **Spend hold (remember.dev):** `search`.
+
+</Cloud>
 
 ### Request body
 
@@ -221,7 +229,11 @@ allowlists and, optionally, the shipped example queries. The answer comes from
 the checked-in manifest, never from your data, so it is identical for every
 deployment on the same release.
 
+<Cloud>
+
 **Spend hold (remember.dev):** `search`.
+
+</Cloud>
 
 ### Parameters
 
@@ -274,7 +286,11 @@ Search the query space's own text — view and column comments, function
 descriptions, operation descriptions, example purposes — for a phrase. It
 never searches your data.
 
+<Cloud>
+
 **Spend hold (remember.dev):** `search`.
+
+</Cloud>
 
 ### Parameters
 
@@ -321,7 +337,11 @@ List saved queries. A saved query is a named, versioned SQL statement stored in
 the deployment. Every deployment ships with 18 in the `examples` namespace;
 see [Query space memory_v1](/docs/reference/query-space#shipped-saved-queries).
 
+<Cloud>
+
 **Spend hold:** none.
+
+</Cloud>
 
 ### Parameters
 
@@ -372,7 +392,11 @@ for saved in memory.list_saved_queries(namespace="examples"):
 
 Describe one version of a saved query, including its SQL.
 
+<Cloud>
+
 **Spend hold:** none.
+
+</Cloud>
 
 ### Parameters
 
@@ -418,7 +442,11 @@ print(detail["sql"])
 Run the active version of a saved query, or a named version, through the same
 validation and limits as `POST /query/sql`.
 
+<Cloud>
+
 **Spend hold (remember.dev):** `search`.
+
+</Cloud>
 
 ### Parameters
 

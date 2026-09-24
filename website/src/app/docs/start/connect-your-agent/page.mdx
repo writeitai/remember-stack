@@ -15,7 +15,7 @@ works.
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 remember.dev hosts an MCP server for you. You add one URL; the agent
 opens a browser, you sign in, and you pick the project it may use. No
@@ -80,7 +80,7 @@ in the [MCP reference](/docs/reference/mcp).
 
 ## What the agent can do
 
-With the self-hosted server the agent gets these tools:
+The `remember mcp` server gives the agent these tools:
 
 | Tool | What it is for |
 |---|---|
@@ -96,8 +96,12 @@ With the self-hosted server the agent gets these tools:
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
 two tools that change memory (`ingest` and `delete_document`).
 
+<Cloud>
+
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.
+
+</Cloud>
 
 ## Teach the agent the order
 

@@ -265,12 +265,12 @@ that to the user instead of waiting. See [Connect your coding agent](/docs/start
 
 ## What gets read
 
-Every ingest is stored. Whether it is read depends on the MIME type and on
-where you run.
+Every ingest is stored. Whether it is read depends on the MIME type<Cloud> and on
+where you run</Cloud>.
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 remember.dev reads UTF-8 plain text and Markdown. Before storing
 anything it checks the bytes:
@@ -316,10 +316,18 @@ its timeout. Check `parked` in the ingest result before you wait;
 
 | Status | When |
 |---|---|
-| 413 | Body over the deployment limit (`body_too_large`), or over 10,000,000 bytes on remember.dev (`source_bytes_limit_exceeded`). Split the file. |
-| 409 | remember.dev refused binary content (`rate_class_unavailable`). |
-| 422 | Missing half of the source pair, a non-UTC `source_modified_at`, living mode or a revision without a source pair, or a remember.dev text check (`rate_class_ambiguous`, `empty_text`). |
+| 413 | Body over the deployment limit (`body_too_large`). Split the file. |
+| 422 | Missing half of the source pair, a non-UTC `source_modified_at`, or living mode or a revision without a source pair. |
 | 401, 403 | Missing or wrong token, or a token without write access. |
+
+<Cloud>
+
+remember.dev's text checks add three more: 413 `source_bytes_limit_exceeded`
+for more than 10,000,000 bytes (split the file), 409
+`rate_class_unavailable` for binary content, and 422 `rate_class_ambiguous`
+or `empty_text`.
+
+</Cloud>
 
 The Python client raises `remember.MemoryApiError` with `status_code` and
 `detail`. Client-side checks (the source pair, UTC, a missing file) raise

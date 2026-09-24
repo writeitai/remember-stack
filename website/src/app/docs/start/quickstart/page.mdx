@@ -12,14 +12,14 @@ waited for it to be processed, and asked a question that it answers with a
 fact and the passage behind it.
 
 *RememberStack is the open-source memory engine. `remember` is its Python
-client and CLI. remember.dev runs RememberStack for you.* This page works
-with either.
+client and CLI.<Cloud> remember.dev runs RememberStack for you.</Cloud>*<Cloud> This page works
+with either.</Cloud>
 
 ## 1. Get an endpoint
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 1. Sign in at [remember.dev/app](https://remember.dev/app).
 2. Open **Settings → API Tokens** and create a token.
@@ -76,7 +76,7 @@ The current release is
 
 <Tabs>
 
-<Tab label="remember.dev">
+<Tab cloud label="remember.dev">
 
 ```bash
 export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
@@ -130,7 +130,7 @@ print(version.version_id, version.created)
 The client sends `.md` files as `text/markdown`, whatever Python you run.
 
 `created` is `True` the first time. Send the same bytes again and it is
-`False`: nothing new is stored and nothing is charged.
+`False`: nothing new is stored<Cloud> and nothing is charged</Cloud>.
 
 ## 5. Wait until it is processed
 

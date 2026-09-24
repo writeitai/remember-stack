@@ -49,8 +49,7 @@ service gets a fixed `environment:` list, and only variables on that list
 reach the engine. The list covers the deployment identity, storage, the
 OpenRouter settings most people change, the model seats, Mistral OCR,
 authentication by shared secret or signed keys, the graph and retrieval pools, the API
-admission limits, Sentry, and
-the remember.dev-only billing settings.
+admission limits<Cloud>, the remember.dev-only billing settings</Cloud> and Sentry.
 
 Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
 `REMEMBERSTACK_COST_EXPORT_BIND`, the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
@@ -145,5 +144,9 @@ variables on your own machine, most importantly `REMEMBER_API_URL` and
 `REMEMBER_API_KEY` (or `REMEMBER_TOKEN`). They are listed at the top of
 [Configuration variables](/docs/reference/configuration#client).
 
+<Cloud>
+
 remember.dev configures each project's deployment for you; see
 [What remember.dev serves](/docs/cloud/compatibility).
+
+</Cloud>

@@ -20,7 +20,7 @@ Base URL, authentication and error shapes are described in
 
 Add one file as a new document, or as a new version of an existing one.
 
-**Scope:** `ingest` or `write`. **Spend hold (remember.dev):** `ingest`.
+**Scope:** `ingest` or `write`.<Cloud> **Spend hold (remember.dev):** `ingest`.</Cloud>
 
 The body is the raw file. Everything else travels in the query string, except
 attribution, which travels in headers so that it never lands in access logs.
@@ -40,7 +40,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
-| `Content-Length` | header | integer | when the deployment caps bodies | | Required on remember.dev. |
+| `Content-Length` | header | integer | when the deployment caps bodies | | |
 
 **Body:** the file's bytes, `application/octet-stream`.
 
@@ -134,12 +134,8 @@ for it; it will not become ready on its own.
 | Status | `detail` | Cause |
 |---|---|---|
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
-| `413` | `body_too_large` | The body is over the deployment's cap (100,000,000 bytes on remember.dev). |
-| `413` | `source_bytes_limit_exceeded` | Text metering is on (remember.dev) and the file is over 10,000,000 bytes. |
+| `413` | `body_too_large` | The body is over the deployment's cap. |
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
-| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
-| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
-| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | `source_modified_at`, `source_version_ref` or `versioning_mode=living` without a source identity. |
 | `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
@@ -148,6 +144,22 @@ for it; it will not become ready on its own.
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
 
+<Cloud>
+
+Text metering on remember.dev adds these:
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `413` | `source_bytes_limit_exceeded` | Text metering is on and the file is over 10,000,000 bytes. |
+| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
+| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
+| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
+
+</Cloud>
+
+<Cloud>
+
+remember.dev caps bodies at 100,000,000 bytes and requires `Content-Length`.
 On remember.dev the spend hold is placed before the body cap is checked, and
 the control plane refuses an over-cap hold itself. The engine then answers an
 over-cap body with `503` `spend_lease_unavailable` rather than `413`. Treat
@@ -155,11 +167,20 @@ both as "too large" when the body is over 100,000,000 bytes.
 
 Text metering applies on deployments that measure processed text for billing,
 which is remember.dev. There, today, `POST /ingest` accepts plain text and
-Markdown only. A self-hosted deployment has no text metering and accepts any
-file its converters handle.
+Markdown only.
+
+</Cloud>
+
+A self-hosted deployment has no body cap unless you set
+`REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`, and accepts any file its
+converters handle.
+
+<Cloud>
 
 Spend refusals (`401`, `403`, `423`, `503`) are listed in
 [HTTP API conventions](/docs/reference/http-api#spend-refusals-rememberdev).
+
+</Cloud>
 
 ### Example
 
@@ -363,7 +384,7 @@ for document in page.documents:
 
 Remove one document from the memory: every version of it, all at once.
 
-**Scope:** `write`. **Spend hold (remember.dev):** none.
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
 
 ### Parameters
 
@@ -401,7 +422,7 @@ If you ingest the same file again later, it is added back as a new version
 and processed from the start, like any new document. The facts that closed
 stay closed; the new claims support facts as usual.
 
-The route starts no pipeline work, so it has no spend hold. Its one possible
+The route starts no pipeline work<Cloud>, so it has no spend hold</Cloud>. Its one possible
 model call re-embeds the profile text of entities whose facts changed; that
 call is recorded with the deployment's other request-time model calls. If
 the model provider is down, the deletion still succeeds and those profiles

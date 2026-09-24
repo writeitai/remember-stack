@@ -59,6 +59,41 @@ jobs:
         with:
           path: website/out
 
+  # The hosted-service pages (DOCS_CLOUD=1) are not deployed; build them so
+  # they keep compiling and their links keep resolving.
+  build-cloud:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    env:
+      DOCS_CLOUD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check documentation truth and metadata (cloud build)
+        run: python ../scripts/check_docs_truth.py --cloud
+
+      - name: Render cloud llms.txt and llms-full.txt
+        run: python ../scripts/generate_docs_llms.py --cloud
+
+      - name: Build static site (cloud build)
+        run: npm run build
+
   deploy:
     # Only publish from main; PRs run the build job above as a check.
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

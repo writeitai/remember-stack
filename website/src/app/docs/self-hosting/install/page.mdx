@@ -100,7 +100,6 @@ RememberStack image, and starts everything in dependency order:
 | `worker-embed-claim` | `worker --stage embed_claim` | Embeds claims for semantic search. |
 | `worker-reconcile` | `worker --stage reconcile` | Settles the version's lifecycle once the other stages are done. |
 | `worker-label-relation` | `worker --stage label_relation` | Writes the searchable label of each relation and embeds facts for semantic search. |
-| `meter-receipts` | `meter-receipts` | Profile `managed` only. Used by remember.dev for billing; do not start it. |
 | `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](/docs/self-hosting/filesystem-views) snapshot on demand. |
 
 Each worker handles one stage and wakes when new work for that stage is
@@ -168,10 +167,10 @@ docker compose logs -f worker-extract-claims worker-normalize-relations
 
 Set `REMEMBER_API_URL` explicitly. The `--self-hosted` flag on
 `remember ingest` and `remember query` does not change where the
-request goes. With no URL in the environment, the CLI uses the
+request goes. With no URL in the environment, the CLI<Cloud> uses the
 credentials that `remember login` stored, which point at remember.dev
-if you have ever signed in there. Only with no stored credentials does
-it fall back to `http://127.0.0.1:8000`.
+if you have ever signed in there. Without stored credentials it</Cloud> falls
+back to `http://127.0.0.1:8000`.
 
 </Callout>
 
@@ -206,5 +205,9 @@ only on `localhost`. Anyone who can reach those ports can read and change
 the memory. Before the machine is on a shared network, set a token and
 limit the published ports; see [Authentication and scopes](/docs/self-hosting/authentication).
 
+<Cloud>
+
 On remember.dev you create a project instead, and it gets its own deployment
 and endpoint; see [Organisations, projects and members](/docs/cloud/organisations-and-projects).
+
+</Cloud>

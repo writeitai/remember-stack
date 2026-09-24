@@ -6,6 +6,10 @@ export type NavItem = {
 
 // Single source of truth for the docs sidebar order and grouping. It also
 // drives prev/next pagination. Add a page here when you add its page.mdx.
+//
+// Hosted-service pages (`page.cloud.mdx`) sit inside
+// `...(process.env.DOCS_CLOUD === "1" ? [...] : [])`. The value is inlined at
+// build time, so the public build's bundle does not contain these entries.
 export const docsNavigation: NavItem[] = [
   {
     title: "Start",
@@ -14,7 +18,9 @@ export const docsNavigation: NavItem[] = [
       { title: "What is a memory system?", href: "/docs/start/what-is-a-memory-system" },
       { title: "Why RememberStack", href: "/docs" },
       { title: "A five-minute tour", href: "/docs/start/how-it-works" },
-      { title: "remember.dev or self-hosted?", href: "/docs/start/choose" },
+      ...(process.env.DOCS_CLOUD === "1"
+        ? [{ title: "remember.dev or self-hosted?", href: "/docs/start/choose" }]
+        : []),
       { title: "Quickstart", href: "/docs/start/quickstart" },
       { title: "Connect your coding agent", href: "/docs/start/connect-your-agent" },
     ],
@@ -56,24 +62,28 @@ export const docsNavigation: NavItem[] = [
       { title: "Build a memory-backed agent", href: "/docs/guides/build-an-agent" },
     ],
   },
-  {
-    title: "remember.dev",
-    href: "/docs/cloud/overview",
-    children: [
-      { title: "What remember.dev runs for you", href: "/docs/cloud/overview" },
-      { title: "Organisations, projects and members", href: "/docs/cloud/organisations-and-projects" },
-      { title: "Tokens and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
-      { title: "Hosted MCP", href: "/docs/cloud/hosted-mcp" },
-      { title: "Pricing and credits", href: "/docs/cloud/pricing" },
-      { title: "Spend caps and auto top-up", href: "/docs/cloud/spend-controls" },
-      { title: "Limits", href: "/docs/cloud/limits" },
-      { title: "Files and mounts", href: "/docs/cloud/files-and-mounts" },
-      { title: "What remember.dev serves", href: "/docs/cloud/compatibility" },
-      { title: "Data handling and security", href: "/docs/cloud/data-and-security" },
-      { title: "Leaving", href: "/docs/cloud/leaving" },
-      { title: "Support", href: "/docs/cloud/support" },
-    ],
-  },
+  ...(process.env.DOCS_CLOUD === "1"
+    ? [
+      {
+        title: "remember.dev",
+        href: "/docs/cloud/overview",
+        children: [
+          { title: "What remember.dev runs for you", href: "/docs/cloud/overview" },
+          { title: "Organisations, projects and members", href: "/docs/cloud/organisations-and-projects" },
+          { title: "Tokens and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
+          { title: "Hosted MCP", href: "/docs/cloud/hosted-mcp" },
+          { title: "Pricing and credits", href: "/docs/cloud/pricing" },
+          { title: "Spend caps and auto top-up", href: "/docs/cloud/spend-controls" },
+          { title: "Limits", href: "/docs/cloud/limits" },
+          { title: "Files and mounts", href: "/docs/cloud/files-and-mounts" },
+          { title: "What remember.dev serves", href: "/docs/cloud/compatibility" },
+          { title: "Data handling and security", href: "/docs/cloud/data-and-security" },
+          { title: "Leaving", href: "/docs/cloud/leaving" },
+          { title: "Support", href: "/docs/cloud/support" },
+        ],
+      },
+      ]
+    : []),
   {
     title: "Self-hosting",
     href: "/docs/self-hosting/requirements",
@@ -112,7 +122,9 @@ export const docsNavigation: NavItem[] = [
       { title: "MCP tools", href: "/docs/reference/mcp" },
       { title: "Configuration variables", href: "/docs/reference/configuration" },
       { title: "Errors and status codes", href: "/docs/reference/errors" },
-      { title: "remember.dev API", href: "/docs/reference/cloud-api" },
+      ...(process.env.DOCS_CLOUD === "1"
+        ? [{ title: "remember.dev API", href: "/docs/reference/cloud-api" }]
+        : []),
     ],
   },
   {

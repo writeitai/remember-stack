@@ -80,7 +80,11 @@ Run one assured operation over a JSON object of arguments.
 four declare themselves read-only (`mutates: false`). See
 [HTTP API conventions](/docs/reference/http-api#scopes).
 
+<Cloud>
+
 **Spend hold (remember.dev):** yes, named after the operation.
+
+</Cloud>
 
 ### Parameters
 
@@ -135,8 +139,12 @@ See [Reading a result](/docs/concepts/reading-results).
 | `422` | validation list | The body is not a JSON object. |
 | `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
 
+<Cloud>
+
 Spend refusals are listed in
 [HTTP API conventions](/docs/reference/http-api#spend-refusals-rememberdev).
+
+</Cloud>
 
 ### Example
 

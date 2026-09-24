@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Supported file types",
-  description: "Which file types RememberStack reads on remember.dev and on a self-hosted deployment, and what to do with everything else.",
+  description: "Which file types RememberStack reads, and what to do with everything else.",
 };
 
 # Supported file types
@@ -9,23 +9,39 @@ export const metadata = {
 
 RememberStack reads text. Every document is turned into Markdown before
 anything else happens, so what a deployment accepts depends on which
-formats it can turn into Markdown. That differs between remember.dev and a
-self-hosted deployment.
+formats it can turn into Markdown.<Cloud> That differs between remember.dev and a
+self-hosted deployment.</Cloud>
 
 ## At a glance
 
-| Format | remember.dev | Self-hosted, as installed | Self-hosted, with converters configured |
-|---|---|---|---|
-| Markdown (`.md`) | Yes | Yes | Yes |
-| Plain text (`.txt`) | Yes | Yes | Yes |
-| Chat logs and transcripts, as Markdown or text | Yes | Yes | Yes |
-| HTML | No | Yes | Yes |
-| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | No | Yes | Yes |
-| PDF, including scanned PDFs | No | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
-| PNG and JPEG images | No | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
-| Audio and video | No | No | No |
-| Web addresses (URLs) | No | No | No: download the page and send the HTML |
+| Format | As installed | With converters configured |
+|---|---|---|
+| Markdown (`.md`) | Yes | Yes |
+| Plain text (`.txt`) | Yes | Yes |
+| Chat logs and transcripts, as Markdown or text | Yes | Yes |
+| HTML | Yes | Yes |
+| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | Yes | Yes |
+| PDF, including scanned PDFs | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
+| PNG and JPEG images | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
+| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
+| Audio and video | No | No |
+| Web addresses (URLs) | No | No: download the page and send the HTML |
+
+## Formats and converters
+
+A new self-hosted deployment converts Markdown, plain text, HTML, Word,
+PowerPoint and Excel files locally, with no API key. Other formats are
+accepted and stored, but they wait unprocessed until you add a converter
+for their type. The upload response tells you: its `parked` field is
+`"no_route"`, and `remember ingest` prints a warning.
+
+To read PDFs and images, map each file type to a converter in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
+converters](/docs/self-hosting/converters) shows the setting, what each
+converter does and costs, and how to release files that were stored before
+you added a route.
+
+<Cloud>
 
 ## remember.dev
 
@@ -39,19 +55,7 @@ limits and error codes is on [Limits](/docs/cloud/limits).
 To store a PDF, a Word document or a web page on remember.dev, convert it
 to Markdown first and send the Markdown.
 
-## Self-hosted
-
-A new self-hosted deployment converts Markdown, plain text, HTML, Word,
-PowerPoint and Excel files locally, with no API key. Other formats are
-accepted and stored, but they wait unprocessed until you add a converter
-for their type. The upload response tells you: its `parked` field is
-`"no_route"`, and `remember ingest` prints a warning.
-
-To read PDFs and images, map each file type to a converter in
-`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
-converters](/docs/self-hosting/converters) shows the setting, what each
-converter does and costs, and how to release files that were stored before
-you added a route.
+</Cloud>
 
 ## Send the right type
 

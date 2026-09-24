@@ -1,6 +1,6 @@
 export const metadata = {
   title: "What is not built yet",
-  description: "Features RememberStack and remember.dev do not have today, each in one sentence.",
+  description: "Features RememberStack does not have today, each in one sentence.",
 };
 
 # What is not built yet
@@ -49,6 +49,8 @@ absent from the current release; nothing here has a date.
 - **Other languages.** There is no TypeScript, JavaScript, Go or other
   client library; use the [HTTP API](/docs/reference/http-api).
 
+<Cloud>
+
 ## Hosted MCP on remember.dev
 
 - **SQL query tools.** The hosted MCP server does not offer the seven SQL
@@ -62,11 +64,15 @@ absent from the current release; nothing here has a date.
 - **Tool schemas and structured errors.** The hosted tools publish no input
   schemas, and a failed call does not come back as a readable tool error.
 
+</Cloud>
+
 ## Running the engine
 
 - **Kubernetes.** There is no Helm chart or Kubernetes manifest; the
   supported deployment is Docker Compose
   ([Install with Docker Compose](/docs/self-hosting/install)).
+
+<Cloud>
 
 ## remember.dev account
 
@@ -76,3 +82,5 @@ absent from the current release; nothing here has a date.
 - **Projects and members from the CLI.** `remember projects create`,
   `remember members list` and `remember members invite` only point to the
   console ([CLI](/docs/reference/cli#commands-that-point-to-the-console)).
+
+</Cloud>
