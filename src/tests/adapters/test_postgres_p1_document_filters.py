@@ -386,7 +386,7 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
             at=_NOW,
             create_document=False,
         )
-        for version_id, number in ((older.version_id, 1), (newer.version_id, 3)):
+        for version_id, number in ((newer.version_id, 3), (older.version_id, 1)):
             connection.execute(
                 text(
                     "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
