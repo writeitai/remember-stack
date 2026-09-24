@@ -130,7 +130,7 @@ tools.
 | Search chunks | `search_chunks(query=, k=10, channel="semantic")` | Source passages, likewise. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
-| Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=)` | Relations matching a pattern, current or at one instant. |
+| Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
 | Lookup observations | `lookup_observations(entity_id=, property_query=, k=10)` | One entity's observations, optionally by property text. |
 | Graph neighbourhood | `graph_neighborhood(entity_id=, hops=2, ...)` | The entities and relations within `hops` (up to 4), capped at `limit` (up to 500) with a continuation. |
 | Graph path | `graph_path(from_entity_id=, to_entity_id=, max_hops=4)` | Shortest connections between two entities (up to 6 hops). |

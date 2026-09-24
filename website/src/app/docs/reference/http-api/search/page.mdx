@@ -57,7 +57,7 @@ entries in rank order.
 | Status | `detail` | Cause |
 |---|---|---|
 | `422` | validation list | `query` missing, `k` out of range, or an unknown `channel`. |
-| `500` | `Internal Server Error` | The embedding call failed (semantic channel). |
+| `503` | `model provider unavailable` | The embedding call failed (semantic channel). Retry with back-off. |
 
 ### Example
 

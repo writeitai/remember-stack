@@ -1954,6 +1954,17 @@
             "title": "Doc Id",
             "type": "string"
           },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
           "parked": {
             "anyOf": [
               {
@@ -1966,10 +1977,36 @@
             ],
             "title": "Parked"
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "version_id": {
             "format": "uuid",
             "title": "Version Id",
             "type": "string"
+          },
+          "versioning_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "snapshot",
+                  "living"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Versioning Mode"
           }
         },
         "required": [
@@ -3405,7 +3442,7 @@
   },
   "info": {
     "title": "RememberStack query API",
-    "version": "0.17.0"
+    "version": "0.17.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4267,6 +4304,8 @@
             "required": false,
             "schema": {
               "default": 10,
+              "maximum": 400,
+              "minimum": 1,
               "title": "K",
               "type": "integer"
             }
@@ -4388,6 +4427,18 @@
                 }
               ],
               "title": "Valid At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
             }
           },
           {
@@ -4601,6 +4652,14 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "draft",
+                    "pending_revalidation",
+                    "active",
+                    "deprecated",
+                    "disabled",
+                    "broken"
+                  ],
                   "type": "string"
                 },
                 {

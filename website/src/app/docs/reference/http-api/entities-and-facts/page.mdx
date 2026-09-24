@@ -72,6 +72,7 @@ the real response and omitted here.
 | Status | `detail` | Cause |
 |---|---|---|
 | `422` | validation list | `name` missing, a malformed UUID, or more than 8 `context_entity_ids`. |
+| `503` | `model provider unavailable` | The embedding tier was needed and the embedding call failed. Retry with back-off. |
 
 ### Example
 
@@ -106,25 +107,24 @@ now or at a past instant.
 | `predicate` | query | string | no | any | Exact predicate name. |
 | `object_entity_id` | query | UUID | no | any | |
 | `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
+| `k` | query | integer | no | `50` | 1–400. The most relations to return. |
 
-Every parameter is optional; the ones you send are combined with AND. A
+Every filter is optional; the ones you send are combined with AND. A
 relation matches when it has not been invalidated and its validity window
 covers `valid_at` (or now). A relation with no known start or end is treated
 as open on that side.
 
-<Callout type="warning">
-
-There is no row limit. A call with no filters returns every live relation
-in the deployment. Always send at least a subject or an object.
-
-</Callout>
+At most `k` relations come back. When more match, `truncation` says so
+(`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
+narrow the pattern or raise `k`.
 
 ### Response
 
 `200` with an `Envelope` of grain `fact`. `facts` holds one
 [`FactResult`](/docs/reference/result-types#factresult) per relation (`kind:
 "relation"`), ordered by evidence count, highest first, then by when the
-memory learned it. Each result carries its `validity`, its
+memory learned it; `truncation` is set when the `k` cap left matches out.
+Each result carries its `validity`, its
 `temporal_match`, its `support` and, when the relation is part of a
 contradiction, the other sides in `contradiction`. With `valid_at`,
 `temporal_scope.mode` is `at`; without it, `current`. No match gives
@@ -134,8 +134,7 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | A malformed UUID or timestamp. |
-| `500` | `Internal Server Error` | `valid_at` has a non-UTC offset (see the warning in [Result types](/docs/reference/result-types#timestamps)). |
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `k` outside 1–400. |
 
 ### Example
 
@@ -169,13 +168,14 @@ well they match a phrase.
 |---|---|---|---|---|---|
 | `entity_id` | query | UUID | yes | | |
 | `property_query` | query | string | no | | When present, observations are found by semantic similarity to this text. |
-| `k` | query | integer | no | `10` | Used only with `property_query`: how many candidates to consider. |
+| `k` | query | integer | no | `10` | 1–400. The most observations to return. |
 
-Without `property_query`, every live observation on the entity whose validity
-covers now is returned, with no row limit. With it, up to `k` candidates are
-nominated by similarity and each is re-checked against the database before it
-is returned; candidates that no longer hold are dropped and counted in
-`dropped_by_hydration`.
+Without `property_query`, the live observations on the entity whose validity
+covers now are returned, strongest evidence first, at most `k`; when more
+exist, `truncation` says so (`reason: "lookup_k_limit"`). With
+`property_query`, up to `k` candidates are nominated by similarity and each is
+re-checked against the database before it is returned; candidates that no
+longer hold are dropped and counted in `dropped_by_hydration`.
 
 ### Response
 
@@ -187,8 +187,8 @@ observation (`kind: "observation"`). No match gives `negative.kind`
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | `entity_id` missing or malformed, or `k` not an integer. |
-| `500` | `Internal Server Error` | The embedding call for `property_query` failed. |
+| `422` | validation list | `entity_id` missing or malformed, or `k` not an integer in 1–400. |
+| `503` | `model provider unavailable` | The embedding call for `property_query` failed. Retry with back-off. |
 
 ### Example
 

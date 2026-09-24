@@ -75,9 +75,18 @@ class DocumentCatalog:
         already fed extraction. Bytes matching only an OLDER version (content
         reverted A→B→A) are a new observation and become a new version: the
         lineage moves forward, never silently back to a stale current pointer.
+
+        The lineage's ``title`` and ``versioning_mode`` and the content's MIME
+        are first-write-wins; the receipt reports the values that apply, so a
+        caller sending different ones sees they were not taken. One exception:
+        bytes whose recorded MIME has no route take a newly declared routable
+        MIME, and their parked conversions are released (D117) — otherwise a
+        file first sent as ``application/octet-stream`` could never be fixed
+        by re-sending it with its real type.
         """
         with self._engine.begin() as connection:
-            doc_id = _lineage_locked(connection=connection, record=record)
+            lineage = _lineage_locked(connection=connection, record=record)
+            doc_id: UUID = lineage["doc_id"]
             connection.execute(
                 _INSERT_CONTENT_OBJECT,
                 {
@@ -88,8 +97,31 @@ class DocumentCatalog:
                     "raw_uri": record.raw_uri,
                 },
             )
-            # Content identity is first-write-wins. A later declaration must
-            # not schedule against a different MIME than convert_source uses.
+            if (
+                routable_mimes is not None
+                and record.mime in routable_mimes
+                and connection.execute(
+                    _ADOPT_ROUTABLE_MIME,
+                    {
+                        "deployment_id": record.deployment_id,
+                        "content_hash": record.content_hash,
+                        "mime": record.mime,
+                        "routable_mimes": list(routable_mimes),
+                    },
+                ).rowcount
+                == 1
+            ):
+                # The wake is a NOTIFY, delivered only when this commits.
+                connection.execute(
+                    _RELEASE_PARKED_CONVERSIONS,
+                    {
+                        "deployment_id": record.deployment_id,
+                        "content_hash": record.content_hash,
+                    },
+                )
+            # Otherwise content identity is first-write-wins. A later
+            # declaration must not schedule against a different MIME than
+            # convert_source uses.
             effective_mime = connection.execute(
                 _SELECT_CONTENT_MIME,
                 {
@@ -199,6 +231,9 @@ class DocumentCatalog:
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
+                mime=effective_mime,
+                title=lineage["title"],
+                versioning_mode=lineage["versioning_mode"],
                 parked="no_route" if parked else None,
                 processing_admission=(
                     "pending" if metering is not None else "not_required"
@@ -583,8 +618,10 @@ class DocumentCatalog:
         return _persisted_tree(generation=generation, sections=persisted)
 
 
-def _lineage_locked(*, connection: Connection, record: UploadRecord) -> UUID:
-    """Create or lock the upload's lineage row; returns its doc_id.
+def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMapping:
+    """Create or lock the upload's lineage row.
+
+    Returns its ``doc_id`` and the ``title`` and ``versioning_mode`` in force.
 
     The insert-or-lock serializes concurrent ingests of one lineage so the
     version-number assignment below it is race-free. An ingest is an
@@ -593,30 +630,38 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> UUID:
     otherwise the recreated file would attach versions to a dead lineage
     that never resurfaces and gets refetched on every poll.
     """
-    inserted = connection.execute(
-        _INSERT_DOCUMENT,
-        {
-            "doc_id": record.doc_id,
-            "deployment_id": record.deployment_id,
-            "source_kind": record.source_kind,
-            "source_ref": record.source_ref,
-            "source_uri": record.source_uri,
-            "title": record.title,
-            "versioning_mode": record.versioning_mode,
-        },
-    ).scalar_one_or_none()
+    inserted = (
+        connection.execute(
+            _INSERT_DOCUMENT,
+            {
+                "doc_id": record.doc_id,
+                "deployment_id": record.deployment_id,
+                "source_kind": record.source_kind,
+                "source_ref": record.source_ref,
+                "source_uri": record.source_uri,
+                "title": record.title,
+                "versioning_mode": record.versioning_mode,
+            },
+        )
+        .mappings()
+        .one_or_none()
+    )
     if inserted is not None:
         return inserted
-    doc_id = connection.execute(
-        _SELECT_DOCUMENT_LOCKED,
-        {
-            "deployment_id": record.deployment_id,
-            "source_kind": record.source_kind,
-            "source_ref": record.source_ref,
-        },
-    ).scalar_one()
-    connection.execute(_RESURRECT_LINEAGE, {"doc_id": doc_id})
-    return doc_id
+    lineage = (
+        connection.execute(
+            _SELECT_DOCUMENT_LOCKED,
+            {
+                "deployment_id": record.deployment_id,
+                "source_kind": record.source_kind,
+                "source_ref": record.source_ref,
+            },
+        )
+        .mappings()
+        .one()
+    )
+    connection.execute(_RESURRECT_LINEAGE, {"doc_id": lineage["doc_id"]})
+    return lineage
 
 
 _INSERT_DOCUMENT = text(
@@ -629,13 +674,13 @@ _INSERT_DOCUMENT = text(
         CAST(:versioning_mode AS versioning_mode)
     )
     ON CONFLICT (deployment_id, source_kind, source_ref) DO NOTHING
-    RETURNING doc_id
+    RETURNING doc_id, title, versioning_mode::text AS versioning_mode
     """
 )
 
 _SELECT_DOCUMENT_LOCKED = text(
     """
-    SELECT doc_id FROM documents
+    SELECT doc_id, title, versioning_mode::text AS versioning_mode FROM documents
     WHERE deployment_id = :deployment_id
       AND source_kind = :source_kind
       AND source_ref = :source_ref
@@ -651,6 +696,36 @@ _INSERT_CONTENT_OBJECT = text(
         :deployment_id, :content_hash, :mime, :byte_size, :raw_uri
     )
     ON CONFLICT (deployment_id, content_hash) DO NOTHING
+    """
+)
+
+_ADOPT_ROUTABLE_MIME = text(
+    """
+    UPDATE content_objects SET mime = :mime
+    WHERE deployment_id = :deployment_id AND content_hash = :content_hash
+      AND purged_at IS NULL
+      AND mime <> ALL(CAST(:routable_mimes AS text[]))
+    """
+)
+
+# Mirrors the work ledger's resume_no_route, narrowed to one content object.
+_RELEASE_PARKED_CONVERSIONS = text(
+    """
+    WITH released AS (
+        UPDATE processing_state p
+        SET defer_reason = NULL, not_before = now()
+        FROM document_versions v, documents d
+        WHERE p.deployment_id = :deployment_id
+          AND p.status = 'pending' AND p.stage = 'convert'
+          AND p.target_kind = 'document_version'
+          AND p.defer_reason::text = 'no_route'
+          AND v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+          AND v.content_hash = :content_hash AND v.deleted_at IS NULL
+          AND d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
+          AND d.deleted_at IS NULL
+        RETURNING p.processing_id
+    )
+    SELECT pg_notify('queue_wake', CAST(processing_id AS text)) FROM released
     """
 )
 

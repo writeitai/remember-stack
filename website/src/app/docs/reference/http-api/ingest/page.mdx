@@ -71,6 +71,24 @@ conversion waits until a converter route for that type exists, and the
 response says so with `"parked": "no_route"`. See
 [File formats and converters](/docs/self-hosting/converters).
 
+### What the first ingest fixes
+
+Some settings are taken from the first ingest and kept:
+
+- **`title` and `versioning_mode`** belong to the document and are set when
+  it is first ingested. Later ingests of the same document do not change
+  them.
+- **The MIME type** belongs to the bytes: identical bytes are stored once,
+  with the type they were first sent with, and conversion uses that type.
+  One exception: if that type has no converter route, so conversion is
+  parked, sending the same bytes with a type that has a route replaces it
+  and releases every parked conversion of those bytes. A file first sent as
+  `application/octet-stream` is fixed by sending it again as `text/markdown`.
+
+The response reports the values in force (`mime`, `title`,
+`versioning_mode`). Compare them with what you sent to see whether yours
+were taken.
+
 ### Attribution
 
 `X-Ingest-Principal-Kind` and `X-Ingest-Principal-Ref` record who added the
@@ -96,6 +114,9 @@ does not change it.
   "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
   "content_hash": "3b7c0e2d9f1a…",
   "created": true,
+  "mime": "text/markdown",
+  "title": "Q3 plan",
+  "versioning_mode": "snapshot",
   "parked": null
 }
 ```
@@ -115,6 +136,7 @@ for it; it will not become ready on its own.
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap (100,000,000 bytes on remember.dev). |
 | `413` | `source_bytes_limit_exceeded` | Text metering is on (remember.dev) and the file is over 10,000,000 bytes. |
+| `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
 | `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
 | `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
 | `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |

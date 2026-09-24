@@ -53,11 +53,12 @@ known code at its expected status). `wait_for_readiness` raises
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `rate_class_unavailable` | Text metering (remember.dev): the file is a binary format. | Send plain text or Markdown. |
+| `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `body_too_large` | The ingest body is over the cap (100,000,000 bytes on remember.dev). | Split the document. |
 | `413` | `source_bytes_limit_exceeded` | Text metering: the file is over 10,000,000 bytes. | Split the document. |
-| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. | Fix the request; `loc` names the field. |
+| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `rate_class_ambiguous` | Text metering: the file is not plain UTF-8 text or Markdown. | Convert it to plain text or Markdown first. |
 | `422` | `empty_text` | Text metering: the file is empty or whitespace. | Send content. |
@@ -66,11 +67,12 @@ known code at its expected status). `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
-| `500` | `Internal Server Error` | An unhandled failure. Known causes in this release: a non-UTC `valid_at` or `believed_at` on lookups and graph routes; an embedding failure on search and lookup routes; an unknown `status` on `GET /query/saved`; re-ingesting content that was forgotten; a graph statement timeout. | Check the request against those causes; otherwise report it. |
+| `500` | `Internal Server Error` | An unhandled failure: a defect. | Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
-| `503` | `model provider unavailable` | An assured operation could not embed its query. | Retry with back-off. |
+| `503` | `model provider unavailable` | A search, lookup, resolve or assured-operation call could not embed its query. | Retry with back-off. |
 | `503` | `live graph is busy` | No graph traversal slot was free in time. | Retry with back-off. |
 | `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
+| `503` | `live graph timed out` | A traversal ran past its time limit, or its database connection failed. | Retry with back-off; narrow `hops`, `max_hops` or `predicates` if it persists. |
 | `503` | `{"code": "…_unavailable", …}` | A store needed by a SQL query was unavailable. See [SQL query codes](#sql-query-codes). | Retry with back-off. |
 
 ### Spend refusals (remember.dev)
