@@ -403,7 +403,10 @@ def poll_for_key(
     deadline = clock() + authorization.expires_in
     wait = min(float(authorization.interval), _POLL_CAP_SECONDS)
     while True:
-        sleep(wait)
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise DeviceGrantError(detail="the device code expired before approval")
+        sleep(min(wait, remaining))
         if clock() >= deadline:
             raise DeviceGrantError(detail="the device code expired before approval")
         try:

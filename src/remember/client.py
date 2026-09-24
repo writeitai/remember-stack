@@ -900,12 +900,12 @@ class MemoryClient:
     ) -> httpx.Response:
         """Send one engine request, re-resolving a moved deployment once.
 
-        Only a key-routed client re-resolves (D136 §8.3): after a connection
-        failure, a ``421``, or a ``404`` that is not the engine's error
-        envelope, the issuer is asked again and the request is retried once if
-        the deployment URL changed and the request is safe to repeat
-        (:func:`_repeatable`). A connect timeout counts as a connection
-        failure; a timeout after sending does not.
+        Only a key-routed client re-resolves (D136 §8.3), and retries once when
+        the deployment URL changed. A read (``GET``/``HEAD``) retries after any
+        network failure, a ``421``, or a ``404`` that is not the engine's error
+        envelope. Any other request retries only after a failure that happens
+        before the request reaches the server — a connect error, a connect
+        timeout, or a ``421`` — so a write is never sent twice.
         """
         merged: dict[str, str] = dict(headers or {})
         if self._route is None:
@@ -920,7 +920,7 @@ class MemoryClient:
                 )
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
-        repeatable = _repeatable(method, path)
+        read = method in ("GET", "HEAD")
         for attempt in (1, 2):
             base, authorization = self._route.target()
             if authorization is not None:
@@ -936,15 +936,15 @@ class MemoryClient:
                     headers=merged,
                 )
             except (httpx.NetworkError, httpx.ConnectTimeout) as error:
-                if attempt == 1 and repeatable and self._route.re_resolve():
+                unsent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+                if attempt == 1 and (read or unsent) and self._route.re_resolve():
                     continue
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             if (
                 attempt == 1
-                and repeatable
-                and _looks_moved(response)
+                and (response.status_code == 421 or (read and _looks_moved(response)))
                 and self._route.key_routed
                 and self._route.re_resolve()
             ):
@@ -1252,17 +1252,6 @@ class AccountApi:
             return metadata.endpoint("remember_account_endpoint")
         except IssuerError as error:
             raise AccountApiUnavailable(detail=error.detail) from error
-
-
-def _repeatable(method: str, path: str) -> bool:
-    """Whether a request may be sent again to a re-resolved deployment.
-
-    Every request except creating a connector: reads repeat harmlessly, an
-    identical ingest is a no-op (D55), deletion and pausing are idempotent
-    (D135), while a repeated ``POST /connectors`` would create a second
-    connector.
-    """
-    return not (method == "POST" and path.rstrip("/") == "/connectors")
 
 
 def _looks_moved(response: httpx.Response) -> bool:

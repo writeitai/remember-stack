@@ -302,6 +302,9 @@ class EngineRoute:
         self._http = http
         self._clock = clock
         self._resolved: str | None = None
+        #: The project id of the first resolution. A re-resolution asks for
+        #: this id, never the issuer's (possibly changed) default project.
+        self._project_id: str | None = None
 
     @property
     def key_routed(self) -> bool:
@@ -347,14 +350,17 @@ class EngineRoute:
     def _resolve(self, *, refresh: bool) -> str:
         connection = self._connection
         assert connection.claims is not None and connection.key is not None
-        return resolve_project(
+        resolved = resolve_project(
             key=connection.key.get_secret_value(),
             claims=connection.claims,
-            project=connection.project,
+            project=self._project_id or connection.project,
             http=self._http,
             clock=self._clock,
             refresh=refresh,
-        ).api_url
+        )
+        if self._project_id is None:
+            self._project_id = resolved.project
+        return resolved.api_url
 
     def _check_stored_key_destination(self, url: str) -> None:
         """Enforce the stored-key origin rule for a configured engine URL."""

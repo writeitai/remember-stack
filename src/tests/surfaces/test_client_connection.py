@@ -361,7 +361,8 @@ def _moved(issuer: FakeIssuer, first_outcome: int | Exception) -> None:
     issuer.engines[DEPLOYMENT_A] = [first_outcome]
 
     def move() -> None:
-        issuer.projects[None] = ("p-docs", "docs", DEPLOYMENT_B)
+        for name in (None, "p-docs", "docs"):
+            issuer.projects[name] = ("p-docs", "docs", DEPLOYMENT_B)
 
     # Move once the first resolution has been served.
     original = issuer.handle
@@ -391,18 +392,72 @@ def test_moved_deployment_is_re_resolved_and_retried_once(
     assert len(issuer.calls("/api/v1/keys/self/project")) == 2
 
 
+def _write(client: Client, kind: str) -> None:
+    if kind == "ingest":
+        client.ingest(content=b"# note", filename="note.md")
+    elif kind == "delete":
+        client.delete_document(doc_id=UUID(int=7))
+    else:
+        client.add_connector(connector=ConnectorCreate(kind="k", name="n"))
+
+
+@pytest.mark.parametrize("write", ["ingest", "delete", "connector"])
 @pytest.mark.parametrize(
-    "first_outcome", [421, httpx.ConnectError("refused")], ids=["421", "connect"]
+    "failure",
+    [httpx.ReadError("reset"), httpx.WriteError("broken pipe"), 404],
+    ids=["read-error", "write-error", "non-engine-404"],
 )
-def test_creating_a_connector_is_never_repeated(
-    issuer: FakeIssuer, first_outcome: int | Exception
+def test_a_write_that_may_have_arrived_is_never_repeated(
+    issuer: FakeIssuer, write: str, failure: int | Exception
 ) -> None:
-    """A repeated POST /connectors would create a second connector."""
-    _moved(issuer, first_outcome)
+    _moved(issuer, failure)
     with Client(api_key=make_key(), transport=issuer.transport()) as client:
         with pytest.raises(MemoryApiError):
-            client.add_connector(connector=ConnectorCreate(kind="k", name="n"))
+            _write(client, write)
     assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"]
+
+
+@pytest.mark.parametrize("write", ["ingest", "delete", "connector"])
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("refused"), httpx.ConnectTimeout("slow"), 421],
+    ids=["connect-error", "connect-timeout", "421"],
+)
+def test_a_write_that_never_arrived_moves_with_the_deployment(
+    issuer: FakeIssuer, write: str, failure: int | Exception
+) -> None:
+    _moved(issuer, failure)
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        with pytest.raises(MemoryApiError):  # the fake engine 404s the write
+            _write(client, write)
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-b.test"]
+
+
+def test_reads_retry_after_any_network_error(issuer: FakeIssuer) -> None:
+    _moved(issuer, httpx.ReadError("reset"))
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        assert client.list_operations() == ()
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-b.test"]
+
+
+def test_re_resolution_keeps_the_first_project(issuer: FakeIssuer) -> None:
+    """A moved-host retry asks for the same project id, not the new default."""
+    issuer.engines[DEPLOYMENT_A] = [421]
+    original = issuer.handle
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        response = original(request)
+        if request.url.path == "/api/v1/keys/self/project":
+            issuer.projects[None] = ("p-notes", "notes", DEPLOYMENT_B)
+            issuer.projects["p-docs"] = ("p-docs", "docs", "https://dp-c.test")
+        return response
+
+    issuer.handle = handle  # type: ignore[method-assign]
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        assert client.list_operations() == ()
+    resolutions = issuer.calls("/api/v1/keys/self/project")
+    assert [r.url.params.get("project") for r in resolutions] == [None, "p-docs"]
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-c.test"]
 
 
 def test_read_timeout_is_not_a_moved_deployment(issuer: FakeIssuer) -> None:

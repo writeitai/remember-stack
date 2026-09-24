@@ -128,6 +128,40 @@ def test_poll_timeout_backs_off_like_slow_down(issuer: FakeIssuer) -> None:
     assert issuer.sleeps == [5.0, 10.0, 10.0]  # type: ignore[attr-defined]
 
 
+def test_poll_sleep_never_outlives_the_code(issuer: FakeIssuer) -> None:
+    """Each wait is capped by the code's remaining lifetime."""
+    from pydantic import SecretStr as _Secret
+
+    from remember.issuer import DeviceAuthorization
+    from remember.issuer import DeviceGrantError
+    from remember.issuer import poll_for_key
+
+    issuer.poll_script = ["authorization_pending"] * 10
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    authorization = DeviceAuthorization(
+        device_code=_Secret("device-secret"),
+        user_code="ABCD-EFGH",
+        verification_uri=f"{ISSUER}/device",
+        expires_in=12,
+        interval=5,
+    )
+    with pytest.raises(DeviceGrantError, match="expired"):
+        poll_for_key(
+            http=issuer.http(),
+            metadata=fetch_issuer_metadata(ISSUER, http=issuer.http()),
+            authorization=authorization,
+            sleep=sleep,
+            clock=lambda: now[0],
+        )
+    assert sleeps == [5.0, 5.0, 2.0]
+
+
 def test_login_uses_remember_issuer_from_the_environment(
     issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
 ) -> None:

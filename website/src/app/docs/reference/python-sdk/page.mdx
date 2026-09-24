@@ -131,10 +131,12 @@ A remember.dev key names projects, not addresses. On the first request the
 client asks remember.dev which address serves the project, checks that the
 key covers it and that the address is `https`, and then talks to that
 address directly; memory traffic never passes through remember.dev's
-console. The answer is reused for 10 minutes. If the address stops answering
-(a connection failure, `421`, or a `404` that is not the engine's), the
-client asks again and retries the request once when the address changed
-(every request except creating a connector, which is never repeated).
+console. The answer is reused for 10 minutes. If the address stops answering,
+the client asks again for the same project and retries the request once when
+the address changed. A read retries after a connection failure, a `421`, or a
+`404` that is not the engine's; a write (ingest, delete, connectors) retries
+only when it never reached the server: a connection error, a connect
+timeout, or a `421`.
 When the project cannot be resolved it raises `ProjectResolutionError`; it
 never falls back to a local engine.
 
