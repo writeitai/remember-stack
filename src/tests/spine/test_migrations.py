@@ -1470,3 +1470,62 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
     assert _head_revision(database_url=database_url) == "p9_35_0056"
+
+
+def test_d134_own_document_name_span_downgrade_guard() -> None:
+    """An empty span column drops; a recorded span refuses and stays intact."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_35_0056")
+    engine = create_engine(database_url)
+    claim_id = uuid4()
+
+    def span_column_exists() -> bool:
+        with engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'claims'"
+                    " AND column_name = 'own_document_name_span')"
+                )
+            ).scalar_one()
+
+    try:
+        # an unused column drops cleanly and re-adds on upgrade
+        command.downgrade(config=config, revision="p9_34_0055")
+        assert _head_revision(database_url=database_url) == "p9_34_0055"
+        assert not span_column_exists()
+        command.upgrade(config=config, revision="p9_35_0056")
+        assert span_column_exists()
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                    " claim_text, source_span, char_start, char_end, anchor_ok,"
+                    " window_membership_ok, extractor_version,"
+                    " own_document_name_span) VALUES (:c, :d, :doc, :chunk,"
+                    " 'The report Audit_2025.pdf summarizes the audit.',"
+                    " 'This report summarizes the audit.', 0, 33, true, true,"
+                    " 'test-extractor', int4range(11, 25))"
+                ),
+                {"c": claim_id, "d": uuid4(), "doc": uuid4(), "chunk": uuid4()},
+            )
+        with pytest.raises(RuntimeError, match="own_document_name_span is recorded"):
+            command.downgrade(config=config, revision="p9_34_0055")
+        assert _head_revision(database_url=database_url) == "p9_35_0056"
+        with engine.connect() as connection:
+            stored = connection.execute(
+                text(
+                    "SELECT lower(own_document_name_span),"
+                    " upper(own_document_name_span) FROM claims WHERE claim_id = :c"
+                ),
+                {"c": claim_id},
+            ).one()
+        assert tuple(stored) == (11, 25)
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_35_0056"

@@ -291,18 +291,25 @@ For each claim return:
 - own_document_name: null, except for a claim about the document itself (see
   SELF-REFERENCES below).
 
-SELF-REFERENCES NAME THE DOCUMENT. When the passage refers to its own document
-("this report", "the attached spreadsheet", "this document", "this file") or
-is an overview of the document itself, write the document's name in place of
-the bare reference: its DOCUMENT HEADER title, or its header file name when the
-title is untitled. For example, with header file Audit_2025.pdf, "This report
-summarizes the 2025 audit findings" becomes claim_text="The report
-Audit_2025.pdf summarizes the 2025 audit findings",
+SELF-REFERENCES NAME THE DOCUMENT. Only when the document itself is the
+referent of the assertion — the passage refers to its own document ("this
+report", "the attached spreadsheet", "this document", "this file") and the
+claim is about that document ("this report summarizes…", "the workbook
+covers…") — write the document's name in place of the bare reference: its
+DOCUMENT HEADER title, or its header file name when the title is untitled.
+For example, with header file Audit_2025.pdf, "This report summarizes the 2025
+audit findings" becomes claim_text="The report Audit_2025.pdf summarizes the
+2025 audit findings",
 added_context=[{{text: "Audit_2025.pdf", source_kind: header}}],
-own_document_name="Audit_2025.pdf". Set own_document_name to exactly the name
-text you wrote, copied from the header, and write it only once in the claim.
-Never add the document's name to any other claim: a claim that does not refer
-to its own document keeps own_document_name null.
+own_document_name="Audit_2025.pdf"; with header file
+Q3_sales_2025.xlsx, "The workbook covers EU revenue by region" becomes "The
+workbook Q3_sales_2025.xlsx covers EU revenue by region". Set
+own_document_name to exactly the name text you wrote, copied from the header,
+and write it only once in the claim. An overview or profile passage that
+states ordinary facts is not about the document: "Q3 revenue was €4.2M" stays
+"Q3 revenue was €4.2M", with no document name and own_document_name null.
+Never add the document's name to any other claim: a claim whose referent is
+not the document itself keeps own_document_name null.
 
 SECTION SUMMARIES help with orientation only. They cannot supply evidence,
 missing names or added_context. Source reporting time is when the source spoke;
@@ -949,7 +956,10 @@ class ExtractClaimsHandler:
                     )
                     continue
                 result, own_name_drop = _own_document_name_span(
-                    record=result, candidate=candidate, source=source
+                    record=result,
+                    candidate=candidate,
+                    source=source,
+                    document_md=document_md,
                 )
                 if own_name_drop is not None:
                     _logger.info(
@@ -1285,18 +1295,24 @@ class OwnDocumentNameDrop(StrEnum):
 
 
 def _own_document_name_span(
-    *, record: ClaimRecord, candidate: CandidateClaim, source: ChunkSource
+    *,
+    record: ClaimRecord,
+    candidate: CandidateClaim,
+    source: ChunkSource,
+    document_md: str,
 ) -> tuple[ClaimRecord, OwnDocumentNameDrop | None]:
     """Keep Claimify's ``own_document_name`` only when it is safely the header's.
 
     The name must equal one of the document's names from the header (title,
     file name, or file name without its extension, compared after the D134
-    name normalization), occur exactly once in ``claim_text``, and not occur
-    as a whole in the claim's source span — otherwise the passage itself
-    spoke that name and it is not a self-reference the extractor inserted.
-    Single words may overlap: "this report" in a document titled "Annual
-    Report" is accepted. A kept name records its ``[start, end)`` span on
-    the claim; a dropped one leaves the claim unchanged and returns why.
+    name normalization), occur exactly once in ``claim_text`` as a whole
+    (word-bounded: "Report" inside "Reporting" does not count), and not occur
+    as a whole in any source text the claim cites — its origin span and every
+    D119 evidence span — otherwise the passage itself spoke that name and it
+    is not a self-reference the extractor inserted. Single words may overlap:
+    "this report" in a document titled "Annual Report" is accepted. A kept
+    name records the ``[start, end)`` range of its one whole-name match; a
+    dropped one leaves the claim unchanged and returns why.
     """
     name = candidate.own_document_name
     if name is None or not name.strip():
@@ -1304,21 +1320,34 @@ def _own_document_name_span(
     normalized = normalize_name(value=name)
     if normalized is None or normalized not in _document_names(source=source):
         return record, OwnDocumentNameDrop.NOT_A_DOCUMENT_NAME
-    start = record.claim_text.find(name)
-    if start < 0 or record.claim_text.find(name, start + 1) >= 0:
+    matches = list(_whole_text_pattern(text=name).finditer(record.claim_text))
+    if len(matches) != 1:
         return record, OwnDocumentNameDrop.NOT_EXACTLY_ONCE
-    whole_name = re.compile(rf"(?<!\w){re.escape(normalized)}(?!\w)")
-    if whole_name.search(normalize_name(value=record.source_span) or ""):
+    whole_name = _whole_text_pattern(text=normalized)
+    cited = (
+        record.source_span,
+        *(
+            document_md[span.char_start : span.char_end]
+            for span in record.evidence_spans
+        ),
+    )
+    if any(whole_name.search(normalize_name(value=text) or "") for text in cited):
         return record, OwnDocumentNameDrop.IN_SOURCE_SPAN
+    match = matches[0]
     return (
         record.model_copy(
             update={
-                "own_document_name_start": start,
-                "own_document_name_end": start + len(name),
+                "own_document_name_start": match.start(),
+                "own_document_name_end": match.end(),
             }
         ),
         None,
     )
+
+
+def _whole_text_pattern(*, text: str) -> re.Pattern[str]:
+    """``text`` as a whole: not preceded or followed by a word character."""
+    return re.compile(rf"(?<!\w){re.escape(text)}(?!\w)")
 
 
 def _document_names(*, source: ChunkSource) -> frozenset[str]:

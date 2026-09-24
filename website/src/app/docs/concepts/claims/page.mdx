@@ -113,34 +113,42 @@ the claim's `added_context`, tagged with where it came from.
 
 When a passage refers to its own document ("this report", "the attached
 spreadsheet", "this document"), Claimify writes the document's name in place
-of the bare reference. It uses the version's title, or its file name when the
-version declares no title:
+of the bare reference, but only when the document itself is what the claim
+is about. It uses the version's title, or its file name when the version
+declares no title:
 
 > source: "This report summarizes the 2025 audit findings."
 > claim: "The report Audit_2025.pdf summarizes the 2025 audit findings."
 
 The name comes from the document header that extraction reads, and it is
-listed in `added_context` like any other addition. Claims that do not refer
-to their own document never get the name added: every claim already links to
-its document.
+listed in `added_context` like any other addition. Claims about anything
+else never get the name added, including ordinary facts stated in an overview
+of the document ("Q3 revenue was €4.2M" stays as it is): every claim already
+links to its document.
 
 The engine records where in `claim_text` the name was written only when the
 name passes three checks:
 
 - it is one of the document's names: the title, the file name, or the file
   name without its extension
-- it appears exactly once in the claim
-- it does not appear as a whole in the claim's source text
+- it appears exactly once in the claim as a whole name ("Report" inside
+  "Reporting" does not count)
+- it does not appear as a whole in any source text the claim cites
 
 If a check fails, the claim is kept and nothing is recorded. The
 `decontext_edit` ledger row notes the name and why it was not recorded. The
 recorded position is part of the claim, so it survives when a new version
 reuses the claim.
-The name itself never becomes an [entity](/docs/concepts/entities).
+The recorded name does not become an [entity](/docs/concepts/entities).
+The exception: when the claim has several references with that exact text,
+the engine cannot tell which one is the document, so it resolves them all.
 
-A renamed file is extracted again, because the file name is one of the inputs
-that decides whether a new version can reuse earlier claims. Claims are
-immutable, so a later rename does not rewrite claims that name the old file.
+A new version with a different file name is extracted again, because the file
+name is one of the inputs that decides whether a new version can reuse earlier
+claims. Sending the same bytes under a new name creates no new version; the
+new name is recorded for the existing version, and its claims stay as they
+are. Claims are immutable, so a later rename never rewrites claims that name
+the old file.
 
 ### 3. The grounding gate: no text without a source
 

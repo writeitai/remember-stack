@@ -132,15 +132,25 @@ def _gate(
     document_md: str = _DOC_MD,
     keep: str = _SELF_REF,
     added: tuple[str, ...] = (),
+    support: tuple[str, ...] = (),
 ) -> tuple[ClaimRecord, OwnDocumentNameDrop | None]:
-    """Ground one candidate, then apply the own-document-name gate."""
+    """Ground one candidate, then apply the own-document-name gate.
+
+    ``support`` are further passages the claim cites after its origin.
+    """
     source = source or _source()
     chunk = _chunk(document_md=document_md)
     start = document_md.index(keep)
     kept_ranges = ((start, start + len(keep)),)
     candidate = CandidateClaim(
         claim_text=claim_text,
-        source_refs=(_origin_label(document_md=document_md, keep=keep),),
+        source_refs=(
+            _origin_label(document_md=document_md, keep=keep),
+            *(
+                _origin_label(document_md=document_md, keep=passage)
+                for passage in support
+            ),
+        ),
         added_context=tuple(
             AddedContext(text=text, source_kind="header") for text in added
         ),
@@ -165,7 +175,9 @@ def _gate(
         ),
     )
     assert isinstance(record, ClaimRecord), record
-    return _own_document_name_span(record=record, candidate=candidate, source=source)
+    return _own_document_name_span(
+        record=record, candidate=candidate, source=source, document_md=document_md
+    )
 
 
 def _span_text(record: ClaimRecord) -> str | None:
@@ -231,6 +243,15 @@ def test_prompt_states_the_self_reference_rule() -> None:
     )
     assert 'own_document_name="Audit_2025.pdf"' in normalized
     assert "Never add the document's name to any other claim" in normalized
+    assert "Only when the document itself is the referent of the assertion" in (
+        normalized
+    )
+    assert '"this report summarizes…", "the workbook covers…"' in normalized
+    assert '"The workbook Q3_sales_2025.xlsx covers EU revenue by region"' in normalized
+    assert (
+        '"Q3 revenue was €4.2M" stays "Q3 revenue was €4.2M", with no document'
+        " name and own_document_name null" in normalized
+    )
     rendered = _CLAIMIFY_PROMPT.format(
         passages="(none)", cards="(none)", keeps="- x", bundle="(bundle)"
     )
@@ -340,6 +361,48 @@ def test_gate_drops_a_name_the_passage_already_spoke() -> None:
         keep=spoken,
     )
     assert drop is OwnDocumentNameDrop.IN_SOURCE_SPAN
+    assert record.own_document_name_start is None
+
+
+def test_gate_drops_a_name_a_supporting_passage_spoke() -> None:
+    """Every cited evidence span counts, not only the origin (D119)."""
+    support = "Audit_2025.pdf was filed in March."
+    record, drop = _gate(
+        claim_text=_SELF_CLAIM,
+        own_document_name="Audit_2025.pdf",
+        document_md=f"{_SELF_REF}\n\n{support}\n",
+        support=(support,),
+    )
+    assert len(record.evidence_spans) == 2
+    assert drop is OwnDocumentNameDrop.IN_SOURCE_SPAN
+    assert record.own_document_name_start is None
+
+
+def test_gate_counts_only_whole_name_occurrences() -> None:
+    """ "Annual Report" inside "Annual Reporting" is not a second occurrence."""
+    passage = "This report covers annual reporting duties."
+    record, drop = _gate(
+        claim_text="The Annual Report covers Annual Reporting duties.",
+        own_document_name="Annual Report",
+        source=_source(file_name="annual.pdf", version_title="Annual Report"),
+        document_md=f"{passage}\n",
+        keep=passage,
+        added=("Annual Report",),
+    )
+    assert drop is None
+    assert (record.own_document_name_start, record.own_document_name_end) == (4, 17)
+
+
+def test_gate_ignores_an_embedded_name_without_a_whole_one() -> None:
+    passage = "This report covers annual reporting duties."
+    record, drop = _gate(
+        claim_text="It covers Annual Reporting duties.",
+        own_document_name="Annual Report",
+        source=_source(file_name="annual.pdf", version_title="Annual Report"),
+        document_md=f"{passage}\n",
+        keep=passage,
+    )
+    assert drop is OwnDocumentNameDrop.NOT_EXACTLY_ONCE
     assert record.own_document_name_start is None
 
 
