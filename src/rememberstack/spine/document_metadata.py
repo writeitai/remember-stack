@@ -12,6 +12,16 @@ Three moments write these rows:
 
 The lineage title (``documents.title``) is never changed here: it stays
 first-write-wins, so a rename never moves an extraction reuse key.
+
+**Lock order.** Every name writer locks the version's ``document_versions``
+row first and its ``document_metadata`` row second — the order conversion
+takes them in (status update, then merge) and the order hard forget touches
+them in. Taking them the other way round in any path could deadlock.
+
+Every ``document_names`` row records its ``origin``: ``ingest`` (the name a
+version was created under), ``observation`` (identical bytes under a new
+name), ``converter`` (a title the file declares) or ``backfill`` (a legacy
+lineage title, not an observed declared title).
 """
 
 import json
@@ -75,6 +85,7 @@ def record_ingest_metadata_on(
         file_name=record.file_name,
         title=record.declared_title,
         source_path=record.source_path,
+        origin="ingest",
     )
 
 
@@ -114,6 +125,7 @@ def observe_names_on(
         file_name=file_name,
         title=title,
         source_path=source_path,
+        origin="observation",
     )
 
 
@@ -200,6 +212,7 @@ def merge_converter_metadata_on(
         file_name=None if latest is None else latest["file_name"],
         title=metadata.title,
         source_path=None if latest is None else latest["source_path"],
+        origin="converter",
     )
 
 
@@ -210,8 +223,13 @@ def refresh_family_on(
 
     A MIME repair (D117: parked bytes re-sent with a routable type) changes
     the stored type for every lineage holding those bytes, so every such
-    version's family changes with it, in the same transaction.
+    version's family changes with it, in the same transaction. The version
+    rows are locked first, keeping the version-then-metadata lock order.
     """
+    connection.execute(
+        _LOCK_CONTENT_VERSIONS,
+        {"deployment_id": deployment_id, "content_hash": content_hash},
+    )
     connection.execute(
         _REFRESH_FAMILY,
         {
@@ -225,11 +243,15 @@ def refresh_family_on(
 def _lock_metadata(
     *, connection: Connection, deployment_id: UUID, version_id: UUID
 ) -> bool:
-    """Lock the version's metadata row; False when it has none.
+    """Lock the version row, then its metadata row; False without metadata.
 
-    Every writer of a version's names takes this lock before reading the
-    latest name, so read-compare-insert never interleaves.
+    Every writer of a version's names takes these locks, in this order,
+    before reading the latest name, so read-compare-insert never interleaves
+    and no two writers can wait on each other's second lock.
     """
+    connection.execute(
+        _LOCK_VERSION, {"deployment_id": deployment_id, "version_id": version_id}
+    )
     return (
         connection.execute(
             _LOCK_METADATA, {"deployment_id": deployment_id, "version_id": version_id}
@@ -261,6 +283,7 @@ def _insert_name(
     file_name: str | None,
     title: str | None,
     source_path: str | None,
+    origin: str,
 ) -> bool:
     """Append one observed name; nothing when every part is empty."""
     searchable = name_text(parts=(file_name, title, source_path))
@@ -275,6 +298,7 @@ def _insert_name(
             "title": title,
             "source_path": source_path,
             "name_text": searchable,
+            "origin": origin,
         },
     )
     return True
@@ -299,11 +323,20 @@ _INSERT_NAME = text(
     """
     INSERT INTO document_names (
         deployment_id, version_id, observed_at, file_name, title,
-        source_path, name_text
+        source_path, name_text, origin
     ) VALUES (
         :deployment_id, :version_id, clock_timestamp(), :file_name, :title,
-        :source_path, :name_text
+        :source_path, :name_text, :origin
     )
+    """
+)
+
+_LOCK_CONTENT_VERSIONS = text(
+    """
+    SELECT 1 FROM document_versions
+    WHERE deployment_id = :deployment_id AND content_hash = :content_hash
+    ORDER BY version_id
+    FOR NO KEY UPDATE
     """
 )
 
@@ -317,6 +350,16 @@ _REFRESH_FAMILY = text(
       AND v.deployment_id = :deployment_id
       AND v.content_hash = :content_hash
       AND m.family <> :family
+    """
+)
+
+# FOR NO KEY UPDATE: the same strength as conversion's status UPDATE, so the
+# two serialize without blocking foreign-key checks against the version.
+_LOCK_VERSION = text(
+    """
+    SELECT 1 FROM document_versions
+    WHERE deployment_id = :deployment_id AND version_id = :version_id
+    FOR NO KEY UPDATE
     """
 )
 

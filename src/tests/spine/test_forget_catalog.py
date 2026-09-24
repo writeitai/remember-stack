@@ -564,8 +564,9 @@ def _seed_documents(*, connection: Connection) -> None:
         connection.execute(
             text(
                 "INSERT INTO document_names (deployment_id, version_id,"
-                " observed_at, file_name, title, source_path, name_text) VALUES"
-                " (:d, :version, now(), :file_name, :marker, :path, :name_text)"
+                " observed_at, file_name, title, source_path, name_text, origin)"
+                " VALUES (:d, :version, now(), :file_name, :marker, :path,"
+                " :name_text, 'ingest')"
             ),
             {
                 "d": _DEPLOYMENT_ID,

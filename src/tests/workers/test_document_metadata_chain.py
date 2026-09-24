@@ -201,6 +201,19 @@ class _Rig:
                 )
             ]
 
+    def origins(self, *, version_id: UUID) -> list[str]:
+        """The origin of each of the version's names, oldest first."""
+        with self.engine.connect() as connection:
+            return list(
+                connection.execute(
+                    text(
+                        "SELECT origin FROM document_names WHERE version_id = :v"
+                        " ORDER BY observed_at"
+                    ),
+                    {"v": version_id},
+                ).scalars()
+            )
+
     def people(self, *, version_id: UUID) -> list[tuple[object, ...]]:
         """The version's people rows in role/ordinal order."""
         with self.engine.connect() as connection:
@@ -296,6 +309,7 @@ def test_identical_bytes_under_a_new_name_append_a_name_only(rig: _Rig) -> None:
         ("draft.md", "Draft", "inbox", "draft.md Draft inbox"),
         ("final.md", None, "archive", "final.md archive"),
     ]
+    assert rig.origins(version_id=first.version_id) == ["ingest", "observation"]
     # the version's metadata keeps what was observed when it was ingested
     assert rig.metadata(version_id=first.version_id)["file_name"] == "draft.md"
 
@@ -485,6 +499,11 @@ def test_convert_names_carry_the_latest_observed_file_name(rig: _Rig) -> None:
         ("renamed.eml", None, None, "renamed.eml"),
         ("renamed.eml", "Audit findings", None, "renamed.eml Audit findings"),
     ]
+    assert rig.origins(version_id=ingested.version_id) == [
+        "ingest",
+        "observation",
+        "converter",
+    ]
 
 
 def test_name_writers_serialize_on_the_metadata_row(rig: _Rig) -> None:
@@ -532,3 +551,81 @@ def test_name_writers_serialize_on_the_metadata_row(rig: _Rig) -> None:
         ("audit.eml", "Audit findings", None, "audit.eml Audit findings"),
         ("renamed.eml", None, None, "renamed.eml"),
     ]
+
+
+def test_observation_and_conversion_share_one_lock_order(rig: _Rig) -> None:
+    """A re-ingest advancing the cursor and a conversion never deadlock.
+
+    The conversion side holds the version row (its status update) and then
+    takes the metadata row. The observation must wait on the version row
+    before it touches the metadata row; the reverse order deadlocks here.
+    """
+    upload = _upload(
+        filename="plan.eml",
+        title=None,
+        source_path=None,
+        content=b"Lock order body.\n",
+        mime=_MAIL_MIME,
+    )
+
+    def observe(*, filename: str, revision: str) -> IngestedVersion:
+        return rig.ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="drive",
+            source_ref="plan",
+            upload=upload.model_copy(update={"filename": filename}),
+            versioning_mode="snapshot",
+            source_modified_at=None,
+            source_version_ref=revision,
+            sync_cycle_id=None,
+        )
+
+    ingested = observe(filename="plan.eml", revision="rev-1")
+    observation_errors: list[BaseException] = []
+
+    def observe_rename() -> None:
+        try:
+            observe(filename="plan-final.eml", revision="rev-2")
+        except BaseException as error:  # surfaced to the test thread below
+            observation_errors.append(error)
+
+    with rig.engine.connect() as connection:
+        transaction = connection.begin()
+        # conversion's first lock: the version row, via its status update
+        connection.execute(
+            text(
+                "UPDATE document_versions SET status = 'structuring'"
+                " WHERE version_id = :v"
+            ),
+            {"v": ingested.version_id},
+        )
+        observer = threading.Thread(target=observe_rename)
+        observer.start()
+        observer.join(timeout=1.0)
+        assert observer.is_alive()  # waiting on the version row
+        # conversion's second lock: the metadata row
+        merge_converter_metadata_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            version_id=ingested.version_id,
+            metadata=_MAIL_METADATA,
+            mapping_version="fake-mail@fake-mail-1",
+        )
+        transaction.commit()
+    observer.join(timeout=30.0)
+    assert not observer.is_alive()
+    assert observation_errors == []
+
+    assert rig.origins(version_id=ingested.version_id) == [
+        "ingest",
+        "converter",
+        "observation",
+    ]
+    with rig.engine.connect() as connection:
+        cursor = connection.execute(
+            text(
+                "SELECT source_version_ref FROM document_versions WHERE version_id = :v"
+            ),
+            {"v": ingested.version_id},
+        ).scalar_one()
+    assert cursor == "rev-2"

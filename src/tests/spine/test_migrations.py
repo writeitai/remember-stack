@@ -1418,7 +1418,12 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
                 ).mappings()
             }
             names = {
-                row["version_id"]: (row["title"], row["name_text"], row["file_name"])
+                row["version_id"]: (
+                    row["title"],
+                    row["name_text"],
+                    row["file_name"],
+                    row["origin"],
+                )
                 for row in connection.execute(
                     text("SELECT * FROM document_names")
                 ).mappings()
@@ -1440,7 +1445,8 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         untitled = versions[_BACKFILL_MIMES[1]][0]
         assert untitled not in names
         titled = versions[_BACKFILL_MIMES[0]][0]
-        assert names[titled] == ("Doc 0", "Doc 0", None)
+        # a legacy lineage title is marked as backfilled, not as observed
+        assert names[titled] == ("Doc 0", "Doc 0", None, "backfill")
         assert len(names) == len(_BACKFILL_MIMES) - 1
 
         # a populated store refuses the lossy downgrade and stays at head

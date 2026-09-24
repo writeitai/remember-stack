@@ -66,6 +66,7 @@ CREATE TABLE document_names (
   title           text,                        -- the declared title observed
   source_path     text,                        -- the source location observed
   name_text       text NOT NULL,               -- file_name + title + source_path, space-joined; the indexed search text
+  origin          text NOT NULL CHECK (origin IN ('ingest','observation','converter','backfill')), -- ingest | observation (same bytes, new name) | converter (declared by the file) | backfill (legacy lineage title)
   PRIMARY KEY (deployment_id, version_id, observed_at),
   FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
 );
@@ -133,9 +134,10 @@ ON CONFLICT (deployment_id, version_id) DO NOTHING
 
 _BACKFILL_NAMES = f"""
 INSERT INTO document_names (
-  deployment_id, version_id, observed_at, title, name_text
+  deployment_id, version_id, observed_at, title, name_text, origin
 )
-SELECT md.deployment_id, md.version_id, v.ingested_at, d.title, btrim(d.title)
+SELECT md.deployment_id, md.version_id, v.ingested_at, d.title, btrim(d.title),
+       'backfill'
 FROM document_metadata md
 JOIN document_versions v
   ON v.deployment_id = md.deployment_id AND v.version_id = md.version_id

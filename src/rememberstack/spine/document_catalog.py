@@ -201,6 +201,19 @@ class DocumentCatalog:
                     mime=effective_mime,
                 )
             else:
+                # Lock order (D134): the document_versions row, then its
+                # document_metadata row — the order conversion takes them in
+                # (version status update, then the metadata merge). The
+                # cursor update comes first; observe_names_on locks the
+                # version row itself when there is no cursor to advance.
+                if record.source_version_ref is not None:
+                    connection.execute(
+                        _ADVANCE_VERSION_CURSOR,
+                        {
+                            "version_id": version_id,
+                            "source_version_ref": record.source_version_ref,
+                        },
+                    )
                 # D134 metadata observation: identical bytes under a new
                 # file name, title or path create no version but are a name
                 # the document must be findable by.
@@ -212,14 +225,6 @@ class DocumentCatalog:
                     title=record.declared_title,
                     source_path=record.source_path,
                 )
-                if record.source_version_ref is not None:
-                    connection.execute(
-                        _ADVANCE_VERSION_CURSOR,
-                        {
-                            "version_id": version_id,
-                            "source_version_ref": record.source_version_ref,
-                        },
-                    )
             parked = False
             if metering is None:
                 convert = enqueue_on(
