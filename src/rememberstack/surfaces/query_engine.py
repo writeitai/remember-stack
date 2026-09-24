@@ -42,6 +42,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
+from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
@@ -1423,8 +1424,8 @@ class QueryEngine:
 
         ``documents`` (D134) keeps a claim only when a live occurrence lies in
         a matching document version — applied inside the ranked statement,
-        before the top-k cut — and the returned evidence names that
-        occurrence's chunk and spans.
+        before the top-k cut, and re-checked at hydration. It decides
+        inclusion only: the evidence is the claim's origin occurrence.
         """
         documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_claim_ids(
@@ -2988,9 +2989,9 @@ class QueryEngine:
     ) -> tuple[tuple[EvidenceResult, ...], int, dict[UUID, int]]:
         """Confirm claim content and any entity scope in one PostgreSQL read.
 
-        With ``documents`` (D134) each claim is confirmed through a live
-        occurrence in a matching document version, and the evidence names
-        that occurrence rather than the claim's origin chunk.
+        With ``documents`` (D134) each claim is re-checked for a live
+        occurrence in a matching document version; the evidence is still the
+        claim's origin occurrence.
         """
         if not claim_ids:
             return (), 0, {}
@@ -3009,12 +3010,13 @@ class QueryEngine:
         )
         extra: dict[str, Any] = {}
         if documents is not None:
-            version_sql, extra = live_version_matches(
-                filters=documents,
-                version="occurrence_chunk.version_id",
-                prefix="documents_",
+            # D134: the filter decides inclusion only. The claim is re-checked
+            # for a live occurrence in a matching version, and the evidence is
+            # its origin occurrence, exactly as without a filter.
+            occurrence_sql, extra = matching_occurrence_exists(
+                filters=documents, claim="c.claim_id", prefix="documents_"
             )
-            statement = text(_CONFIRM_CLAIMS_IN_DOCUMENTS.format(matches=version_sql))
+            statement = text(f"{_CONFIRM_CLAIMS_CURRENT.text}  AND {occurrence_sql}\n")
         rows: list[RowMapping] = []
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
@@ -4421,53 +4423,6 @@ _CONFIRM_CLAIMS_CURRENT = text(
       AND c.claim_id = ANY(:claim_ids)
     """
 )
-
-# D134: confirm a current claim through its newest live occurrence in a
-# matching document version. Everything positional describes THAT occurrence,
-# so chunk_id, char_start/char_end and evidence_spans stay one coordinate
-# system (the EvidenceResult contract): the offsets are the occurrence's
-# first evidence span, which D119 stores as the origin span in the owning
-# chunk's representation. source_span stays the claim's verbatim text; reuse
-# across versions carries identical text.
-# The filter is re-checked here, not only at nomination. The ORDER BY ends in
-# a unique key per claim ((chunk_id, created_at) is the occurrence key), so
-# the chosen occurrence is deterministic.
-# `{matches}` is the shared document-filter predicate over the occurrence's
-# version (rememberstack.core.document_filters).
-_CONFIRM_CLAIMS_IN_DOCUMENTS = """
-    SELECT c.claim_id, c.doc_id, occ.chunk_id, c.claim_text, c.source_span,
-           (occ.evidence_spans->0->>'char_start')::integer AS char_start,
-           (occ.evidence_spans->0->>'char_end')::integer AS char_end,
-           occ.evidence_spans,
-           c.is_attributed,
-           TRUE AS is_current_testimony,
-           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
-           c.claim_valid_precision, c.claim_valid_kind,
-           d.title AS document_title, d.source_kind
-    FROM memory_v1.claims_live c
-    JOIN memory_v1.documents_live d
-      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
-    JOIN LATERAL (
-        SELECT occurrence.chunk_id, occurrence.evidence_spans
-        FROM chunk_claims occurrence
-        JOIN chunks occurrence_chunk
-          ON occurrence_chunk.deployment_id = occurrence.deployment_id
-         AND occurrence_chunk.chunk_id = occurrence.chunk_id
-        JOIN document_versions occurrence_version
-          ON occurrence_version.deployment_id = occurrence_chunk.deployment_id
-         AND occurrence_version.version_id = occurrence_chunk.version_id
-         AND occurrence_version.current_representation_id
-             = occurrence_chunk.representation_id
-        WHERE occurrence.deployment_id = c.deployment_id
-          AND occurrence.claim_id = c.claim_id
-          AND {matches}
-        ORDER BY occurrence_version.version_no DESC, occurrence.created_at,
-                 occurrence.derivation_kind NULLS FIRST, occurrence.chunk_id
-        LIMIT 1
-    ) AS occ ON true
-    WHERE c.deployment_id = :deployment_id
-      AND c.claim_id = ANY(:claim_ids)
-"""
 
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     """

@@ -390,7 +390,7 @@ def _span(reading: str) -> tuple[int, int]:
 def test_a_claim_reused_across_versions_is_tested_per_occurrence(
     database_engine: Engine, index: PostgresP1Index
 ) -> None:
-    """Each version's metadata is tested on its own occurrence; hydration names it."""
+    """Each version's metadata is tested on its own occurrence; evidence is the origin."""
     with database_engine.begin() as connection:
         older = seed_live_document_lineage(
             connection=connection,
@@ -442,47 +442,52 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
     )
     engine = _engine(database_engine=database_engine, index=index)
 
-    for filters, occurrence, reading in (
-        (_ALICE, older.chunk_id, _OLDER_READING),
-        (
-            DocumentSearchFilters(authors=("bob@acme.com",)),
-            newer.chunk_id,
-            _NEWER_READING,
-        ),
-    ):
+    def search(filters: DocumentSearchFilters | None) -> list[tuple[object, ...]]:
         envelope = engine.search_claims(
             deployment_id=_DEPLOYMENT_ID,
             query="zanzibar rollout",
             k=5,
             channel="bm25",
-            documents=filters,
+            **({} if filters is None else {"documents": filters}),
         )
-        assert [(item.claim_id, item.chunk_id) for item in envelope.evidence] == [
-            (claim_id, occurrence)
+        return [
+            (
+                item.claim_id,
+                item.chunk_id,
+                item.char_start,
+                item.char_end,
+                tuple((span.char_start, span.char_end) for span in item.evidence_spans),
+                item.source_span,
+            )
+            for item in envelope.evidence
         ]
-        # chunk, offsets and spans are one coordinate system: the returned
-        # offsets point at the claim's verbatim text in THAT version's reading
-        evidence = envelope.evidence[0]
-        assert (evidence.char_start, evidence.char_end) == _span(reading)
-        assert reading[evidence.char_start : evidence.char_end] == evidence.source_span
-        assert [
-            (span.char_start, span.char_end) for span in evidence.evidence_spans
-        ] == [_span(reading)]
-    nobody = engine.search_claims(
-        deployment_id=_DEPLOYMENT_ID,
-        query="zanzibar rollout",
-        k=5,
-        channel="bm25",
-        documents=DocumentSearchFilters(authors=("carol",)),
-    )
-    assert nobody.evidence == ()
-    # unfiltered hydration still names the origin occurrence
-    unfiltered = engine.search_claims(
-        deployment_id=_DEPLOYMENT_ID, query="zanzibar rollout", k=5, channel="bm25"
-    )
-    assert [
-        (item.chunk_id, item.char_start, item.char_end) for item in unfiltered.evidence
-    ] == [(newer.chunk_id, *_span(_NEWER_READING))]
+
+    # the filter decides inclusion only; the evidence is always the origin
+    origin = [
+        (
+            claim_id,
+            newer.chunk_id,
+            *_span(_NEWER_READING),
+            (_span(_NEWER_READING),),
+            _ROLLOUT,
+        )
+    ]
+    assert search(None) == origin
+    # Alice wrote only the older version: included through its occurrence
+    assert search(_ALICE) == origin
+    assert search(DocumentSearchFilters(authors=("bob@acme.com",))) == origin
+    assert search(DocumentSearchFilters(authors=("carol",))) == []
+    # the origin offsets point at the claim's text in the origin reading
+    assert _NEWER_READING[slice(*_span(_NEWER_READING))] == _ROLLOUT
+
+    # without its older-version occurrence the claim no longer matches Alice
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM chunk_claims WHERE chunk_id = :c AND claim_id = :claim"),
+            {"c": older.chunk_id, "claim": claim_id},
+        )
+    assert search(_ALICE) == []
+    assert search(DocumentSearchFilters(authors=("bob@acme.com",))) == origin
 
 
 def test_facts_are_kept_by_a_supporting_claim_from_a_matching_document(

@@ -9928,10 +9928,9 @@ evidence from matching documents is returned:
   document version. A claim that repeats across a document's versions is
   checked against each version separately, so `authors: ["alice"]` finds the
   claim through the version Alice wrote even if a later version names someone
-  else. The returned `chunk_id`, `char_start`/`char_end` and
-  `evidence_spans` all describe that occurrence, in that version's text, not
-  the chunk the claim was first extracted from; `source_span` is the claim's
-  text, which is the same in every version that repeats it.
+  else. The filter only decides which claims are included: each returned
+  claim looks exactly as it does without a filter, with the `chunk_id`,
+  offsets and `evidence_spans` of the passage it was first extracted from.
 
 Deleted documents and deleted versions never match. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
