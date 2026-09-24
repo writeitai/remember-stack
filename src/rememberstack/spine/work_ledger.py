@@ -778,20 +778,34 @@ class WorkLedger:
                     "work can be budget-parked"
                 )
 
-    def park_no_route(self, *, processing_id: UUID, attempt: int) -> None:
+    def park_no_route(self, *, processing_id: UUID, attempt: int, mime: str) -> None:
         """Return a convert claim that found no route before doing work (D117).
 
         Only the matching running convert attempt can transition. The unused
         claim is refunded, historical errors remain, and no retry is scheduled.
+
+        ``mime`` is the stored MIME the handler found unroutable. An ingest
+        may meanwhile have replaced it with a routable one and released the
+        parked rows — which excludes this running claim. The park therefore
+        locks the content row (the lock that replacement takes) and parks
+        only if the MIME is unchanged; otherwise the claim returns to the
+        queue unparked and is announced, so it converts with the new MIME.
         """
         with self._engine.begin() as connection:
-            updated = connection.execute(
-                _PARK_NO_ROUTE, {"processing_id": processing_id, "attempt": attempt}
-            ).rowcount
-            if updated != 1:
+            parked = (
+                connection.execute(
+                    _PARK_NO_ROUTE,
+                    {"processing_id": processing_id, "attempt": attempt, "mime": mime},
+                )
+                .scalars()
+                .all()
+            )
+            if len(parked) != 1:
                 raise WorkNotRunningError(
                     f"processing row {processing_id} is not the running convert attempt"
                 )
+            if parked[0] is None:
+                connection.execute(_WAKE, {"processing_id": str(processing_id)})
 
     def resume_no_route(
         self, *, deployment_id: UUID, routable_mimes: Collection[str]
@@ -1582,11 +1596,26 @@ _PROMOTE_TO_STEADY = text(
 
 _PARK_NO_ROUTE = text(
     """
+    WITH stored AS (
+        SELECT c.mime
+        FROM processing_state p
+        JOIN document_versions v
+          ON v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+        JOIN content_objects c
+          ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+        WHERE p.processing_id = :processing_id
+        FOR SHARE OF c
+    )
     UPDATE processing_state
-    SET status = 'pending', defer_reason = 'no_route',
+    SET status = 'pending',
+        defer_reason = CASE
+            WHEN (SELECT mime FROM stored) IS DISTINCT FROM :mime THEN NULL
+            ELSE 'no_route'::processing_defer_reason
+        END,
         attempts = attempts - 1, started_at = NULL, not_before = now()
     WHERE processing_id = :processing_id AND status = 'running'
       AND stage = 'convert' AND attempts = :attempt AND attempts > 0
+    RETURNING defer_reason::text
     """
 )
 

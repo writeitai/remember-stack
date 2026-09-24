@@ -397,7 +397,7 @@ class ConvertHandler:
             # Configuration can differ from the ingestor or resume command.
             # This runs before reading bytes or making a provider call, so the
             # runner may park and return the unused attempt (D117).
-            raise NoRouteHandlerError(str(err)) from err
+            raise NoRouteHandlerError(str(err), mime=source.mime) from err
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,

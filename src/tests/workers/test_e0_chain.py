@@ -872,6 +872,81 @@ def test_a_released_row_whose_route_is_still_missing_reparks(
     assert version["error"] is None
 
 
+class _MimeSwapRouter(ConversionRouter):
+    """A router that lets an ingest land after the worker read the MIME."""
+
+    def __init__(self, *, routes: dict[str, Converter], swap: object) -> None:
+        """Run `swap` once, between the MIME read and the route decision."""
+        super().__init__(routes=routes)
+        self._swap = swap
+
+    def converter_for(self, *, mime: str) -> Converter:
+        """Let the concurrent ingest commit, then decide on the stale MIME."""
+        swap, self._swap = self._swap, None
+        if callable(swap):
+            swap()
+        return super().converter_for(mime=mime)
+
+
+def test_mime_replaced_mid_claim_is_not_stranded_as_no_route(rig: _E0Rig) -> None:
+    """G31 review: a running claim that read the old unrouted MIME must not
+    park after an ingest replaced it with a routable one — that ingest only
+    releases *pending* parked rows, so the park would never be released.
+    """
+    admitting_gate = UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset({"application/x-unknown"}),
+    )
+    first = admitting_gate.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+
+    def resend_as_markdown() -> None:
+        resent = rig.ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(
+                filename="notes.md", mime="text/markdown", content=b"# Notes\n"
+            ),
+        )
+        assert resent.mime == "text/markdown"
+
+    routes: dict[str, Converter] = {"text/markdown": MarkdownPassthroughConverter()}
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=rig.catalog,
+            raw_store=rig.raw_store,
+            artifact_store=rig.artifact_store,
+            router=_MimeSwapRouter(routes=routes, swap=resend_as_markdown),
+        ),
+    )
+    # The first claim reads the stale MIME and finds no route after the ingest
+    # replaced it. It must return to the queue unparked, not strand.
+    stale = Worker(ledger=rig.ledger, registry=registry)
+    assert (
+        stale.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.CONVERT,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.NO_ROUTE_PARKED
+    )
+    work = rig.row(
+        sql="SELECT status, defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+        params={"id": first.version_id},
+    )
+    assert work["status"] == "pending"
+    assert work["defer_reason"] is None
+    assert work["attempts"] == 0
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+
+
 def test_retried_convert_replays_the_stored_representation(rig: _E0Rig) -> None:
     """Codex review: D65 replay-not-regenerate — a retry never re-converts."""
     ingested = rig.ingestor.ingest(

@@ -43,6 +43,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
+from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
 
 from rememberstack import __version__
@@ -777,9 +778,18 @@ def _graph_errors() -> Iterator[None]:
             status_code=503, detail="live graph result unavailable"
         ) from error
     except (TimeoutError, OperationalError) as error:
-        # A statement, lock or transaction timeout (or a lost connection)
-        # inside the bounded traversal: the graph could not answer in time.
+        # A statement or lock timeout (or a lost connection) inside the
+        # bounded traversal: the graph could not answer in time.
         raise HTTPException(status_code=503, detail="live graph timed out") from error
+    except InternalError as error:
+        # PostgreSQL reports transaction_timeout (SQLSTATE 25P04) as an
+        # internal error class; anything else in that class stays a 500.
+        if getattr(error.orig, "sqlstate", None) != _TRANSACTION_TIMEOUT:
+            raise
+        raise HTTPException(status_code=503, detail="live graph timed out") from error
+
+
+_TRANSACTION_TIMEOUT: Final = "25P04"
 
 
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:

@@ -14,6 +14,7 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
 
 from rememberstack.model import current_temporal_scope
@@ -87,6 +88,15 @@ class _Engine:
         """Fail like the embedding tier of resolution."""
         del kwargs
         raise ProviderCallError("embedding endpoint returned 502")
+
+
+class _DriverError(Exception):
+    """A DBAPI error carrying a PostgreSQL SQLSTATE, as psycopg's does."""
+
+    def __init__(self, sqlstate: str) -> None:
+        """Keep the SQLSTATE."""
+        super().__init__(f"sqlstate {sqlstate}")
+        self.sqlstate = sqlstate
 
 
 class _Graph:
@@ -260,6 +270,7 @@ def test_graph_refuses_a_naive_or_non_utc_clock(clock: str) -> None:
     [
         OperationalError("SELECT 1", {}, Exception("canceling statement")),
         TimeoutError("live graph operation deadline expired"),
+        InternalError("SELECT 1", {}, _DriverError("25P04")),
     ],
 )
 @pytest.mark.parametrize(
@@ -307,3 +318,12 @@ def test_reingesting_forgotten_content_is_a_conflict(lineage: dict[str, str]) ->
     )
     assert response.status_code == 409
     assert response.json() == {"detail": "source_forgotten"}
+
+
+def test_other_internal_graph_errors_stay_500() -> None:
+    """Only transaction_timeout (25P04) is mapped; a real defect is not hidden."""
+    error = InternalError("SELECT 1", {}, _DriverError("XX000"))
+    response = _client(graph=_Graph(error)).post(
+        "/graph/neighborhood", json={"entity_id": str(_ENTITY)}
+    )
+    assert response.status_code == 500
