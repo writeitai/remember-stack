@@ -697,21 +697,16 @@ def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
     )
 
 
-@pytest.mark.parametrize(
-    "first_mime, second_mime, expected",
-    [
-        ("application/x-unknown", "text/plain", "no_route"),
-        ("text/plain", "application/x-unknown", None),
-    ],
-)
-def test_parking_uses_first_write_content_mime(
-    rig: _E0Rig, first_mime: str, second_mime: str, expected: str | None
-) -> None:
-    """A second lineage with identical bytes schedules against stored MIME."""
+def test_routable_content_mime_is_first_write_wins(rig: _E0Rig) -> None:
+    """A second lineage with identical bytes schedules against stored MIME.
+
+    The receipt reports the MIME that applies, so the caller can see its own
+    declaration was not taken.
+    """
     rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="first.bin", mime=first_mime, content=b"same bytes"
+            filename="first.txt", mime="text/plain", content=b"same bytes"
         ),
     )
     observed = rig.ingestor.ingest_observed(
@@ -719,7 +714,7 @@ def test_parking_uses_first_write_content_mime(
         source_kind="drive",
         source_ref="second",
         upload=DocumentUpload(
-            filename="second.bin", mime=second_mime, content=b"same bytes"
+            filename="second.bin", mime="application/x-unknown", content=b"same bytes"
         ),
         versioning_mode="living",
         source_modified_at=None,
@@ -730,9 +725,101 @@ def test_parking_uses_first_write_content_mime(
         sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
         params={"id": observed.version_id},
     )
-    assert work["defer_reason"] == expected
+    assert work["defer_reason"] is None
     assert work["attempts"] == 0
-    assert rig.catalog.convert_source(version_id=observed.version_id).mime == first_mime
+    assert observed.mime == "text/plain"
+    assert rig.catalog.convert_source(version_id=observed.version_id).mime == (
+        "text/plain"
+    )
+
+
+def test_resending_parked_bytes_with_a_routable_mime_releases_them(rig: _E0Rig) -> None:
+    """G31: a file first sent as an unrouted type is fixed by re-sending it.
+
+    Identical bytes keep one content row, so without this the first
+    declaration would park them forever. Every parked conversion of those
+    bytes is released, and the new MIME is the one conversion uses.
+    """
+    parked = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+    other_lineage = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="notes",
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert parked.mime == "application/x-unknown"
+
+    resent = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes.md", mime="text/markdown", content=b"# Notes\n"
+        ),
+    )
+    assert resent.created is False
+    assert resent.version_id == parked.version_id
+    assert resent.mime == "text/markdown"
+    for version_id in (parked.version_id, other_lineage.version_id):
+        work = rig.row(
+            sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+            params={"id": version_id},
+        )
+        assert work["defer_reason"] is None
+        assert work["attempts"] == 0
+        assert rig.catalog.convert_source(version_id=version_id).mime == (
+            "text/markdown"
+        )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+
+    # A later unrouted declaration never takes the MIME back.
+    again = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+    assert again.mime == "text/markdown"
+
+
+def test_receipt_reports_the_lineage_settings_in_force(rig: _E0Rig) -> None:
+    """G31: title and versioning mode are set by the first ingest, and said so."""
+    first = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="plan",
+        upload=DocumentUpload(
+            filename="plan.md", mime="text/markdown", content=b"v1", title="Plan"
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert (first.title, first.versioning_mode) == ("Plan", "snapshot")
+    second = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="plan",
+        upload=DocumentUpload(
+            filename="plan.md", mime="text/markdown", content=b"v2", title="New"
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert second.created is True
+    assert (second.title, second.versioning_mode) == ("Plan", "snapshot")
 
 
 @pytest.mark.parametrize("prior_attempts", [0, 2])

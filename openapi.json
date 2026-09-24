@@ -1907,9 +1907,32 @@
             "title": "Doc Id",
             "type": "string"
           },
+          "mime": {
+            "title": "Mime",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "version_id": {
             "format": "uuid",
             "title": "Version Id",
+            "type": "string"
+          },
+          "versioning_mode": {
+            "enum": [
+              "snapshot",
+              "living"
+            ],
+            "title": "Versioning Mode",
             "type": "string"
           }
         },
@@ -1918,7 +1941,10 @@
           "doc_id",
           "version_id",
           "content_hash",
-          "created"
+          "created",
+          "mime",
+          "title",
+          "versioning_mode"
         ],
         "title": "IngestedVersion",
         "type": "object"
@@ -4143,6 +4169,8 @@
             "required": false,
             "schema": {
               "default": 10,
+              "maximum": 400,
+              "minimum": 1,
               "title": "K",
               "type": "integer"
             }
@@ -4264,6 +4292,18 @@
                 }
               ],
               "title": "Valid At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
             }
           },
           {
@@ -4477,6 +4517,14 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "draft",
+                    "pending_revalidation",
+                    "active",
+                    "deprecated",
+                    "disabled",
+                    "broken"
+                  ],
                   "type": "string"
                 },
                 {

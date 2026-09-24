@@ -148,7 +148,7 @@ remember ingest FILE [--mime MIME] [--title TITLE]
 Uploads one file and prints the new version as JSON:
 
 ```json
-{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true}
+{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot"}
 ```
 
 `created` is `false` when these exact bytes are already stored for the same

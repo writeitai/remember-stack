@@ -64,6 +64,9 @@ class _DeploymentHandler(BaseHTTPRequestHandler):
                     "version_id": "57000000-0000-0000-0000-000000000003",
                     "content_hash": "a" * 64,
                     "created": True,
+                    "mime": "text/markdown",
+                    "title": None,
+                    "versioning_mode": "snapshot",
                 }
             )
             return

@@ -44,6 +44,16 @@ The call returns as soon as the bytes are stored. The result
 | `version_id` | This exact snapshot of the bytes. You wait on it and cite it. |
 | `content_hash` | SHA-256 of the bytes, in hex. |
 | `created` | `True` when this call stored a new version; `False` when the bytes were already the document's latest version. |
+| `mime` | The MIME type conversion uses for these bytes. |
+| `title` | The document's title. |
+| `versioning_mode` | `snapshot` or `living`. |
+
+`title` and `versioning_mode` are set by a document's first ingest, and the
+MIME type by the first upload of those bytes. Later values you send are not
+applied, so compare the result with what you sent. The one exception is a
+type with no converter route: send the bytes again with a routable type and
+the new type applies, releasing the parked conversion. See
+[What the first ingest fixes](/docs/reference/http-api/ingest#what-the-first-ingest-fixes).
 
 Processing (reading, structuring, extracting claims, adjudicating facts)
 happens afterwards and takes minutes. The document is not queryable until

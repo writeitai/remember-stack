@@ -249,10 +249,14 @@ detects. These uploads arrive with a type the default routes do not cover:
   `.md`: `application/octet-stream`;
 - a `curl` call with a type such as `text/x-markdown`. The match is exact.
 
-Re-sending the same file with the right type does not help. RememberStack
-stores identical bytes once, and the type recorded with the first upload
-stays with those bytes. To release what is parked, add a route for the
-type that was recorded, for example
+Send the same file again with the right type:
+`remember ingest notes --mime text/markdown`, or `mime="text/markdown"` in
+Python. RememberStack stores identical bytes once, with the type of their
+first upload, but a type with no route is replaced by a later upload's
+type that has one, and every parked conversion of those bytes is released.
+The ingest result's `mime` shows the type now recorded.
+
+Alternatively, add a route for the type that was recorded, for example
 `"application/octet-stream": "passthrough"`, then run `resume-no-route`.
 `passthrough` needs valid UTF-8, so a binary file sent under that type
 fails conversion instead of waiting. To see which types were recorded:

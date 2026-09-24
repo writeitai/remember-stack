@@ -530,9 +530,10 @@ class MemoryClient:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
+        k: int = 50,
     ) -> Envelope:
         """Read current or valid-time relations matching an optional pattern."""
-        params: dict[str, str] = {}
+        params: dict[str, str | int] = {"k": k}
         if subject_entity_id is not None:
             params["subject_entity_id"] = str(subject_entity_id)
         if predicate is not None:
@@ -543,7 +544,7 @@ class MemoryClient:
             params["valid_at"] = valid_at.isoformat()
         return _validated(
             Envelope,
-            self._json("GET", "/lookup/relations", params=params if params else None),
+            self._json("GET", "/lookup/relations", params=params),
             endpoint="GET /lookup/relations",
         )
 

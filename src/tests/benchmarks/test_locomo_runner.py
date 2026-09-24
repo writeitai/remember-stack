@@ -2737,6 +2737,9 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 "version_id": str(UUID("57000000-0000-0000-0000-000000000003")),
                 "content_hash": hashlib.sha256(request.content).hexdigest(),
                 "created": True,
+                "mime": "text/markdown",
+                "title": None,
+                "versioning_mode": "snapshot",
             },
         )
     if request.method == "POST" and request.url.path == "/readiness":
@@ -2944,6 +2947,9 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
                     "version_id": str(version_id),
                     "content_hash": hashlib.sha256(request.content).hexdigest(),
                     "created": True,
+                    "mime": "text/markdown",
+                    "title": None,
+                    "versioning_mode": "snapshot",
                 },
             )
         return _run_transport(request)

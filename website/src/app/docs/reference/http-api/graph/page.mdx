@@ -29,7 +29,7 @@ so in `truncation.reason` instead of stopping silently.
 | Frontier size | 1,000 | `frontier_budget` |
 | Traversal time | 1,000 ms | `time_budget` |
 | Results | the route's limit | `result_budget` |
-| Statement timeout | 5 s | none: the request fails with `500` |
+| Statement timeout | 5 s | none: the request fails with `503` `live graph timed out` |
 
 Two traversals run at a time by default
 (`REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY`, default `2`). A request that
@@ -42,7 +42,8 @@ cannot get a slot within the pool wait (default 1 second) is refused with
 instant in the world you ask about, and the instant of the memory's knowledge
 you ask from. Send both or neither. With neither, both are the time the
 request runs. The result's `temporal_scope` always has mode `as_of` and names
-both clocks. Send them in UTC (`Z` or `+00:00`). See
+both clocks. Send them in UTC (`Z` or `+00:00`); a timestamp with no offset
+or another offset is refused with `422`. See
 [Time](/docs/concepts/time).
 
 ## POST /graph/neighborhood
@@ -88,9 +89,10 @@ Unknown fields are rejected.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | Out-of-range `hops` or `limit`, too many or too long `predicates`, only one of `valid_at` and `believed_at`, or an unknown field. |
+| `422` | validation list | Out-of-range `hops` or `limit`, too many or too long `predicates`, only one of `valid_at` and `believed_at`, a clock without a zero UTC offset, or an unknown field. |
 | `503` | `live graph is busy` | No traversal slot was free in time. Retry. |
 | `503` | `live graph result unavailable` | The traversal and the rows it pointed at disagreed. Retry. |
+| `503` | `live graph timed out` | The traversal ran past its statement timeout, or its database connection failed. Retry with back-off; narrow the request if it persists. |
 
 ### Example
 

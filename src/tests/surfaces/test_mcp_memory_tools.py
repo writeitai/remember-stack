@@ -101,6 +101,9 @@ class _RecordingWriteBackend:
             version_id=_VERSION,
             content_hash="a" * 64,
             created=self.created,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def pipeline_readiness(
@@ -151,6 +154,9 @@ class _StubIngestPort:
             version_id=_VERSION,
             content_hash="b" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def ingest_observed(
@@ -184,6 +190,9 @@ class _StubIngestPort:
             version_id=_VERSION,
             content_hash="c" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
 
@@ -883,6 +892,9 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
                     "version_id": str(_VERSION),
                     "content_hash": "d" * 64,
                     "created": True,
+                    "mime": "text/markdown",
+                    "title": None,
+                    "versioning_mode": "snapshot",
                 },
             )
         if request.url.path == "/readiness":

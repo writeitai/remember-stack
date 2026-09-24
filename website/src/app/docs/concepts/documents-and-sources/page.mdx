@@ -128,6 +128,9 @@ Every ingest returns an `IngestedVersion`:
 | `version_id` | The version this call produced or matched. |
 | `content_hash` | SHA-256 of the bytes. |
 | `created` | `true` if this call created a new version; `false` if the bytes match the document's latest version. |
+| `mime` | The MIME type conversion uses for these bytes. |
+| `title` | The document's title, set by its first ingest. |
+| `versioning_mode` | `snapshot` or `living`, set by its first ingest. |
 
 When the bytes match the document's **latest** version, nothing new is
 created and no processing is scheduled. You get the existing `version_id`

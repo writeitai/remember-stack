@@ -148,6 +148,9 @@ class _RecordingIngest:
             version_id=uuid4(),
             content_hash="0" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def ingest_observed(

@@ -52,6 +52,9 @@ class _RecordingIngest:
             version_id=uuid4(),
             content_hash="0" * 64,
             created=True,
+            mime="text/markdown",
+            title=None,
+            versioning_mode="snapshot",
         )
 
     def ingest(
@@ -248,6 +251,9 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
                 version_id=uuid4(),
                 content_hash="0" * 64,
                 created=True,
+                mime="text/markdown",
+                title=None,
+                versioning_mode="snapshot",
             )
 
     legacy = _LegacyIngest()
@@ -264,14 +270,17 @@ def test_legacy_port_without_the_keyword_still_serves_unattributed_ingest() -> N
     assert legacy.calls == 1
 
 
-def test_receipt_shape_is_unchanged_for_old_clients() -> None:
-    """The internal admission hint never reaches an extra-forbid old client."""
+def test_receipt_never_carries_the_admission_hint() -> None:
+    """The internal admission hint never reaches an extra-forbid client."""
     receipt = IngestedVersion(
         deployment_id=_DEPLOYMENT_ID,
         doc_id=uuid4(),
         version_id=uuid4(),
         content_hash="0" * 64,
         created=True,
+        mime="text/markdown",
+        title=None,
+        versioning_mode="snapshot",
         processing_admission="pending",
     )
     assert set(receipt.model_dump(mode="json")) == {
@@ -280,6 +289,9 @@ def test_receipt_shape_is_unchanged_for_old_clients() -> None:
         "version_id",
         "content_hash",
         "created",
+        "mime",
+        "title",
+        "versioning_mode",
     }
 
 

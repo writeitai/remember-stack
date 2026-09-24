@@ -39,11 +39,10 @@ Timestamps in results are ISO 8601 strings in UTC. Fields typed
 <Callout type="warning">
 
 Send timestamps to `GET /lookup/relations` (`valid_at`) and to the graph
-routes (`valid_at`, `believed_at`) in UTC, with `Z` or `+00:00`. The
-engine echoes them into the result's `temporal_scope`, which accepts only
-UTC; a timestamp with another offset currently fails with `500` instead of
-being converted. The assured operations' `time` object converts any
-offset to UTC for you.
+routes (`valid_at`, `believed_at`) in UTC, with `Z` or `+00:00`. A
+timestamp with no offset or another offset is refused with `422` and a
+validation list naming the field; it is not converted. The assured
+operations' `time` object converts any offset to UTC for you.
 
 </Callout>
 
@@ -86,7 +85,7 @@ Which fields each route fills:
 | Route or operation | Grain | Fields |
 |---|---|---|
 | `GET /resolve`, `resolve_entity` | `fact` | `entities`, `truncation`, `negative` |
-| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `dropped_by_hydration`, `negative` |
+| `GET /lookup/relations`, `GET /lookup/observations` | `fact` | `facts`, `truncation`, `dropped_by_hydration`, `negative` |
 | `GET /hydrate/relation/{relation_id}` | `composite` | `facts`, `evidence`, `sources`, `negative` |
 | `GET /transcript/relation/{relation_id}` | `composite` | `transcript`, `truncation`, `negative` |
 | Search routes | `evidence` | `evidence` or `chunks`, `dropped_by_hydration`, `negative` |
@@ -422,7 +421,7 @@ A cap is never silent: when one applies, this block says so.
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
 | `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`. |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`. |
 
 ### Negative
 
@@ -570,6 +569,9 @@ Returned by `POST /ingest`.
 | `version_id` | UUID | The version; pass it to `POST /readiness`. |
 | `content_hash` | string | SHA-256 of the bytes, hex. |
 | `created` | boolean | `true` for a new version; `false` when the bytes matched the latest version and nothing new was stored. |
+| `mime` | string | The MIME type recorded for these bytes, which conversion uses. Set by the first upload of the bytes, unless that type had no converter route and a later upload sent one that has. |
+| `title` | string, nullable | The document's title, set by its first ingest. |
+| `versioning_mode` | `snapshot` \| `living` | The document's versioning mode, set by its first ingest. |
 
 ## Readiness
 

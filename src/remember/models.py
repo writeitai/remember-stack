@@ -370,6 +370,12 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    mime: str
+    """The MIME type recorded for these bytes, which conversion uses."""
+    title: str | None
+    """The document's title. Set by the first ingest of the lineage."""
+    versioning_mode: Literal["snapshot", "living"]
+    """The lineage's versioning mode. Set by the first ingest of the lineage."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )
