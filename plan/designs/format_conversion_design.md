@@ -89,6 +89,7 @@ where a step says so.
    video by signature and ISO BMFF brand (D132); SQLite (`SQLite format 3\0`
    header); Parquet (`PAR1` at both ends); Arrow IPC (`ARROW1`); 7z; gzip
    (then a TAR test on the decompressed head); TAR (`ustar` at offset 257);
+   PST mailboxes (`!BDN` file header);
    and the **card** formats: DWG (`AC10` version header), fonts (TrueType
    `00 01 00 00` or `true`, OpenType `OTTO`, WOFF `wOFF`, WOFF2 `wOF2`),
    disk images (ISO 9660 `CD001` at offset 32769, VMDK `KDMV`, VHD
@@ -101,8 +102,8 @@ where a step says so.
    matching none of these is an **archive**.
 3. **OLE containers by stream names:** legacy Word, Excel and PowerPoint
    (D132, with the declared legacy office MIME selecting the subtype), MSG
-   (`__properties_version1.0` stream), PST (`!BDN` header). An OLE container
-   matching none is refused.
+   (`__properties_version1.0` stream). An OLE container matching none is
+   refused.
 4. **Text.** Strict UTF-8 validation as D132 defines it. Then structural
    tests on the whole file, in order:
    1. **mbox** — the first line starts `From ` and at least one RFC 5322
@@ -113,6 +114,7 @@ where a step says so.
    3. **Captions** — WebVTT (`WEBVTT` first line) or SRT (numbered cues with
       `-->` timestamps in the first cue).
    4. **Calendar / contacts** — `BEGIN:VCALENDAR` or `BEGIN:VCARD`.
+   4c. **RTF** — the file starts with `{\rtf`.
    4a. **Line-shaped message exports** — each shape's declared line grammar
       (for WhatsApp: `[date, time] Name: text`, with continuation lines),
       matched by at least 80% of non-empty lines.
@@ -135,6 +137,13 @@ where a step says so.
    10. **YAML / TOML** — only on a declared hint, and the file parses.
    11. Otherwise **Markdown** when declared as Markdown (D132 rendering hint),
        else **plain text**.
+
+**The order is binding; each family's exact test is its family design's.**
+This list fixes which families exist, the order in which they are tried and
+the kind of evidence each uses. The precise signature, offsets and grammar
+for a family are specified and tested in that family's design (§10.1 item 3)
+and must be placed at the position given here; a family design that needs a
+different position changes this list first.
 
 A declaration that contradicts a binary class is a D132 refusal. Within the
 text class a failed structural test never refuses — it falls through to the
