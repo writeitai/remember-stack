@@ -384,27 +384,28 @@ client and CLI.*
 
 ## 1. Get an endpoint
 
-You need Docker with Compose and an
-[OpenRouter](https://openrouter.ai) API key.
+You need Docker Engine 28.0.0 or later with Compose, and an
+[OpenRouter](https://openrouter.ai) API key. On an older Docker Engine,
+turn on API authentication before the first start; see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose).
 
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The first start builds the PostgreSQL image and runs migrations. When
-`docker compose ps` shows `api` as healthy, the endpoint is
-`http://localhost:8000`. No token is needed by default.
-
-**Warning:**
-
-Compose publishes port 8000 on every network interface of the
-machine, and the API is open by default. On a shared network, read
-[Before you expose it](https://remember.dev/docs/self-hosting/install#before-you-expose-it)
-first.
+The `printf` line generates the database password and the object-store
+credentials; Compose refuses
+to start without them. The first start builds the PostgreSQL image and runs
+migrations. When `docker compose ps` shows `api` as healthy, the endpoint
+is `http://localhost:8000`. No token is needed by default, because the API
+is reachable from this machine only. To open it to others, see
+[Before you expose it](https://remember.dev/docs/self-hosting/install#before-you-expose-it).
 
 ## 2. Install the client
 
@@ -6018,7 +6019,16 @@ top-level `name`, `depends_on` conditions such as
 `service_completed_successfully`, and profiles, which the v2 plugin
 supports.
 
-The project does not state a minimum Docker or Compose version. Its own
+Run the tokenless quickstart only on Docker Engine 28.0.0 or later
+(`docker version --format '{{.Server.Version}}'`). Compose publishes the
+API on `127.0.0.1` only, and before Engine 28.0.0 a port published on
+`127.0.0.1` can still be reached by other hosts on the same local network.
+On an older engine, turn on API authentication before the first start:
+set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` in `.env` (see
+[A shared secret](https://remember.dev/docs/self-hosting/authentication#a-shared-secret)).
+
+The project states no other minimum Docker or Compose version. Its own
 continuous-integration check runs `docker compose up --build --detach --wait`
 on a current GitHub Actions Ubuntu runner.
 
@@ -6182,7 +6192,13 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
 ```
+
+The last command generates the database password and the object-store
+credentials; `.env.example` ships none, and Compose refuses to start
+without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -6190,6 +6206,12 @@ also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
 ## 2. Fill in `.env`
+
+**Warning:**
+
+The API needs no token by default. That is safe only on Docker Engine
+28.0.0 or later; on an older engine, set a token first. See
+[Before you expose it](#before-you-expose-it).
 
 Docker Compose reads `.env` from the project directory and substitutes its
 values into `compose.yaml`. These variables have no default in
@@ -6201,9 +6223,9 @@ values into `compose.yaml`. These variables have no default in
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | A new random UUID for this deployment. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
-| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. |
-| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials. PostgreSQL creates them on first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
+| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
 Generate the deployment id rather than keeping the example value:
 
@@ -6219,9 +6241,6 @@ refuses to run if they differ. A different id is a different
 deployment: tokens bound to the old id stop working and the memory
 already stored belongs to the old id. See
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
-
-The example passwords in `.env.example` are marked local-only. Replace them
-before the stack is reachable from anywhere but your own machine.
 
 ## 3. Start the stack
 
@@ -6248,7 +6267,7 @@ RememberStack image, and starts everything in dependency order:
 | `postgres` | `postgres` | PostgreSQL 19 beta with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
 | `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
-| `api` | `api` | The HTTP API on port 8000 inside the container, published on `REMEMBERSTACK_SELFHOST_API_PORT`. |
+| `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](https://remember.dev/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
@@ -6355,10 +6374,16 @@ The first two hold the memory. Back them up together; see
 
 ## Before you expose it
 
-By default the API needs no token, and Compose publishes port 8000 on
-**every** network interface of the host, not only on `localhost`. Anyone
-who can reach that port can read and change the memory. Before the machine
-is on a shared network, set a token and limit the published port; see [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
+By default the API needs no token, so Compose publishes its port on
+`127.0.0.1` only: only this machine can reach it. That holds on Docker
+Engine 28.0.0 or later. On an older engine, other hosts on the same local
+network can reach a port published on `127.0.0.1`, so set
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` before the first start (see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose)). To serve other machines,
+set a token and then the address to publish on
+(`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`); see
+[Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines).
 
 ---
 
@@ -6467,16 +6492,19 @@ A running process never picks up a changed variable on its own.
 
 ## What to change first
 
-For a machine only you can reach, three settings matter:
+For a machine only you can reach, these settings matter:
 
 | Variable | Why |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Replace the local-only examples. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
 
-Before anyone else can reach the machine, add a token:
-`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` ([Authentication and scopes](https://remember.dev/docs/self-hosting/authentication)).
+Compose publishes the API on `127.0.0.1` only. To let other machines reach
+it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true`, then
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`
+([Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines)).
 
 To accept more than Markdown and plain text, set
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` ([File formats and converters](https://remember.dev/docs/self-hosting/converters)).
@@ -6863,29 +6891,45 @@ That is convenient on your own laptop and unsafe anywhere else. This page
 shows how to require a token, what each kind of token may do, and how to
 let a browser app call the API.
 
-## Open by default
+## Open by default, on this machine only
 
 With no authentication variable set, the API has no perimeter: any caller
 that reaches port 8000 can read the whole memory, send documents, and run
 every operation. Nothing is logged about who they were.
 
-That is acceptable only when nobody else can reach the port. Note that
-`compose.yaml` publishes the API (`${REMEMBERSTACK_SELFHOST_API_PORT}:8000`)
-on **all** network interfaces of the host. On a laptop on a shared Wi-Fi
-network, a colleague can reach it. (The object store publishes no host
-port.)
+So `compose.yaml` publishes the API on the loopback interface only
+(`127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000`): other machines
+cannot connect. (The object store publishes no host port at all.)
 
-To publish the API on the loopback interface only, add to
-`compose.override.yaml` (Compose 2.24.4 or later, for the `!override` tag):
+## Opening the API to other machines
 
-```yaml
-services:
-  api:
-    ports: !override
-      - "127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
-```
+Set a token first, then choose the address to publish on:
 
-Do this and set a token before the machine is reachable by anyone else.
+1. Set a shared secret as described in [A shared secret](#a-shared-secret),
+   and make the API refuse to start without one:
+
+    ```bash
+    # .env
+    REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN=<the secret>
+    REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true
+    ```
+
+2. Publish the port on every interface, or on one interface's address:
+
+    ```bash
+    # .env
+    REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS=0.0.0.0
+    ```
+
+3. Apply it:
+
+    ```bash
+    docker compose up -d
+    ```
+
+The API speaks plain HTTP. Across an untrusted network, put a TLS-terminating
+reverse proxy in front of it, keep the publish address on loopback, and let
+the proxy reach it there.
 
 ## A shared secret
 
@@ -7122,6 +7166,16 @@ declare it (`mutates: false`), so a `read` token can run them.
 |---|---|
 | `401` | No `Authorization` header, the credential did not verify, or (for signed keys) no fresh revocation document has been accepted |
 | `403` | The credential is for another deployment, or its scope does not cover the route |
+
+## `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH`
+
+The perimeter is enforced as soon as a token, a bind or a key issuer is
+configured. `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` makes that a
+start condition: the API refuses to start unless at least one of
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN`,
+`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` or
+`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` is set. Set it on any deployment
+other machines can reach, so a lost `.env` line cannot leave it open.
 
 ## Browser origins (CORS)
 
@@ -7575,7 +7629,10 @@ On an arm64 machine, also check that the image runs at all; see
 ## Wrong port or wrong address
 
 Compose publishes the API on the host port in
-`REMEMBERSTACK_SELFHOST_API_PORT`. The `remember` client and CLI do not
+`REMEMBERSTACK_SELFHOST_API_PORT`, on `127.0.0.1` only unless
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` says otherwise, so another
+machine gets "Connection refused" until you
+[open it](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). The `remember` client and CLI do not
 read that variable. Without `REMEMBER_API_URL` they use
 `http://127.0.0.1:8000`, whatever port the API is published on.
 
@@ -8538,7 +8595,7 @@ export REMEMBER_API_URL=http://localhost:8000
 
 The engine listens on port 8000 inside its container
 (`REMEMBERSTACK_SELFHOST_API_PORT`, default `8000`). The Compose file
-publishes it on the host.
+publishes it on the host's loopback address, `127.0.0.1`.
 
 Paths in this reference are relative to that base URL. The `remember` client
 reads the same variable (`REMEMBER_API_URL`) and falls back to
@@ -15446,7 +15503,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
@@ -15461,6 +15518,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | — | Default language of the deployment. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | — | Address the API listens on inside the container. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
+| `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Compose only | Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
@@ -15474,8 +15532,8 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
 | `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://object-store:8333`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
@@ -15492,6 +15550,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 |---|---|---|---|---|
 | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
 | `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Refuse to start unless the token, the bind or the key issuer is set. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |

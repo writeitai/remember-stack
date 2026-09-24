@@ -70,7 +70,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
@@ -85,6 +85,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | — | Default language of the deployment. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | — | Address the API listens on inside the container. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
+| `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Compose only | Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
@@ -98,8 +99,8 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
 | `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://object-store:8333`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
 | `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
@@ -116,6 +117,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 |---|---|---|---|---|
 | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
 | `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Refuse to start unless the token, the bind or the key issuer is set. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
 | `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |
@@ -131,12 +133,12 @@ See [Authentication and scopes](/docs/self-hosting/authentication).
 ## Spend and metering
 
 Used by remember.dev; leave unset. Setting some of the metering values
-without the rest stops the API at start.
+without the rest stops the API at start, and so do the metering values
+without the spend lease URL.
 
 | Variable | Default | Type | Compose | Purpose |
 |---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Leave unset. Refuses to start without a bind or a key issuer and a spend lease URL. |
-| `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` | unset | URL | passed | Billing service asked before paid work. |
+| `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` | unset | URL | passed | Billing service asked before paid work. Required with the metering values. |
 | `REMEMBERSTACK_SELFHOST_METER_INGEST_URL` | unset | URL | passed | Metering receipt endpoint. |
 | `REMEMBERSTACK_SELFHOST_METER_INGEST_TOKEN` | unset | secret (`umc_mi_…`) | passed | Metering token. |
 | `REMEMBERSTACK_SELFHOST_METER_IDENTITY_KEY` | unset | secret (`umc_mik_…`, ≥ 40 chars) | passed | Deployment-local metering key. |

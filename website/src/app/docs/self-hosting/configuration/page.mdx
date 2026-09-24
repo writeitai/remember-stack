@@ -108,16 +108,19 @@ A running process never picks up a changed variable on its own.
 
 ## What to change first
 
-For a machine only you can reach, three settings matter:
+For a machine only you can reach, these settings matter:
 
 | Variable | Why |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Replace the local-only examples. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](/docs/self-hosting/install#1-get-the-files). |
 
-Before anyone else can reach the machine, add a token:
-`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` ([Authentication and scopes](/docs/self-hosting/authentication)).
+Compose publishes the API on `127.0.0.1` only. To let other machines reach
+it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true`, then
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`
+([Opening the API to other machines](/docs/self-hosting/authentication#opening-the-api-to-other-machines)).
 
 To accept more than Markdown and plain text, set
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` ([File formats and converters](/docs/self-hosting/converters)).

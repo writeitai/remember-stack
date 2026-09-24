@@ -219,13 +219,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare .env as the quickstart documents
+        run: |
+          # .env.example ships no secrets; Compose must refuse it.
+          if docker compose --env-file .env.example config --quiet; then
+            echo "Compose accepted .env.example without secrets" >&2
+            exit 1
+          fi
+          cp .env.example .env
+          printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+            "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+
       - name: Validate Compose model
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          docker compose --env-file .env config --quiet
+          docker compose --env-file .env config --format json | python3 -c \
+            'import json,sys; ports=json.load(sys.stdin)["services"]["api"]["ports"]; assert [p["host_ip"] for p in ports] == ["127.0.0.1"], ports'
 
       - name: Start fresh self-host deployment
         run: |
           started_at="$(date +%s)"
-          docker compose --env-file .env.example up --build --detach --wait
+          docker compose --env-file .env up --build --detach --wait
           curl --fail http://localhost:8000/operations
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
@@ -243,7 +257,7 @@ jobs:
 
       - name: Prove object-store round trip and conditional create
         run: |
-          docker compose --env-file .env.example exec -T api python - <<'PY'
+          docker compose --env-file .env exec -T api python - <<'PY'
           from uuid import uuid4
 
           from rememberstack.adapters.selfhost import MinIOObjectStore, MinIOSettings
@@ -281,7 +295,7 @@ jobs:
       - name: Prove the zero-cost full pipeline
         run: |
           running_services="$(
-            docker compose --env-file .env.example ps --status running --services
+            docker compose --env-file .env ps --status running --services
           )"
           for service in \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
@@ -297,7 +311,7 @@ jobs:
           )"
           version_id="$(
             printf '%s' "$ingested" |
-              docker compose --env-file .env.example exec -T api \
+              docker compose --env-file .env exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
           # D84/D88/D90: extract is chunk-scoped; empty input skips claim
@@ -308,7 +322,7 @@ jobs:
           # embed_claim→label→reconcile (8).
           observed=''
           for attempt in {1..60}; do
-            observed="$(docker compose --env-file .env.example exec -T postgres \
+            observed="$(docker compose --env-file .env exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc \
               "SELECT count(*), count(*) FILTER (WHERE status='succeeded'), count(DISTINCT stage) FROM processing_state WHERE target_id='$version_id'")"
             if [ "$observed" = '8|8|8' ]; then
@@ -317,10 +331,10 @@ jobs:
             sleep 1
           done
           test "$observed" = '8|8|8'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM cost_ledger')" = '0'
-          docker compose --env-file .env.example --profile operations \
+          docker compose --env-file .env --profile operations \
             run --rm projections
           readiness="$(
             curl --fail --header 'Content-Type: application/json' \
@@ -328,19 +342,19 @@ jobs:
               'http://localhost:8000/readiness'
           )"
           printf '%s' "$readiness" |
-            docker compose --env-file .env.example exec -T api python -c \
+            docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
       - name: Stage an upgrade from the prior schema
         run: |
-          docker compose --env-file .env.example stop \
+          docker compose --env-file .env stop \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
             worker-extract-claims worker-normalize-relations \
             worker-adjudicate-observations worker-adjudicate-supersession \
             worker-embed-claim worker-reconcile worker-label-relation
           # Build an empty pre-D119 fixture. Temporal/span migrations refuse
           # lossy conversion or downgrade of populated stores.
-          docker compose --env-file .env.example run --rm --no-deps -T \
+          docker compose --env-file .env run --rm --no-deps -T \
             --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
             --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'
           from alembic import command
@@ -371,18 +385,18 @@ jobs:
           )
           engine.dispose()
           PY
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT version_num FROM alembic_version')" = 'p9_31_0052'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
-          docker compose --env-file .env.example rm --force setup
+          docker compose --env-file .env rm --force setup
 
       - name: Run migrations before application processes restart
         run: |
           compose_args=(
-            --env-file .env.example
+            --env-file .env
             --file compose.yaml
             --file .github/compose/upgrade-gate.yaml
           )
@@ -418,10 +432,10 @@ jobs:
           release_gate
           wait "$compose_pid"
           trap - EXIT
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT version_num FROM alembic_version')" = 'p9_33_0054'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
           running_services="$(
@@ -438,11 +452,11 @@ jobs:
 
       - name: Show service logs after failure
         if: failure()
-        run: docker compose --env-file .env.example logs --no-color
+        run: docker compose --env-file .env logs --no-color
 
       - name: Remove quickstart deployment
         if: always()
-        run: docker compose --env-file .env.example down --volumes
+        run: docker compose --env-file .env down --volumes
 
   # Single always-present required check. Integration path jobs are soft.
   pr-gate:

@@ -59,7 +59,7 @@ export REMEMBER_API_URL=http://localhost:8000
 
 The engine listens on port 8000 inside its container
 (`REMEMBERSTACK_SELFHOST_API_PORT`, default `8000`). The Compose file
-publishes it on the host.
+publishes it on the host's loopback address, `127.0.0.1`.
 
 </Tab>
 </Tabs>
