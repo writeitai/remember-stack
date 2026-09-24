@@ -13,20 +13,22 @@ from uuid import UUID
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
-from remember.mcp_memory_tools import delete_document_tool_descriptor
-from remember.mcp_memory_tools import DELETE_DOCUMENT_TOOL_NAME
-from remember.mcp_memory_tools import handle_delete_document_tool
-from remember.mcp_memory_tools import handle_memory_write_tool
-from remember.mcp_memory_tools import memory_write_tool_descriptors
-from remember.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
+from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import INGEST_TOOL_NAME
+from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import status_error_result
+from remember.mcp_tools import tool
 from remember.models import DocumentDeletion
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
 from remember.models import ToolDescriptor
 from remember.query_sandbox.errors import SandboxRejection
-from remember.query_sandbox.mcp_tools import open_query_tool_descriptors
-from remember.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
@@ -105,13 +107,22 @@ class RemoteOperationMcpServer:
         Order is stable: write/readiness tools and ``delete_document``,
         operations from ``GET /operations``, then the seven open-query tools
         when the remote deployment mounts the open facade (same composition
-        gate as local MCP and HTTP). ``--read-only`` omits every write tool,
-        deletion included.
+        gate as local MCP and HTTP). ``--read-only`` omits every tool that
+        changes memory (``ingest`` and ``delete_document``).
         """
-        tools: list[dict[str, object]] = []
-        if not self._read_only:
-            tools.extend(memory_write_tool_descriptors())
-            tools.append(delete_document_tool_descriptor())
+        tools = render_tools_list(
+            [
+                tool(name)
+                for name in (
+                    INGEST_TOOL_NAME,
+                    PIPELINE_READINESS_TOOL_NAME,
+                    DELETE_DOCUMENT_TOOL_NAME,
+                )
+            ],
+            project=False,
+            path_ingest=True,
+            read_only=self._read_only,
+        )
         tools.extend(
             {
                 "name": descriptor.name,
@@ -121,7 +132,14 @@ class RemoteOperationMcpServer:
             for descriptor in self._assured_operation_descriptors()
         )
         if self._remote_open_query_is_composed():
-            tools.extend(open_query_tool_descriptors())
+            tools.extend(
+                render_tools_list(
+                    [tool(name) for name in OPEN_QUERY_TOOL_NAMES],
+                    project=False,
+                    path_ingest=True,
+                    read_only=self._read_only,
+                )
+            )
         return {"tools": tools}
 
     def call_tool(
@@ -134,7 +152,7 @@ class RemoteOperationMcpServer:
                 backend=None if self._read_only else self._write_backend,
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
-            if self._read_only:
+            if self._read_only and tool(name).mutates:
                 return {
                     "content": [
                         {
@@ -145,7 +163,10 @@ class RemoteOperationMcpServer:
                     "isError": True,
                 }
             return handle_memory_write_tool(
-                name=name, arguments=arguments, backend=self._write_backend
+                name=name,
+                arguments=arguments,
+                backend=self._write_backend,
+                path_ingest=True,
             )
         if name in OPEN_QUERY_TOOL_NAMES:
             try:
@@ -208,43 +229,16 @@ class RemoteOperationMcpServer:
 
 def _memory_api_error_result(*, error: MemoryApiError) -> dict[str, object]:
     """Preserve typed remote failure metadata inside an MCP error result."""
-    public_error: dict[str, object] = {
-        "status_code": error.status_code,
-        "detail": error.detail,
-    }
-    if error.code is not None:
-        public_error["code"] = error.code
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps({"error": public_error}, sort_keys=True),
-            }
-        ],
-        "isError": True,
-    }
+    return status_error_result(
+        status_code=error.status_code, detail=error.detail, code=error.code
+    )
 
 
 def _sandbox_error_result(*, error: SandboxRejection) -> dict[str, object]:
     """Preserve a public query rejection code inside an MCP error result."""
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps(
-                    {
-                        "error": {
-                            "status_code": None,
-                            "detail": error.message,
-                            "code": error.code.value,
-                        }
-                    },
-                    sort_keys=True,
-                ),
-            }
-        ],
-        "isError": True,
-    }
+    return status_error_result(
+        status_code=None, detail=error.message, code=error.code.value
+    )
 
 
 def _is_authoritative_open_query_discovery(payload: object) -> bool:

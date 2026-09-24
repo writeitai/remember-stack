@@ -43,6 +43,9 @@ from remember.errors import NotPermitted
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
 from remember.errors import Unauthenticated
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import validate_arguments
+from remember.mcp_tools import validate_saved_query_identifier
 from remember.mime import infer_upload_mime
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
@@ -459,9 +462,9 @@ class MemoryClient:
         without duplicating route knowledge in the transport loop. Arguments
         are validated strictly (same rules as local MCP) before the HTTP call.
         """
-        from remember.query_sandbox.mcp_tools import validate_open_query_arguments
-
-        args = validate_open_query_arguments(name=name, arguments=arguments)
+        if name not in OPEN_QUERY_TOOL_NAMES:
+            raise ValueError(f"unknown open-query tool {name!r}")
+        args = validate_arguments(name, arguments)
         if name == "query_sql":
             return self.query_sql(
                 sql=str(args["sql"]),
@@ -1042,7 +1045,6 @@ def _sdk_param_list(value: object) -> list[object]:
 def _saved_query_path_segment(*, value: str, field: str) -> str:
     """Validate a registry identifier before encoding it as one URL segment."""
     from remember.query_sandbox.errors import SandboxRejection
-    from remember.query_sandbox.mcp_tools import validate_saved_query_identifier
 
     try:
         validated = validate_saved_query_identifier(value=value, field=field)

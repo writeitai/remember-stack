@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Deployment info and health",
-  description: "Check which code and models a deployment is serving, probe its health, and read its cost export.",
+  description: "Check which code, models and tools a deployment is serving, probe its health, and read its cost export.",
 };
 
 # Deployment info and health
@@ -14,12 +14,11 @@ are described in [HTTP API conventions](/docs/reference/http-api).
 
 ## GET /deployment
 
-Report the code revision and the model and document bindings the deployment
-is serving. It touches no submitted work, so you can call it first to confirm
-you are talking to the build you expect.
+Report the code revision, the model and document bindings, and the MCP
+memory tools the deployment is serving. It touches no submitted work, so you
+can call it first to confirm you are talking to the build you expect.
 
-**Scope:** `write`. This route is not in the list of read routes, so a `read`
-credential is refused with `403`.
+**Scope:** `read`.
 
 ### Parameters
 
@@ -37,7 +36,18 @@ None.
     "p1_embedding": "…",
     "fact_adjudication": "…"
   },
-  "document_binding_generation": "…"
+  "document_binding_generation": "…",
+  "tools": {
+    "ingest": 1,
+    "pipeline_readiness": 1,
+    "delete_document": 1,
+    "resolve_entity": 1,
+    "claims_and_sources_context": 2,
+    "facts_context": 3,
+    "combined_context": 4,
+    "query_sql": 1,
+    "…": 1
+  }
 }
 ```
 
@@ -46,15 +56,16 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `chunk_embedding`, `context_prefix`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding`, `fact_label`, and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, and `delete_document` only when document deletion is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
-The same three fields also appear on every
+The first three fields also appear on every
 [`PipelineReadinessReport`](/docs/reference/result-types#pipelinereadinessreport).
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `403` | `credential may not perform this operation` | The credential's scope is not `write`. |
+| `403` | `credential may not perform this operation` | The credential has the `ingest` scope, which cannot read. |
 
 ### Example
 

@@ -26,9 +26,11 @@ from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 import pytest
 
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import tool as catalogue_tool
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
-from remember.query_sandbox.mcp_tools import open_query_tool_descriptors
 from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAccessError
 from rememberstack.model import ProviderCallUsage
@@ -80,7 +82,14 @@ def test_mcp_catalog_is_read_only_input_schema_only() -> None:
         }
         for descriptor in assured_tool_catalog()
     ]
-    tools.extend(cast(list[dict[str, object]], open_query_tool_descriptors()))
+    tools.extend(
+        render_tools_list(
+            [catalogue_tool(name) for name in OPEN_QUERY_TOOL_NAMES],
+            project=False,
+            path_ingest=False,
+            read_only=True,
+        )
+    )
 
     catalog = ablation._mcp_catalog(  # noqa: SLF001
         server=cast(RemoteOperationMcpServer, _FakeMcpServer(tools=tools))
@@ -104,7 +113,7 @@ def test_mcp_catalog_is_read_only_input_schema_only() -> None:
 
     assert {tool.name for tool in catalog} == {
         tool.name for tool in assured_tool_catalog()
-    } | {str(tool["name"]) for tool in open_query_tool_descriptors()}
+    } | set(OPEN_QUERY_TOOL_NAMES)
     assert all(tool.mutates is False for tool in catalog)
     assert "result_schema" not in prompt
     assert "ingest" not in {tool.name for tool in catalog}

@@ -46,7 +46,7 @@ known code at its expected status). `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. On remember.dev, create one in the console or run `remember login`. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /operations/{name}`, `GET /deployment` or `DELETE /documents/{doc_id}`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
 | `404` | `document_not_found` | `DELETE /documents/{doc_id}` for a document that does not exist or is already deleted. | Do not retry; check the id with `GET /documents`. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |

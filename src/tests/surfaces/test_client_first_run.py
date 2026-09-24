@@ -21,8 +21,8 @@ import remember.client as client_module
 from remember.credentials import ControlPlaneCredentials
 from remember.credentials import CredentialFile
 from remember.credentials import DEFAULT_CONTROL_PLANE_URL
-from remember.mcp_memory_tools import handle_memory_write_tool
-from remember.mcp_memory_tools import McpMemorySettings
+from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import McpMemorySettings
 from remember.mime import infer_upload_mime
 from remember.mime import KNOWN_UPLOAD_MIME_TYPES
 from remember.models import IngestedVersion
@@ -254,7 +254,11 @@ def test_mcp_ingest_infers_mime_in_path_and_filename_modes(
     ]
     for arguments in calls:
         result = handle_memory_write_tool(
-            name="ingest", arguments=arguments, backend=backend, settings=settings
+            name="ingest",
+            arguments=arguments,
+            backend=backend,
+            path_ingest=True,
+            settings=settings,
         )
         assert result["isError"] is False, result
     assert backend.mimes == [

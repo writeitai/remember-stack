@@ -700,6 +700,7 @@ One assured operation, as `GET /operations` returns it.
 | `build_revision` | string | Source revision the image was built from; empty when unknown. Default `""`. |
 | `model_bindings` | object of string to string | Model per pipeline role. Default `{}`. |
 | `document_binding_generation` | string, nullable | |
+| `tools` | object of string to integer | MCP memory tool name to tool version, for every tool the deployment serves. Default `{}`. |
 
 ## Request bodies
 

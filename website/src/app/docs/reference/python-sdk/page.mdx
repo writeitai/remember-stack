@@ -484,7 +484,8 @@ MemoryClient.deployment_build_info() -> DeploymentBuildInfo
 
 Returns which engine build and which model bindings the deployment is
 serving: `build_revision` (str), `model_bindings` (dict of str to str),
-`document_binding_generation` (str or `None`). The class is
+`document_binding_generation` (str or `None`), and `tools` (dict of MCP
+memory tool name to tool version). The class is
 `remember.models.DeploymentBuildInfo`; it is not in `__all__`.
 
 ```python
