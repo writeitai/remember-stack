@@ -40,7 +40,7 @@ family that depends on it.
 | A4 | Profile machinery: size rule, `computed` mode, identifying-values rules, extraction eligibility in E1/E2 | D133 §4.1–§4.5 | C-items |
 | A5 | Private store and `data_query` (sandboxed worker, `DataQueryResult/v1`) | D133 §4.6 | C-items |
 | A6 | General document metadata, `search_documents`, document filters on `search`, self-reference naming in Claimify, own-name rule in E3 | D134 | every family (each maps its metadata) |
-| A7 | Expansion: `expand` sub-worker, member records and suppressions, `counting_lineage_id`, descendant-closure delete and forget (manifest v2), whole-tree bounds | D133 §5 | D-items |
+| A7 | Expansion: `expand` sub-worker, member records, `counting_lineage_id`, delete and forget covering expanded members, whole-tree bounds | D133 §5 | D-items |
 | A8 | File cards | D133 §6 | E1 |
 
 ## B. Full-reading families (local)

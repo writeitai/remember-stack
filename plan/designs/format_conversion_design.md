@@ -4,7 +4,7 @@
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md).
 **Refines:** D38 (router), D65 (converter contract and locators), D117
 (parking scope), D132 (text-flavour routing), D54 (counting identity), D74
-(forget inventory). **Composes with:** D134
+(delete and forget cover expanded members). **Composes with:** D134
 ([document metadata and search](document_metadata_and_search_design.md)):
 every converter also returns the document's general metadata, and claims
 about a document name it.
@@ -457,7 +457,7 @@ ingest ──► convert ──► expand ──► structure ──► crossref
   out, which the bytes fix: members beyond the expansion bounds, unsafe
   paths, decorative images below the floor. What happens to each member
   afterwards is mutable state in `document_members`: `ingested`, `skipped`
-  (refused by detection, over its family's limit, or suppressed by §5.4) or
+  (refused by detection or over its family's limit) or
   `failed`, with the reason. Other members proceed when one fails.
 - **Readiness:** the parent's representation becomes current when its own
   reading completes; it does not wait for its children. The parent version
@@ -527,32 +527,17 @@ parent's.
 
 ### 5.4 Deleting and forgetting
 
-- **Normal deletion** of a parent tombstones its **descendant closure** —
-  every lineage reachable through `document_members` — in the same
-  lifecycle operation.
-- **Normal deletion of one child** tombstones that child and records a
-  **member suppression** (schema: `document_member_suppressions`: parent
-  `doc_id` and the SHA-256 of the member key — never the key itself, which
-  can contain a file name). `expand` skips suppressed keys in every later
-  expansion of that parent and records `skipped` with reason `suppressed` on
-  the member record.
-- **Hard forget (D74) applies to a whole container, never to one member.**
-  A container's original bytes contain every member, and originals are
-  immutable (D1), so a member cannot be erased while its container survives.
-  Hard forget of a root builds one forget manifest whose inventory is the
-  descendant closure, admitted behind one barrier; every lineage in it is
-  scrubbed, including private query assets. A hard-forget request naming a
-  **member** is refused with a typed error that names the root container
-  to forget instead. The consequence is stated plainly: forgetting a container
-  forgets everything in it, and D74's permanent ingest guard then refuses the
-  forgotten members' bytes too, so the rest of the container cannot simply be
-  re-ingested into the same deployment. A source that may need one item
-  erased later should be ingested as separate files, not as a container.
-- **Staged member bytes are temporary.** `expand` deletes a member's staged
-  copy from the private store as soon as the child's own original is
-  written (or the member is skipped or failed), so no second copy of a member
-  outlives expansion. The staging prefix is still in the root's forget
-  inventory, for copies left by an interrupted expansion.
+**Delete and hard forget act on the uploaded document; everything expanded
+from it is part of it.** Deleting or forgetting a container covers every
+lineage reachable from it through `document_members`, in the same
+operation, exactly as chunks and claims go with their document. A member is
+not deleted or forgotten on its own: a request naming a member is refused
+with an error naming the upload it came from. (A container's original bytes
+contain every member, so a single member could not be erased anyway while
+its container survives.)
+
+Staged member bytes are temporary: `expand` deletes a member's staged copy
+from the private store once the member is ingested, skipped or failed.
 
 ### 5.5 Bounds
 

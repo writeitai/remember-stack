@@ -1285,16 +1285,6 @@ CREATE TABLE document_members (
 );
 CREATE INDEX ix_document_members_child ON document_members (deployment_id, child_doc_id) WHERE child_doc_id IS NOT NULL;
 
--- D133 §5.4: a member deleted on its own stays deleted when its parent is expanded again. Content-free:
--- expand compares the hash of each member key.
-CREATE TABLE document_member_suppressions (
-  deployment_id   uuid NOT NULL,
-  parent_doc_id   uuid NOT NULL,
-  member_key_sha256 text NOT NULL,            -- SHA-256 of the member key; the key itself can contain a file name
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, parent_doc_id, member_key_sha256)
-);
-
 -- D134: general document metadata, one row per version, the same fields for every format family.
 CREATE TABLE document_metadata (
   deployment_id   uuid NOT NULL,
@@ -2575,9 +2565,9 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
 
 ### 13.1 Normal delete (remove a document; retain audit history)
 
-**Containers (D133 §5.4).** Deleting a lineage applies every step below to its **descendant
-closure** — every lineage reachable through `document_members` — in the same operation. Deleting one member lineage also
-writes a `document_member_suppressions` row so re-expansion does not recreate it.
+**Containers (D133 §5.4).** Deleting an uploaded container applies every step below to every
+lineage expanded from it (reachable through `document_members`), in the same operation. A
+member is not deleted on its own.
 
 1. **K tombstone first.** Before touching evidence, enqueue a `knowledge_refresh_queue` row with
    `trigger='tombstone'` carrying the doc/claim ids (found via `knowledge_artifact_evidence`), so
@@ -2794,7 +2784,7 @@ Labs."*
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
-| D133 format registry, profiles, expansion | `document_members`, `document_member_suppressions`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
+| D133 format registry, profiles, expansion | `document_members`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
 | D134 document metadata and search | `document_metadata`, `document_people` (general fields per version), `document_names` (every observed name, trigram + BM25 indexes); `claims.own_document_name_span`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 

@@ -25,15 +25,9 @@ cannot surface content unique to that lineage, and their public negative is the 
 that never existed (S55). Information independently supported by another live lineage remains: the
 operation forgets a source contribution, not every independently obtained copy of a fact.
 
-> **Amended 2026-09-23 (D133, D134).** Forgetting a **container** forgets its descendant
-> closure — every lineage reachable through `document_members` — under **one** manifest whose
-> inventory lists every lineage in the closure, admitted behind one barrier. A hard-forget
-> request naming one **member** is refused with a typed error naming its root container, because
-> the container's immutable original holds the member's bytes. Private query assets and staged member bytes are
-> inventoried with their representation. D134's `document_metadata`, `document_people` and
-> `document_names` rows are source-bearing and deleted with the lineage. Authority:
-> [`format_conversion_design.md`](format_conversion_design.md) §5.4,
-> [`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §2.
+> **Amended 2026-09-23 (D133, D134).** Forgetting an uploaded container forgets every member
+> expanded from it, under the same manifest (§2). D133's private-store objects and D134's
+> `document_metadata`, `document_people` and `document_names` rows are deleted with the lineage.
 
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**
@@ -78,25 +72,11 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 - pre-forget P3 snapshot prefixes; and
 - K artifact IDs whose body, curation sidecar, or history ever cited the lineage's evidence.
 
-**Manifest v2 (D133).** The schema version becomes 2 and adds, still content-free:
-
-- `lineages[]`: one entry per lineage in the forgotten **descendant closure** — the requested
-  `doc_id` first (`role = root`), then every lineage reachable from it through
-  `document_members` (`role = member`, with `parent_doc_id` and `member_key_sha256` — member
-  keys can contain file names, so only their hash is written). Each entry carries
-  that lineage's own source fingerprint, raw `content_hash`es, and the row IDs and object
-  keys/prefixes listed above, including private-store prefixes. Every field above that v1 scopes
-  to "the lineage" is scoped per entry. The top-level `doc_id` remains the requested lineage.
-- Hard forget is lineage-scoped **at the root container**: a request naming a container member is
-  refused with a typed error naming the root, because the root's immutable original contains the
-  member's bytes (D133 §5.4). Member suppressions come from normal deletion, not from this
-  manifest.
-
-**Restore guards for v2.** Replay treats every `lineages[]` entry exactly as v1 treats its one
-lineage: its source fingerprint and content hashes refuse re-admission of the same source, and
-its IDs and prefixes are purged from each restored store. Replay admits no `expand` work for a root in `lineages[]`, so a restored container cannot be
-re-expanded into forgotten members. Verification (the S55 canary) runs per entry. A v1 manifest remains
-valid and is read as a v2 manifest with one root entry and no members.
+**Containers (D133).** Forgetting an uploaded container forgets every member expanded from it.
+The manifest adds `member_doc_ids[]`, and each member's content hashes, row IDs and object
+prefixes join the manifest's existing lists, so replay after a restore purges members exactly
+like the container. A forget request naming a member is refused with an error naming its
+upload.
 
 IDs and hashes are retained because replay must still work when PostgreSQL has already scrubbed the
 payload columns or when only one external store was restored. The manifest is immutable and

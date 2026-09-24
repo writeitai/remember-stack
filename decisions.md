@@ -2796,10 +2796,9 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
-**Refined by D133 and D134.** Forgetting a container forgets its descendant closure under one
-manifest; hard forget of a single member is refused in favour of its root container, whose
-original holds the member's bytes.
-D134's document metadata, people and observed-name rows are deleted with their lineage.
+**Refined by D133 and D134.** Forgetting an uploaded container forgets every member expanded from
+it under the same manifest; a member is not forgotten on its own. D134's document metadata,
+people and observed-name rows are deleted with their lineage.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -6165,12 +6164,11 @@ way to become several documents.
 5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
    ordinary E0 lineages keyed by a content- or identifier-based member key (never a
    position), linked by mutable member records; the parent's immutable
-   representation lists members by stable handle and does not wait for them. A container and its members
-   count as one source (`counting_lineage_id`, refining D54); deleting or forgetting
-   a parent covers its descendant closure under one versioned (v2) manifest; hard
-   forget applies only to a root container, because its original holds every
-   member, while normal deletion of one member suppresses it in later expansions
-   (refining D74). Bounds apply to the whole tree.
+   representation lists members by stable handle and does not wait for them. A
+   container and its members count as one source (`counting_lineage_id`, refining
+   D54). Delete and hard forget act on the uploaded document and cover every member
+   expanded from it; a member is never deleted or forgotten on its own (refining
+   D74). Bounds apply to the whole tree.
 6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
 7. D133 binds the framework, not individual formats. The family table is the
    target coverage. **Each family is delivered one at a time through its own
