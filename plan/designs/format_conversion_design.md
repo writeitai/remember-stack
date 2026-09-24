@@ -504,23 +504,31 @@ parent's.
   is a new child lineage (§5.2). A member absent from the new parent version
   has its child lineage retired as absent.
 
-### 5.4 Forgetting
+### 5.4 Deleting and forgetting
 
 - **Normal deletion** of a parent tombstones its **descendant closure** —
   every lineage reachable through `document_members` — in the same
   lifecycle operation.
-- **Hard forget (D74)** of a parent builds one forget manifest whose
-  inventory is the descendant closure, admitted behind one barrier;
-  every child is scrubbed like the parent, including private query assets
-  and staged member objects.
-- **Forgetting one child** records a **member suppression** (schema:
-  `document_member_suppressions`: parent `doc_id` and the SHA-256 of the
-  member key — never the key itself, which can contain a file name). `expand`
-  skips suppressed keys in every later expansion of that parent — including
-  re-expansion of an unchanged parent version after restore — and records
-  `skipped` with reason `suppressed` on the member record. The suppression is
-  content-free (a hash, not a name or bytes) and is carried in the forget manifest, so
-  restore replay re-creates it (`hard_forget_design.md` §2).
+- **Normal deletion of one child** tombstones that child and records a
+  **member suppression** (schema: `document_member_suppressions`: parent
+  `doc_id` and the SHA-256 of the member key — never the key itself, which
+  can contain a file name). `expand` skips suppressed keys in every later
+  expansion of that parent and records `skipped` with reason `suppressed` on
+  the member record.
+- **Hard forget (D74) applies to a whole container, never to one member.**
+  A container's original bytes contain every member, and originals are
+  immutable (D1), so a member cannot be erased while its container survives.
+  Hard forget of a root builds one forget manifest whose inventory is the
+  descendant closure, admitted behind one barrier; every lineage in it is
+  scrubbed, including private query assets. A hard-forget request naming a
+  **member** is refused with a typed error that names the root container
+  to forget instead. To keep the rest of a container, the caller forgets the
+  root and ingests again what should remain.
+- **Staged member bytes are temporary.** `expand` deletes a member's staged
+  copy from the private store as soon as the child's own original is
+  written (or the member is skipped or failed), so no second copy of a member
+  outlives expansion. The staging prefix is still in the root's forget
+  inventory, for copies left by an interrupted expansion.
 
 ### 5.5 Bounds
 
