@@ -391,13 +391,14 @@ You need Docker with Compose and an
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
-printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The `printf` line generates the object-store credentials; Compose refuses
+The `printf` line generates the database password and the object-store
+credentials; Compose refuses
 to start without them. The first start builds the PostgreSQL image and runs
 migrations. When `docker compose ps` shows `api` as healthy, the endpoint
 is `http://localhost:8000`. No token is needed by default, because the API
@@ -6180,12 +6181,13 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
-printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
 ```
 
-The last command generates the object-store credentials; `.env.example`
-ships none, and Compose refuses to start without them.
+The last command generates the database password and the object-store
+credentials; `.env.example` ships none, and Compose refuses to start
+without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -6205,7 +6207,7 @@ values into `compose.yaml`. These variables have no default in
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
-| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials. PostgreSQL creates them on first start. |
+| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
 | `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
 Generate the deployment id rather than keeping the example value:
@@ -6222,10 +6224,6 @@ refuses to run if they differ. A different id is a different
 deployment: tokens bound to the old id stop working and the memory
 already stored belongs to the old id. See
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
-
-The example PostgreSQL password in `.env.example` is marked local-only.
-PostgreSQL publishes no host port, but replace it anyway before the first
-start of any deployment you keep.
 
 ## 3. Start the stack
 
@@ -6478,8 +6476,7 @@ For a machine only you can reach, these settings matter:
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | Replace the local-only example. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
 
 Compose publishes the API on `127.0.0.1` only. To let other machines reach
 it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
@@ -15484,7 +15481,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 

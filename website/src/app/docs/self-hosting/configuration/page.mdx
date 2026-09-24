@@ -114,8 +114,7 @@ For a machine only you can reach, these settings matter:
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](/docs/self-hosting/install#1-get-the-files). |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | Replace the local-only example. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](/docs/self-hosting/install#1-get-the-files). |
 
 Compose publishes the API on `127.0.0.1` only. To let other machines reach
 it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and

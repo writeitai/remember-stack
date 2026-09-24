@@ -27,14 +27,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare .env as the quickstart documents
         run: |
-          # .env.example ships no object-store credentials; Compose must refuse it.
+          # .env.example ships no secrets; Compose must refuse it.
           if docker compose --env-file .env.example config --quiet; then
-            echo "Compose accepted .env.example without object-store credentials" >&2
+            echo "Compose accepted .env.example without secrets" >&2
             exit 1
           fi
           cp .env.example .env
-          printf 'REMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-            "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+          printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
+            "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
       - name: Validate Compose model
         run: |
           docker compose --env-file .env config --quiet
