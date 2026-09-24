@@ -404,7 +404,9 @@ Writes each coding agent's MCP entry for Remember.
 `--cloud` asks the issuer for its MCP endpoint (`remember_mcp_endpoint` in
 its metadata) and points each agent at it. With no stored key and no
 `REMEMBER_API_KEY`, it runs [`remember login`](#remember-login) first,
-except with `--headless` or `--dry-run`. It refuses `--api-key`,
+except with `--headless` or `--dry-run`. Only a key minted by the selected
+issuer counts: a stored key from elsewhere (or a self-hosted entry) is
+replaced by that login, and a `REMEMBER_API_KEY` from elsewhere is refused. It refuses `--api-key`,
 `--api-url` and `--mcp-url`: a remember.dev key comes from `remember login`
 or `REMEMBER_API_KEY`. With neither `--cloud` nor a self-hosted flag, on an
 interactive terminal, the command asks which backend to use; remember.dev
@@ -458,8 +460,8 @@ refuses; run `remember logout` first.</Cloud>
 
 </Callout>
 
-Existing configuration files must be valid JSON or TOML; otherwise that
-agent is not configured and the command exits with status 1. A failure in
+Existing configuration files must be valid JSON or TOML and must not be
+symbolic links; otherwise that agent is not configured and the command exits with status 1. A failure in
 one agent does not stop the others. Running the command again with the same
 flags leaves the files unchanged.
 

@@ -297,7 +297,15 @@ def codex_support() -> RemoteSupport:
 
 
 def _write_if_changed(path: Path, text: str) -> None:
-    """Replace ``path`` atomically, keeping its mode; skip when unchanged."""
+    """Replace ``path`` atomically, keeping its mode; skip when unchanged.
+
+    A symbolic link is refused rather than replaced by a file or followed.
+    """
+    if path.is_symlink():
+        raise RuntimeError(
+            f"{path} is a symbolic link; setup does not write through it. "
+            "Add the entry to the file it points to by hand, or replace the link"
+        )
     if path.is_file() and path.read_text(encoding="utf-8") == text:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -521,6 +529,13 @@ def configure_codex(
         ) from error
     block = codex_block(entry)
     kept = _CODEX_TABLE.sub("", existing).rstrip()
+    if SERVER_NAME in tomllib.loads(kept).get("mcp_servers", {}):
+        # Spelled some other way (a quoted name, an inline or dotted table):
+        # appending would define it twice.
+        raise RuntimeError(
+            f"{config_file} defines mcp_servers.{SERVER_NAME} in a form setup "
+            f"cannot replace; edit [mcp_servers.{SERVER_NAME}] manually"
+        )
     content = f"{kept}\n\n{block}" if kept else block
     try:
         tomllib.loads(content)
@@ -753,12 +768,24 @@ def _hosted_plan(
     connection = resolve_connection(issuer=getattr(args, "issuer", None))
     issuer = normalize_issuer(connection.issuer or DEFAULT_ISSUER)
     print(f"Backend: {issuer}")
+    claims = connection.claims
+    has_key = claims is not None and claims.iss.strip().rstrip("/") == issuer
+    if connection.key is not None and not has_key and connection.key_source != "file":
+        raise ValueError(
+            f"{KEY_VARIABLE} is not a key from {issuer}; unset it, or pass the "
+            "issuer that minted it with --issuer"
+        )
     with httpx.Client(timeout=30.0, follow_redirects=False) as http:
-        if connection.key is None:
+        # A stored key for another issuer, or a self-hosted one, does not count.
+        if not has_key:
             if headless:
-                print(f"  No key stored; the agents read it from ${KEY_VARIABLE}.")
+                print(
+                    f"  No key from this issuer is stored; the agents read it from ${KEY_VARIABLE}."
+                )
             elif dry_run:
-                print("[dry-run] Would run `remember login` first (no key stored)")
+                print(
+                    "[dry-run] Would run `remember login` first (no key from this issuer is stored)"
+                )
             else:
                 print("  Not signed in; running `remember login` first.")
                 login(issuer=issuer, http=http)
@@ -807,8 +834,10 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     for harness in harnesses:
         try:
             ok = _configure(harness, target_dir=target_dir, plan=plan, dry_run=dry_run)
-        except RuntimeError as error:
-            print(f"error: {error}", file=sys.stderr)
+        except (RuntimeError, OSError, ValueError) as error:
+            # ValueError covers unreadable text (UnicodeDecodeError) and
+            # TOML/JSON parse errors.
+            print(f"error: {_LABELS[harness]}: {error}", file=sys.stderr)
             ok = False
         if not ok:
             failed.append(_LABELS[harness])

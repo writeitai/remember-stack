@@ -442,3 +442,154 @@ def test_self_hosted_flag_conflicts(
     assert main([*base, "--self-hosted", "--issuer", ISSUER]) == 1
     assert "--issuer is for" in capsys.readouterr().err
     assert not (tmp_path / ".cursor").exists()
+
+
+# --- review fixes ------------------------------------------------------------------
+
+
+def test_engine_a_entry_never_sends_engine_b_stored_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setup for A, then for B: A's entry (REMEMBER_API_URL=A) must not carry
+    B's stored key to A; `remember mcp` engine mode refuses it."""
+    from io import StringIO
+
+    from remember.mcp_engine import serve_stdio
+
+    engine_a, engine_b = "http://127.0.0.1:8001", "http://127.0.0.1:8002"
+    base = ["setup", "--agent", "cursor"]
+    project_a, project_b = tmp_path / "a", tmp_path / "b"
+    assert (
+        main(
+            [
+                *base,
+                "--api-url",
+                engine_a,
+                "--api-key",
+                "key-a",
+                "--dir",
+                str(project_a),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                *base,
+                "--api-url",
+                engine_b,
+                "--api-key",
+                "key-b",
+                "--dir",
+                str(project_b),
+            ]
+        )
+        == 0
+    )
+    entry = json.loads((project_a / ".cursor" / "mcp.json").read_text())
+    monkeypatch.setenv(
+        "REMEMBER_API_URL", entry["mcpServers"]["remember"]["env"]["REMEMBER_API_URL"]
+    )
+
+    sent: list[httpx.Request] = []
+    real_client = httpx.Client
+
+    def patched(*args: object, **kwargs: object) -> httpx.Client:
+        def handler(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+            return httpx.Response(200, json={"build_revision": "x", "tools": []})
+
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", patched)
+    output = StringIO()
+    lines = "\n".join(
+        json.dumps(message)
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
+    )
+    monkeypatch.setattr(
+        "remember.mcp_engine.serve_stdio",
+        lambda *, server: serve_stdio(
+            server=server, input_stream=StringIO(lines + "\n"), output_stream=output
+        ),
+    )
+    main(["mcp"])
+    assert all(
+        "key-b" not in request.headers.get("Authorization", "") for request in sent
+    )
+    assert "is not sent to" in output.getvalue()
+
+
+def test_cloud_with_a_foreign_environment_key_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    issuer: FakeIssuer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("REMEMBER_API_KEY", make_key(iss="https://other.test"))
+    argv = ["setup", "--cloud", "--issuer", ISSUER, "--agent", "cursor"]
+    assert main([*argv, "--dir", str(tmp_path)]) == 1
+    assert "is not a key from https://issuer.test" in capsys.readouterr().err
+    monkeypatch.setenv("REMEMBER_API_KEY", "a-shared-secret")
+    assert main([*argv, "--dir", str(tmp_path)]) == 1
+    assert not (tmp_path / ".cursor").exists()
+
+
+def test_cloud_with_an_unrelated_stored_key_signs_in(
+    tmp_path: Path, issuer: FakeIssuer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stored self-hosted entry is no key for the issuer: login runs."""
+    write_credentials(
+        credentials=StoredCredentials(
+            version=2, api_url="http://127.0.0.1:8000", key=SecretStr("engine-secret")
+        )
+    )
+    argv = ["setup", "--cloud", "--agent", "cursor", "--dir", str(tmp_path)]
+    assert main([*argv, "--issuer", ISSUER]) == 0
+    assert "ABCD-EFGH" in capsys.readouterr().out
+    stored = load_credentials()
+    assert stored is not None and stored.issuer == ISSUER
+
+
+def test_one_unreadable_harness_file_does_not_stop_the_others(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor" / "mcp.json").write_bytes(b"\xff\xfe not utf-8")
+    (tmp_path / ".agents").mkdir()
+    assert main(["setup", "--self-hosted", "--dir", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "Cursor" in err and "Traceback" not in err
+    assert (tmp_path / ".agents" / "mcp_config.json").is_file()
+
+
+def test_a_symlinked_config_file_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "dotfiles-mcp.json"
+    target.write_text('{"mcpServers": {}}', encoding="utf-8")
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor" / "mcp.json").symlink_to(target)
+    argv = ["setup", "--self-hosted", "--agent", "cursor", "--dir", str(tmp_path)]
+    assert main(argv) == 1
+    assert "symbolic link" in capsys.readouterr().err
+    assert target.read_text(encoding="utf-8") == '{"mcpServers": {}}'
+    assert (tmp_path / ".cursor" / "mcp.json").is_symlink()
+
+
+def test_codex_table_in_another_spelling_is_not_duplicated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / ".codex" / "config.toml"
+    config.parent.mkdir()
+    original = '[mcp_servers."remember"]\ncommand = "/stale"\n'
+    config.write_text(original, encoding="utf-8")
+    argv = ["setup", "--self-hosted", "--agent", "codex", "--dir", str(tmp_path)]
+    assert main(argv) == 1
+    assert "edit [mcp_servers.remember] manually" in capsys.readouterr().err
+    assert config.read_text(encoding="utf-8") == original

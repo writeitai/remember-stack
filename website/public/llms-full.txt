@@ -14642,8 +14642,8 @@ The exact files and their content are listed in
 address and the key from `--api-key` (or no key). Afterwards every command
 talks to that engine.
 
-Existing configuration files must be valid JSON or TOML; otherwise that
-agent is not configured and the command exits with status 1. A failure in
+Existing configuration files must be valid JSON or TOML and must not be
+symbolic links; otherwise that agent is not configured and the command exits with status 1. A failure in
 one agent does not stop the others. Running the command again with the same
 flags leaves the files unchanged.
 

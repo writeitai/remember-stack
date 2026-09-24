@@ -304,7 +304,7 @@ def test_setup_handles_malformed_cursor_json_gracefully(
     assert exit_code == 1
 
     captured = capsys.readouterr()
-    assert "error: Existing" in captured.err
+    assert "error: Cursor: Existing" in captured.err
     assert "contains invalid JSON" in captured.err
     assert "Traceback" not in captured.err
 
