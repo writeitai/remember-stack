@@ -2798,8 +2798,7 @@ D66.
 
 **Refined by D133 and D134.** Forgetting a container forgets its descendant closure under one
 manifest; forgetting one member records a content-free suppression so re-expansion skips it.
-Forgetting a document removes its document-subject binding and the aliases it sourced; a
-surviving document entity is renamed from its remaining aliases or retired.
+D134's document metadata and people rows are scrubbed with their lineage.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -4192,9 +4191,9 @@ D20, or D21.
 
 ## D96. No entity types; profile is observation prose
 
-**Refined by D134.** A document can be the subject of a claim: a document entity
-is an ordinary untyped entity whose identity comes from a document-subject binding
-to its lineage rather than from the name cascade. No entity type is introduced.
+**Refined by D134.** A document's own name (its title, file name, or file name without
+extension) is not minted or resolved as an entity; a claim naming its own document keeps the
+name as text only. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -5899,10 +5898,6 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
-**Amended by D134.** Every Selection and Claimify request also receives an engine-supplied
-`DOCUMENT` metadata passage and a self card for the document being processed, outside the
-caps. A claim citing it binds to the document entity without the resolution cascade — the single exception to
-this entry's rule that choosing a card never bypasses resolution.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6193,34 +6188,50 @@ event digest is a documented alternative with an adoption trigger.
 [analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
 [delivery order](plan/plans/format_coverage_delivery.md).
 
-## D134. A document can be the subject of a claim
+## D134. General document metadata, document search, and self-references that name the document
 
-**Status:** accepted. **Date:** 2026-09-23.
+**Status:** accepted. **Date:** 2026-09-24.
 
-**Context.** Profiles, file cards and self-referring prose ("this report…") produce
-claims about the file itself. Provenance says where a claim came from, not what it
-is about, and a file name is not an identity (collisions, renames).
+**Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
+who and when ("emails from Alice"), and for information limited to certain
+files ("everything about Project X from Alice's emails"). Every derived record
+already links to its document, but nothing about a document — author,
+recipients, dates, title — is stored in a filterable form, `GET /documents`
+only pages by status, retrieval has no document search or document filters,
+and a claim like "this report summarizes the 2025 audit" does not say which
+report.
 
-**Decision.** `documents.document_entity_id` becomes a unique, one-to-one
-**document-subject binding**, replacing the D18-era typed-Document bridge. The
-entity is minted atomically (documents row lock) the first time a claim takes the
-document as its subject, with file name, title and path segment as
-`document_metadata` aliases tracked per contributing document. Every Selection and
-Claimify request gets an engine-supplied `DOCUMENT` metadata passage and self card
-(supporting only, never origin; its tokens count as grounded context). Claimify
-marks a claim whose subject is the document with `document_is_subject`; the gate
-validates it and persists `subject_is_document`. The resolver binds only a
-**subject** reference matching the document's names to the document entity,
-without the cascade (tier `document_self`); objects never bind this way. Two bound entities never merge. Mentions from
-other documents resolve normally with no auto-accept. Identical bytes under a new
-name are a metadata observation that adds aliases. Hard forget removes the binding
-and the document's aliases; a surviving entity is renamed or retired.
+**Decision.**
+1. **General document metadata.** Every version gets the same fields whatever
+   its format — `file_name`, `title`, `authors`, `recipients` (people as name
+   plus address or handle), `created_at`, `modified_at`, `language`,
+   `thread_ref`, `family` — with per-field provenance (source or connector).
+   Each family design maps its native fields onto them (an email's From is
+   `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
+   `document_metadata` and `document_people`.
+2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
+   MCP: filters on the general fields, a query matched on names (file name,
+   title, path) and content (profile overview or top-level summary plus best
+   chunk), and results carrying metadata and access handles. Ambiguous people
+   matches are listed, not guessed.
+3. **Document filters on `search`** for chunks, claims (joined through their
+   origin chunk, D80) and facts (through supporting claims), applied before
+   the top-k cut.
+4. **Self-references name the document.** When a passage refers to its own
+   document, Claimify writes the title (else file name) from the extraction
+   header, which gains the file name; the words are header `added_context`.
+   Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips any reference equal to
+   the document's own names (refining D96's eligibility rule), so same-named
+   files never merge.
 
-**Alternatives and consequences.** File name in text only, provenance only,
-minting an entity for every document at ingest, resolving self-references by
-name, and binding on a citation alone were rejected (design §Alternatives).
-Amends D122 for the self passage and card only and refines D96 without
-introducing types.
+**Alternatives and consequences.** Making documents entities bound to their
+lineage (the first D134 draft) was rejected as heavier than the questions
+require and kept as a proposal with an adoption trigger. Per-family metadata
+only, metadata only as Markdown text, appending the file name to every claim,
+and resolving file names as entities were rejected (design §7). Metadata values
+are what sources declare, not verified facts.
 
-**Authority:** [design](plan/designs/document_subject_entity_design.md),
+**Authority:** [design](plan/designs/document_metadata_and_search_design.md),
+[proposal not chosen](plan/proposals/document_subject_entities.md),
 [analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.

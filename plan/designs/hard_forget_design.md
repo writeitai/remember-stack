@@ -30,11 +30,10 @@ operation forgets a source contribution, not every independently obtained copy o
 > inventory lists every lineage in the closure, admitted behind one barrier. Forgetting one
 > **member** writes a content-free `document_member_suppressions` key so re-expanding the
 > parent (including after restore) skips it. Private query assets and staged member bytes are
-> inventoried with their representation. A **document entity** loses its binding and every
-> `document_metadata` alias sourced from the forgotten lineage; if claims from other lineages
-> keep it alive, its canonical name is recomputed from the surviving aliases (or it is retired
-> when none remain). Authority: [`format_conversion_design.md`](format_conversion_design.md) §5.4,
-> [`document_subject_entity_design.md`](document_subject_entity_design.md) §8.
+> inventoried with their representation. D134's `document_metadata` and `document_people` rows
+> are source-bearing and scrubbed with the lineage. Authority:
+> [`format_conversion_design.md`](format_conversion_design.md) §5.4,
+> [`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §2.
 
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**
@@ -79,7 +78,7 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 - pre-forget P3 snapshot prefixes; and
 - K artifact IDs whose body, curation sidecar, or history ever cited the lineage's evidence.
 
-**Manifest v2 (D133, D134).** The schema version becomes 2 and adds, still content-free:
+**Manifest v2 (D133).** The schema version becomes 2 and adds, still content-free:
 
 - `lineages[]`: one entry per lineage in the forgotten **descendant closure** — the requested
   `doc_id` first (`role = root`), then every lineage reachable from it through
@@ -90,10 +89,6 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
   to "the lineage" is scoped per entry. The top-level `doc_id` remains the requested lineage.
 - `member_suppressions[]`: `(parent_doc_id, member_key_sha256)` pairs. A request to forget one member
   lineage records its own pair here, so that the parent is never re-expanded into it.
-- `alias_entities[]`: the IDs of entities that held `document_metadata` alias contributions from
-  any lineage in `lineages[]`. Names are never written to the manifest. Replay deletes every
-  contribution whose `source_doc_id` is in `lineages[]` from those entities and rebuilds their
-  alias rows from what survives, even when the restored database predates the scrub.
 
 **Restore guards for v2.** Replay treats every `lineages[]` entry exactly as v1 treats its one
 lineage: its source fingerprint and content hashes refuse re-admission of the same source, and

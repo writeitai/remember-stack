@@ -40,8 +40,8 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 
 For which file formats the engine accepts and what it produces from each — the format
 registry, full/profile/expand/card postures, `data_query`, child documents — see
-[D133 format conversion](designs/format_conversion_design.md); for claims whose subject
-is a file, [D134 document subject entities](designs/document_subject_entity_design.md).
+[D133 format conversion](designs/format_conversion_design.md); for finding files and
+filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
 The [analysis](analysis/format_coverage_and_conversion_architecture.md) records the
 current coverage and rejected alternatives; the
 [delivery order](plans/format_coverage_delivery.md) sequences the work.

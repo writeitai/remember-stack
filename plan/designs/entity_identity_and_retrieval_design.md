@@ -584,6 +584,13 @@ James’s Unity strategy game). Prefer dropping the relation or
 observation over inventing a referent. Protocol/boilerplate lines
 (adapter banners, “X is a participant”) are the same class.
 
+**The source document's own name (D134).** A reference whose normalized name
+equals the current document's title, file name, or file name without
+extension is not minted or resolved; the claim keeps the name as text. This
+stops two same-named files from merging through a name entity. Mentions of
+*other* files by name resolve normally. Authority:
+[`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §6.
+
 This is extract eligibility, not a new mentions subsystem.
 
 ### 4.4 Aliases
@@ -622,14 +629,6 @@ lemma to make an exception for.
 ---
 
 ## 5. No entity types (amends D18 typing and domain/range)
-
-> **D134 (documents as subjects).** A document can be the subject of a claim. Its
-> entity is an ordinary untyped entity; what makes it a document entity is a one-to-one
-> document-subject binding (`documents.document_entity_id`), and a claim citing the
-> document's engine-supplied `DOCUMENT` passage binds to it without the §3 cascade (tier
-> `document_self`). Two bound entities never merge. Mentions of the file from other documents resolve
-> through the cascade as usual. Authority:
-> [`document_subject_entity_design.md`](document_subject_entity_design.md).
 
 There is **no** class on the entity, **no** hats table, **no** extract
 type, **no** domain/range over kinds.

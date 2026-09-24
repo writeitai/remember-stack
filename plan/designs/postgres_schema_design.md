@@ -205,8 +205,8 @@ CREATE TYPE ontology_status        AS ENUM ('active','deprecated');
 CREATE TYPE scope_interest_kind    AS ENUM ('entity_type','predicate','metadata','keyword');
 
 CREATE TYPE entity_status          AS ENUM ('active','merged','retired');
-CREATE TYPE alias_provenance       AS ENUM ('source','llm_canonical','document_metadata'); -- D134: document_metadata = a document entity's file name/title/path
-CREATE TYPE resolution_tier        AS ENUM ('T0','T1','T2','T3','T4_small','T4_frontier','human','document_self'); -- D134: document_self = bound from provenance, no cascade -- D100 keeps T4_small for the configured simple-model seat; frontier is historical
+CREATE TYPE alias_provenance       AS ENUM ('source','llm_canonical');
+CREATE TYPE resolution_tier        AS ENUM ('T0','T1','T2','T3','T4_small','T4_frontier','human'); -- D100 keeps T4_small for the configured simple-model seat; frontier is historical
 CREATE TYPE decision_actor         AS ENUM ('auto','human');
 CREATE TYPE resolution_exclusion_basis AS ENUM ('supported_different','human','legacy_binary');
 
@@ -798,24 +798,6 @@ CREATE INDEX ix_aliases_lemma_dm    ON aliases USING gin (daitch_mokotoff(normal
 CREATE INDEX ix_aliases_lemma_exact ON aliases (deployment_id, normalized_lemma);  -- T0 exact match
 CREATE INDEX ix_aliases_entity      ON aliases (entity_id);
 
--- D134: which document contributed each document_metadata alias, with its exact spelling. The
--- aliases row exists while at least one contribution survives, and its alias_text is rebuilt from
--- the surviving contributions (the earliest first_seen), so forgetting one document removes its
--- contribution AND any spelling only it supplied, even when two documents gave a merged entity
--- the same normalized name.
-CREATE TABLE alias_contributions (
-  deployment_id    uuid NOT NULL,
-  entity_id        uuid NOT NULL,
-  normalized_lemma text NOT NULL,
-  provenance       alias_provenance NOT NULL,
-  source_doc_id    uuid NOT NULL,              -- the contributing lineage
-  alias_text       text NOT NULL,              -- this source's exact spelling
-  first_seen       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (deployment_id, entity_id, normalized_lemma, provenance, source_doc_id),
-  FOREIGN KEY (deployment_id, entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE CASCADE
-);
-CREATE INDEX ix_alias_contributions_doc ON alias_contributions (deployment_id, source_doc_id);
-
 -- generic_identifier_guard was REMOVED by D103 (migration p9_22_0043). It flagged any lemma
 -- linking >= 2 entities and that flag outranked match score in T1/T2 blocking, so a near-exact
 -- hit on a shared name lost to a barely-matching unshared one. It also counted entity rows
@@ -1121,7 +1103,7 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the lineage's current snapshot (real FK added after that table)
-  document_entity_id uuid,                      -- D134 document-subject binding: the entity that IS this document, minted on first self-subject claim (see note below); one-to-one
+  document_entity_id uuid,                      -- OPTIONAL bridge to the Document-typed entity (see note below); composite FK
   counting_lineage_id uuid NOT NULL,           -- D133/D54: write-once confirmation-counting identity — doc_id for a root, the root container's counting_lineage_id for a container member
   title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
@@ -1129,7 +1111,6 @@ CREATE TABLE documents (
   deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
   UNIQUE (deployment_id, doc_id),               -- composite-FK target (tenancy isolation, §0)
-  UNIQUE (deployment_id, document_entity_id),   -- D134: one entity per document, one document per entity (NULLs do not collide)
   FOREIGN KEY (deployment_id, document_entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE SET NULL (document_entity_id)
 );
 COMMENT ON TABLE documents IS
@@ -1316,16 +1297,69 @@ CREATE TABLE document_member_suppressions (
   created_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (deployment_id, parent_doc_id, member_key_sha256)
 );
+
+-- D134: general document metadata, one row per version, the same fields for every format family.
+CREATE TABLE document_metadata (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  doc_id          uuid NOT NULL,               -- denormalized lineage for filters
+  family          text NOT NULL,               -- D133 format family
+  file_name       text,                        -- as observed for this version
+  title           text,
+  created_at      timestamptz,                 -- source-declared created/sent
+  modified_at     timestamptz,                 -- source-declared last modified
+  language        text,
+  thread_ref      text,                        -- opaque conversation/thread key
+  provenance      jsonb NOT NULL DEFAULT '{}', -- field → source | connector
+  extra           jsonb NOT NULL DEFAULT '{}', -- family-specific fields; returned, not a general filter
+  extractor_version text NOT NULL,             -- the converter/connector mapping that produced it
+  PRIMARY KEY (deployment_id, version_id),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_metadata_family  ON document_metadata (deployment_id, family, created_at DESC);
+CREATE INDEX ix_document_metadata_thread  ON document_metadata (deployment_id, thread_ref) WHERE thread_ref IS NOT NULL;
+CREATE INDEX ix_document_metadata_names   ON document_metadata USING gin ((coalesce(file_name,'') || ' ' || coalesce(title,'')) gin_trgm_ops);
+
+-- D134: the people in authors/recipients, one row each, for filtering by name or address.
+CREATE TABLE document_people (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  role            text NOT NULL CHECK (role IN ('author','recipient')),
+  ordinal         integer NOT NULL,
+  display_name    text,
+  address         text,                        -- email address or handle
+  normalized_name text,                        -- lower case, unaccented, whitespace collapsed
+  normalized_address text,
+  provenance      text NOT NULL CHECK (provenance IN ('source','connector')),
+  CHECK (display_name IS NOT NULL OR address IS NOT NULL),
+  PRIMARY KEY (deployment_id, version_id, role, ordinal),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
+CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
+
+-- D134: one search row per live document for search_documents' content channel (D94 sidecar style:
+-- derived, rebuildable, one current embedding).
+CREATE TABLE document_search (
+  deployment_id   uuid NOT NULL,
+  doc_id          uuid NOT NULL,
+  version_id      uuid NOT NULL,               -- the current version
+  overview_text   text NOT NULL,               -- profile overview (D133 §4.2) or top-level summary (D39)
+  embedding       vector,                      -- one current embedding of overview_text
+  PRIMARY KEY (deployment_id, doc_id)
+);
 ```
 
-> **Document-subject binding (D134; replaces the D18-era Document-typed bridge).** Entity types
-> no longer exist (D96). `documents.document_entity_id` now means exactly *this entity is this
-> document*: it is set, one-to-one, the first time a claim from the document takes the document as
-> its subject (`claims.subject_is_document`), inside one transaction holding the `documents` row
-> lock, so concurrent minters converge on one entity. Two entities bound to different documents
-> never merge. A cited-but-not-ingested document is an ordinary name entity with no binding.
-> `document_entity_bindings` (above) is unrelated: D102's per-document name anchors.
-> Authority: `document_subject_entity_design.md`.
+> **Document ↔ entity bridge (D18, Codex review).** D18 makes `Document ⊂ CreativeWork` a core
+> *entity* type with predicates `authored: Person → Document` and `about: Document → any`, so
+> documents participate in relations as entities. The corpus's *ingested files* and the *registry's
+> Document entities* are distinct but linkable: `documents.document_entity_id` points an ingested
+> file at its registry entity **when one exists**. Policy: an ingested document gets a Document
+> entity when it is referenced as the subject/object of a relation (e.g. "Alice authored this
+> report") or by a deployment-configured default; a Document entity may also exist for a
+> *cited-but-not-ingested* paper (created from a `document_crossrefs` row with no `to_doc_id`),
+> which has a registry entity but no `documents` row. So the bridge is nullable in both directions
+> and neither side is mandatory.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1548,7 +1582,6 @@ CREATE TABLE claims (
   added_context   jsonb NOT NULL DEFAULT '[]', -- [{text, source_kind: header|neighbour|prefix|hint, source_ref}] — each substring decontextualization ADDED (D32 layer 2)
   temporal_class  claim_temporal_class,        -- static | dynamic | atemporal — the "temporally classified" requirement (see reconciliation note)
   is_attributed   boolean NOT NULL DEFAULT false, -- preserves a "X said Y" attribution (entailment rule: entails "X said Y", not "Y" — D32)
-  subject_is_document boolean NOT NULL DEFAULT false, -- D134: validated document_is_subject — the claim's subject is this document; only its matching SUBJECT reference binds to the document entity
   -- grounding verdicts (D32). Deterministic layers 1-2 are an ACCEPTANCE GATE (must be true here);
   -- the LLM layers 3-4 are advisory/sampled and may be false on a kept-but-borderline claim:
   anchor_ok       boolean NOT NULL,            -- layer 1: source_span is a real in-bounds slice of the chunk (deterministic)
@@ -2542,8 +2575,7 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
 ### 13.1 Normal delete (remove a document; retain audit history)
 
 **Containers (D133 §5.4).** Deleting a lineage applies every step below to its **descendant
-closure** — every lineage reachable through `document_members` — in the same operation, and
-clears the lineage's `document_entity_id` binding (D134). Deleting one member lineage also
+closure** — every lineage reachable through `document_members` — in the same operation. Deleting one member lineage also
 writes a `document_member_suppressions` row so re-expansion does not recreate it.
 
 1. **K tombstone first.** Before touching evidence, enqueue a `knowledge_refresh_queue` row with
@@ -2614,10 +2646,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
-  `documents.document_entity_id` binding, every `alias_contributions` row whose `source_doc_id` is
-  the lineage and each `aliases` row left with none (D134 — a surviving document entity is renamed
-  from its remaining aliases, or retired when none remain), the lineage's `document_members` rows
-  and private-store objects (D133), and
+  lineage's `document_members` rows, `document_metadata` and `document_people` rows (D134) and
+  private-store objects (D133), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
@@ -2763,7 +2793,7 @@ Labs."*
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
 | D133 format registry, profiles, expansion | `document_members`, `document_member_suppressions`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
-| D134 documents as subjects | `documents.document_entity_id` (unique binding); `alias_contributions` + `document_metadata` provenance; `resolution_tier` `document_self`; `claims.subject_is_document` |
+| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version); `document_search` index; search filters join them |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---

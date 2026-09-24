@@ -5,7 +5,9 @@
 **Refines:** D38 (router), D65 (converter contract and locators), D117
 (parking scope), D132 (text-flavour routing), D54 (counting identity), D74
 (forget inventory). **Composes with:** D134
-([document subject entities](document_subject_entity_design.md)).
+([document metadata and search](document_metadata_and_search_design.md)):
+every converter also returns the document's general metadata, and claims
+about a document name it.
 Numbers below are starting points to measure, not committed constants.
 
 **What this design binds, and what it deliberately does not.** It binds the
@@ -32,7 +34,8 @@ the same way, e.g. "spreadsheet" covers XLSX, XLS and ODS). Each family has
 one **posture** — what the engine produces from it — and a converter that
 implements that posture through the D65 contract (`document.md` +
 `source_map` + `derived_assets` + `manifest`, extended by §5.1 with member
-descriptors for expanding families).
+descriptors for expanding families and by D134 with the document's general
+metadata).
 
 | Posture | What `document.md` holds | Used for |
 |---|---|---|
@@ -299,6 +302,8 @@ records full prompts records them there.
 
 Claims come from `profile_heading`, `profile_overview`, `profile_values` and
 `profile_formulas` ranges, and **not** from `profile_structure` ranges.
+Claims about the file itself name it ("The workbook Q3_sales_2025.xlsx
+covers…", D134 §5), so they are searchable by the file's name.
 Structure is chunked, embedded and searchable — it is how a file is found by
 a column name — but turning it into claims ("Sheet Q3 has a column Revenue")
 would flood the fact layer with schema trivia.
@@ -553,7 +558,7 @@ MIME, size, and the metadata the format itself exposes (a font's family
 name, a CAD file's declared units). Labels: `file_card` / `source_expression`
 for copied names and metadata strings, `computed` for sizes and counts.
 Coverage is `policy="card"`, `complete=False`. The card makes the file
-discoverable and gives claims a document to be about (D134); the original is
+discoverable (its name and metadata feed `search_documents`, D134); the original is
 served as always (D51).
 
 ## 7. New locator kinds

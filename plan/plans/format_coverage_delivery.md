@@ -1,7 +1,7 @@
 # Format coverage — delivery order
 
 Build order for D133 ([format conversion](../designs/format_conversion_design.md))
-and D134 ([document subject entities](../designs/document_subject_entity_design.md)).
+and D134 ([document metadata and search](../designs/document_metadata_and_search_design.md)).
 The designs describe the complete system; this file says what to build first
 and why. Rationale: [analysis](../analysis/format_coverage_and_conversion_architecture.md).
 
@@ -39,7 +39,7 @@ family that depends on it.
 | A3 | Source-map requirement for local converters; the four new locator kinds | D133 §3, §7 | B-items |
 | A4 | Profile machinery: size rule, `computed` mode, identifying-values rules, extraction eligibility in E1/E2 | D133 §4.1–§4.5 | C-items |
 | A5 | Private store and `data_query` (sandboxed worker, `DataQueryResult/v1`) | D133 §4.6 | C-items |
-| A6 | Document subject entities | D134 | C-items onward |
+| A6 | General document metadata, `search_documents`, document filters on `search`, self-reference naming in Claimify, own-name rule in E3 | D134 | every family (each maps its metadata) |
 | A7 | Expansion: `expand` sub-worker, member records and suppressions, `counting_lineage_id`, descendant-closure delete and forget (manifest v2), whole-tree bounds | D133 §5 | D-items |
 | A8 | File cards | D133 §6 | E1 |
 

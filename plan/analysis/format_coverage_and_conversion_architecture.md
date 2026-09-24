@@ -204,43 +204,50 @@ should be searchable (they are how a file is found) but not claim-extracted;
 claims come from the overview and key-values sections. The range labels
 already give E2 the signal.
 
-## 5. Documents as the subject of claims
+## 5. Finding documents and claims about them
 
-A profile produces almost only claims whose subject is **the file itself**.
-The same happens in prose: "This report covers the 2025 audit", "the
-attached spreadsheet lists…". Today such a claim has no subject to bind to:
-the file is not an entity.
+A profile produces claims about **the file itself** ("the Q3 sales workbook
+covers EU revenue by region"), and prose does the same ("this report covers
+the 2025 audit"). Separately, agents ask for files directly ("find
+Q3_sales_2025.xlsx"), by who and when ("emails from Alice"), and for
+information limited to certain files ("everything about Project X from
+Alice's emails").
 
-Options considered:
+### 5.1 First answer: documents as entities (not chosen)
 
-| Option | Assessment |
-|---|---|
-| Put the file name in the claim text only | Readable and searchable, but a string is not an identity: names collide (`Book1.xlsx`, `export (3).csv`), change on rename, and the same name in two folders is two files. Nothing binds the claim to the document. |
-| Rely on provenance (claim → span → version → document) | Already exists and is right for claims *about the world*. It does not make the document the *subject*: "covers EU revenue" would float without a holder. |
-| Make every document an entity at ingest | Correct identity, but at millions of documents it floods entity search and T0 candidate lists with entities nobody talks about. |
-| **Mint a document entity when a claim first takes the document as its subject** | Identity from the lineage (no resolution guesswork), aliases from file name/title/path, created only when needed. **Chosen.** |
+The first D134 draft made a document an entity bound one-to-one to its
+lineage, so claims about a file had the file as their subject. It went
+through three review rounds (§9) and grew a `DOCUMENT` metadata passage,
+a subject flag, subject-position binding, merge guards, per-source alias
+bookkeeping and forget rules.
 
-Binding mechanism: Claimify already cites engine-supplied source passages by
-label, and D122 adds *source reference cards* built from them. A document gets
-one extra, always-present **`DOCUMENT` metadata passage** naming it, with a
-self card. A claim whose subject is the document cites it; the grounding gate
-turns the citation into a persisted flag, and the resolver binds the reference
-matching the document's names to the document entity from provenance, without
-running the identity cascade. The first draft of this analysis supported the
-self card with "the header"; review (§9) showed D122 requires a citable
-passage, which is why the passage exists. Mentions of the
-file *from other documents* ("see Q3_sales_2025.xlsx") go through the normal
-cascade, where the document entity's file-name aliases make it a candidate —
-no auto-accept, preserving D95/D100.
+The owner then asked (2026-09-24) whether this was needed at all:
+`documents` already records every file's name, and everything derived from a
+file already links to it. Working through "find me all info about X from
+emails from Alice" settled it. That question needs three things: to filter by
+format (email), to filter by **sender**, and to run normal retrieval limited
+to those documents. None of them needs the document to be an entity. What is
+missing is **structured, filterable metadata about documents**, a **document
+search**, and **document filters on retrieval**. A person entity for Alice can
+widen the sender match, but that entity already exists. Files as nodes in the
+fact graph ("Alice authored the Q3 report" as a relation) are the only thing
+the entity adds, and nothing yet shows a need for it. The design moved to
+`plan/proposals/document_subject_entities.md` with that adoption trigger.
 
-Claim text stays immutable. A profile's heading carries the file name, so
-Claimify can write a self-contained, grounded claim ("The workbook
-Q3_sales_2025.xlsx covers…") naming the file as that version named itself.
-A later rename adds an alias to the entity; old claims are not rewritten, and
-the entity id is the link that survives.
+### 5.2 Chosen: general metadata, document search, named self-references
 
-The entity also gives the agent a **handle to act on**: resolve the entity →
-its document → `source_open` or the new data query.
+- **General metadata fields**, shared by every format (`authors` rather than
+  an email-only `from`), so one filter works across emails, office
+  documents, PDFs and chat exports. Each family maps its native fields.
+- **`search_documents`** over names, metadata and content, and **document
+  filters on `search`**.
+- **Claimify names the document in self-references.** The owner kept this
+  from the entity approach: a claim that says which file it is about can be
+  found by the file's name. It is limited to self-references, because a file
+  name appended to every claim would repeat provenance and pollute embeddings
+  as the D129 world-time suffix did.
+- **A document's own name is never made an entity**, so two same-named files
+  cannot merge through a name entity.
 
 ## 6. The data query primitive — engine choice
 
@@ -303,6 +310,10 @@ Sequencing is in [the delivery plan](../plans/format_coverage_delivery.md);
 it does not belong in the design.
 
 ## 9. Independent review
+
+Rounds 1–4 reviewed the first D134 draft (documents as entities). Their
+D134 rows describe that draft, which §5.1 records as not chosen; the current
+D134 is §5.2.
 
 Codex (gpt-6-sol, high reasoning) reviewed the first draft adversarially and
 returned 15 findings (12 must-fix, 3 should-fix; verdict "not
